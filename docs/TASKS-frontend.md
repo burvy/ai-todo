@@ -32,6 +32,11 @@ Build on the original UI (`index.html` / `app.js` / `styles.css`), not the phone
 - [x] **One UI:** removed the "Phone view" link and `static/mobile.html`, `mobile.js`, `mobile.css`.
 - [x] Pen is easy to tap at 390px — 58px target, and the composer is now sticky on phones so the pen stays in reach while the list scrolls (it used to sit ~450px below the fold once the list had more than a few tasks).
 
+## P0-now-b: phone gestures + reorder (burvy, ~17:00)
+- [ ] **Phone: swipe up for the planner.** At phone width the planner becomes a bottom sheet: the list and pen-textbox fill the screen, a handle at the bottom shows "Planner". Swipe up (or tap the handle) → planner slides up over the list; swipe down → back. CSS `transform: translateY` + `touchstart/touchmove/touchend`; no library.
+- [ ] **Reorder planner tasks by dragging** (placed tasks only, never busy blocks). Drag a task block to a new day/time, snapped to 15 min → `PATCH /api/tasks/:id {"pinned_start":"<UTC ISO>"}` → `POST /api/schedule` → redraw. Pinned blocks get a small pin icon; dragging one back off / a "unpin" action sends `{"pinned_start":null}`. Use pointer events so it works with touch (long-press 300 ms to start a drag on phones, so normal swipes still scroll).
+- [ ] Until backend 2's `pinned_start` lands, build the drag UI against the PATCH call; it will 200 and simply not stick.
+
 ## P2: polish
 - [ ] **Week / month views**: optional now, only if the pen is done before 17:30
 - [x] Pen mascot (idle / listening / writing)

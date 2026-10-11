@@ -22,6 +22,11 @@ _Synced 2026-10-11 ~16:10 by the orchestrator. Your email/PDF parsers merged in 
 
 **Merge order:** you and the new teammate both add a route in `server/src/main.rs`. Whoever merges second pulls `main` first. Keep the `main.rs` edit to the route only.
 
+## P1c: now (burvy, ~17:00), in this order
+- [ ] **`pinned_start` for drag-to-reorder** (frontend drags planner blocks). Add `pinned_start: Option<DateTime<Utc>>` to `Task` (`crates/core`, `#[serde(default)]`), a nullable column in `db.rs` (add it with `ALTER TABLE ... ADD COLUMN` if missing so old DBs still open), accept it in `PATCH /api/tasks/:id` (`null` clears it). Scheduler: place pinned tasks first at exactly that start (full duration, even if it overlaps a busy block), treat them as busy for everyone else. Tests: pinned task lands at its time; others flow around it. *(45m)*
+- [ ] **`POST /api/reset`**: clear all tasks, placements and busy blocks (memory + SQLite), so the shared live list starts empty before judging. *(15m)*
+- [ ] **Reschedule after `/api/calendar/import`** so the response's `placements` are fresh. *(10m)*
+
 ## Dropped for today
 - Microsoft Graph sign-in.
 
