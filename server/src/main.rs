@@ -13,8 +13,9 @@ use std::sync::{Arc, Mutex};
 
 use axum::{
     Json, Router,
-    extract::{Path as UrlPath, Query, State},
+    extract::{Path as UrlPath, Query, Request as HttpRequest, State},
     http::StatusCode,
+    response::{IntoResponse, Response},
     routing::{get, patch, post},
 };
 use chrono::{DateTime, Datelike, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
@@ -784,20 +785,50 @@ async fn calendar(
     Json(CalendarOut { busy, placements })
 }
 
-#[derive(Deserialize)]
-struct CalendarImportIn {
-    ics_text: String,
-}
-
 /// Replace the busy blocks with the ones in an uploaded `.ics` export.
 ///
-/// Replaces rather than appends: importing twice must not double-book the
-/// same lecture, and re-exporting after moving an event must move it here too.
+/// Accepts the file as JSON `{ics_text}` or as a multipart upload with a
+/// `file` field, which is how a user picks an `.ics` off their device.
+///
+/// Replaces rather than appends, so re-exporting after moving an event moves
+/// it here too. But if the incoming events overlap what is already in the app
+/// we stop and return the clashes as `409` rather than silently deciding for
+/// the user; pass `confirm: true` (or a `confirm` field on the upload) to
+/// import anyway.
 async fn import_calendar(
     State(state): State<AppState>,
-    Json(body): Json<CalendarImportIn>,
-) -> Result<Json<CalendarOut>, ics::ImportError> {
-    let imported = ics::parse_ics(&body.ics_text)?;
+    request: HttpRequest,
+) -> Result<Response, ics::ImportError> {
+    let input = ics::read_import(request).await?;
+    let imported = ics::parse_ics(&input.ics_text)?;
+
+    let existing: Vec<BusyRow> = state
+        .busy
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|block| BusyRow {
+            start: block.start,
+            end: block.end,
+            title: block.title.clone(),
+        })
+        .collect();
+
+    let conflicts = ics::find_conflicts(&imported, &existing);
+    if !conflicts.is_empty() && !input.confirm {
+        return Ok((
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": format!(
+                    "{} of the {} imported event(s) overlap what is already in the app",
+                    conflicts.len(),
+                    imported.len()
+                ),
+                "conflicts": conflicts,
+            })),
+        )
+            .into_response());
+    }
 
     let blocks: Vec<BusyOut> = imported
         .iter()
@@ -815,7 +846,8 @@ async fn import_calendar(
     Ok(Json(CalendarOut {
         busy: blocks,
         placements,
-    }))
+    })
+    .into_response())
 }
 
 fn fallback_intent(text: &str) -> &'static str {
@@ -1513,12 +1545,17 @@ mod tests {
     }
 
     fn import_request(ics_text: &str) -> Request<Body> {
+        import_confirmed(ics_text, false)
+    }
+
+    /// The same import, with the conflict prompt already accepted.
+    fn import_confirmed(ics_text: &str, confirm: bool) -> Request<Body> {
         Request::builder()
             .method("POST")
             .uri("/api/calendar/import")
             .header("content-type", "application/json")
             .body(Body::from(
-                serde_json::json!({ "ics_text": ics_text }).to_string(),
+                serde_json::json!({ "ics_text": ics_text, "confirm": confirm }).to_string(),
             ))
             .unwrap()
     }
@@ -1572,18 +1609,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn importing_the_same_calendar_twice_does_not_double_book() {
+    async fn reimporting_the_same_calendar_is_prompted_not_silently_applied() {
         let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
         let router = app(new_state_with(db));
 
-        for _ in 0..2 {
-            let res = router
-                .clone()
-                .oneshot(import_request(TWO_EVENTS))
-                .await
-                .unwrap();
-            assert_eq!(res.status(), StatusCode::OK);
-        }
+        let res = router
+            .clone()
+            .oneshot(import_request(TWO_EVENTS))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "first import is clean");
+
+        // The second import overlaps the first exactly, so the user is asked
+        // rather than having their calendar quietly replaced.
+        let res = router
+            .clone()
+            .oneshot(import_request(TWO_EVENTS))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CONFLICT);
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let conflicts = json["conflicts"].as_array().expect("a conflicts array");
+        assert!(!conflicts.is_empty());
+        assert_eq!(conflicts[0]["imported_title"], "STAT 201 Lecture");
+        assert_eq!(conflicts[0]["existing_title"], "STAT 201 Lecture");
+
+        // Nothing was applied by that refusal.
+        let res = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/calendar")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["busy"].as_array().unwrap().len(), 2);
+
+        // Confirming goes through, and still replaces rather than appends.
+        let res = router
+            .clone()
+            .oneshot(import_confirmed(TWO_EVENTS, true))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
 
         let res = router
             .oneshot(
@@ -1599,7 +1672,7 @@ mod tests {
         assert_eq!(
             json["busy"].as_array().unwrap().len(),
             2,
-            "a second import must replace, not append"
+            "a confirmed import must replace, not append"
         );
     }
 
@@ -1644,7 +1717,8 @@ mod tests {
         let router = app(new_state_with(db));
         let week = include_str!("../../demo/outlook/week.ics");
 
-        let res = router.oneshot(import_request(week)).await.unwrap();
+        // The seeded demo blocks overlap the real week, so confirm it.
+        let res = router.oneshot(import_confirmed(week, true)).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
 
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
@@ -1654,5 +1728,157 @@ mod tests {
             9,
             "the Outlook fixture has 9 events"
         );
+    }
+
+    #[tokio::test]
+    async fn an_ics_file_can_be_picked_off_the_device_and_uploaded() {
+        // How a user actually gets an `.ics` out of Outlook: save it, then
+        // choose the file. JSON is the other path; this is the one the
+        // frontend's file picker will use.
+        let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
+        let router = app(new_state_with(db));
+        let week = include_str!("../../demo/outlook/week.ics");
+
+        let boundary = "icsboundary";
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; name=\"file\"; filename=\"week.ics\"\r\n",
+        );
+        body.extend_from_slice(b"Content-Type: text/calendar\r\n\r\n");
+        body.extend_from_slice(week.as_bytes());
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+        let res = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/calendar/import")
+                    .header(
+                        "content-type",
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::CONFLICT, "overlaps the seed");
+
+        // The same upload with confirm=1 goes through.
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
+        body.extend_from_slice(
+            b"Content-Disposition: form-data; name=\"file\"; filename=\"week.ics\"\r\n",
+        );
+        body.extend_from_slice(b"Content-Type: text/calendar\r\n\r\n");
+        body.extend_from_slice(week.as_bytes());
+        body.extend_from_slice(format!("\r\n--{boundary}\r\n").as_bytes());
+        body.extend_from_slice(b"Content-Disposition: form-data; name=\"confirm\"\r\n\r\ntrue\r\n");
+        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+        let res = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/calendar/import")
+                    .header(
+                        "content-type",
+                        format!("multipart/form-data; boundary={boundary}"),
+                    )
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn cancelled_and_transparent_events_are_not_imported() {
+        let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
+        let router = app(new_state_with(db));
+
+        let week = "BEGIN:VCALENDAR\r\n\
+            BEGIN:VEVENT\r\n\
+            SUMMARY:Advising appointment\r\n\
+            STATUS:CANCELLED\r\n\
+            DTSTART;TZID=America/New_York:20261020T130000\r\n\
+            DTEND;TZID=America/New_York:20261020T133000\r\n\
+            END:VEVENT\r\n\
+            BEGIN:VEVENT\r\n\
+            SUMMARY:Someone's birthday\r\n\
+            TRANSP:TRANSPARENT\r\n\
+            DTSTART;TZID=America/New_York:20261021T000000\r\n\
+            DTEND;TZID=America/New_York:20261021T235959\r\n\
+            END:VEVENT\r\n\
+            BEGIN:VEVENT\r\n\
+            SUMMARY:Real lecture\r\n\
+            DTSTART;TZID=America/New_York:20261022T090000\r\n\
+            DTEND;TZID=America/New_York:20261022T101500\r\n\
+            END:VEVENT\r\n\
+            END:VCALENDAR\r\n";
+
+        let res = router.oneshot(import_request(week)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let busy = json["busy"].as_array().expect("a busy array");
+        assert_eq!(busy.len(), 1, "only the event that actually blocks time");
+        assert_eq!(busy[0]["title"], "Real lecture");
+    }
+
+    #[test]
+    fn a_partial_overlap_is_a_conflict_too() {
+        // Not identical times, but still a clash: a lecture starting ten
+        // minutes into an existing meeting needs the same warning.
+        let existing = vec![db::BusyRow {
+            start: "2026-10-13T13:00:00Z".parse().unwrap(),
+            end: "2026-10-13T14:00:00Z".parse().unwrap(),
+            title: "Group meeting".into(),
+        }];
+        let imported = vec![db::BusyRow {
+            start: "2026-10-13T13:50:00Z".parse().unwrap(),
+            end: "2026-10-13T15:00:00Z".parse().unwrap(),
+            title: "STAT 201 Lecture".into(),
+        }];
+        let conflicts = ics::find_conflicts(&imported, &existing);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].imported_title, "STAT 201 Lecture");
+        assert_eq!(conflicts[0].existing_title, "Group meeting");
+    }
+
+    #[test]
+    fn back_to_back_events_are_not_a_conflict() {
+        // Half-open intervals: finishing at 11:00 and starting at 11:00 is a
+        // normal day, not a clash.
+        let existing = vec![db::BusyRow {
+            start: "2026-10-13T10:00:00Z".parse().unwrap(),
+            end: "2026-10-13T11:00:00Z".parse().unwrap(),
+            title: "Lab".into(),
+        }];
+        let imported = vec![db::BusyRow {
+            start: "2026-10-13T11:00:00Z".parse().unwrap(),
+            end: "2026-10-13T12:00:00Z".parse().unwrap(),
+            title: "Lunch".into(),
+        }];
+        assert!(ics::find_conflicts(&imported, &existing).is_empty());
+    }
+
+    #[test]
+    fn events_on_free_days_do_not_conflict() {
+        let existing = vec![db::BusyRow {
+            start: "2026-10-13T10:00:00Z".parse().unwrap(),
+            end: "2026-10-13T11:00:00Z".parse().unwrap(),
+            title: "Lab".into(),
+        }];
+        let imported = vec![db::BusyRow {
+            start: "2026-10-14T10:00:00Z".parse().unwrap(),
+            end: "2026-10-14T11:00:00Z".parse().unwrap(),
+            title: "Lab".into(),
+        }];
+        assert!(ics::find_conflicts(&imported, &existing).is_empty());
     }
 }
