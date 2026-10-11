@@ -103,6 +103,22 @@ fn default_label() -> String {
     "Other".into()
 }
 
+fn clamp_duration(duration: i64) -> i64 {
+    duration.clamp(5, 480)
+}
+
+fn title_is_valid(title: &str) -> bool {
+    !title.trim().is_empty()
+}
+
+fn round_up_quarter(now: DateTime<Utc>) -> DateTime<Utc> {
+    let remainder = now.timestamp().rem_euclid(15 * 60);
+    let add = (15 * 60 - remainder) % (15 * 60);
+    (now + chrono::Duration::seconds(add))
+        .with_nanosecond(0)
+        .unwrap()
+}
+
 #[derive(Deserialize)]
 struct MessageIn {
     text: String,
@@ -507,9 +523,9 @@ fn tasks_from_judgments(
             title,
             notes: String::new(),
             duration_min: if assessment {
-                i64::from(judgment.duration_min.max(60))
+                clamp_duration(i64::from(judgment.duration_min.max(60)))
             } else {
-                i64::from(judgment.duration_min)
+                clamp_duration(i64::from(judgment.duration_min))
             },
             deadline,
             priority: judgment.priority,
@@ -601,14 +617,20 @@ async fn list_tasks(State(state): State<AppState>) -> Json<TasksOut> {
 async fn create_task(
     State(state): State<AppState>,
     Json(body): Json<CreateTaskIn>,
-) -> (StatusCode, Json<Task>) {
+) -> Result<(StatusCode, Json<Task>), (StatusCode, Json<serde_json::Value>)> {
+    if !title_is_valid(&body.title) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "title is required"})),
+        ));
+    }
     let mut store = state.store.lock().unwrap();
     store.next_id += 1;
     let task = Task {
         id: format!("t{}", store.next_id),
         title: clean_title(&body.title),
         notes: body.notes,
-        duration_min: body.duration_min,
+        duration_min: clamp_duration(body.duration_min),
         deadline: body.deadline,
         priority: body.priority,
         status: "todo".into(),
@@ -619,28 +641,33 @@ async fn create_task(
     store.tasks.push(task.clone());
     drop(store);
     state.db.save_tasks(std::slice::from_ref(&task));
-    (StatusCode::CREATED, Json(task))
+    Ok((StatusCode::CREATED, Json(task)))
 }
 
 async fn patch_task(
     State(state): State<AppState>,
     UrlPath(id): UrlPath<String>,
     Json(body): Json<PatchIn>,
-) -> Result<Json<Task>, StatusCode> {
+) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
     let mut store = state.store.lock().unwrap();
-    let task = store
-        .tasks
-        .iter_mut()
-        .find(|task| task.id == id)
-        .ok_or(StatusCode::NOT_FOUND)?;
+    let task = store.tasks.iter_mut().find(|task| task.id == id).ok_or((
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({"error": "task not found"})),
+    ))?;
     if let Some(v) = body.title {
+        if !title_is_valid(&v) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "title is required"})),
+            ));
+        }
         task.title = v;
     }
     if let Some(v) = body.notes {
         task.notes = v;
     }
     if let Some(v) = body.duration_min {
-        task.duration_min = v;
+        task.duration_min = clamp_duration(v);
     }
     if let Some(v) = body.deadline {
         task.deadline = v;
@@ -712,7 +739,7 @@ async fn schedule_tasks(State(state): State<AppState>) -> Json<ScheduleOut> {
 
     let mut placements = Vec::new();
     let mut unscheduled = Vec::new();
-    for placement in scheduler::schedule(&inputs, &busy, &hours, Utc::now()) {
+    for placement in scheduler::schedule(&inputs, &busy, &hours, round_up_quarter(Utc::now())) {
         match placement {
             Placement::Scheduled(p) => placements.push(PlacementOut {
                 task_id: p.task_id,
@@ -1354,6 +1381,20 @@ mod tests {
         assert_eq!(query_label("what does Friday look like"), "Friday");
         assert_eq!(query_label("what is tomorrow like"), "Tomorrow");
         assert_eq!(query_label("show my day"), "Today");
+    }
+
+    #[test]
+    fn validates_titles_clamps_durations_and_rounds_schedule_time() {
+        assert!(!title_is_valid("  \t"));
+        assert!(title_is_valid("Do the thing"));
+        assert_eq!(clamp_duration(-5), 5);
+        assert_eq!(clamp_duration(100_000), 480);
+        assert_eq!(clamp_duration(30), 30);
+        let now = Utc.with_ymd_and_hms(2026, 10, 11, 21, 12, 15).unwrap();
+        assert_eq!(
+            round_up_quarter(now).to_rfc3339(),
+            "2026-10-11T21:15:00+00:00"
+        );
     }
 
     #[test]
