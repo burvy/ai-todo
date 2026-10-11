@@ -24,6 +24,11 @@ test green; that is the signal it is done.
 
 ## Open
 
+- [x] **14. PATCH accepts unknown task statuses** — `PATCH /api/tasks/:id`
+
+      Task status is restricted to `todo` and `done`; other values now return
+      HTTP 400 with an error object.
+
 - [x] **1. Cancelled events still block time**
       `server/src/ics.rs` — `parse_ics`
 

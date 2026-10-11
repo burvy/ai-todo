@@ -13,6 +13,8 @@ use std::sync::{Arc, Mutex};
 
 use axum::{
     Json, Router,
+    body::to_bytes,
+    extract::{FromRequest, Multipart},
     extract::{Path as UrlPath, Query, Request as HttpRequest, State},
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -78,6 +80,8 @@ struct CaptureIn {
 #[derive(Serialize)]
 struct CaptureOut {
     tasks: Vec<Task>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -146,6 +150,8 @@ struct PatchIn {
     priority: Option<u8>,
     status: Option<String>,
     confidence: Option<f64>,
+    position: Option<i64>,
+    pinned_start: Option<Option<DateTime<Utc>>>,
 }
 
 #[derive(Serialize)]
@@ -171,7 +177,8 @@ fn tasks_from_text(text: &str) -> Vec<Task> {
     text.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
-        .map(|line| Task {
+        .enumerate()
+        .map(|(index, line)| Task {
             id: String::new(),
             title: line.to_string(),
             notes: String::new(),
@@ -182,6 +189,8 @@ fn tasks_from_text(text: &str) -> Vec<Task> {
             confidence: 0.5,
             label: label_for(line),
             source: Source::Text,
+            position: index as i64,
+            pinned_start: None,
         })
         .collect()
 }
@@ -441,6 +450,53 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
     ))
 }
 
+fn explicit_clock(text: &str) -> Option<(u32, u32)> {
+    for raw in text.to_ascii_lowercase().split_whitespace() {
+        let token = raw.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != ':');
+        if token == "noon" {
+            return Some((12, 0));
+        }
+        let (number, suffix) = if let Some(value) = token.strip_suffix("am") {
+            (value, Some(false))
+        } else if let Some(value) = token.strip_suffix("pm") {
+            (value, Some(true))
+        } else {
+            (token, None)
+        };
+        let (hour, minute) = if let Some((hour, minute)) = number.split_once(':') {
+            (hour.parse().ok()?, minute.parse().ok()?)
+        } else if suffix.is_some() {
+            (number.parse().ok()?, 0)
+        } else {
+            continue;
+        };
+        if minute > 59 {
+            continue;
+        }
+        let hour = match suffix {
+            Some(is_pm) if (1..=12).contains(&hour) => (hour % 12) + if is_pm { 12 } else { 0 },
+            None if hour < 24 => hour,
+            _ => continue,
+        };
+        return Some((hour, minute));
+    }
+    None
+}
+
+fn pinned_start_for(sentence: &str, anchor: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let (hour, minute) = explicit_clock(sentence)?;
+    let date_candidate = find_date_candidates(sentence, anchor)
+        .into_iter()
+        .find(|candidate| parse_deadline(candidate, anchor).is_some())?;
+    let date = parse_deadline(&date_candidate, anchor)?
+        .with_timezone(&timezone())
+        .date_naive();
+    Some(local_time_as_utc(
+        timezone(),
+        date.and_time(NaiveTime::from_hms_opt(hour, minute, 0)?),
+    ))
+}
+
 /// Understand captured text, with a deterministic line fallback when Jev is unavailable.
 pub async fn capture_text(text: &str, source: Source, anchor: DateTime<Utc>) -> Vec<Task> {
     let sentences = split_sentences(text);
@@ -496,7 +552,7 @@ fn tasks_from_judgments(
     anchor: DateTime<Utc>,
 ) -> Vec<Task> {
     let mut tasks = Vec::new();
-    for (sentence, _candidates, judgment) in judgments {
+    for (index, (sentence, _candidates, judgment)) in judgments.into_iter().enumerate() {
         if judgment.is_task < 0.5 {
             continue;
         }
@@ -504,6 +560,11 @@ fn tasks_from_judgments(
             .deadline
             .as_deref()
             .and_then(|candidate| parse_deadline(candidate, anchor));
+        let pinned_start = pinned_start_for(&sentence, anchor);
+        let meeting_like = sentence.to_ascii_lowercase();
+        let meeting_like = ["meeting", "appointment", "call"]
+            .iter()
+            .any(|word| meeting_like.contains(word));
         let assessment = is_assessment(&sentence);
         let title = if assessment {
             let cleaned = clean_title(&sentence)
@@ -523,7 +584,7 @@ fn tasks_from_judgments(
             id: String::new(),
             title,
             notes: String::new(),
-            duration_min: if assessment {
+            duration_min: if (pinned_start.is_some() && meeting_like) || assessment {
                 clamp_duration(i64::from(judgment.duration_min.max(60)))
             } else {
                 clamp_duration(i64::from(judgment.duration_min))
@@ -534,6 +595,8 @@ fn tasks_from_judgments(
             confidence: judgment.confidence,
             label: judgment.label.unwrap_or_else(|| label_for(&sentence)),
             source,
+            position: index as i64,
+            pinned_start,
         });
     }
     tasks
@@ -593,26 +656,132 @@ fn reason_text(reason: &UnschedulableReason) -> &'static str {
     }
 }
 
-async fn capture(State(state): State<AppState>, Json(body): Json<CaptureIn>) -> Json<CaptureOut> {
-    // TODO: multipart `file` (PDF) capture. Needs a PDF-to-text step in crates/capture.
-    let mut created =
-        capture_text(&body.text, body.source.unwrap_or(Source::Text), Utc::now()).await;
+async fn capture(
+    State(state): State<AppState>,
+    request: HttpRequest,
+) -> Result<Json<CaptureOut>, (StatusCode, Json<serde_json::Value>)> {
+    let content_type = request
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let (text, source, anchor) = if content_type.starts_with("multipart/form-data") {
+        let mut multipart = Multipart::from_request(request, &())
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": error.to_string()})),
+                )
+            })?;
+        let mut file = None;
+        let mut filename = String::new();
+        while let Some(field) = multipart.next_field().await.map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": error.to_string()})),
+            )
+        })? {
+            if field.name() == Some("file") {
+                filename = field.file_name().unwrap_or_default().to_owned();
+                file = Some(field.bytes().await.map_err(|error| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"error": error.to_string()})),
+                    )
+                })?);
+                break;
+            }
+        }
+        let bytes = file.ok_or_else(|| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "file is required"})),
+            )
+        })?;
+        let lower = filename.to_ascii_lowercase();
+        let raw = if lower.ends_with(".pdf") {
+            tokio::task::spawn_blocking(move || capture::pdf_to_text(&bytes))
+                .await
+                .map_err(|error| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"error": error.to_string()})),
+                    )
+                })?
+                .map_err(|error| {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({"error": error.to_string()})),
+                    )
+                })?
+        } else {
+            String::from_utf8_lossy(&bytes).into_owned()
+        };
+        let email = if lower.ends_with(".eml") || lower.ends_with(".txt") {
+            Some(capture::parse_email(&raw))
+        } else {
+            None
+        };
+        let anchor = email
+            .as_ref()
+            .and_then(|mail| mail.sent)
+            .unwrap_or_else(Utc::now);
+        (
+            email.map(|mail| mail.body).unwrap_or(raw),
+            Source::Pdf,
+            anchor,
+        )
+    } else {
+        let bytes = to_bytes(request.into_body(), 10 * 1024 * 1024)
+            .await
+            .map_err(|error| {
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({"error": error.to_string()})),
+                )
+            })?;
+        let body: CaptureIn = serde_json::from_slice(&bytes).map_err(|error| {
+            (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": error.to_string()})),
+            )
+        })?;
+        (body.text, body.source.unwrap_or(Source::Text), Utc::now())
+    };
+    if text.trim().is_empty() {
+        return Ok(Json(CaptureOut {
+            tasks: Vec::new(),
+            note: Some("nothing to do in that email".into()),
+        }));
+    }
+    let mut created = capture_text(&text, source, anchor).await;
     let mut store = state.store.lock().unwrap();
     for task in &mut created {
         store.next_id += 1;
         task.id = format!("t{}", store.next_id);
+        task.position = store
+            .tasks
+            .iter()
+            .map(|existing| existing.position)
+            .max()
+            .unwrap_or(-1)
+            + 1;
     }
     store.tasks.extend(created.iter().cloned());
     drop(store);
     state.db.save_tasks(&created);
-    Json(CaptureOut { tasks: created })
+    Ok(Json(CaptureOut {
+        tasks: created,
+        note: None,
+    }))
 }
 
 async fn list_tasks(State(state): State<AppState>) -> Json<TasksOut> {
-    let store = state.store.lock().unwrap();
-    Json(TasksOut {
-        tasks: store.tasks.clone(),
-    })
+    let mut tasks = state.store.lock().unwrap().tasks.clone();
+    tasks.sort_by_key(|task| (task.status == "done", task.position));
+    Json(TasksOut { tasks })
 }
 
 async fn create_task(
@@ -627,6 +796,13 @@ async fn create_task(
     }
     let mut store = state.store.lock().unwrap();
     store.next_id += 1;
+    let position = store
+        .tasks
+        .iter()
+        .map(|task| task.position)
+        .max()
+        .unwrap_or(-1)
+        + 1;
     let task = Task {
         id: format!("t{}", store.next_id),
         title: clean_title(&body.title),
@@ -638,6 +814,8 @@ async fn create_task(
         confidence: 1.0,
         label: body.label,
         source: Source::Text,
+        position,
+        pinned_start: None,
     };
     store.tasks.push(task.clone());
     drop(store);
@@ -677,10 +855,22 @@ async fn patch_task(
         task.priority = v;
     }
     if let Some(v) = body.status {
+        if v != "todo" && v != "done" {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": "status must be todo or done"})),
+            ));
+        }
         task.status = v;
     }
     if let Some(v) = body.confidence {
         task.confidence = v;
+    }
+    if let Some(v) = body.position {
+        task.position = v;
+    }
+    if let Some(v) = body.pinned_start {
+        task.pinned_start = v;
     }
     let updated = task.clone();
     drop(store);
@@ -714,6 +904,8 @@ async fn schedule_tasks(State(state): State<AppState>) -> Json<ScheduleOut> {
             duration_minutes: task.duration_min,
             deadline: task.deadline,
             priority: i32::from(task.priority),
+            position: task.position,
+            pinned_start: task.pinned_start,
         })
         .collect();
     let busy: Vec<BusyBlock> = state
@@ -1095,6 +1287,13 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
             for task in &mut created {
                 store.next_id += 1;
                 task.id = format!("t{}", store.next_id);
+                task.position = store
+                    .tasks
+                    .iter()
+                    .map(|existing| existing.position)
+                    .max()
+                    .unwrap_or(-1)
+                    + 1;
             }
             store.tasks.extend(created.iter().cloned());
             drop(store);
@@ -1472,6 +1671,8 @@ mod tests {
             confidence: 1.0,
             label: "School".into(),
             source: Source::Text,
+            position: 0,
+            pinned_start: None,
         };
         assert!(task_matches_message(
             &task,
@@ -1492,6 +1693,8 @@ mod tests {
             confidence: 1.0,
             label: "Work".into(),
             source: Source::Text,
+            position: 0,
+            pinned_start: None,
         };
         assert_eq!(task_overlap(&task, "I finished my slides"), 1);
         assert!(!task_matches_message(&task, "I finished the report"));
