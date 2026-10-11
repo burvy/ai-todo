@@ -56,6 +56,7 @@ pub struct Judgment {
     pub duration_min: u32,
     pub confidence: f64,
     pub label: Option<String>,
+    pub title: Option<String>,
 }
 
 const LABELS: [&str; 6] = ["School", "Work", "Errands", "Health", "Personal", "Other"];
@@ -162,6 +163,7 @@ struct Response {
 pub async fn understand(
     sentence: &str,
     date_candidates: &[String],
+    title_candidates: &[String],
     now: DateTime<Utc>,
 ) -> Result<Judgment> {
     let key = std::env::var("TYPESAFE_API_KEY").context("TYPESAFE_API_KEY is not set")?;
@@ -190,6 +192,11 @@ pub async fn understand(
             "type": "choice",
             "instructions": "Choose the best label for this task.",
             "criteria": {"School": "School", "Work": "Work", "Errands": "Errands", "Health": "Health", "Personal": "Personal", "Other": "Other"}
+        },
+        "title": {
+            "type": "choice",
+            "instructions": "Choose the candidate span that best names the actionable task. Preserve important words from the beginning and omit filler and dates.",
+            "criteria": title_criteria(title_candidates)
         }
     });
     let body = Request {
@@ -264,6 +271,14 @@ pub async fn understand(
         .and_then(Value::as_str)
         .filter(|choice| LABELS.contains(choice))
         .map(ToOwned::to_owned);
+    let title = response
+        .answers
+        .get("title")
+        .and_then(|answer| answer.get("choice"))
+        .and_then(Value::as_str)
+        .and_then(|choice| choice.strip_prefix("candidate_"))
+        .and_then(|index| index.parse::<usize>().ok())
+        .and_then(|index| title_candidates.get(index).cloned());
     let confidence = [
         task_answer,
         deadline_choice,
@@ -281,7 +296,20 @@ pub async fn understand(
         duration_min,
         confidence,
         label,
+        title,
     })
+}
+
+fn title_criteria(candidates: &[String]) -> Value {
+    let mut criteria = serde_json::Map::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        criteria.insert(
+            format!("candidate_{index}"),
+            Value::String(candidate.clone()),
+        );
+    }
+    criteria.insert("none".into(), Value::String("No suitable title".into()));
+    Value::Object(criteria)
 }
 
 fn deadline_criteria(candidates: &[String]) -> Value {
@@ -504,6 +532,24 @@ pub fn find_date_candidates(text: &str, now: DateTime<Utc>) -> Vec<String> {
                 };
                 let days = (target - current + 7) % 7;
                 let days = if days == 0 { 7 } else { days };
+                (now.date_naive() + Duration::days(days))
+                    .format("%Y-%m-%d")
+                    .to_string()
+            } else if lower.contains(&format!("next {name}")) {
+                let current = now.with_timezone(&Local).weekday().number_from_monday() as i64;
+                let target = match name {
+                    "monday" => 1,
+                    "tuesday" => 2,
+                    "wednesday" => 3,
+                    "thursday" => 4,
+                    "friday" => 5,
+                    "saturday" => 6,
+                    _ => 7,
+                };
+                let mut days = (target - current + 7) % 7;
+                if days == 0 {
+                    days = 7;
+                }
                 (now.date_naive() + Duration::days(days))
                     .format("%Y-%m-%d")
                     .to_string()
@@ -955,7 +1001,7 @@ Late work loses 10 percent per day unless an extension is arranged in advance."#
     #[tokio::test]
     #[ignore = "requires TYPESAFE_API_KEY and network access"]
     async fn live_jev_request() {
-        let _ = understand("File taxes by Friday", &[], Utc::now())
+        let _ = understand("File taxes by Friday", &[], &[], Utc::now())
             .await
             .unwrap();
     }
