@@ -81,8 +81,8 @@ pub async fn understand(
     let questions = json!({
         "is_a_task": {
             "type": "noul",
-            "instructions": "Does this text express a concrete task or commitment?",
-            "criteria": {"true": "Concrete todo, chore, or deliverable", "false": "Background context or reference note"}
+            "instructions": "Does this clause contain an obligation, deadline, assessment to prepare for (quiz, exam, test, presentation, interview), or concrete errand? Count implied preparation tasks as actionable.",
+            "criteria": {"true": "Actionable obligation, assessment preparation, deadline, or errand", "false": "Chit-chat, feelings, background context, or a past event with no action"}
         },
         "deadline_choice": {
             "type": "choice",
