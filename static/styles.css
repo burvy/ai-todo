@@ -459,11 +459,9 @@ kbd {
   max-width: 46ch;
 }
 
-.sample-lead, .sample-tail { display: block; }
-.sample-lead { font-size: 12.5px; letter-spacing: .04em; color: var(--pencil); }
 .sample-ramble {
   display: block;
-  margin: 6px 0 8px;
+  margin: 4px 0 4px;
   padding: 8px 0 8px 14px;
   border-left: 2.5px solid var(--accent);
   font-family: var(--hand);
@@ -472,7 +470,6 @@ kbd {
   font-style: normal;
   color: var(--ink);
 }
-.sample-tail { font-size: 13px; }
 
 /* ── Composer ───────────────────────────────────────────────── */
 
@@ -513,8 +510,6 @@ kbd {
   padding: 5px 0;
 }
 #messageBox::placeholder { color: var(--pencil); font-style: italic; }
-
-.composer-hint { margin: 7px 2px 0; font-size: 12.5px; color: var(--pencil); }
 
 /* ── Planner ────────────────────────────────────────────────── */
 

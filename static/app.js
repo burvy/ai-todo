@@ -579,8 +579,7 @@ function setupRecognition() {
   if (!SpeechRec) {
     penBtn.dataset.noSpeech = 'true';
     penBtn.title = 'This browser has no speech recognition. Tap to send, type instead.';
-    $('#composerHint').innerHTML = 'Tap the pen to send · this browser has no speech recognition';
-    return;
+    return;   // the composer hint was removed; the title carries this now
   }
   recognition = new SpeechRec();
   recognition.continuous = true;
