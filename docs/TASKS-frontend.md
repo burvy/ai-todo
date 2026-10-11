@@ -6,6 +6,8 @@ Run: `.env` with `TYPESAFE_API_KEY=...`, then `.\run-local.ps1` from the repo ro
 
 _Synced 2026-10-11 17:05 by the orchestrator (main at #44). **Now: bug fixes and polish. 18:15 anything shaky gets hidden. 18:30 feature freeze.**_
 
+**One website (burvy):** build every change on the existing `static/` site (`index.html`, `app.js`, `styles.css`), which serves both PC and phone. Phone behaviour is a media query (`@media (max-width: 720px)`) on that same page, never a separate page or a rebuild. The `design/mobile-reference` branch is a visual reference only; take ideas from it, don't build on it.
+
 ## Done ✅
 - P0/P1: parchment UI, task list (check, edit, delete, add), text box → `/api/message`, push-to-talk, spoken replies, week planner, "Schedule it" (#20, #27)
 - P2: pencilled-in fields, writing animation, focus date, error toast, light theme default, planner starts today, empty-state sample, phone width (#29)
