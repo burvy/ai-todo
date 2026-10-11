@@ -24,6 +24,11 @@ test green; that is the signal it is done.
 
 ## Open
 
+- [x] **14. PATCH accepts unknown task statuses** — `PATCH /api/tasks/:id`
+
+      Task status is restricted to `todo` and `done`; other values now return
+      HTTP 400 with an error object.
+
 - [x] **1. Cancelled events still block time**
       `server/src/ics.rs` — `parse_ics`
 
@@ -119,7 +124,7 @@ test green; that is the signal it is done.
 
       *Fix:* none needed separately once (3) is fixed — this test then passes.
 
-- [ ] **6. "What does tomorrow look like" skips the first task of the day**
+- [x] **6. "What does tomorrow look like" skips the first task of the day**
       `server/src/main.rs` — `query_day` reply
 
       After the demo rambles + `week.ics`, Monday's first placement is
@@ -134,17 +139,17 @@ test green; that is the signal it is done.
 
       The two replies contradict each other. *Impact:* medium, both are demo lines.
 
-- [ ] **7. "What should I do now" does not say it is tomorrow**
+- [x] **7. "What should I do now" does not say it is tomorrow**
       Asked Sunday 18:10 local: `"Next: Clean up the chemistry lab data at 9:00 (60 minutes)."`
       Reads as if it is 9:00 today. *Impact:* low-medium.
 
-- [ ] **8. Past days are answered as if they were today**
+- [x] **8. Past days are answered as if they were today**
       ```
       "what does yesterday look like" -> "Today is free."  (focus_date = today)
       ```
       *Impact:* low.
 
-- [ ] **9. Reply to a ramble hides tasks that could not be placed**
+- [x] **9. Reply to a ramble hides tasks that could not be placed**
       After ramble 4 (`Today I need to submit the financial aid form`) the task
       gets deadline today 17:00 (already past at 18:00 local) and is returned in
       `unscheduled` with `deadline_passed`, but the reply is only
@@ -152,14 +157,14 @@ test green; that is the signal it is done.
       (`no_available_time`, seen for *Clean up the chemistry lab data* before a
       cancellation). *Impact:* medium: the spoken reply claims success.
 
-- [ ] **10. Finishing an already-finished task gives a misleading reply**
+- [x] **10. Finishing an already-finished task gives a misleading reply**
       ```
       "I finished the history paper"   -> "Done: Finish the history response paper."
       "I finished the history paper"   -> "I couldn't tell which task you finished."
       ```
       Should say it is already done. *Impact:* low.
 
-- [ ] **11. Same text submitted twice creates duplicate tasks**
+- [x] **11. Same text submitted twice creates duplicate tasks**
       Sending ramble 1 then 2, 3, 4 is fine, but re-sending the same text (or a
       sentence repeated 400 times: `"I need to call mom. " x400`) creates 400
       identical tasks and 400 placements (4.2 s, server stays up). No dedupe.
