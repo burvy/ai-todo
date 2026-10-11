@@ -1,5 +1,8 @@
-//! HTTP server for the ai-todo API. Storage is in memory for now (no SQLite).
+//! HTTP server for the ai-todo API. Tasks and busy blocks are persisted to
+//! SQLite; the in-memory `Store` is the working copy.
 //! Routes and payloads follow the frozen API contract in `hive/board.md`.
+
+mod db;
 
 use std::net::SocketAddr;
 use std::path::Path;
@@ -13,6 +16,7 @@ use axum::{
 };
 use chrono::{DateTime, Datelike, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
+use db::{BusyRow, Db};
 use futures::future::join_all;
 use judge::{classify_intent, find_date_candidates, split_sentences, understand};
 use scheduler::{BusyBlock, Placement, UnschedulableReason, WorkingHours};
@@ -32,6 +36,7 @@ struct Store {
 struct AppState {
     store: Arc<Mutex<Store>>,
     busy: Arc<Mutex<Vec<BusyOut>>>,
+    db: Arc<Db>,
 }
 
 #[derive(Clone, Serialize)]
@@ -498,6 +503,8 @@ async fn capture(State(state): State<AppState>, Json(body): Json<CaptureIn>) -> 
         task.id = format!("t{}", store.next_id);
     }
     store.tasks.extend(created.iter().cloned());
+    drop(store);
+    state.db.save_tasks(&created);
     Json(CaptureOut { tasks: created })
 }
 
@@ -562,17 +569,23 @@ async fn patch_task(
     if let Some(v) = body.confidence {
         task.confidence = v;
     }
-    Ok(Json(task.clone()))
+    let updated = task.clone();
+    drop(store);
+    state.db.save_task(&updated);
+    Ok(Json(updated))
 }
 
 async fn delete_task(State(state): State<AppState>, UrlPath(id): UrlPath<String>) -> StatusCode {
     let mut store = state.store.lock().unwrap();
     let before = store.tasks.len();
     store.tasks.retain(|task| task.id != id);
-    if store.tasks.len() == before {
-        StatusCode::NOT_FOUND
-    } else {
+    let removed = store.tasks.len() != before;
+    drop(store);
+    if removed {
+        state.db.remove_task(&id);
         StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
     }
 }
 
@@ -729,6 +742,8 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                 task.id = format!("t{}", store.next_id);
             }
             store.tasks.extend(created.iter().cloned());
+            drop(store);
+            state.db.save_tasks(&created);
         }
         "cancel_event" => {
             let lower = body.text.to_ascii_lowercase();
@@ -739,6 +754,9 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                 let hour_match = hour == Some(event.start.with_timezone(&timezone()).hour());
                 !(title_match || hour_match)
             });
+            state
+                .db
+                .save_busy(&busy.iter().map(busy_row).collect::<Vec<_>>());
         }
         "complete_task" => {
             let lower = body.text.to_ascii_lowercase();
@@ -749,6 +767,7 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                 .find(|task| task_matches_message(task, &lower))
             {
                 task.status = "done".into();
+                state.db.save_task(task);
             }
         }
         "query_day" => {
@@ -801,10 +820,61 @@ fn app(state: AppState) -> Router {
     router
 }
 
+fn busy_row(block: &BusyOut) -> BusyRow {
+    BusyRow {
+        start: block.start,
+        end: block.end,
+        title: block.title.clone(),
+    }
+}
+
 fn new_state() -> AppState {
+    let db = Db::open_from_env().unwrap_or_else(|e| {
+        eprintln!("error: could not open the database ({e}); falling back to in-memory only");
+        Db::open_in_memory().expect("in-memory database")
+    });
+    new_state_with(Arc::new(db))
+}
+
+/// Build state on top of an already-open database. Tests pass an in-memory one
+/// so they never read or write the real `data/ai-todo.db`.
+fn new_state_with(db: Arc<Db>) -> AppState {
+    let mut store = Store::default();
+    match db.load_tasks() {
+        Ok(tasks) => {
+            // Continue the id sequence past anything already stored, so a task
+            // added after a restart cannot collide with a saved one.
+            store.next_id = tasks
+                .iter()
+                .filter_map(|task| task.id.strip_prefix('t')?.parse::<u64>().ok())
+                .max()
+                .unwrap_or(0);
+            store.tasks = tasks;
+        }
+        Err(e) => eprintln!("warning: could not load tasks from SQLite: {e}"),
+    }
+
+    let busy = match db.load_busy() {
+        Ok(rows) if !rows.is_empty() => rows
+            .into_iter()
+            .map(|row| BusyOut {
+                start: row.start,
+                end: row.end,
+                title: row.title,
+            })
+            .collect(),
+        _ => {
+            // Seed the demo calendar only on a first run, never on every start.
+            let seeded = seed_busy(Utc::now());
+            db.save_busy(&seeded.iter().map(busy_row).collect::<Vec<_>>());
+            seeded
+        }
+    };
+
     AppState {
-        store: Arc::new(Mutex::new(Store::default())),
-        busy: Arc::new(Mutex::new(seed_busy(Utc::now()))),
+        store: Arc::new(Mutex::new(store)),
+        busy: Arc::new(Mutex::new(busy)),
+        db,
     }
 }
 
@@ -915,7 +985,9 @@ mod tests {
 
     #[tokio::test]
     async fn capture_then_schedule_then_calendar() {
-        let router = app(new_state());
+        // In-memory database so this test cannot see or touch real saved tasks.
+        let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
+        let router = app(new_state_with(db));
 
         let res = router
             .clone()
