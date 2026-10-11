@@ -10,21 +10,21 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 
 ---
 
-## 1. Status (synced 2026-10-11 ~16:31)
+## 1. Status (synced 2026-10-11 17:05, main at #44)
 
 **Works on `main` (all live-tested by the orchestrator against real Jev):**
 
 | Area | What works |
 |---|---|
-| Web app (`static/`) | Parchment UI (light by default), pen mascot, task list (check off, edit, delete, add), always-on text box, push-to-talk (mic button / space bar), spoken replies, 7-day planner starting today with busy blocks + placed tasks, "Schedule it", "pencilled in" low-confidence fields, sample sentence when the list is empty, phone layout, Night desk theme |
-| AI capture | Messy spoken rambles split into clauses; Jev keeps real tasks and drops chit-chat; clean titles ("Study for calc quiz"); relative dates (today, tomorrow, weekdays, "by the weekend", "next week") with 17:00 local deadlines; durations, priority, labels |
-| Conversation | `POST /api/message`: add tasks, "I finished X" (marks done, unschedules), "my 3pm got cancelled" (removes busy block, re-plans), "what does tomorrow look like" (jumps planner) |
-| Scheduler | Deadline first then priority; ≤2h chunks; 9:00–18:00 local; skips done tasks |
-| Calendar import | `POST /api/calendar/import` takes an Outlook/Google `.ics` export and **replaces** the busy blocks, converting `TZID` times to UTC. `demo/outlook/week.ics` loads all 9 events. Persisted, survives restart |
-| Persistence | SQLite (`data/ai-todo.db`): tasks and busy blocks survive restarts |
-| Ops | CI (fmt, clippy, tests), `run-local.ps1`, `.env` loading, **deployed** at `ai-todo-api.burvy.dev` |
+| Web app (`static/`) | Parchment UI, task list (check off, edit, delete, add), **pen in the text box** (tap/Enter sends, hold to talk, flies up to write new tasks), spoken replies, 7-day planner from today with busy blocks + placed tasks, "Schedule it", pencilled-in low-confidence fields, phone layout, Night desk theme |
+| AI capture | Rambles become clean tasks: chit-chat and self-talk dropped, "upload it" merged into its task, "X and Y" kept together; relative dates with 17:00 local deadlines; durations; School / Errands / Personal / Work labels. All 3 `demo/rambles.md` come out clean |
+| Conversation | "I finished X" → "Done: X." · "my 3pm got cancelled" → "Cancelled 1:1 at 3:00" · "what does tomorrow/Friday look like" → day summary · "what should I do now" → next task. Honest "I couldn't…" replies when nothing matches |
+| Calendar import | `POST /api/calendar/import {ics_text}` replaces busy blocks with a real Outlook/Google `.ics` (`demo/outlook/week.ics` = 9 events) |
+| Alarms | "Add to my calendar" downloads `GET /api/calendar.ics`: every planned task with a 10-minute alarm, for Google / Outlook / iPhone. Open page: notification + spoken "Up next" 5 min before a task |
+| Scheduler / storage | Deadline first then priority, ≤2h chunks, 9:00–18:00 local; SQLite, survives restarts |
+| Ops | CI, `run-local.ps1`, deployed at `ai-todo-api.burvy.dev` |
 
-**Known gaps:** PDF/email parsing exists (`crates/capture`) but no upload route yet; no week/month view yet; labels partly keyword-based; no login (everyone shares one list on the live site).
+**Known gaps:** no PDF upload route yet; no swipe-up planner or drag-to-reorder yet; task titles truncated in the list; overlapping planner blocks; no `/api/reset`; no login (everyone shares one list on the live site).
 
 ---
 
@@ -32,18 +32,19 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 
 | Owner | Doing now | Task list |
 |---|---|---|
-| **Frontend** | Week / month planner views, then import buttons | `docs/TASKS-frontend.md` |
-| **Backend 2** | Done: email/PDF parsers (#32), calendar import (#37). Nothing open | `docs/TASKS-backend.md` |
-| **New teammate** | Email / PDF upload → tasks (uses `crates/capture`) | `docs/TASKS-pdf.md` (start here) |
-| **burvy** | Demo rehearsal, redeploys | |
-| **AI agents** | Review, merge, live-test, docs | |
+| **Frontend** | Swipe-up planner on phones (#1), full titles, planner overlaps, Import calendar button, drag to reorder | `docs/TASKS-frontend.md` |
+| **Backend 2 (Rayansh)** | `/api/reset`, reschedule after import, `pinned_start` for drag | `docs/TASKS-backend.md` |
+| **New teammate** | PDF / email upload on `POST /api/capture` (cut-off 18:00) | `docs/TASKS-pdf.md` |
+| **burvy** | Redeploys, demo rehearsal | |
+| **AI agents** | Review, live-test, merge; Jim fixes rehearsal bugs | |
 
 **Schedule (deadline ~19:55):**
-- **17:30** PRs up for week/month view, `.ics` import, email/PDF.
-- **18:30 feature freeze.** After this, only bug fixes. Orchestrator merges, builds the final release, burvy redeploys.
+- **18:00** PDF upload works or is cut.
+- **18:15** anything shaky (drag) gets hidden.
+- **18:30 feature freeze.** Only bug fixes after. Orchestrator builds the final release, burvy redeploys and runs `POST /api/reset`.
 - **18:30–19:30** rehearse the demo twice on the live site.
 
-**Avoid merge conflicts:** both backend people add a route in `server/src/main.rs`. Keep that edit to a few lines and put the logic in your own file (`server/src/ics.rs`, `server/src/email.rs`). Pull `main` before you push.
+**Avoid merge conflicts:** backend 2 and the new teammate both touch `server/src/main.rs`. Keep edits to a few lines, put logic in your own file, pull `main` before you push.
 
 **Tick your boxes:** when you finish an item, change `- [ ]` to `- [x]` in your task list in the same PR. The orchestrator updates this file.
 

@@ -11,7 +11,7 @@ Welcome. Your job: let a user **drop an Outlook email (saved as PDF) and get tas
 
 **Where things are:** `server/src/main.rs` (routes, `capture_text`), `crates/capture` (`pdf_to_text`, `parse_email`), `demo/syllabus.pdf` (test PDF).
 
-## P1: upload route (PR by 17:30)
+## P1: upload route (PR by 18:00; if it is not working by then, push a draft PR and we cut it from the demo)
 - [ ] Accept a multipart `file` on `POST /api/capture` (axum `Multipart`; keep `{text, source}` JSON working). Keep the `main.rs` edit small; put helpers in `server/src/upload.rs`.
 - [ ] PDF → `capture::pdf_to_text` → `capture::parse_email` → `capture_text(body, Source::Pdf, sent)` so "tomorrow" means the day after the email was **sent**. A plain PDF that is not an email: use the whole text, anchor = now.
 - [ ] `pdf-extract` can **panic** on odd PDFs: wrap the call in `std::panic::catch_unwind` (or `spawn_blocking` and handle the join error) and return `400 {error}` instead of crashing the server.
