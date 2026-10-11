@@ -160,6 +160,8 @@ mod tests {
             confidence: 0.2,
             label: "Other".into(),
             source: Source::Text,
+            position: 0,
+            pinned_start: None,
         }
     }
 
