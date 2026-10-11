@@ -10,7 +10,7 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 
 ---
 
-## 1. Status (synced 2026-10-11 ~15:45)
+## 1. Status (synced 2026-10-11 ~16:10)
 
 **Works on `main` (all live-tested by the orchestrator against real Jev):**
 
@@ -23,7 +23,7 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 | Persistence | SQLite (`data/ai-todo.db`): tasks and busy blocks survive restarts |
 | Ops | CI (fmt, clippy, tests), `run-local.ps1`, `.env` loading, **deployed** at `ai-todo-api.burvy.dev` |
 
-**Known gaps:** busy blocks are 3 fake demo blocks (no real calendar import yet); no PDF/email capture yet; no week/month view yet; labels partly keyword-based; no login (everyone shares one list on the live site).
+**Known gaps:** busy blocks are 3 fake demo blocks (no real calendar import yet); PDF/email parsing exists (`crates/capture`) but no upload route yet; no week/month view yet; labels partly keyword-based; no login (everyone shares one list on the live site).
 
 ---
 
@@ -32,8 +32,8 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 | Owner | Doing now | Task list |
 |---|---|---|
 | **Frontend** | Week / month planner views, then import buttons | `docs/TASKS-frontend.md` |
-| **Backend 2** | Email / PDF → tasks | `docs/TASKS-backend.md` |
-| **New teammate** | Calendar import (`.ics` → busy blocks) | `docs/TASKS-calendar.md` (start here) |
+| **Backend 2** | Calendar import (`.ics` → busy blocks); email/PDF parsers done (#32) | `docs/TASKS-backend.md` |
+| **New teammate** | Email / PDF upload → tasks (uses `crates/capture`) | `docs/TASKS-pdf.md` (start here) |
 | **burvy** | Demo rehearsal, redeploys | |
 | **AI agents** | Review, merge, live-test, docs | |
 
@@ -78,7 +78,7 @@ All times are UTC ISO strings; convert to local time in the UI. A long task can 
 
 ## 4. Task lists
 
-Frontend: `docs/TASKS-frontend.md` · Backend 2: `docs/TASKS-backend.md` · New teammate: `docs/TASKS-calendar.md`. Tick boxes as you finish.
+Frontend: `docs/TASKS-frontend.md` · Backend 2: `docs/TASKS-backend.md` · New teammate: `docs/TASKS-pdf.md`. Tick boxes as you finish.
 
 ---
 

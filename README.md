@@ -54,7 +54,7 @@ Task: `id, title, notes, duration_min, deadline|null, priority 0-3, status, conf
 | `server/` | axum API, SQLite (`db.rs`), intent routing |
 | `static/` | Web app (parchment UI) |
 | `deploy/` | Windows build, run and install scripts |
-| `docs/` | `TEAM.md` (status, owners), task lists (`TASKS-frontend.md`, `TASKS-backend.md`, `TASKS-calendar.md`), `jev.md`, `deploy.md` |
+| `docs/` | `TEAM.md` (status, owners), task lists (`TASKS-frontend.md`, `TASKS-backend.md`, `TASKS-pdf.md`), `jev.md`, `deploy.md` |
 
 ## Checks (CI runs these on every PR)
 

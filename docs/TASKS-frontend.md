@@ -34,8 +34,8 @@ _Synced 2026-10-11 ~15:45 by the orchestrator from what is on `main` (PRs #20, #
 - [x] Phone width check — verified at 390x844 and 1400x900 in a real browser: no horizontal overflow, titles wrap, planner scrolls inside its own column, mascot hidden so it stops covering the page
 
 ## P1b: import buttons (after week/month, as the routes land)
-- [ ] **Import calendar** button: file picker for `.ics` → `POST /api/calendar/import` with `{ics_text}` → redraw the planner from the response (same shape as `GET /api/calendar`). Owner of the route: new teammate (`docs/TASKS-calendar.md`).
-- [ ] **Drop an email / PDF**: file drop or picker → multipart `file` on `POST /api/capture` → new tasks come back as `{tasks}`; run the same "writing" animation. Owner of the route: backend 2.
+- [ ] **Import calendar** button: file picker for `.ics` → `POST /api/calendar/import` with `{ics_text}` → redraw the planner from the response (same shape as `GET /api/calendar`). Owner of the route: backend 2.
+- [ ] **Drop an email / PDF**: file drop or picker → multipart `file` on `POST /api/capture` → new tasks come back as `{tasks}`; run the same "writing" animation. Owner of the route: new teammate (`docs/TASKS-pdf.md`).
 
 ## P3: only if time
 - [ ] Weather background (Open-Meteo, no key, plus browser location)
