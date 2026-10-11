@@ -13,5 +13,7 @@ if (-not $env:TZ_NAME) { $env:TZ_NAME = 'America/New_York' }
 
 $server = Join-Path $PSScriptRoot 'dist\ai-todo\server.exe'
 if (-not (Test-Path $server)) { throw "Missing $server. Run build-release.ps1 first." }
+# The server serves ./static and writes ./data relative to its working directory.
+Set-Location (Split-Path $server)
 & $server
 exit $LASTEXITCODE
