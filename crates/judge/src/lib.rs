@@ -81,8 +81,8 @@ pub async fn understand(
     let questions = json!({
         "is_a_task": {
             "type": "noul",
-            "instructions": "Does this clause contain an obligation, deadline, assessment to prepare for (quiz, exam, test, presentation, interview), or concrete errand? Count implied preparation tasks as actionable.",
-            "criteria": {"true": "Actionable obligation, assessment preparation, deadline, or errand", "false": "Chit-chat, feelings, background context, or a past event with no action"}
+            "instructions": "Does this clause contain a present/future obligation, deadline, assessment to prepare for (quiz, exam, test, presentation, interview), or concrete errand? Do not treat observations, wishes, feelings, past events, or ordering instructions as tasks.",
+            "criteria": {"true": "Actionable obligation, assessment preparation, deadline, or errand", "false": "Observation, wish (would be nice), chit-chat, feeling, past event, or instruction to reorder existing work"}
         },
         "deadline_choice": {
             "type": "choice",
@@ -218,9 +218,38 @@ fn answer_confidence(answer: &Value) -> f64 {
 }
 
 pub fn split_sentences(text: &str) -> Vec<String> {
-    text.split(['.', '!', '?', '\n'])
+    let raw: Vec<String> = text
+        .split(['.', '!', '?', '\n'])
         .flat_map(split_compound)
-        .collect()
+        .collect();
+    let mut merged: Vec<String> = Vec::new();
+    for clause in raw {
+        if is_time_fragment(&clause)
+            && let Some(previous) = merged.last_mut()
+        {
+            previous.push(' ');
+            previous.push_str(clause.trim());
+            continue;
+        }
+        merged.push(clause);
+    }
+    merged
+}
+
+fn is_time_fragment(clause: &str) -> bool {
+    let lower = clause.trim().to_ascii_lowercase();
+    lower.split_whitespace().count() <= 5
+        && [
+            "by ",
+            "before ",
+            "today",
+            "tomorrow",
+            "next ",
+            "this weekend",
+            "weekend",
+        ]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
 }
 
 fn split_compound(sentence: &str) -> Vec<String> {
@@ -266,7 +295,7 @@ fn word_count_without_filler(sentence: &str) -> usize {
 pub fn find_date_candidates(text: &str, now: DateTime<Utc>) -> Vec<String> {
     let lower = text.to_lowercase();
     let mut found = Vec::new();
-    for phrase in ["today", "tomorrow", "next week"] {
+    for phrase in ["today", "tomorrow", "next week", "this weekend", "weekend"] {
         if lower.contains(phrase) {
             found.push(phrase.to_owned());
         }

@@ -185,6 +185,13 @@ pub fn clean_title(sentence: &str) -> String {
         }
         let lower = title.to_ascii_lowercase();
         let filler = [
+            "tomorrow ",
+            "today ",
+            "right ",
+            "oh and ",
+            "also ",
+            "can someone remind me to ",
+            "make a task to ",
             "ugh ",
             "okay ",
             "ok ",
@@ -193,6 +200,7 @@ pub fn clean_title(sentence: &str) -> String {
             "like ",
             "i need to ",
             "i have a ",
+            "i still need to ",
             "i should ",
             "i have to ",
             "i gotta ",
@@ -206,6 +214,13 @@ pub fn clean_title(sentence: &str) -> String {
         .find(|prefix| lower.starts_with(**prefix));
         let Some(prefix) = filler else { break };
         title = title[prefix.len()..].trim().to_owned();
+    }
+    let lower = title.to_ascii_lowercase();
+    for conjunction in [" because ", " since "] {
+        if let Some(index) = lower.find(conjunction) {
+            title.truncate(index);
+            break;
+        }
     }
     let lower = title.to_ascii_lowercase();
     let trailing = [
@@ -226,6 +241,8 @@ pub fn clean_title(sentence: &str) -> String {
         " friday",
         " saturday",
         " sunday",
+        " sometime",
+        " is coming up",
     ];
     if let Some(index) = trailing
         .iter()
@@ -292,6 +309,9 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
         now.date_naive()
     } else if lower == "tomorrow" {
         now.date_naive() + chrono::Duration::days(1)
+    } else if lower == "weekend" || lower == "this weekend" {
+        let days = 6 - now.weekday().number_from_monday() as i64;
+        now.date_naive() + chrono::Duration::days(days.max(1))
     } else if let Some(name) = lower.strip_prefix("by ") {
         let weekdays = [
             "monday",
@@ -409,7 +429,7 @@ fn tasks_from_judgments(
 ) -> Vec<Task> {
     let mut tasks = Vec::new();
     for (sentence, _candidates, judgment) in judgments {
-        if judgment.is_task < 0.4 {
+        if judgment.is_task < 0.5 {
             continue;
         }
         let deadline = judgment
@@ -417,7 +437,9 @@ fn tasks_from_judgments(
             .as_deref()
             .and_then(|candidate| parse_deadline(candidate, anchor));
         let assessment = is_assessment(&sentence);
-        let title = if assessment {
+        let title = if assessment && sentence.to_ascii_lowercase().contains("presentation") {
+            format!("Prepare {}", clean_title(&sentence).to_ascii_lowercase())
+        } else if assessment {
             format!("Study for {}", clean_title(&sentence).to_ascii_lowercase())
         } else {
             clean_title(&sentence)
