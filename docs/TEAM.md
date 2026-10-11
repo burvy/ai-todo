@@ -10,7 +10,7 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 
 ---
 
-## 1. Status (synced 2026-10-11 ~16:10)
+## 1. Status (synced 2026-10-11 ~16:31)
 
 **Works on `main` (all live-tested by the orchestrator against real Jev):**
 
@@ -20,10 +20,11 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 | AI capture | Messy spoken rambles split into clauses; Jev keeps real tasks and drops chit-chat; clean titles ("Study for calc quiz"); relative dates (today, tomorrow, weekdays, "by the weekend", "next week") with 17:00 local deadlines; durations, priority, labels |
 | Conversation | `POST /api/message`: add tasks, "I finished X" (marks done, unschedules), "my 3pm got cancelled" (removes busy block, re-plans), "what does tomorrow look like" (jumps planner) |
 | Scheduler | Deadline first then priority; ≤2h chunks; 9:00–18:00 local; skips done tasks |
+| Calendar import | `POST /api/calendar/import` takes an Outlook/Google `.ics` export and **replaces** the busy blocks, converting `TZID` times to UTC. `demo/outlook/week.ics` loads all 9 events. Persisted, survives restart |
 | Persistence | SQLite (`data/ai-todo.db`): tasks and busy blocks survive restarts |
 | Ops | CI (fmt, clippy, tests), `run-local.ps1`, `.env` loading, **deployed** at `ai-todo-api.burvy.dev` |
 
-**Known gaps:** busy blocks are 3 fake demo blocks (no real calendar import yet); PDF/email parsing exists (`crates/capture`) but no upload route yet; no week/month view yet; labels partly keyword-based; no login (everyone shares one list on the live site).
+**Known gaps:** PDF/email parsing exists (`crates/capture`) but no upload route yet; no week/month view yet; labels partly keyword-based; no login (everyone shares one list on the live site).
 
 ---
 
@@ -32,7 +33,7 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 | Owner | Doing now | Task list |
 |---|---|---|
 | **Frontend** | Week / month planner views, then import buttons | `docs/TASKS-frontend.md` |
-| **Backend 2** | Calendar import (`.ics` → busy blocks); email/PDF parsers done (#32) | `docs/TASKS-backend.md` |
+| **Backend 2** | Done: email/PDF parsers (#32), calendar import (#37). Nothing open | `docs/TASKS-backend.md` |
 | **New teammate** | Email / PDF upload → tasks (uses `crates/capture`) | `docs/TASKS-pdf.md` (start here) |
 | **burvy** | Demo rehearsal, redeploys | |
 | **AI agents** | Review, merge, live-test, docs | |
@@ -69,6 +70,7 @@ Task:
 | `POST /api/message` | `{text}` | `{reply, intent, tasks, placements, unscheduled, focus_date}` |
 | `POST /api/schedule` | | `{placements:[{task_id,start,end}], unscheduled:[{task_id,reason}]}` |
 | `GET /api/calendar?from&to` | | `{busy:[{start,end,title}], placements:[...]}` |
+| `POST /api/calendar/import` | `{ics_text}` (the whole `.ics` file as a string) | `{busy:[...], placements:[...]}` — **replaces** the busy blocks. `400 {error}` if it is not an `.ics` |
 
 All times are UTC ISO strings; convert to local time in the UI. A long task can have **several placements** (chunks).
 

@@ -45,7 +45,7 @@ Build on the original UI (`index.html` / `app.js` / `styles.css`), not the phone
 - [x] Phone width check (#29). Re-checked after the pen moved into the text box: no horizontal overflow at 390px, pen on screen and pinned while scrolling.
 
 ## P1b: import buttons (after week/month, as the routes land)
-- [ ] **Import calendar** button: file picker for `.ics` → `POST /api/calendar/import` with `{ics_text}` → redraw the planner from the response (same shape as `GET /api/calendar`). Owner of the route: backend 2.
+- [ ] **Import calendar** button: file picker for `.ics` → `POST /api/calendar/import` with `{ics_text}` → redraw the planner from the response (same shape as `GET /api/calendar`). **The route is live on `main` since #37** — nothing is blocking this.
 - [ ] **Drop an email / PDF**: file drop or picker → multipart `file` on `POST /api/capture` → new tasks come back as `{tasks}`; run the same "writing" animation. Owner of the route: new teammate (`docs/TASKS-pdf.md`).
 
 ## P3: only if time
