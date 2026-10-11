@@ -213,6 +213,9 @@ const PEN_WRITE_LINGER_MS = 2000;
 const PEN_WIDTH = 30;
 const PEN_HEIGHT = 52;
 const PEN_SCALE = 0.78;
+/* how far above the text the nib hovers while writing, in px. Kept clear of
+   the line box so the pen never lies across the words it is writing. */
+const PEN_LIFT = 26;
 let penIdleTimer = null;
 
 /* Where should the nib land? A textarea has no caret API, so mirror the text
@@ -288,7 +291,11 @@ function penWrites() {
   const x = point.x - homeCx;
   // never let the pen walk past the right edge of the box
   const maxX = point.right - 6 - PEN_WIDTH * PEN_SCALE - homeCx;
-  const y = (point.y - nibDrop) - homeCy;
+  // The nib hovers ABOVE the line rather than on it: a pen sitting on the
+  // baseline lies across the words being written and hides them, which is the
+  // one thing a writing pen must not do. Clear the whole line box, not half.
+  const lift = Math.max(PEN_LIFT, point.lineHeight);
+  const y = (point.y - nibDrop - lift) - homeCy;
 
   if (!mascotTrack.classList.contains('is-writing')) {
     mascotTrack.classList.add('is-writing');

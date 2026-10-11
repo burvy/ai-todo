@@ -34,6 +34,18 @@ _Synced 2026-10-11 17:05 by the orchestrator (main at #44). **Now: bug fixes and
 - **Item 5 had to use `!important`.** `static/reminders.js` builds the link with an inline `style.cssText`, which outranks any plain class. The overrides are scoped to `.masthead-tools > a[href="/api/calendar.ics"]` and commented as such — please don't "clean them up" without checking that file.
 - **Item 3 lays blocks out from painted geometry, not timestamps.** A block shorter than its 16px minimum height sticks out of its slot, and that is an overlap you can see even when the data has none. Lanes are measured after the day is attached to the document (`offsetTop` is 0 on a detached element).
 - **Item 4 re-runs `/api/schedule` before redrawing**, otherwise freshly imported events would be hidden behind placements computed against the old busy list. A file that isn't a calendar gets a plain toast, not a console error.
+- **Don't bulk-rewrite `static/index.html` with PowerShell.** `Get-Content -Raw` / `Set-Content` round-trips the file as Windows-1252 and turns `‹` `›` into mojibake. Use the editor, or `-Encoding UTF8` on both sides.
+
+## Open issues — left on purpose, for the next person
+
+Handed over mid-way on the theme pass. Everything below is **committed and pushed but not finished**; nothing is broken on screen.
+
+1. **Ink outlines are 2px, which is heavier than intended on the small pills.** The first pass used `1.6px`; Chrome snaps fractional border widths down to a whole CSS pixel, so every outline silently rendered at 1px and looked thin. Going to `2px` fixed it but overshoots the "hand-drawn nib" look the brief asked for. **The right fix is not an integer border** — use an SVG or `border-image` stroke with rounded caps so the line can be thin *and* uneven. `--ink-wash` is already there for the second pass.
+2. **`.inked::after` (the wet second pass) is barely visible.** It sits at `z-index: -1` behind the button's own background, so the doubled-nib effect the comment describes does not actually render. Either raise it or drop the idea.
+3. **The pen's lift is tuned, not designed.** `PEN_LIFT` (26px) plus `Math.max(PEN_LIFT, lineHeight)` in `penWrites()` is what makes the nib clear the text line, but the composer is only ~60px tall and the pen ~40px, so there is very little room. If the composer grows, revisit these two numbers together — they only make sense as a pair.
+4. **The crumpled-paper texture is untested on the night theme.** `--paper-fibre` and `--paper-crease` are light-ink SVGs tuned against the cream sheet. On `--paper: #1B1A18` they may be invisible or muddy. Nobody has looked at night desk since the theme landed.
+5. **`design/mobile/index.html` is stale.** It predates the swipe pages, the writing pen, and the tools moving into the To do card. It is still the file people open to "see the mobile design", so it is now actively misleading.
+6. **Untested: reduced motion.** `reduceMotion` is honoured for the *flight* timings but the writing loop, the bob and the ink trail all still run. Worth honouring before this ships.
 
 ## Deploy handoff
 Nothing to do: the server serves `static/`, relative `/api/...` URLs.

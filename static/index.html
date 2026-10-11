@@ -30,10 +30,10 @@
       <div class="paper-head">
         <h2 id="listHeading" class="notebook-title">To do</h2>
         <div class="masthead-tools">
-          <button class="tool" id="speakToggle" type="button" aria-pressed="true" title="Read replies aloud">
+          <button class="tool inked" id="speakToggle" type="button" aria-pressed="true" title="Read replies aloud">
             <span class="tool-glyph" aria-hidden="true">🔊</span><span class="tool-label">Voice</span>
           </button>
-          <button class="tool" id="themeToggle" type="button" title="Switch between paper and chalkboard">
+          <button class="tool inked" id="themeToggle" type="button" title="Switch between paper and chalkboard">
             <span class="tool-glyph" aria-hidden="true">🌙</span><span class="tool-label">Night desk</span>
           </button>
         </div>
@@ -66,7 +66,7 @@
         <textarea id="messageBox" rows="1" placeholder="I have to file the tax report before Friday…"
                   autocomplete="off" spellcheck="true"></textarea>
 
-        <button class="pen-btn" id="penBtn" type="button"
+        <button class="pen-btn inked" id="penBtn" type="button"
                 aria-label="Send, or hold to talk" aria-pressed="false"
                 title="Tap to send · hold to talk (or hold space)">
           <span class="mascot-track" id="mascotTrack">
@@ -74,8 +74,10 @@
               <svg viewBox="0 0 64 112" class="pen" role="presentation">
                 <g class="pen-body">
                   <rect class="pen-barrel" x="23" y="18" width="18" height="70" rx="9" />
+                  <rect class="pen-barrel-shade" x="33" y="22" width="8" height="62" rx="4" />
                   <rect class="pen-cap"   x="23" y="18" width="18" height="11" rx="5" />
                   <path   class="pen-nib"  d="M23 88 L32 110 L41 88 Z" />
+                  <path   class="pen-nib-shine" d="M23 88 L28 88 L30.5 103 Z" />
                   <path   class="pen-lead" d="M28.6 99.5 L32 110 L35.4 99.5 Z" />
                   <path   class="pen-gloss" d="M27 34 L27 78" />
                   <circle class="eye-white" cx="29.4" cy="55" r="4.6" />
@@ -101,12 +103,12 @@
     <div class="planner-head">
       <h2 id="planHeading" class="planner-title">Planner</h2>
       <div class="week-nav">
-        <button class="nav-btn" id="weekPrev" type="button" aria-label="Seven days earlier">‹</button>
+        <button class="nav-btn inked" id="weekPrev" type="button" aria-label="Seven days earlier">‹</button>
         <button class="week-label" id="weekLabel" type="button" title="Jump back to today">—</button>
-        <button class="nav-btn" id="weekNext" type="button" aria-label="Seven days later">›</button>
+        <button class="nav-btn inked" id="weekNext" type="button" aria-label="Seven days later">›</button>
       </div>
-      <button class="schedule-btn" id="scheduleBtn" type="button">Schedule it</button>
-      <label class="import-btn" for="icsFile" title="Import an Outlook or Google .ics export">
+      <button class="schedule-btn inked" id="scheduleBtn" type="button">Schedule it</button>
+      <label class="import-btn inked" for="icsFile" title="Import an Outlook or Google .ics export">
         <svg viewBox="0 0 24 24" aria-hidden="true">
           <path class="imp-clip"
                 d="M17.6 10.9 11.2 17.3a4.2 4.2 0 0 1-5.9-5.9l7.3-7.3a2.9 2.9 0 0 1 4.1 4.1l-7.2 7.2a1.6 1.6 0 0 1-2.3-2.3l6.6-6.6" />

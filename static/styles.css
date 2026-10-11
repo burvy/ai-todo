@@ -1,22 +1,25 @@
 /* ============================================================
-   ai-todo — parchment
-   Warm paper, near-black ink, one blue accent, one red pencil.
+   ai-todo — cream, ink, crumpled paper
+   Cream stock, near-black iron-gall ink, one blue accent, one red
+   pencil. The paper is crumpled: every sheet carries the same fibre
+   and crease texture, so the ruled lines land on real paper instead
+   of a flat fill.
    Handwriting only for task titles; everything else stays plain.
    ============================================================ */
 
 :root {
-  --paper:        #F6F1E7;
-  --paper-fresh:  #FCFAF4;
-  --paper-deep:   #EDE6D6;
-  --ink:          #2B2A28;
-  --ink-soft:     #5E594E;
-  --pencil:       #8E8878;   /* "pencilled in" — AI was not sure */
+  --paper:        #EFE6D2;   /* the desk the page lies on: deeper cream */
+  --paper-fresh:  #F7F0DF;   /* the sheet itself, a shade lighter */
+  --paper-deep:   #E4D8BE;   /* creases, and anything that sits behind */
+  --ink:          #241F1A;   /* iron-gall: brown-black, not grey-black */
+  --ink-soft:     #574F42;
+  --pencil:       #8B8271;   /* "pencilled in" — AI was not sure */
   --accent:       #2F5D9E;
-  --red-pencil:   #B23A33;
-  --rule:         rgba(43, 42, 40, 0.085);
-  --edge:         rgba(43, 42, 40, 0.16);
-  --margin-line:  rgba(178, 58, 51, 0.22);
-  --shadow:       0 1px 0 rgba(43,42,40,.05), 0 10px 26px -18px rgba(43,42,40,.55);
+  --red-pencil:   #A6352C;
+  --rule:         rgba(36, 31, 26, 0.10);
+  --edge:         rgba(36, 31, 26, 0.20);
+  --margin-line:  rgba(166, 53, 44, 0.28);
+  --shadow:       0 1px 0 rgba(36,31,26,.05), 0 10px 26px -18px rgba(36,31,26,.55);
 
   --hand: "Caveat", "Bradley Hand", "Segoe Print", cursive;
   --chrome: "Inter", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
@@ -30,6 +33,23 @@
   --label-other:   #5A5750;
 
   --speed: 600ms;            /* how long the pen takes to write a title */
+
+  /* pen motion: a soft, slightly springy curve with no overshoot at the end,
+     so the nib settles on the text instead of bouncing past it */
+  --pen-ease: cubic-bezier(.32, .72, .28, 1);
+
+  /* the pen: a green shaft with a gold nib */
+  --pen-shaft:   #1F6B4A;
+  --pen-shaft-2: #2A8760;   /* the lit side of the barrel */
+  --pen-gold:    #C89B3C;
+  --pen-gold-2:  #EBC96B;   /* the lit side of the nib */
+}
+
+/* crumpled paper, as two reusable layers: fibre + creases. Kept in one
+   place so the sheet, the planner and the composer stay the same stock. */
+:root {
+  --paper-fibre: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='f'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='180' height='180' filter='url(%23f)' opacity='0.055'/></svg>");
+  --paper-crease: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='420' height='420'><filter id='c'><feTurbulence type='turbulence' baseFrequency='0.006 0.011' numOctaves='3' seed='7'/><feDiffuseLighting lighting-color='#fff8e8' surfaceScale='1.6' diffuseConstant='0.9'><feDistantLight azimuth='225' elevation='52'/></feDiffuseLighting><feColorMatrix type='saturate' values='0'/><feComponentTransfer><feFuncA type='linear' slope='0.5' intercept='0'/></feComponentTransfer></filter><rect width='420' height='420' filter='url(%23c)' opacity='0.5'/></svg>");
 }
 
 :root[data-theme="night"] {
@@ -49,14 +69,55 @@
 
 * { box-sizing: border-box; }
 
+/* ── Inked outlines ─────────────────────────────────────────────
+   A button edge drawn as ink: a rounded rule plus a second, slightly
+   offset pass that doubles and thins like a real nib. The `--ink-wash`
+   layer pools the colour so the line is deep where it matters instead of
+   an even hairline. One class, applied to every control. */
+.inked {
+  border: 2px solid var(--ink);
+  border-radius: 999px;
+  position: relative;
+  isolation: isolate;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .35),
+    0 1px 0 var(--ink-wash);
+  transition: background .2s, color .2s, box-shadow .2s, transform .12s;
+}
+/* the wet edge: a 1px inner ring, offset, so the outline reads as two passes
+   of a nib rather than a machine border */
+.inked::after {
+  content: "";
+  position: absolute;
+  inset: 1.5px;
+  border: 1px solid var(--ink-wash);
+  border-radius: inherit;
+  opacity: .5;
+  pointer-events: none;
+  z-index: -1;
+}
+.inked:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .45),
+    0 2px 5px -2px var(--ink-wash);
+}
+.inked:active { transform: translateY(1px); }
+
+:root {
+  /* how deep the ink pools: the wash under every outline */
+  --ink-wash: rgba(36, 31, 26, .34);
+}
+:root[data-theme="night"] { --ink-wash: rgba(235, 228, 214, .3); }
+
 html, body { height: 100%; }
 
 body {
   margin: 0;
   background-color: var(--paper);
   background-image:
-    radial-gradient(ellipse 80% 60% at 18% 8%,  rgba(255,255,255,.55), transparent 60%),
-    radial-gradient(ellipse 70% 50% at 88% 92%, rgba(120,96,48,.055), transparent 62%);
+    var(--paper-fibre),
+    radial-gradient(ellipse 80% 60% at 18% 8%,  rgba(255,252,242,.55), transparent 60%),
+    radial-gradient(ellipse 70% 50% at 88% 92%, rgba(94,72,36,.09), transparent 62%);
   color: var(--ink);
   font-family: var(--chrome);
   font-size: 16px;
@@ -109,14 +170,14 @@ kbd {
 .tool {
   display: inline-flex; align-items: center; gap: 7px;
   background: transparent;
-  border: 1px solid var(--edge);
+  border: 2px solid var(--ink);
   border-radius: 999px;
   padding: 5px 12px 5px 9px;
   font-size: 13.5px; color: var(--ink-soft);
   text-decoration: none;
-  transition: background .18s, color .18s, border-color .18s;
+  transition: background .2s, color .2s, box-shadow .2s;
 }
-.tool:hover { background: var(--paper-fresh); color: var(--ink); }
+.tool:hover { background: rgba(255,255,255,.5); color: var(--ink); }
 .tool[aria-pressed="false"] { opacity: .55; }
 .tool-glyph { font-size: 14px; line-height: 1; }
 
@@ -128,7 +189,7 @@ kbd {
   gap: 7px;
   min-height: 30px;
   padding: 5px 12px !important;
-  border: 1px solid var(--edge) !important;
+  border: 2px solid var(--ink) !important;
   border-radius: 999px !important;
   background: transparent !important;
   color: var(--ink-soft) !important;
@@ -136,7 +197,7 @@ kbd {
   font-size: 13.5px;
   text-decoration: none !important;
   white-space: nowrap;
-  transition: background .18s, color .18s, border-color .18s;
+  transition: background .2s, color .2s, box-shadow .2s;
 }
 .masthead-tools > a[href="/api/calendar.ics"]::before {
   content: "";
@@ -163,18 +224,17 @@ kbd {
   width: 62px; height: 62px;
   display: grid; place-items: center;
   border-radius: 50%;
-  border: 1.4px solid var(--edge);
-  background: var(--paper);
+  border: 2px solid var(--ink);
+  background: var(--paper-fresh);
   touch-action: none;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
-  transition: background .18s, border-color .18s, box-shadow .18s;
+  transition: background .2s, box-shadow .2s, transform .12s;
 }
-.pen-btn:hover { border-color: var(--accent); }
+.pen-btn:hover { background: #FFFDF6; }
 .pen-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .pen-btn[aria-pressed="true"] {
   background: rgba(47, 93, 158, .1);
-  border-color: var(--accent);
   box-shadow: 0 0 0 4px rgba(47, 93, 158, .12);
 }
 
@@ -186,9 +246,10 @@ kbd {
   display: grid; place-items: center;
   pointer-events: none;
   transform: translate(var(--pen-x, 0px), var(--pen-y, 0px)) scale(var(--pen-scale, 1));
-  transition: transform .42s cubic-bezier(.22, .8, .3, 1);
+  /* one shared easing for every pen move, so nothing snaps or overshoots */
+  transition: transform var(--pen-move, 340ms) var(--pen-ease);
 }
-.mascot-track.is-flying { transition: transform .5s cubic-bezier(.3, .85, .25, 1); }
+.mascot-track.is-flying { --pen-move: 460ms; }
 
 .mascot {
   position: absolute; inset: 0;
@@ -198,14 +259,18 @@ kbd {
 }
 
 .pen { width: 30px; height: 52px; overflow: visible; }
-.pen-barrel { fill: var(--accent); }
-.pen-cap    { fill: #24486F; }
-.pen-nib    { fill: #D9CFB8; }
+/* a green shaft with a gold nib — the barrel is lit from the left */
+.pen-barrel { fill: var(--pen-shaft); }
+.pen-cap    { fill: var(--pen-gold); }
+.pen-nib    { fill: var(--pen-gold); }
 .pen-lead   { fill: var(--ink); }
-.pen-gloss  { stroke: rgba(255,255,255,.35); stroke-width: 2.4; stroke-linecap: round; fill: none; }
+.pen-gloss  { stroke: var(--pen-shaft-2); stroke-width: 2.4; stroke-linecap: round; fill: none; }
 .eye-white  { fill: var(--paper-fresh); }
 .eye-black  { fill: var(--ink); }
-.brow       { stroke: #24486F; stroke-width: 1.5; stroke-linecap: round; fill: none; opacity: .8; }
+.brow       { stroke: var(--pen-shaft); stroke-width: 1.5; stroke-linecap: round; fill: none; opacity: .8; }
+/* the shaft's shaded side, painted over the barrel so the SVG needs no edit */
+.pen-barrel-shade { fill: rgba(0,0,0,.22); }
+.pen-nib-shine    { fill: var(--pen-gold-2); }
 
 .mascot-shadow {
   position: absolute; left: 50%; bottom: 5px;
@@ -239,7 +304,7 @@ kbd {
 .mascot-track[data-mood="listening"] .ink-trail i:nth-child(4) { animation-delay: .1s; }
 .mascot-track[data-mood="listening"] .ink-trail i:nth-child(5) { animation-delay: .46s; }
 
-.mascot-track[data-mood="writing"] .mascot { animation: scribble .18s linear infinite; }
+.mascot-track[data-mood="writing"] .mascot { animation: scribble 1.1s ease-in-out infinite; }
 .mascot-track[data-mood="writing"] .pen-gloss { opacity: 0; }
 
 /* Writing along with you at the text box: the pen shrinks out of the way of
@@ -269,12 +334,14 @@ kbd {
   0%, 100% { transform: translateY(0); }
   50%      { transform: translateY(-2.4px); }
 }
+/* Writing: a slow, smooth stroke with a slight forward lean and back. The old
+   version ran at .18s linear, which read as a vibration rather than a hand. */
 @keyframes scribble {
-  0%   { transform: rotate(-9deg) translateY(0); }
-  25%  { transform: rotate(-4deg) translateY(-2.5px); }
-  50%  { transform: rotate(-11deg) translateY(0.5px); }
-  75%  { transform: rotate(-6deg) translateY(-2px); }
-  100% { transform: rotate(-9deg) translateY(0); }
+  0%   { transform: rotate(-9deg) translate(0, 0); }
+  30%  { transform: rotate(-5.5deg) translate(.6px, -2.6px); }
+  55%  { transform: rotate(-10deg) translate(1.1px, .4px); }
+  80%  { transform: rotate(-6.5deg) translate(.4px, -1.8px); }
+  100% { transform: rotate(-9deg) translate(0, 0); }
 }
 @keyframes ink-pulse {
   0%   { opacity: 0;   transform: scale(.15); }
@@ -302,7 +369,15 @@ kbd {
 
 .paper, .planner {
   position: relative;
-  background: var(--paper-fresh);
+  background-color: var(--paper-fresh);
+  /* the sheet is crumpled: fibre on top, broad creases under it. Both are
+     data-URI SVG filters, so they cost no requests and scale with the page. */
+  background-image:
+    var(--paper-fibre),
+    var(--paper-crease),
+    linear-gradient(168deg, rgba(255,255,255,.42), rgba(255,255,255,0) 46%),
+    radial-gradient(ellipse 62% 48% at 76% 14%, rgba(120,96,48,.10), transparent 70%);
+  background-blend-mode: multiply, multiply, normal, normal;
   border: 1px solid var(--edge);
   border-radius: 3px;
   box-shadow: var(--shadow);
@@ -567,11 +642,11 @@ kbd {
 .planner-title { margin: 0 auto 0 0; font-size: 21px; font-weight: 600; }
 .week-nav { display: flex; align-items: center; gap: 4px; }
 .nav-btn {
-  background: transparent; border: 1px solid var(--edge);
-  border-radius: 4px; width: 26px; height: 26px; line-height: 1;
+  background: transparent; border: 2px solid var(--ink);
+  border-radius: 6px; width: 28px; height: 28px; line-height: 1;
   color: var(--ink-soft); font-size: 17px;
 }
-.nav-btn:hover { border-color: var(--accent); color: var(--accent); }
+.nav-btn:hover { background: rgba(255,255,255,.5); color: var(--ink); }
 .week-label {
   background: transparent; border: 0; padding: 2px 6px;
   font-size: 14px; font-style: italic; color: var(--ink-soft);
@@ -716,15 +791,15 @@ kbd {
 .schedule-btn {
   margin-left: 4px; flex: none;
   font-family: var(--hand); font-size: 22px; line-height: 1;
-  color: var(--accent);
-  background: transparent;
-  border: 1.4px solid var(--accent);
-  border-radius: 4px;
+  color: var(--ink);
+  background: rgba(255,255,255,.4);
+  border: 2px solid var(--ink);
+  border-radius: 5px;
   padding: 7px 14px 8px;
   transform: rotate(-.8deg);
-  transition: background .18s, transform .12s, opacity .18s;
+  transition: background .2s, transform .12s, opacity .2s;
 }
-.schedule-btn:hover { background: rgba(47, 93, 158, .1); transform: rotate(-.8deg) translateY(-1px); }
+.schedule-btn:hover { background: rgba(255,255,255,.8); transform: rotate(-.8deg) translateY(-1px); }
 .schedule-btn:active { transform: rotate(-.8deg) translateY(1px); }
 .schedule-btn[disabled] { opacity: .45; cursor: progress; }
 .schedule-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -735,13 +810,13 @@ kbd {
   flex: none; cursor: pointer;
   font-family: var(--hand); font-size: 19px; line-height: 1;
   color: var(--ink-soft);
-  border: 1.3px dashed var(--edge);
+  border: 2px dashed var(--ink);
   border-radius: 5px;
   padding: 6px 11px 7px;
   transform: rotate(-.5deg);
-  transition: color .18s, border-color .18s, background .18s;
+  transition: color .2s, background .2s;
 }
-.import-btn:hover { color: var(--accent); border-color: var(--accent); background: rgba(47, 93, 158, .06); }
+.import-btn:hover { color: var(--ink); background: rgba(255,255,255,.55); }
 .import-btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 .import-btn svg { width: 16px; height: 16px; }
 .imp-clip { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
