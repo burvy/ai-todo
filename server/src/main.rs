@@ -187,8 +187,10 @@ pub fn clean_title(sentence: &str) -> String {
             "um ",
             "like ",
             "i need to ",
+            "i have a ",
             "i should ",
             "i have to ",
+            "i gotta ",
             "gotta ",
             "also ",
             "and ",
@@ -202,6 +204,7 @@ pub fn clean_title(sentence: &str) -> String {
     }
     let lower = title.to_ascii_lowercase();
     let trailing = [
+        " today",
         " tomorrow",
         " next week",
         " by monday",
@@ -211,6 +214,13 @@ pub fn clean_title(sentence: &str) -> String {
         " by friday",
         " by saturday",
         " by sunday",
+        " monday",
+        " tuesday",
+        " wednesday",
+        " thursday",
+        " friday",
+        " saturday",
+        " sunday",
     ];
     if let Some(index) = trailing
         .iter()
@@ -805,6 +815,14 @@ mod tests {
             "Finish the chem lab report"
         );
         assert_eq!(clean_title("um, I should call mom tomorrow"), "Call mom");
+        assert_eq!(
+            clean_title("Ugh okay so I have a calc quiz Thursday"),
+            "Calc quiz"
+        );
+        assert_eq!(
+            clean_title("I gotta pick up my prescription today"),
+            "Pick up my prescription"
+        );
     }
 
     #[test]
