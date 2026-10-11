@@ -12,11 +12,15 @@ Welcome. Your job: let a user **drop an Outlook email (saved as PDF) and get tas
 **Where things are:** `server/src/main.rs` (routes, `capture_text`), `crates/capture` (`pdf_to_text`, `parse_email`), `demo/syllabus.pdf` (test PDF).
 
 ## P1: upload route (PR by 18:00; if it is not working by then, push a draft PR and we cut it from the demo)
-- [ ] Accept a multipart `file` on `POST /api/capture` (axum `Multipart`; keep `{text, source}` JSON working). Keep the `main.rs` edit small; put helpers in `server/src/upload.rs`.
-- [ ] PDF → `capture::pdf_to_text` → `capture::parse_email` → `capture_text(body, Source::Pdf, sent)` so "tomorrow" means the day after the email was **sent**. A plain PDF that is not an email: use the whole text, anchor = now.
-- [ ] `pdf-extract` can **panic** on odd PDFs: wrap the call in `std::panic::catch_unwind` (or `spawn_blocking` and handle the join error) and return `400 {error}` instead of crashing the server.
-- [ ] Return `{tasks:[Task]}` (new ones), same as text capture.
-- [ ] Test: `demo/syllabus.pdf`, plus one real Outlook email exported to PDF (remove personal data before committing anything to `demo/`).
+- [x] Accept a multipart `file` on `POST /api/capture` (axum `Multipart`; keep `{text, source}` JSON working). Keep the `main.rs` edit small; put helpers in `server/src/upload.rs`.
+- [x] PDF → `capture::pdf_to_text` → `capture::parse_email` → `capture_text(body, Source::Pdf, sent)` so "tomorrow" means the day after the email was **sent**. A plain PDF that is not an email: use the whole text, anchor = now.
+- [x] `pdf-extract` can **panic** on odd PDFs: wrap the call in `std::panic::catch_unwind` (or `spawn_blocking` and handle the join error) and return `400 {error}` instead of crashing the server.
+- [x] Return `{tasks:[Task]}` (new ones), same as text capture.
+- [~] Test: `demo/syllabus.pdf`, plus one real Outlook email exported to PDF (remove personal data before committing anything to `demo/`).
+  `demo/syllabus.pdf` is covered by tests and a live run. The email path is covered by a
+  synthetic PDF carrying Outlook's header/date format, and verified live: an email sent
+  3 October 2025 with "by tomorrow" produced a 4 October deadline. **Still to do:** one real
+  Outlook export, to confirm real-world header spacing survives `pdf_to_text`'s line joining.
 - [ ] Tell the frontend the route works (they add a file drop).
 
 ## Rules

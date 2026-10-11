@@ -116,6 +116,16 @@ impl Db {
         report(self.replace_busy(rows), "busy blocks");
     }
 
+    /// Delete every stored task and busy block (used by `POST /api/reset`).
+    pub fn clear(&self) {
+        let result = self
+            .conn
+            .lock()
+            .expect("db mutex")
+            .execute_batch("DELETE FROM tasks; DELETE FROM busy_blocks;");
+        report(result, "reset");
+    }
+
     // -- tasks ----------------------------------------------------------
 
     /// Every task, oldest id first, so `GET /api/tasks` keeps a stable order.
