@@ -12,7 +12,10 @@ Ramble (voice or text) and ai-todo writes your task list: Jev (TypeSafe's System
    ```
 2. Build and start it from the repo root (it serves the web app from `static/` and opens the browser):
    ```powershell
-   .\run-local.ps1          # -Fresh: throwaway data, -Port 9000, -LogCapture: log Jev judgments
+   .\run-local.ps1          # Windows. -Fresh: throwaway data, -Port 9000, -LogCapture: log Jev judgments
+   ```
+   ```sh
+   ./run-local.sh           # Linux/macOS. --fresh, --port 9000, --log-capture
    ```
    (`cargo run -p server` also works.)
 3. Open `http://localhost:8080`. Hold the mic button or the space bar and ramble, or type in the box. Sample rambles: `demo/rambles.md`.

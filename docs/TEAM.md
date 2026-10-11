@@ -6,7 +6,7 @@ Ramble or drop a file, walk away, and your tasks are written and scheduled for y
 Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 
 **Live:** https://ai-todo-api.burvy.dev (anyone can open it; Chrome or Edge for the mic).
-**Run locally:** `.env` with `TYPESAFE_API_KEY=...` in the repo root, then `.\run-local.ps1` → http://localhost:8080 (`-Fresh` = throwaway data).
+**Run locally:** `.env` with `TYPESAFE_API_KEY=...` in the repo root, then `.\run-local.ps1` (Windows) or `./run-local.sh` (Linux/macOS) → http://localhost:8080 (`-Fresh` / `--fresh` = throwaway data).
 
 ---
 
@@ -22,7 +22,7 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 | Scheduler | Deadline first then priority; ≤2h chunks; 9:00–18:00 local; skips done tasks |
 | Calendar import | `POST /api/calendar/import` takes an Outlook/Google `.ics` export and **replaces** the busy blocks, converting `TZID` times to UTC. `demo/outlook/week.ics` loads all 9 events. Persisted, survives restart |
 | Persistence | SQLite (`data/ai-todo.db`): tasks and busy blocks survive restarts |
-| Ops | CI (fmt, clippy, tests), `run-local.ps1`, `.env` loading, **deployed** at `ai-todo-api.burvy.dev` |
+| Ops | CI (fmt, clippy, tests), `run-local.ps1` / `run-local.sh`, `.env` loading, **deployed** at `ai-todo-api.burvy.dev` |
 
 **Known gaps:** PDF/email parsing exists (`crates/capture`) but no upload route yet; no week/month view yet; labels partly keyword-based; no login (everyone shares one list on the live site).
 
