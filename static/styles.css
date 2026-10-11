@@ -178,6 +178,70 @@ kbd {
   box-shadow: 0 0 0 4px rgba(47, 93, 158, .12);
 }
 
+/* ── The bin: wipe a mis-speak before it is sent ── */
+
+/* the bin and the pen share one cell so the row stays two-column */
+.composer-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: end;
+}
+
+.trash-btn {
+  flex: none;
+  align-self: flex-end;
+  width: 42px; height: 42px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  border: 1.4px solid var(--edge);
+  background: var(--paper);
+  color: var(--ink-soft);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background .18s, border-color .18s, color .18s;
+}
+.trash-btn[hidden] { display: none; }
+.trash-btn:hover { border-color: var(--accent); color: var(--accent); }
+.trash-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.trash-glyph { width: 19px; height: 19px; }
+.trash-glyph path {
+  fill: none; stroke: currentColor; stroke-width: 1.6;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.trash-glyph .trash-lid { stroke-width: 1.9; }
+
+/* a flash on the bin so a mis-speak deletion is felt, not just seen */
+.trash-btn.is-wiping .trash-glyph { animation: wipe .34s ease-out; }
+@keyframes wipe {
+  0%   { transform: rotate(0deg)   scale(1); }
+  40%  { transform: rotate(-14deg) scale(.86); }
+  100% { transform: rotate(0deg)   scale(1); }
+}
+
+/* the box lifts slightly while held, so the hold reads as "recording" */
+#messageBox.is-holding {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47, 93, 158, .1);
+}
+#messageBox.is-swiping { border-color: var(--danger, #b4553f); }
+
+/* ── Soft cap: warn long before anything is actually cut ── */
+
+.length-note {
+  margin: .3rem 0 0;
+  font-size: .78rem;
+  color: var(--ink-soft);
+  font-style: italic;
+}
+.length-note[hidden] { display: none; }
+.length-note.is-truncating { color: var(--danger, #b4553f); font-style: normal; }
+
+@media (prefers-reduced-motion: reduce) {
+  .trash-btn.is-wiping .trash-glyph { animation: none; }
+}
+
 /* the pen travels on this element; it has to escape the composer row */
 .mascot-track {
   position: absolute;

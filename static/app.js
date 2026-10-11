@@ -751,9 +751,22 @@ async function submit(text, source = 'text') {
   }
 }
 
-/* ── Push to talk: the pen is the mic ───────────────────────── */
+/* ── Talking to it ──────────────────────────────────────────────
+   Three ways to speak, all landing in the same box:
+     · hold the text box (or the pen, or space)  — push to talk, let go to send
+     · flick up while holding                    — throw away what you just said
+     · tap the bin                               — wipe the box and start over
+   Nothing is blocked by a word count: the soft cap only warns, and
+   trims the tail on the way to the model. */
 
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+/* Soft cap. WARN is where we start talking about it; CAP is where we
+   actually cut. Both are counted in characters — cheap to test and it
+   tracks the real payload. Between them the user is never blocked. */
+const LEN_WARN = 1500;
+const LEN_CAP = 4000;
+
 let recognition = null;
 let listening = false;
 let heardSomething = false;
@@ -761,6 +774,12 @@ let startGuard = null;
 /* true when this press produced speech, so the click that follows a
    press-and-hold does not also fire an empty send */
 let spokeThisPress = false;
+/* whatever was in the box before the current utterance — the bin
+   restores to this rather than wiping typed text too */
+let dictationBase = '';
+
+const trashBtn = $('#trashBtn');
+const lengthNote = $('#lengthNote');
 
 function setupRecognition() {
   if (!SpeechRec) {
@@ -782,6 +801,7 @@ function setupRecognition() {
     heardSomething = false;
     mood('listening');
     box.dataset.base = box.value;
+    box.classList.add('is-holding');
   };
 
   recognition.onresult = (event) => {
@@ -796,9 +816,11 @@ function setupRecognition() {
     const base = baseText();
     box.value = (base ? base.replace(/\s+$/, '') + ' ' : '') + final + interim;
     autoGrow();
-    // writing into the box by hand does not raise `input`, so call the pen
+// writing into the box by hand does not raise `input`, so call the pen
     // directly: it should be seen following along with what you are saying
     penWrites();
+    checkLength();
+    showTrash();
   };
 
   recognition.onerror = (event) => {
@@ -812,15 +834,22 @@ function setupRecognition() {
   recognition.onend = () => {
     clearTimeout(startGuard);
     startGuard = null;
-    if (!listening) { mood('idle'); return; }
+    if (!listening) { mood('idle'); box.classList.remove('is-holding'); return; }
     listening = false;
+    box.classList.remove('is-holding');
+    mood('idle');
+    hideTrash();
     const spoken = box.value.trim();
     if (heardSomething && spoken) {
       spokeThisPress = true;
+      const body = trimForSend(spoken);
+      if (body !== spoken) say('That was too long to send whole — I sent the first part.');
       box.value = '';
       delete box.dataset.base;
+dictationBase = '';
+      clearLengthNote();
       penGoHome();            // spoken and sent: same as tapping send
-      submit(spoken, 'voice');
+      submit(body, 'voice');
     } else {
       box.value = baseText();
       delete box.dataset.base;
@@ -833,6 +862,7 @@ function setupRecognition() {
 
 function startListening() {
   if (!recognition || listening) return;
+  dictationBase = box.value;
   // React to the press straight away. Some browsers advertise speech support
   // but never fire `start` (no device, permission still pending), so don't hang.
   mood('listening');
@@ -860,6 +890,124 @@ function stopListening() {
   try { recognition.stop(); } catch { /* not running */ }
 }
 
+/* The bin: throw away the dictation, keep whatever was typed before it.
+   Still listening after a wipe, so the user can just say it again. */
+function wipeDictation() {
+  box.value = dictationBase;
+  delete box.dataset.base;
+  autoGrow();
+  clearLengthNote();
+  hideTrash();
+  trashBtn.classList.add('is-wiping');
+  setTimeout(() => trashBtn.classList.remove('is-wiping'), 360);
+  mood(listening ? 'listening' : 'idle');
+  say('Cleared — say it again.');
+}
+
+/* The bin shows as soon as there is dictated text worth throwing away. */
+function showTrash() {
+  trashBtn.hidden = !(box.value.trim() && box.value !== dictationBase);
+}
+function hideTrash() {
+  trashBtn.hidden = true;
+}
+
+/* ── Soft cap: warn, then trim the tail ─────────────────────── */
+
+function checkLength() {
+  const len = box.value.length;
+  if (len <= LEN_WARN) { clearLengthNote(); return; }
+  const words = box.value.trim().split(/\s+/).length;
+  if (len <= LEN_CAP) {
+    lengthNote.textContent = `Getting long (${words} words). Keep going — I'll trim it if it gets too much.`;
+    lengthNote.classList.remove('is-truncating');
+    lengthNote.hidden = false;
+    return;
+  }
+  lengthNote.textContent = 'That is more than I can read in one go — I will send the first part.';
+  lengthNote.classList.add('is-truncating');
+  lengthNote.hidden = false;
+}
+
+function clearLengthNote() {
+  lengthNote.hidden = true;
+  lengthNote.textContent = '';
+  lengthNote.classList.remove('is-truncating');
+}
+
+/* Cut on a word boundary so the model never receives half a word. */
+function trimForSend(text) {
+  if (text.length <= LEN_CAP) return text;
+  let cut = text.slice(0, LEN_CAP);
+  const lastSpace = cut.lastIndexOf(' ');
+  if (lastSpace > LEN_CAP * 0.6) cut = cut.slice(0, lastSpace);
+  return cut.replace(/[\s,;:.-]+$/, '') + '…';
+}
+
+/* ── Hold the text box to talk, flick up to undo ─────────────── */
+
+let holdTimer = null;
+let holdStartY = 0;
+let holdFired = false;
+let swipedAway = false;
+
+function beginHold(event) {
+  if (event.button !== undefined && event.button !== 0) return;
+  if (!recognition || state.working) return;
+  holdStartY = event.clientY;
+  holdFired = false;
+  swipedAway = false;
+  // Keep tracking the finger even if it slides off the text, otherwise the
+  // swipe-up undo would stop the moment the pointer left the box.
+  try { box.setPointerCapture?.(event.pointerId); } catch { /* fine without it */ }
+  // A tap is a tap: only start talking once the finger has actually stayed
+  // down, so ordinary clicking and caret placement still work.
+  holdTimer = setTimeout(() => {
+    holdTimer = null;
+    holdFired = true;
+    // whatever was in the box before this hold is what a swipe-up restores
+    dictationBase = box.value;
+    startListening();
+  }, 220);
+}
+
+function moveHold(event) {
+  if (!holdFired || swipedAway) return;
+  // 56px up = "that was wrong", enough to not fire on a wobble
+  if (holdStartY - event.clientY > 56) {
+    swipedAway = true;
+    // throw away the dictation, keep the text that was there before the hold
+    box.value = dictationBase;
+    delete box.dataset.base;
+    autoGrow();
+    clearLengthNote();
+    hideTrash();
+    box.classList.add('is-swiping');
+    say('Cleared — say it again.');
+  }
+}
+
+function endHold() {
+  if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+  if (holdFired) {
+    if (swipedAway) box.classList.remove('is-swiping');
+    swipedAway = false;
+    stopListening();
+  }
+  holdFired = false;
+}
+
+box.addEventListener('pointerdown', beginHold);
+box.addEventListener('pointermove', moveHold);
+['pointerup', 'pointercancel', 'pointerleave'].forEach((evt) =>
+  box.addEventListener(evt, endHold));
+
+/* the bin itself */
+trashBtn.addEventListener('click', () => {
+  wipeDictation();
+  box.focus();
+});
+
 /* The pen: press and hold to talk, tap to send. */
 penBtn.addEventListener('pointerdown', (event) => {
   event.preventDefault();
@@ -880,7 +1028,10 @@ penBtn.addEventListener('click', () => {
   if (!text.trim()) return;
   box.value = '';
   delete box.dataset.base;
+  dictationBase = '';
   autoGrow();
+  clearLengthNote();
+  trashBtn.hidden = true;
   submit(text, 'text');
 });
 
@@ -913,6 +1064,7 @@ function autoGrow() {
    listener covers all three. The pen writes, then goes home by itself. */
 box.addEventListener('input', () => {
   autoGrow();
+  checkLength();
   if (box.value.trim()) penWrites();
   else penGoHome();
 });
@@ -920,11 +1072,15 @@ box.addEventListener('blur', () => { if (!state.working) penGoHome(); });
 box.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
-    const text = box.value;
+    const text = trimForSend(box.value);
+    if (text !== box.value) say('That was too long to send whole — I sent the first part.');
     box.value = '';
     box.dataset.base = '';
+    dictationBase = '';
     autoGrow();
-    penGoHome();              // sent: nothing left to write
+penGoHome();              // sent: nothing left to write
+    clearLengthNote();
+    trashBtn.hidden = true;
     submit(text, 'text');
   }
 });
