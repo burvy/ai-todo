@@ -924,6 +924,56 @@ fn event_matches(text: &str, event: &BusyOut) -> bool {
     hour_match || (title_match && (day_match || !lower.contains("tomorrow")))
 }
 
+fn stem(word: &str) -> String {
+    let mut value: String = word
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|character| character.is_ascii_alphabetic())
+        .collect();
+    if value.len() > 3 && value.ends_with('s') {
+        value.pop();
+    }
+    value
+}
+
+fn event_match_score(text: &str, event: &BusyOut) -> usize {
+    let message: std::collections::BTreeSet<String> = text
+        .split_whitespace()
+        .map(stem)
+        .filter(|word| !word.is_empty())
+        .collect();
+    event
+        .title
+        .split_whitespace()
+        .map(stem)
+        .filter(|word| !word.is_empty() && message.contains(word))
+        .count()
+}
+
+fn event_is_on_requested_day(text: &str, event: &BusyOut) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let local = event.start.with_timezone(&timezone());
+    if lower.contains("today") {
+        return local.date_naive() == Utc::now().with_timezone(&timezone()).date_naive();
+    }
+    if lower.contains("tomorrow") {
+        return local.date_naive()
+            == Utc::now().with_timezone(&timezone()).date_naive() + chrono::Duration::days(1);
+    }
+    [
+        ("monday", chrono::Weekday::Mon),
+        ("tuesday", chrono::Weekday::Tue),
+        ("wednesday", chrono::Weekday::Wed),
+        ("thursday", chrono::Weekday::Thu),
+        ("friday", chrono::Weekday::Fri),
+        ("saturday", chrono::Weekday::Sat),
+        ("sunday", chrono::Weekday::Sun),
+    ]
+    .iter()
+    .filter(|(name, _)| lower.contains(name))
+    .all(|(_, day)| local.weekday() == *day)
+}
+
 fn content_words(text: &str) -> Vec<String> {
     text.split_whitespace()
         .map(|word| {
@@ -1085,9 +1135,28 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                 .lock()
                 .unwrap()
                 .iter()
-                .filter(|event| event_matches(&body.text, event))
-                .min_by_key(|event| event.start)
-                .map(|event| (event.title.clone(), event.start));
+                .filter(|event| event_is_on_requested_day(&body.text, event))
+                .filter_map(|event| {
+                    let score = event_match_score(&body.text, event);
+                    (score >= 1).then_some((event, score))
+                })
+                .max_by(|(left, left_score), (right, right_score)| {
+                    left_score
+                        .cmp(right_score)
+                        .then_with(|| right.start.cmp(&left.start))
+                })
+                .map(|(event, _)| event)
+                .map(|event| (event.title.clone(), event.start))
+                .or_else(|| {
+                    state
+                        .busy
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|event| event_matches(&body.text, event))
+                        .min_by_key(|event| event.start)
+                        .map(|event| (event.title.clone(), event.start))
+                });
             let selected = choice
                 .and_then(|candidate| candidates.iter().find(|(_, text, _)| text == &candidate))
                 .map(|(title, _, start)| (title.clone(), *start))
@@ -1476,6 +1545,23 @@ mod tests {
         };
         assert!(event_matches("cancel my 3pm", &event));
         assert!(!event_matches("cancel my 4pm", &event));
+    }
+
+    #[test]
+    fn fuzzy_cancellation_matches_stems_and_requested_weekday() {
+        let event = BusyOut {
+            start: Utc.with_ymd_and_hms(2026, 10, 13, 13, 0, 0).unwrap(),
+            end: Utc.with_ymd_and_hms(2026, 10, 13, 14, 0, 0).unwrap(),
+            title: "STAT 201 Lecture".into(),
+        };
+        assert_eq!(
+            event_match_score("my stats lecture on Tuesday is cancelled", &event),
+            2
+        );
+        assert!(event_is_on_requested_day(
+            "my stats lecture on Tuesday is cancelled",
+            &event
+        ));
     }
 
     #[test]
