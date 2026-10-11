@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-capture = { path = "../crates/capture" }
 axum = { version = "0.8", features = ["multipart"] }
+capture = { path = "../crates/capture" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = "0.10"
 dotenvy = "0.15"

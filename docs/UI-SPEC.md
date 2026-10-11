@@ -32,3 +32,16 @@ The single source of truth for the look and the interactions. One website (`stat
 
 ## Done means
 Looks like paper on a 1400-wide laptop and a 390-wide phone, no overlaps, no console errors, every action above works against the live API.
+
+## Student test (burvy, 18:15): a productivity tool, no bloat
+Think like a student opening this between classes.
+- **One obvious action:** the pen text box. Everything else is secondary and quiet.
+- **Visible on first open:** today's open tasks and the next thing to do. No onboarding, no empty chrome.
+- **Nothing a student wouldn't miss:** no source chips, no counts beyond "3 open", no legend unless the planner has 2+ labels, no buttons that duplicate the pen. Settings hides in the gear.
+- **Fast paths:** Enter sends; tap a task to edit; tap the circle to finish; long-press to reorder. Undo toast for delete and done ("Undone").
+- **Readable at a glance:** full titles, deadline in words ("Fri 5pm", "tomorrow"), overdue in red pencil.
+
+## Paper assets and sounds (replaceable)
+- **Folder:** `static/assets/`. `paper.jpg` (tileable light paper), `paper-night.jpg` (optional), and `sounds/` with `write.mp3`, `tick.mp3`, `page.mp3`, `listen.mp3`, `send.mp3`. Replacing a file with the same name changes it; no code edits.
+- **If a file is missing**, fall back silently: CSS/SVG grain for paper, a tiny WebAudio synth for sounds. The app must work with an empty `assets/` folder.
+- **Sounds:** short and quiet (volume ~0.3), never overlapping more than one at a time, off when Voice/Sound is off in settings, and never on page load.
