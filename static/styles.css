@@ -1084,3 +1084,24 @@ body.is-busy .composer-row { border-color: var(--accent); }
   .pen, .eye-black, .eye-white { transition: none; }
   .mascot-track.fidget-hop .pen, .mascot-track.fidget-happy .pen { animation: none; }
 }
+
+/* compact phone scale: keep the notebook readable without horizontal drift */
+@media (max-width: 720px) {
+  body { max-width: 100%; overflow-x: hidden; }
+  .desk > .notebook,
+  .desk > .planner { padding-left: 12px; padding-right: 12px; }
+  .notebook-title, .planner-title { font-size: 20px; }
+  .notebook-sub, .week-label, .planner-empty, .margin-text { font-size: 11px; }
+  .title-text {
+    font-size: 19px; line-height: 1.15;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+    overflow: hidden; overflow-wrap: anywhere;
+  }
+  .chip, .meta { font-size: 11px; }
+  .gutter span, .block-time, .margin-replay { font-size: 10px; }
+  .day-head .dow { font-size: 10px; }
+  .day-head .dom { font-size: 14px; }
+  .pen-btn { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+  .composer-row { font-size: 15px; }
+  .page-tabs { padding-left: 12px; padding-right: 12px; }
+}
