@@ -13,7 +13,10 @@ pub struct Judgment {
     pub priority: u8,
     pub duration_min: u32,
     pub confidence: f64,
+    pub label: Option<String>,
 }
+
+const LABELS: [&str; 6] = ["School", "Work", "Errands", "Health", "Personal", "Other"];
 
 /// Classify a conversational message with one Jev Choice question.
 pub async fn classify_intent(text: &str) -> Result<String> {
@@ -50,6 +53,48 @@ pub async fn classify_intent(text: &str) -> Result<String> {
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .context("missing intent choice")
+}
+
+/// Let Jev select one of the supplied candidates, or none when no candidate fits.
+pub async fn choose(text: &str, choices: &[String]) -> Result<Option<String>> {
+    let key = std::env::var("TYPESAFE_API_KEY").context("TYPESAFE_API_KEY is not set")?;
+    let mut criteria = serde_json::Map::new();
+    for (index, choice) in choices.iter().enumerate() {
+        criteria.insert(format!("candidate_{index}"), Value::String(choice.clone()));
+    }
+    criteria.insert("none".into(), Value::String("None of these".into()));
+    let body = json!({
+        "state": text,
+        "model": "jev-latest",
+        "questions": {"selection": {
+            "type": "choice",
+            "instructions": "Select the single best candidate, or none if no candidate matches.",
+            "criteria": criteria
+        }}
+    });
+    let response: Response = reqwest::Client::new()
+        .post(ENDPOINT)
+        .header(AUTHORIZATION, format!("Bearer {key}"))
+        .header(CONTENT_TYPE, "application/json")
+        .json(&body)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let answer = response
+        .answers
+        .get("selection")
+        .context("missing selection")?;
+    if answer_confidence(answer) < 0.5 {
+        return Ok(None);
+    }
+    let index = answer
+        .get("choice")
+        .and_then(Value::as_str)
+        .and_then(|choice| choice.strip_prefix("candidate_"))
+        .and_then(|index| index.parse::<usize>().ok());
+    Ok(index.and_then(|index| choices.get(index).cloned()))
 }
 
 #[derive(Serialize)]
@@ -98,6 +143,11 @@ pub async fn understand(
             "type": "score",
             "instructions": "Estimate the required task duration.",
             "criteria": ["Quick (<15 min)", "Short (15–45 min)", "Medium (1–2 hours)", "Half-Day (2–4 hours)", "Full-Day or Multi-Day (>4 hours)"]
+        },
+        "label": {
+            "type": "choice",
+            "instructions": "Choose the best label for this task.",
+            "criteria": {"School": "School", "Work": "Work", "Errands": "Errands", "Health": "Health", "Personal": "Personal", "Other": "Other"}
         }
     });
     let body = Request {
@@ -165,6 +215,13 @@ pub async fn understand(
     .round()
     .clamp(0.0, 4.0) as usize;
     let duration_min = [10, 30, 90, 180, 360][duration_level];
+    let label = response
+        .answers
+        .get("label")
+        .and_then(|answer| answer.get("choice"))
+        .and_then(Value::as_str)
+        .filter(|choice| LABELS.contains(choice))
+        .map(ToOwned::to_owned);
     let confidence = [
         task_answer,
         deadline_choice,
@@ -181,6 +238,7 @@ pub async fn understand(
         priority,
         duration_min,
         confidence,
+        label,
     })
 }
 

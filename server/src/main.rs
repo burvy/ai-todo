@@ -21,7 +21,7 @@ use chrono::{DateTime, Datelike, NaiveDateTime, NaiveTime, TimeZone, Timelike, U
 use chrono_tz::Tz;
 use db::{BusyRow, Db};
 use futures::future::join_all;
-use judge::{classify_intent, find_date_candidates, split_sentences, understand};
+use judge::{choose, classify_intent, find_date_candidates, split_sentences, understand};
 use scheduler::{BusyBlock, Placement, UnschedulableReason, WorkingHours};
 use serde::{Deserialize, Serialize};
 use todo_core::{Source, Task};
@@ -531,7 +531,7 @@ fn tasks_from_judgments(
             priority: judgment.priority,
             status: "todo".into(),
             confidence: judgment.confidence,
-            label: label_for(&sentence),
+            label: judgment.label.unwrap_or_else(|| label_for(&sentence)),
             source,
         });
     }
@@ -1001,32 +1001,102 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
             state.db.save_tasks(&created);
         }
         "cancel_event" => {
-            let mut busy = state.busy.lock().unwrap();
-            cancelled_event = busy
+            let candidates: Vec<(String, DateTime<Utc>)> = state
+                .busy
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|event| {
+                    (
+                        format!(
+                            "{} at {}",
+                            event.title,
+                            event.start.with_timezone(&timezone()).format("%-I:%M %p")
+                        ),
+                        event.start,
+                    )
+                })
+                .collect();
+            let choice = choose(
+                &body.text,
+                &candidates
+                    .iter()
+                    .map(|(title, _)| title.clone())
+                    .collect::<Vec<_>>(),
+            )
+            .await
+            .ok()
+            .flatten();
+            let fallback = state
+                .busy
+                .lock()
+                .unwrap()
                 .iter()
                 .find(|event| event_matches(&body.text, event))
-                .map(|event| (event.title.clone(), event.start));
+                .map(|event| {
+                    (
+                        format!(
+                            "{} at {}",
+                            event.title,
+                            event.start.with_timezone(&timezone()).format("%-I:%M %p")
+                        ),
+                        event.start,
+                    )
+                });
+            let selected = choice
+                .and_then(|title| candidates.iter().find(|(candidate, _)| candidate == &title))
+                .map(|(title, start)| (title.clone(), *start))
+                .or(fallback);
+            let mut busy = state.busy.lock().unwrap();
+            cancelled_event = selected.map(|(title, start)| {
+                (
+                    title.split(" at ").next().unwrap_or(&title).to_string(),
+                    start,
+                )
+            });
+            let selected_title = cancelled_event.as_ref().map(|(title, _)| title.clone());
             busy.retain(|event| !event_matches(&body.text, event));
+            if let Some(title) = selected_title {
+                busy.retain(|event| event.title != title);
+            }
             state
                 .db
                 .save_busy(&busy.iter().map(busy_row).collect::<Vec<_>>());
         }
         "complete_task" => {
-            let mut store = state.store.lock().unwrap();
-            let selected = store
+            let candidates: Vec<(String, String)> = state
+                .store
+                .lock()
+                .unwrap()
                 .tasks
                 .iter()
                 .filter(|task| task.status != "done")
-                .filter_map(|task| {
-                    let overlap = task_overlap(task, &body.text);
-                    task_matches_message(task, &body.text).then_some((
-                        task.id.clone(),
-                        task.title.clone(),
-                        overlap,
-                    ))
-                })
-                .max_by_key(|(_, _, overlap)| *overlap);
-            if let Some((id, title, _)) = selected {
+                .map(|task| (task.id.clone(), task.title.clone()))
+                .collect();
+            let titles: Vec<String> = candidates.iter().map(|(_, title)| title.clone()).collect();
+            let choice = choose(&body.text, &titles).await.ok().flatten();
+            let selected = choice
+                .and_then(|title| candidates.iter().find(|(_, candidate)| candidate == &title))
+                .map(|(id, title)| (id.clone(), title.clone()))
+                .or_else(|| {
+                    let store = state.store.lock().unwrap();
+                    store
+                        .tasks
+                        .iter()
+                        .filter(|task| task.status != "done")
+                        .filter_map(|task| {
+                            let overlap = task_overlap(task, &body.text);
+                            task_matches_message(task, &body.text).then_some((
+                                task.id.clone(),
+                                task.title.clone(),
+                                overlap,
+                            ))
+                        })
+                        .max_by_key(|(_, _, overlap)| *overlap)
+                        .map(|(id, title, _)| (id, title))
+                });
+            let mut store = state.store.lock().unwrap();
+            if let Some((id, title)) = selected {
                 let task = store.tasks.iter_mut().find(|task| task.id == id).unwrap();
                 task.status = "done".into();
                 state.db.save_task(task);
@@ -1445,6 +1515,7 @@ mod tests {
                         priority: 1,
                         duration_min: 30,
                         confidence: 1.0,
+                        label: None,
                     },
                 )
             })
