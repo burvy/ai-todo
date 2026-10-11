@@ -24,7 +24,7 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 | Scheduler / storage | Deadline first then priority, ≤2h chunks, 9:00–18:00 local; SQLite, survives restarts |
 | Ops | CI, `run-local.ps1`, deployed at `ai-todo-api.burvy.dev` |
 
-**Known gaps:** no PDF upload route yet; no swipe-up planner or drag-to-reorder yet; task titles truncated in the list; overlapping planner blocks; no `/api/reset`; no login (everyone shares one list on the live site).
+**Known gaps:** no PDF upload route yet; no phone swipe between list and planner or drag-to-reorder yet; task titles truncated in the list; overlapping planner blocks; no `/api/reset`; no login (everyone shares one list on the live site).
 
 ---
 
@@ -32,7 +32,7 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 
 | Owner | Doing now | Task list |
 |---|---|---|
-| **Frontend** | Swipe-up planner on phones (#1), full titles, planner overlaps, Import calendar button, drag to reorder | `docs/TASKS-frontend.md` |
+| **Frontend** | Swipe left/right between list and planner on phones (#1), full titles, planner overlaps, Import calendar button, drag to reorder | `docs/TASKS-frontend.md` |
 | **Backend 2 (Rayansh)** | `/api/reset`, reschedule after import, `pinned_start` for drag | `docs/TASKS-backend.md` |
 | **New teammate** | PDF / email upload on `POST /api/capture` (cut-off 18:00) | `docs/TASKS-pdf.md` |
 | **burvy** | Redeploys, demo rehearsal | |
