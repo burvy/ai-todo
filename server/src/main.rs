@@ -11,7 +11,8 @@ use axum::{
     http::StatusCode,
     routing::{get, patch, post},
 };
-use chrono::{DateTime, Datelike, NaiveTime, Utc};
+use chrono::{DateTime, Datelike, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono_tz::Tz;
 use futures::future::join_all;
 use judge::{find_date_candidates, split_sentences, understand};
 use scheduler::{BusyBlock, Placement, UnschedulableReason, WorkingHours};
@@ -118,21 +119,70 @@ fn tasks_from_text(text: &str) -> Vec<Task> {
         .collect()
 }
 
-fn clean_title(sentence: &str) -> String {
-    let mut title = sentence.trim().to_owned();
-    for filler in [
-        "um, i need to ",
-        "i need to ",
-        "need to ",
-        "please ",
-        "todo: ",
-    ] {
-        if title.to_lowercase().starts_with(filler) {
-            title = title[filler.len()..].trim().to_owned();
-            break;
+pub fn clean_title(sentence: &str) -> String {
+    let mut title = sentence
+        .trim()
+        .trim_end_matches(['.', '!', '?'])
+        .trim()
+        .to_owned();
+    loop {
+        // Normalize punctuation on a leading hedge token ("um,", "so...", etc.).
+        if let Some(end) = title.find(char::is_whitespace) {
+            let token = &title[..end];
+            let cleaned = token.trim_matches(|character: char| {
+                matches!(character, ',' | '.' | '…' | '!' | ';' | ':')
+            });
+            if cleaned != token {
+                title = format!("{}{}", cleaned, &title[end..]);
+            }
         }
+        let lower = title.to_ascii_lowercase();
+        let filler = [
+            "ugh ",
+            "okay ",
+            "ok ",
+            "so ",
+            "um ",
+            "like ",
+            "i need to ",
+            "i should ",
+            "i have to ",
+            "gotta ",
+            "also ",
+            "and ",
+            "please ",
+            "todo: ",
+        ]
+        .iter()
+        .find(|prefix| lower.starts_with(**prefix));
+        let Some(prefix) = filler else { break };
+        title = title[prefix.len()..].trim().to_owned();
     }
-    title
+    let lower = title.to_ascii_lowercase();
+    let trailing = [
+        " tomorrow",
+        " next week",
+        " by monday",
+        " by tuesday",
+        " by wednesday",
+        " by thursday",
+        " by friday",
+        " by saturday",
+        " by sunday",
+    ];
+    if let Some(index) = trailing
+        .iter()
+        .filter_map(|suffix| lower.rfind(suffix))
+        .min()
+    {
+        title.truncate(index);
+        title = title.trim().to_owned();
+    }
+    let mut chars = title.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => title,
+    }
 }
 
 fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
@@ -224,13 +274,29 @@ pub async fn capture_text(text: &str, source: Source, anchor: DateTime<Utc>) -> 
     tasks
 }
 
-/// Busy blocks for today (UTC), seeded so the demo has something to schedule around.
+fn timezone() -> Tz {
+    std::env::var("TZ_NAME")
+        .ok()
+        .and_then(|name| name.parse().ok())
+        .unwrap_or(chrono_tz::America::New_York)
+}
+
+fn local_time_as_utc(tz: Tz, local: NaiveDateTime) -> DateTime<Utc> {
+    tz.from_local_datetime(&local)
+        .single()
+        .unwrap_or_else(|| tz.from_utc_datetime(&local))
+        .with_timezone(&Utc)
+}
+
+/// Busy blocks for today in the configured local timezone, returned as UTC.
 fn seed_busy(today: DateTime<Utc>) -> Vec<BusyOut> {
+    let tz = timezone();
+    let local_date = today.with_timezone(&tz).date_naive();
     let at = |h: u32, m: u32| {
-        today
-            .date_naive()
-            .and_time(NaiveTime::from_hms_opt(h, m, 0).unwrap())
-            .and_utc()
+        local_time_as_utc(
+            tz,
+            local_date.and_time(NaiveTime::from_hms_opt(h, m, 0).unwrap()),
+        )
     };
     vec![
         BusyOut {
@@ -346,10 +412,17 @@ async fn schedule_tasks(State(state): State<AppState>) -> Json<ScheduleOut> {
             end: block.end,
         })
         .collect();
-    let hours = WorkingHours::every_day(
-        NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
-        NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
-    );
+    let tz = timezone();
+    let local_now = Utc::now().with_timezone(&tz);
+    let local_start = local_now
+        .date_naive()
+        .and_time(NaiveTime::from_hms_opt(9, 0, 0).unwrap());
+    let local_end = local_now
+        .date_naive()
+        .and_time(NaiveTime::from_hms_opt(18, 0, 0).unwrap());
+    let start_utc = local_time_as_utc(tz, local_start).time();
+    let end_utc = local_time_as_utc(tz, local_end).time();
+    let hours = WorkingHours::every_day(start_utc, end_utc);
 
     let mut placements = Vec::new();
     let mut unscheduled = Vec::new();
@@ -447,6 +520,15 @@ mod tests {
         let tasks = tasks_from_text("buy milk\n\n  call mom  \n");
         let titles: Vec<&str> = tasks.iter().map(|t| t.title.as_str()).collect();
         assert_eq!(titles, ["buy milk", "call mom"]);
+    }
+
+    #[test]
+    fn clean_title_removes_hedges_and_deadline() {
+        assert_eq!(
+            clean_title("Ugh okay so I need to finish the chem lab report by Friday"),
+            "Finish the chem lab report"
+        );
+        assert_eq!(clean_title("um, I should call mom tomorrow"), "Call mom");
     }
 
     #[tokio::test]
