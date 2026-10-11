@@ -5,6 +5,7 @@
 mod db;
 mod export;
 mod ics;
+mod revise;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -1309,6 +1310,7 @@ fn app(state: AppState) -> Router {
         .route("/api/tasks", get(list_tasks))
         .route("/api/tasks", post(create_task))
         .route("/api/tasks/{id}", patch(patch_task).delete(delete_task))
+        .route("/api/tasks/{id}/revise", post(revise::revise_task))
         .route("/api/schedule", post(schedule_tasks))
         .route("/api/calendar", get(calendar))
         .route("/api/calendar.ics", get(export::calendar_ics))
