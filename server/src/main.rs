@@ -454,10 +454,20 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
 }
 
 fn explicit_clock(text: &str) -> Option<(u32, u32)> {
-    for raw in text.to_ascii_lowercase().split_whitespace() {
+    let lower = text.to_ascii_lowercase();
+    let words: Vec<&str> = lower.split_whitespace().collect();
+    for (index, raw) in words.iter().enumerate() {
         let token = raw.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != ':');
         if token == "noon" {
             return Some((12, 0));
+        }
+        // A bare hour after "at" ("Thursday at 2"): 1-6 read as afternoon, 7-12 as written.
+        if index > 0
+            && words[index - 1] == "at"
+            && let Ok(bare) = token.parse::<u32>()
+            && (1..=12).contains(&bare)
+        {
+            return Some((if bare <= 6 { bare + 12 } else { bare }, 0));
         }
         let (number, suffix) = if let Some(value) = token.strip_suffix("am") {
             (value, Some(false))
