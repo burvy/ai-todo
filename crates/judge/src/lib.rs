@@ -1,10 +1,52 @@
 use anyhow::{Context, Result, anyhow};
-use chrono::{DateTime, Datelike, Duration, Utc};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, Utc};
+use regex::Regex;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const ENDPOINT: &str = "https://api.typesafe.ai/v1/systemone";
+
+const MONTHS: [(&str, u32); 12] = [
+    ("january", 1),
+    ("february", 2),
+    ("march", 3),
+    ("april", 4),
+    ("may", 5),
+    ("june", 6),
+    ("july", 7),
+    ("august", 8),
+    ("september", 9),
+    ("october", 10),
+    ("november", 11),
+    ("december", 12),
+];
+
+const MONTHS_SHORT: [(&str, u32); 12] = [
+    ("jan", 1),
+    ("feb", 2),
+    ("mar", 3),
+    ("apr", 4),
+    ("may", 5),
+    ("jun", 6),
+    ("jul", 7),
+    ("aug", 8),
+    ("sep", 9),
+    ("oct", 10),
+    ("nov", 11),
+    ("dec", 12),
+];
+
+#[allow(dead_code)]
+const WEEKDAYS: [&str; 7] = [
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Judgment {
@@ -285,6 +327,9 @@ pub fn split_sentences(text: &str) -> Vec<String> {
         if is_hedged_self_talk(&clause) {
             continue;
         }
+        if is_policy_line(&clause) {
+            continue;
+        }
         if is_time_fragment(&clause)
             && let Some(previous) = merged.last_mut()
         {
@@ -481,7 +526,215 @@ pub fn find_date_candidates(text: &str, now: DateTime<Utc>) -> Vec<String> {
     }
     // Keep the parameter meaningful for callers that use relative dates.
     let _ = (now.weekday(), now + Duration::days(1));
+
+    // Absolute date patterns
+    found.extend(find_absolute_dates(text, now));
+
     found
+}
+
+fn find_absolute_dates(text: &str, now: DateTime<Utc>) -> Vec<String> {
+    let lower = text.to_lowercase();
+    let mut found = Vec::new();
+    let now_local = now.with_timezone(&Local);
+    let current_year = now_local.year();
+    let current_month = now_local.month();
+    let current_day = now_local.day();
+
+    // Pattern 1: "December 11, 2026" or "Dec 11, 2026" or "December 11" or "Dec 11"
+    let full_month_re =
+        Regex::new(r"\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s*(\d{4})?\b").unwrap();
+    for cap in full_month_re.captures_iter(&lower) {
+        let month_str = &cap[1];
+        let day: u32 = cap[2].parse().unwrap_or(1);
+        let year = cap
+            .get(3)
+            .and_then(|m| m.as_str().parse::<i32>().ok())
+            .unwrap_or_else(|| {
+                let month_num = MONTHS
+                    .iter()
+                    .find(|(n, _)| *n == month_str)
+                    .map(|(_, m)| *m)
+                    .unwrap_or(1);
+                if month_num < current_month || (month_num == current_month && day < current_day) {
+                    current_year + 1
+                } else {
+                    current_year
+                }
+            });
+        if let Some(date) = NaiveDate::from_ymd_opt(
+            year,
+            MONTHS
+                .iter()
+                .find(|(n, _)| *n == month_str)
+                .map(|(_, m)| *m)
+                .unwrap_or(1),
+            day,
+        ) {
+            let dt = date
+                .and_hms_opt(17, 0, 0)
+                .unwrap()
+                .and_local_timezone(Local)
+                .unwrap();
+            found.push(dt.with_timezone(&Utc).to_rfc3339());
+        }
+    }
+
+    // Pattern 2: "Oct 30" or "Oct 30, 2026" (short month)
+    let short_month_re = Regex::new(
+        r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2}),?\s*(\d{4})?\b",
+    )
+    .unwrap();
+    for cap in short_month_re.captures_iter(&lower) {
+        let month_str = &cap[1];
+        let day: u32 = cap[2].parse().unwrap_or(1);
+        let year = cap
+            .get(3)
+            .and_then(|m| m.as_str().parse::<i32>().ok())
+            .unwrap_or_else(|| {
+                let month_num = MONTHS_SHORT
+                    .iter()
+                    .find(|(n, _)| *n == month_str)
+                    .map(|(_, m)| *m)
+                    .unwrap_or(1);
+                if month_num < current_month || (month_num == current_month && day < current_day) {
+                    current_year + 1
+                } else {
+                    current_year
+                }
+            });
+        if let Some(date) = NaiveDate::from_ymd_opt(
+            year,
+            MONTHS_SHORT
+                .iter()
+                .find(|(n, _)| *n == month_str)
+                .map(|(_, m)| *m)
+                .unwrap_or(1),
+            day,
+        ) {
+            let dt = date
+                .and_hms_opt(17, 0, 0)
+                .unwrap()
+                .and_local_timezone(Local)
+                .unwrap();
+            found.push(dt.with_timezone(&Utc).to_rfc3339());
+        }
+    }
+
+    // Pattern 3: "10/30" or "10/30/2026"
+    let slash_re = Regex::new(r"\b(\d{1,2})/(\d{1,2})(?:/(\d{2,4}))?\b").unwrap();
+    for cap in slash_re.captures_iter(&lower) {
+        let month: u32 = cap[1].parse().unwrap_or(1);
+        let day: u32 = cap[2].parse().unwrap_or(1);
+        if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+            continue;
+        }
+        let year = cap
+            .get(3)
+            .and_then(|m| m.as_str().parse::<i32>().ok())
+            .unwrap_or_else(|| {
+                if month < current_month || (month == current_month && day < current_day) {
+                    current_year + 1
+                } else {
+                    current_year
+                }
+            });
+        let year = if year < 100 { year + 2000 } else { year };
+        if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
+            let dt = date
+                .and_hms_opt(17, 0, 0)
+                .unwrap()
+                .and_local_timezone(Local)
+                .unwrap();
+            found.push(dt.with_timezone(&Utc).to_rfc3339());
+        }
+    }
+
+    // Pattern 4: "Friday, October 30" or "Friday, October 30, 2026"
+    let weekday_month_re = Regex::new(r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday),\s+(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2}),?\s*(\d{4})?\b").unwrap();
+    for cap in weekday_month_re.captures_iter(&lower) {
+        let _weekday = &cap[1];
+        let month_str = &cap[2];
+        let day: u32 = cap[3].parse().unwrap_or(1);
+        let year = cap
+            .get(4)
+            .and_then(|m| m.as_str().parse::<i32>().ok())
+            .unwrap_or_else(|| {
+                let month_num = MONTHS
+                    .iter()
+                    .find(|(n, _)| *n == month_str)
+                    .map(|(_, m)| *m)
+                    .unwrap_or(1);
+                if month_num < current_month || (month_num == current_month && day < current_day) {
+                    current_year + 1
+                } else {
+                    current_year
+                }
+            });
+        if let Some(date) = NaiveDate::from_ymd_opt(
+            year,
+            MONTHS
+                .iter()
+                .find(|(n, _)| *n == month_str)
+                .map(|(_, m)| *m)
+                .unwrap_or(1),
+            day,
+        ) {
+            let dt = date
+                .and_hms_opt(17, 0, 0)
+                .unwrap()
+                .and_local_timezone(Local)
+                .unwrap();
+            found.push(dt.with_timezone(&Utc).to_rfc3339());
+        }
+    }
+
+    // Deduplicate
+    found.sort();
+    found.dedup();
+    found
+}
+
+/// Check if a clause is a policy line (not a task).
+/// Policy lines contain: late work, grading, attendance, "unless", percent penalties.
+pub fn is_policy_line(clause: &str) -> bool {
+    let lower = clause.to_lowercase();
+    let policy_keywords = [
+        "late work",
+        "grading",
+        "attendance",
+        "unless",
+        "percent",
+        "%",
+        "penalty",
+        "penalties",
+        "late penalty",
+        "extension",
+        "arranged in advance",
+        "drops",
+        "drop policy",
+        "late loses",
+        "loses percent",
+    ];
+    policy_keywords.iter().any(|kw| lower.contains(kw))
+}
+
+/// Extract title and deadline from patterns like "Final synthesis essay - December 11, 2026"
+/// Returns (title, deadline_string) if found, otherwise (original_clause, None)
+pub fn extract_title_and_deadline(clause: &str) -> (String, Option<String>) {
+    // Pattern: "Title - Date" or "Title – Date" (em dash)
+    let dash_re = Regex::new(r"^(.+?)\s*[-–—]\s*(.+)$").unwrap();
+    if let Some(cap) = dash_re.captures(clause) {
+        let title = cap[1].trim().to_string();
+        let date_part = cap[2].trim().to_string();
+        // Try to parse the date part as an absolute date
+        let now = Utc::now();
+        let dates = find_absolute_dates(&date_part, now);
+        if !dates.is_empty() {
+            return (title, Some(dates[0].clone()));
+        }
+    }
+    (clause.to_string(), None)
 }
 
 #[cfg(test)]
@@ -577,6 +830,76 @@ mod tests {
         assert!(candidates.contains(&"2026-10-16".into()));
         assert!(candidates.contains(&"next week".into()));
         assert!(candidates.contains(&"2026-10-31".into()));
+    }
+
+    #[test]
+    fn finds_absolute_dates_full_month() {
+        let now = Utc.with_ymd_and_hms(2026, 10, 11, 12, 0, 0).unwrap();
+        let candidates = find_date_candidates("Final synthesis essay - December 11, 2026", now);
+        assert!(candidates.iter().any(|c| c.contains("2026-12-11")));
+    }
+
+    #[test]
+    fn finds_absolute_dates_short_month() {
+        let now = Utc.with_ymd_and_hms(2026, 10, 11, 12, 0, 0).unwrap();
+        let candidates = find_date_candidates("Quiz on Dec 11", now);
+        assert!(candidates.iter().any(|c| c.contains("2026-12-11")));
+        let candidates2 = find_date_candidates("Oct 30 deadline", now);
+        assert!(candidates2.iter().any(|c| c.contains("2026-10-30")));
+    }
+
+    #[test]
+    fn finds_absolute_dates_slash_format() {
+        let now = Utc.with_ymd_and_hms(2026, 10, 11, 12, 0, 0).unwrap();
+        let candidates = find_date_candidates("Due 10/30", now);
+        assert!(candidates.iter().any(|c| c.contains("2026-10-30")));
+        let candidates2 = find_date_candidates("Due 10/30/2026", now);
+        assert!(candidates2.iter().any(|c| c.contains("2026-10-30")));
+    }
+
+    #[test]
+    fn finds_absolute_dates_weekday_month() {
+        let now = Utc.with_ymd_and_hms(2026, 10, 11, 12, 0, 0).unwrap();
+        let candidates = find_date_candidates("Friday, October 30", now);
+        assert!(candidates.iter().any(|c| c.contains("2026-10-30")));
+    }
+
+    #[test]
+    fn filters_policy_lines() {
+        let clauses = split_sentences(
+            "Late work loses 10 percent per day unless an extension is arranged in advance. Finish the essay by Friday.",
+        );
+        assert_eq!(clauses.len(), 1);
+        assert!(clauses[0].contains("Finish the essay"));
+    }
+
+    #[test]
+    fn filters_policy_lines_grading_attendance() {
+        let clauses = split_sentences(
+            "Grading is based on participation. Attendance is mandatory. Submit homework by Monday.",
+        );
+        assert_eq!(clauses.len(), 1);
+        assert!(clauses[0].contains("Submit homework"));
+    }
+
+    #[test]
+    fn extracts_title_and_deadline() {
+        let _now = Utc.with_ymd_and_hms(2026, 10, 11, 12, 0, 0).unwrap();
+        let (title, deadline) =
+            extract_title_and_deadline("Final synthesis essay - December 11, 2026");
+        assert_eq!(title, "Final synthesis essay");
+        assert!(deadline.is_some());
+        assert!(deadline.unwrap().contains("2026-12-11"));
+    }
+
+    #[test]
+    fn extracts_title_and_deadline_em_dash() {
+        let _now = Utc.with_ymd_and_hms(2026, 10, 11, 12, 0, 0).unwrap();
+        let (title, deadline) =
+            extract_title_and_deadline("Final synthesis essay – December 11, 2026");
+        assert_eq!(title, "Final synthesis essay");
+        assert!(deadline.is_some());
+        assert!(deadline.unwrap().contains("2026-12-11"));
     }
 
     #[test]
