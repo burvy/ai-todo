@@ -302,4 +302,93 @@ Subject: Invoice\nPlease pay the invoice by Friday.\n";
         }
         assert!(parse_email_date("not a date").is_none());
     }
+
+    // ---- shapes real mail actually arrives in ------------------------------
+
+    #[test]
+    fn crlf_headers_parse() {
+        // RFC 5322 mail is CRLF. This is what an Outlook PDF export contains.
+        let text = "From: Jane Doe <jane@example.edu>\r\n\
+            Sent: Monday, October 12, 2026 10:03 AM\r\n\
+            Subject: Lab report\r\n\
+            \r\n\
+            Please finish the lab report by Friday.\r\n";
+        let email = parse_email(text);
+        assert_eq!(email.subject, "Lab report");
+        assert_eq!(email.body, "Please finish the lab report by Friday.");
+    }
+
+    #[test]
+    fn a_gmail_or_apple_mail_quote_attribution_is_cut() {
+        // Gmail and Apple Mail do not write "-----Original Message-----".
+        // They write an attribution line, and everything under it is the
+        // previous message.
+        let text = "Sent: Monday, October 12, 2026 10:03 AM\n\n\
+            Please finish the lab report by Friday.\n\n\
+            On Mon, Oct 12, 2026 at 9:15 AM Jane Doe <jane@example.edu> wrote:\n\n\
+            > Are you still doing the lab report?\n";
+        let email = parse_email(text);
+        assert_eq!(
+            email.body, "Please finish the lab report by Friday.",
+            "the quoted previous message leaked in: {:?}",
+            email.body
+        );
+    }
+
+    #[test]
+    fn a_folded_header_is_joined() {
+        // RFC 5322 folds long headers onto a continuation line starting with a
+        // space. A parser that misses this truncates the subject.
+        let text = "From: jane@example.edu\n\
+            Sent: Monday, October 12, 2026 10:03 AM\n\
+            Subject: A very long subject line about the chemistry lab that\n  would not fit on one line\n\
+            \n\
+            Please finish the lab report by Friday.\n";
+        let email = parse_email(text);
+        assert_eq!(
+            email.subject,
+            "A very long subject line about the chemistry lab that would not fit on one line"
+        );
+    }
+
+    #[test]
+    fn an_rfc5322_date_header_is_used_when_there_is_no_sent() {
+        // Gmail exports use Date:, not Outlook's Sent:.
+        let text = "From: jane@example.edu\n\
+            Date: Mon, 12 Oct 2026 10:03:00 +0000\n\
+            Subject: Lab report\n\n\
+            Please finish the lab report by Friday.\n";
+        let email = parse_email(text);
+        let sent = email.sent.expect("Date: is read as the send time");
+        assert_eq!(sent.to_rfc3339(), "2026-10-12T10:03:00+00:00");
+    }
+
+    #[test]
+    fn a_body_that_is_entirely_quoted_leaves_nothing_to_extract() {
+        // A reply that adds no words of its own. The caller needs to know the
+        // body is empty, rather than be handed "" to make phantom tasks from.
+        let text = "Sent: Monday, October 12, 2026 10:03 AM\n\n\
+            On Mon, Oct 12, 2026 at 9:15 AM Jane <jane@example.edu> wrote:\n\n\
+            > Are you still doing the lab report?\n";
+        let email = parse_email(text);
+        assert!(
+            email.body.trim().is_empty(),
+            "expected an empty body, got {:?}",
+            email.body
+        );
+    }
+
+    #[test]
+    fn a_quote_marker_mentioned_in_passing_is_not_treated_as_history() {
+        // A body that quotes the marker as a word should keep its text.
+        let text = "Sent: Monday, October 12, 2026 10:03 AM\n\n\
+            Attach the file by Friday.\n\n\
+            The lab manual calls this the 'forwarded message' step, so ignore it.\n";
+        let email = parse_email(text);
+        assert!(
+            email.body.contains("Attach the file by Friday"),
+            "lost the real sentence: {:?}",
+            email.body
+        );
+    }
 }

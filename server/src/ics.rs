@@ -271,4 +271,254 @@ mod tests {
         assert_eq!(busy.len(), 1, "only the sane event should survive");
         assert_eq!(busy[0].title, "Fine");
     }
+
+    // ---- realistic Outlook / Google exports --------------------------------
+    //
+    // demo/outlook/week.ics is sanitised: LF only, and no VTIMEZONE, folded
+    // lines, RRULE or STATUS. Real exports carry all of them, so the parser is
+    // checked against that shape here too.
+
+    /// Build an export the way Outlook does: CRLF line endings, trailing CRLF.
+    fn outlook(lines: &[&str]) -> String {
+        let mut text = lines.join("\r\n");
+        text.push_str("\r\n");
+        text
+    }
+
+    const VTIMEZONE: &[&str] = &[
+        "BEGIN:VTIMEZONE",
+        "TZID:America/New_York",
+        "BEGIN:DAYLIGHT",
+        "TZOFFSETFROM:-0500",
+        "TZOFFSETTO:-0400",
+        "TZNAME:EDT",
+        "DTSTART:19700308T020000",
+        "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU",
+        "END:DAYLIGHT",
+        "BEGIN:STANDARD",
+        "TZOFFSETFROM:-0400",
+        "TZOFFSETTO:-0500",
+        "TZNAME:EST",
+        "DTSTART:19701101T020000",
+        "RRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU",
+        "END:STANDARD",
+        "END:VTIMEZONE",
+    ];
+
+    fn with_vtimezone(rest: &[&str]) -> String {
+        let mut lines = vec![
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//Microsoft//OUTLOOK",
+        ];
+        lines.extend_from_slice(VTIMEZONE);
+        lines.extend_from_slice(rest);
+        lines.push("END:VCALENDAR");
+        outlook(&lines)
+    }
+
+    #[test]
+    fn crlf_line_endings_parse_like_a_real_export() {
+        // Every real .ics is CRLF. The demo fixture is LF, so this is the only
+        // test that exercises the line endings Outlook actually writes.
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:BIO 214 Urban Ecology",
+            "DTSTART;TZID=America/New_York:20261012T100000",
+            "DTEND;TZID=America/New_York:20261012T111500",
+            "END:VEVENT",
+        ]);
+        assert!(text.contains("\r\n"), "sanity: this really is CRLF");
+
+        let busy = parse_ics(&text).expect("a CRLF export parses");
+        assert_eq!(busy.len(), 1);
+        assert_eq!(busy[0].title, "BIO 214 Urban Ecology");
+        assert_eq!(busy[0].start.to_rfc3339(), "2026-10-12T14:00:00+00:00");
+    }
+
+    #[test]
+    fn a_vtimezone_block_is_not_mistaken_for_an_event() {
+        // Real exports carry a VTIMEZONE per TZID, and those blocks contain
+        // DTSTART and RRULE lines of their own.
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:STAT 201 Lecture",
+            "DTSTART;TZID=America/New_York:20261013T090000",
+            "DTEND;TZID=America/New_York:20261013T101500",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("parses");
+        assert_eq!(busy.len(), 1, "the VTIMEZONE must not produce a block");
+        assert_eq!(busy[0].title, "STAT 201 Lecture");
+    }
+
+    #[test]
+    fn a_folded_line_is_joined_back_together() {
+        // RFC 5545 folds long lines: a CRLF followed by a single space means
+        // "continues". A parser that misses this splits one event's SUMMARY
+        // from its DTSTART.
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:BIO 214 Urban Ecology, section three, a genuinely long",
+            " title that Outlook had to wrap at seventy-five octets",
+            "DTSTART;TZID=America/New_York:20261012T100000",
+            "DTEND;TZID=America/New_York:20261012T111500",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("parses");
+        assert_eq!(busy.len(), 1, "the folded event should still be one event");
+        assert!(
+            busy[0].title.contains("seventy-five octets"),
+            "the folded continuation was lost: {:?}",
+            busy[0].title
+        );
+    }
+
+    #[test]
+    fn escaped_commas_and_semicolons_in_a_title() {
+        // RFC 5545 escapes `,` `\;` `\\` and newline in text values. If they
+        // are not unescaped the planner shows the raw backslashes to the user.
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Buy milk\\, eggs\\; and bread",
+            "DTSTART;TZID=America/New_York:20261012T100000",
+            "DTEND;TZID=America/New_York:20261012T110000",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("parses");
+        assert_eq!(busy.len(), 1);
+        assert_eq!(
+            busy[0].title, "Buy milk, eggs; and bread",
+            "got {:?}",
+            busy[0].title
+        );
+    }
+
+    #[test]
+    fn a_weekly_recurring_class_is_present_for_the_week() {
+        // A student's real calendar is mostly RRULEs: the same lecture every
+        // week. We do not expand recurrences, so it appears once.
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:STAT 201 Lecture",
+            "DTSTART;TZID=America/New_York:20261013T090000",
+            "DTEND;TZID=America/New_York:20261013T101500",
+            "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215T035959Z",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("parses");
+        assert_eq!(
+            busy.len(),
+            1,
+            "one block for the recurrence's first instance"
+        );
+        assert_eq!(
+            busy[0].start.to_rfc3339(),
+            "2026-10-13T13:00:00+00:00",
+            "the first occurrence should be used"
+        );
+    }
+
+    #[test]
+    fn a_cancelled_event_should_not_block_any_time() {
+        // Outlook keeps cancelled meetings in the export with STATUS:CANCELLED.
+        // Booking time over them is wrong: the whole point of cancelling was
+        // to free the slot.
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Advising appointment",
+            "STATUS:CANCELLED",
+            "DTSTART;TZID=America/New_York:20261013T130000",
+            "DTEND;TZID=America/New_York:20261013T133000",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("parses");
+        assert!(
+            busy.is_empty(),
+            "a cancelled event must not block time, got {:?}",
+            busy.iter().map(|b| &b.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_transparent_event_is_marked_free_in_the_export() {
+        // TRANSP:TRANSPARENT is the iCalendar way of saying "show this, but do
+        // not treat it as busy" — all-day birthdays and holidays use it.
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Someone's birthday",
+            "TRANSP:TRANSPARENT",
+            "DTSTART;TZID=America/New_York:20261014T000000",
+            "DTEND;TZID=America/New_York:20261014T235959",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("parses");
+        assert!(
+            busy.is_empty(),
+            "a TRANSPARENT event should not block the day, got {:?}",
+            busy.iter().map(|b| &b.title).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn non_ascii_titles_survive() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Café meeting — résumé review",
+            "DTSTART;TZID=America/New_York:20261012T100000",
+            "DTEND;TZID=America/New_York:20261012T110000",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("parses");
+        assert_eq!(busy.len(), 1);
+        assert_eq!(busy[0].title, "Café meeting — résumé review");
+    }
+
+    #[test]
+    fn an_event_spanning_midnight_keeps_its_length() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Overnight shift",
+            "DTSTART;TZID=America/New_York:20261012T220000",
+            "DTEND;TZID=America/New_York:20261013T060000",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("parses");
+        assert_eq!(busy.len(), 1);
+        let hours = (busy[0].end - busy[0].start).num_minutes() / 60;
+        assert_eq!(hours, 8, "an overnight shift should stay eight hours");
+    }
+
+    #[test]
+    fn one_malformed_event_does_not_lose_the_whole_week() {
+        // A single unparseable event must not take the other eight with it.
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Broken, no dates at all",
+            "END:VEVENT",
+            "BEGIN:VEVENT",
+            "SUMMARY:Real lecture",
+            "DTSTART;TZID=America/New_York:20261012T100000",
+            "DTEND;TZID=America/New_York:20261012T111500",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("parses");
+        assert_eq!(busy.len(), 1, "the good event should survive");
+        assert_eq!(busy[0].title, "Real lecture");
+    }
+
+    #[test]
+    fn an_empty_calendar_yields_no_blocks() {
+        let text = outlook(&["BEGIN:VCALENDAR", "VERSION:2.0", "END:VCALENDAR"]);
+        let busy = parse_ics(&text).expect("an empty calendar is still valid");
+        assert!(busy.is_empty());
+    }
+
+    #[test]
+    fn the_demo_fixture_still_parses_after_all_this() {
+        // Guard against the realistic cases above steering the parser away
+        // from the fixture the demo actually uses.
+        let busy = parse_ics(WEEK).expect("the demo fixture parses");
+        assert_eq!(busy.len(), 9);
+    }
 }

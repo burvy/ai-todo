@@ -7,11 +7,18 @@ calendar-import and email/PDF work.
 `demo/outlook/week.ics`, which is a sanitised fixture — LF line endings, and no
 `VTIMEZONE`, folded lines, `RRULE` or `STATUS`. Real Outlook and Gmail exports
 contain every one of those. Writing tests against the shape real exports
-actually arrive in surfaced five failures. The failing tests are written and
-passing-by-design (they assert the correct behaviour) but are **not pushed** —
-they are local on `secre/local-ics-tests`.
+actually arrive in surfaced five failures.
 
-Run `cargo test -p capture -p server` on that branch to see all five fail.
+**The tests are on this branch** (`server/src/ics.rs`, `crates/capture`), so
+anyone can reproduce them:
+
+```sh
+cargo test -p capture -p server
+```
+
+They assert the *correct* behaviour, so **this branch is red on purpose and must
+not be merged until the five items below are fixed.** Fixing a bug turns its
+test green; that is the signal it is done.
 
 ---
 
