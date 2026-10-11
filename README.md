@@ -29,6 +29,14 @@ Google Calendar.
 
 ## API
 
+## Deploy
+
+Run `deploy\build-release.ps1` to build and stage `dist\ai-todo\`. Copy the
+`deploy` directory to the server, then run `deploy\install-task.ps1` as
+Administrator to register the startup task and allow TCP port 3160. The task
+uses `C:\burvy\secrets\ai-todo\jev-key.env` for the Jev key and runs with
+`PORT=3160` and `TZ_NAME=America/New_York` by default.
+
 - `POST /api/capture` - accept JSON `{"text":"..."}` or a multipart PDF
   `file`; return `{"tasks":[Task]}`.
 - `GET /api/tasks` - return `{"tasks":[Task]}`.
@@ -42,3 +50,6 @@ Google Calendar.
 Each `Task` has `id`, `title`, `notes`, `duration_min`, `deadline` (nullable),
 `priority` (0-3), `status`, `confidence` (0-1), and `source`
 (`voice`, `pdf`, or `text`).
+
+> The scheduled task runs as the low-privilege `LocalService` account, not SYSTEM, because the server faces the internet. Grant it read access to the key and app folder once (admin PowerShell):
+> `icacls C:\burvy\secrets\ai-todo /grant "NT AUTHORITY\LOCAL SERVICE:(OI)(CI)R"` and `icacls C:\burvy\ai-todo /grant "NT AUTHORITY\LOCAL SERVICE:(OI)(CI)RX"`
