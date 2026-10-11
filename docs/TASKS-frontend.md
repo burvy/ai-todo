@@ -28,10 +28,10 @@ _Synced 2026-10-11 ~14:45 by the orchestrator from what is on `main` (PRs #20, #
 - [x] Low-confidence fields "pencilled in"
 - [x] Jump to `focus_date`
 - [x] Busy state + error toast
-- [ ] **Open in the light parchment theme by default** (today it follows the OS, so dark-mode laptops show Night desk; the pitch is paper)
-- [ ] **Planner starts at today**, not Monday: on a Sunday demo most tasks land next week and the visible week looks empty
-- [ ] Empty-state hint with a sample sentence to say
-- [ ] Phone width check (judges may open the URL on a phone)
+- [x] **Opens in the light parchment theme** — no `prefers-color-scheme` rule anywhere in `static/`, so it always opens light; Night desk only if you ask for it, and that choice is remembered in `localStorage`
+- [x] **Planner starts at today**, not Monday: a rolling seven-day window from today, so a Sunday demo shows the Monday the tasks actually land on. Prev/next step seven days, the date label jumps back to today
+- [x] Empty-state hint with a sample sentence to say (taken from `demo/rambles.md`, set in handwriting so it reads like a note on the page)
+- [x] Phone width check — verified at 390x844 and 1400x900 in a real browser: no horizontal overflow, titles wrap, planner scrolls inside its own column, mascot hidden so it stops covering the page
 
 ## P3: only if time
 - [ ] Weather background (Open-Meteo, no key, plus browser location)

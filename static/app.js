@@ -48,7 +48,7 @@ const state = {
   busy: [],
   placements: [],
   unscheduled: [],
-  weekStart: startOfWeek(new Date()),
+  weekStart: startOfDay(new Date()),
   focusDate: null,
   speaking: true,
   freshIds: new Set(),
@@ -60,11 +60,12 @@ const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').match
 
 /* ── Tiny helpers ───────────────────────────────────────────── */
 
-function startOfWeek(date) {
+/* The planner shows a rolling seven days from today, not Monday to Sunday.
+   On a Sunday demo most placements land on the following Monday, which a
+   Monday-anchored week would hide off screen. */
+function startOfDay(date) {
   const d = new Date(date);
   d.setHours(0, 0, 0, 0);
-  const shift = (d.getDay() + 6) % 7;   // Monday = 0
-  d.setDate(d.getDate() - shift);
   return d;
 }
 
@@ -511,7 +512,7 @@ async function submit(text, source = 'text') {
     indexTasks();
     if (result.focus_date) {
       state.focusDate = result.focus_date;
-      state.weekStart = startOfWeek(new Date(result.focus_date + 'T00:00:00'));
+      state.weekStart = startOfDay(new Date(result.focus_date + 'T00:00:00'));
     }
     state.placements = result.placements || [];
 
@@ -871,7 +872,7 @@ $('#weekNext').addEventListener('click', async () => {
   await refreshCalendar();
 });
 weekLabel.addEventListener('click', async () => {
-  state.weekStart = startOfWeek(new Date());
+  state.weekStart = startOfDay(new Date());
   state.focusDate = null;
   await refreshCalendar();
 });
