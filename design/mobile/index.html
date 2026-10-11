@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>ai-todo — mobile reference</title>
+<meta name="description" content="Standalone 9:16 phone concept for ai-todo. Design reference, not served by the app." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   ai-todo — mobile reference (design only)
+   Lives in design/, NOT static/, so the server never serves it.
+   Mock data, no API calls.
+   ============================================================ */
+
+:root {
+  --cream:      #F3EAD4;
+  --paper:      #FBF5E6;
+  --paper-deep: #EDE2C8;
+  --ink:        #2B2A28;
+  --ink-soft:   #5E594E;
+  --pencil:     #938B77;
+  --accent:     #2F5D9E;
+  --red:        #B23A33;
+  --rule:       rgba(43,42,40,.085);
+  --edge:       rgba(43,42,40,.17);
+  --margin:     rgba(178,58,51,.20);
+
+  --hand: "Caveat", "Segoe Print", cursive;
+  --ui:   "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --school: #2F7D74; --work: #6B4E9E; --health: #B8891B;
+  --errands:#C9552F; --personal:#A64B7B; --other:#5A5750;
+
+  --fade: 46px;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+
+body {
+  font-family: var(--ui);
+  color: var(--ink);
+  background: radial-gradient(ellipse 70% 50% at 50% 0%, #F0E6CE, transparent 70%),
+              linear-gradient(165deg, #E9DEC3, #DCD0B4);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
+
+.stage {
+  min-height: 100dvh;
+  display: grid; place-items: center; padding: 20px;
+}
+
+/* ── the 9:16 card ────────────────────────────────────────── */
+.sheet {
+  position: relative;
+  width: min(430px, 100%);
+  aspect-ratio: 9 / 16;
+  max-height: calc(100dvh - 40px);
+  display: flex; flex-direction: column;
+  padding: 14px 14px 10px;
+  background-color: var(--paper);
+  background-image:
+    repeating-linear-gradient(to bottom, transparent 0 31px, rgba(120,96,48,.04) 31px 32px),
+    radial-gradient(ellipse 60% 40% at 20% 5%, rgba(255,255,255,.75), transparent 65%),
+    radial-gradient(ellipse 55% 40% at 90% 96%, rgba(150,118,58,.07), transparent 70%);
+  border: 1px solid var(--edge);
+  border-radius: 18px;
+  box-shadow: 0 1px 0 rgba(255,255,255,.6) inset,
+              0 24px 50px -26px rgba(43,42,40,.6);
+  overflow: hidden;
+}
+.sheet::before {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 26px;
+  border-left: 1.5px solid var(--margin); pointer-events: none;
+}
+
+/* ── one control shape for both boxes ─────────────────────── */
+.pill {
+  position: relative;
+  display: flex; align-items: center; gap: 9px;
+  width: 100%;
+  border: 1px solid var(--edge); border-radius: 999px;
+  background: linear-gradient(180deg, #FFFDF6, var(--paper) 62%, #F3EBD8);
+  box-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 6px 16px -12px rgba(43,42,40,.7);
+  overflow: hidden; isolation: isolate;
+  transition: transform .14s ease, box-shadow .2s ease, border-color .2s ease;
+}
+.pill::after {
+  content: ""; position: absolute; inset: -40% -60%; z-index: -1;
+  background: radial-gradient(38% 60% at 22% 18%, rgba(255,255,255,.95), transparent 62%),
+              radial-gradient(30% 50% at 82% 86%, rgba(47,93,158,.13), transparent 65%);
+  transform: translate3d(-28%, 16%, 0) scale(.9); opacity: .85;
+  transition: transform .7s cubic-bezier(.22,.8,.3,1), opacity .7s ease;
+  pointer-events: none;
+}
+.pill:hover::after, .pill:focus-visible::after {
+  transform: translate3d(24%, -14%, 0) scale(1.08); opacity: 1;
+}
+.pill:active { transform: scale(.985); }
+.pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pill-text { font-size: 15px; font-weight: 500; color: var(--ink); }
+
+/* ── top: View schedule, a real control ───────────────────── */
+.sheet-top { flex: none; padding: 0 0 8px 26px; }
+.pill-ghost { padding: 10px 16px 10px 14px; justify-content: center; }
+.pill-icon { width: 18px; height: 18px; flex: none; }
+.cal-frame, .cal-line, .cal-tick { fill: none; stroke: var(--accent); stroke-width: 1.6; }
+.cal-tick { stroke-linecap: round; }
+.cal-dot { fill: var(--accent); opacity: .85; }
+
+/* ── the empty middle: mascot + hands + the line it grips ─── */
+.mascot-zone {
+  flex: none; position: relative;
+  display: grid; justify-items: center;
+  padding: 0 0 4px;
+}
+
+.mascot-wrap {
+  position: relative;
+  width: 150px; height: 150px;
+  display: grid; place-items: center;
+  transform-origin: 50% 78%;
+  transition: transform .45s cubic-bezier(.25,.85,.3,1);
+}
+
+/* the pen: hands + body. No microphone glyph anywhere. */
+.mascot { width: 150px; height: 150px; overflow: visible; }
+.pen-body   { fill: var(--paper); stroke: var(--ink); stroke-width: 3.2; }
+.pen-cap    { fill: var(--ink); }
+.pen-band   { fill: var(--accent); }
+.pen-gloss  { stroke: rgba(255,255,255,.85); stroke-width: 2; stroke-linecap: round; fill: none; }
+.pen-eye    { fill: var(--ink); }
+.pen-smile  { stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; fill: none; }
+.pen-hand   { fill: var(--paper); stroke: var(--ink); stroke-width: 3; stroke-linejoin: round; }
+.pen-grip   { fill: var(--paper); stroke: var(--ink); stroke-width: 3; stroke-linecap: round; fill: none; }
+
+/* The pen travels: it drops down over the prompt when writing. Set in JS
+   because the distance depends on how tall the prompt is. */
+.mascot-wrap {
+  transition: transform .5s cubic-bezier(.25,.85,.3,1);
+}
+.mascot-wrap[data-mood="writing"] { transition: none; }
+
+/* listening: it tips towards you */
+.mascot-wrap[data-mood="listening"]:not([data-mood="writing"]) {
+  animation: lean 1.1s ease-in-out infinite;
+}
+.mascot-wrap[data-mood="listening"] .pen-gloss { opacity: .4; }
+
+/* writing: it leaves the grip and hangs upside down over the prompt */
+.mascot-wrap[data-mood="writing"] {
+  transform: translateY(var(--to-prompt, 0px)) scale(.52) rotate(180deg);
+  animation: nibble .22s ease-in-out infinite;
+}
+.mascot-wrap[data-mood="writing"] .pen-smile,
+.mascot-wrap[data-mood="writing"] .pen-eye { opacity: .35; }
+
+/* the drop is measured in JS: it depends on how tall the prompt is */
+@keyframes nibble {
+  0%, 100% { margin-top: 0; }
+  50%      { margin-top: 3px; }
+}
+
+/* the barrier the hands grip: the top edge of the list */
+.grip-line {
+  position: relative;
+  width: calc(100% - 26px);
+  margin-left: 26px;
+  height: 3px;
+  background: var(--ink);
+  opacity: .82;
+  border-radius: 2px;
+}
+.grip-line::before, .grip-line::after {
+  content: ""; position: absolute; top: -3px;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--paper); border: 2.4px solid var(--ink);
+}
+.grip-line::before { left: -16px; }
+.grip-line::after  { right: -16px; }
+
+/* ── tasks: anchored low, dissolving upwards ──────────────── */
+.tasks-zone {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  padding: 0 8px 0 26px;
+}
+.tasks {
+  list-style: none; margin: auto 0 0; padding: 0 0 8px;
+  display: flex; flex-direction: column; gap: 2px;
+  overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-color: var(--edge) transparent;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade), #000 calc(100% - 40px), transparent 100%);
+          mask-image: linear-gradient(to bottom, transparent 0, #000 var(--fade), #000 calc(100% - 40px), transparent 100%);
+}
+
+.task {
+  display: grid;
+  grid-template-columns: 12px 22px minmax(0,1fr) 20px;
+  align-items: start; gap: 6px;
+  padding: 6px 0 7px;
+  border-bottom: 1px solid var(--rule);
+}
+.task:last-child { border-bottom: 0; }
+.dash { align-self: center; width: 8px; height: 1.4px; background: var(--pencil); border-radius: 1px; }
+
+.tick {
+  position: relative; width: 21px; height: 21px; margin-top: 1px;
+  display: grid; place-items: center;
+  border: 1.5px solid var(--ink-soft);
+  border-radius: 47% 53% 50% 50% / 52% 48% 52% 48%;
+  transform: rotate(-2deg);
+}
+.tick svg { width: 17px; height: 17px; }
+.tick-mark { fill: none; stroke: var(--accent); stroke-width: 2.6;
+  stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 26; stroke-dashoffset: 26; }
+.task.done .tick { border-color: var(--accent); background: rgba(47,93,158,.08); }
+.task.done .tick-mark { animation: tickIn 300ms ease-out forwards; }
+@keyframes tickIn { to { stroke-dashoffset: 0; } }
+
+.task-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.title-text {
+  display: block;
+  font-family: var(--hand); font-size: 19px; line-height: 1.08;   /* ~25% down from 25px */
+  color: var(--ink); overflow-wrap: anywhere;
+}
+.task.done .title-text { color: var(--ink-soft); }
+.task.done .title-wrap { position: relative; }
+.task.done .title-wrap::after {
+  content: ""; position: absolute; left: -1px; right: -1px; top: 52%;
+  height: 2.4px; border-radius: 2px; background: var(--ink);
+  transform: scaleX(0) rotate(-.8deg); transform-origin: left center;
+  animation: strike 320ms ease-out forwards;
+}
+@keyframes strike { to { transform: scaleX(1) rotate(-.8deg); } }
+
+.meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.chip {
+  font-size: 8.6px; color: var(--ink-soft);
+  border: 1px solid var(--edge); border-radius: 999px;
+  padding: 0 5px; white-space: nowrap;
+}
+.chip.due.overdue { color: var(--red); border-color: var(--red); }
+.tag { display: inline-flex; align-items: center; gap: 3px; }
+.tag i { width: 5px; height: 5px; border-radius: 50%; background: var(--c, var(--other)); }
+
+.kill {
+  position: relative; width: 20px; height: 20px; padding: 3px;
+  opacity: .4; transition: opacity .16s;
+}
+.kill svg { width: 100%; height: 100%; }
+.kill path { stroke: var(--red); stroke-width: 2; stroke-linecap: round; fill: none; }
+
+/* writing a title as it arrives */
+.task.enter .title-text { animation: write 600ms cubic-bezier(.35,.7,.35,1) forwards; }
+@keyframes write {
+  from { clip-path: inset(-2px 100% -2px 0); }
+  to   { clip-path: inset(-2px -0.3em -2px 0); }
+}
+
+.empty { margin: 0 0 4px; text-align: center; }
+.empty-lead { display: block; font-size: 14px; font-style: italic; color: var(--ink-soft); }
+.empty-ramble { display: block; margin-top: 5px; font-size: 12px; font-style: italic; color: var(--pencil); }
+.empty[hidden] { display: none; }
+
+/* ── the prompt row: paperclip, text, and a hands-free mic ── */
+.sheet-bottom { flex: none; padding: 8px 0 0 26px; }
+
+.prompt-row { position: relative; padding: 4px 6px 4px 5px; gap: 6px; }
+.prompt-row.is-listening { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(47,93,158,.14); }
+
+.clip { width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 50%; }
+.clip svg { width: 19px; height: 19px; }
+.clip-path { fill: none; stroke: var(--ink-soft); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.pill-rule { width: 1px; height: 24px; background: var(--edge); flex: none; }
+
+#prompt {
+  flex: 1; min-width: 0;
+  font-family: var(--ui); font-size: 15px; color: var(--ink);
+  background: transparent; border: 0; outline: none; padding: 10px 4px;
+}
+#prompt::placeholder { color: var(--pencil); }
+
+/* the small mic: tap once to keep listening, tap again to stop */
+.handsfree {
+  position: relative;
+  width: 38px; height: 38px; flex: none;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--edge);
+  transition: background .18s, border-color .18s;
+}
+.handsfree svg { width: 19px; height: 19px; }
+.hf-capsule { fill: var(--ink-soft); transition: fill .18s; }
+.hf-arc, .hf-stem { fill: none; stroke: var(--ink-soft); stroke-width: 1.8; stroke-linecap: round; transition: stroke .18s; }
+.handsfree:hover { border-color: var(--accent); }
+.handsfree[aria-pressed="true"] { background: rgba(47,93,158,.12); border-color: var(--accent); }
+.handsfree[aria-pressed="true"] .hf-capsule { fill: var(--accent); }
+.handsfree[aria-pressed="true"] .hf-arc,
+.handsfree[aria-pressed="true"] .hf-stem { stroke: var(--accent); }
+.handsfree[aria-pressed="true"]::after {
+  content: ""; position: absolute; left: 50%; top: 50%;
+  width: 36px; height: 36px; margin: -18px 0 0 -18px;
+  border: 2px solid var(--accent); border-radius: 50%;
+  animation: ring 1.3s ease-out infinite;
+}
+@keyframes ring { from { transform: scale(1); opacity: .7; } to { transform: scale(1.7); opacity: 0; } }
+
+/* hint under the prompt, fades when you start talking */
+.hint {
+  margin: 6px 0 0; text-align: center;
+  font-size: 10.5px; letter-spacing: .03em; color: var(--pencil);
+  transition: opacity .2s;
+}
+
+/* bottom-left trash: clear what you just said.
+   Anchored to the sheet, not the footer, so it clears the prompt row. */
+.trash {
+  position: absolute; left: 8px; bottom: 84px;
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--paper);
+  border: 1px solid var(--edge);
+  box-shadow: 0 3px 10px -6px rgba(43,42,40,.6);
+  opacity: 0; transform: scale(.6) translateY(6px); pointer-events: none;
+  transition: opacity .2s ease, transform .2s cubic-bezier(.25,.9,.3,1.2);
+  z-index: 5;
+}
+.trash.show { opacity: 1; transform: none; pointer-events: auto; }
+/* the [hidden] attribute is removed by JS when there is something to clear */
+.trash[hidden] { display: none; }
+.trash svg { width: 17px; height: 17px; }
+.trash path { stroke: var(--red); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+.trash:hover { background: rgba(178,58,51,.1); }
+
+/* the pen leaves a mark while it writes at the prompt */
+.ink-scratch {
+  position: absolute; left: 46px; right: 46px; bottom: 52px;
+  height: 2px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent) 20%, var(--accent) 80%, transparent);
+  opacity: 0; transition: opacity .25s;
+  pointer-events: none;
+}
+.sheet[data-mood="writing"] .ink-scratch { opacity: .5; }
+
+@keyframes lean {
+  0%, 100% { transform: rotate(-4deg) scale(1.02); }
+  50%      { transform: rotate(-9deg) scale(1.06) translateY(-2px); }
+}
+@keyframes scribble {
+  0%   { transform: scale(.52) rotate(180deg) translateY(-2px); }
+  25%  { transform: scale(.52) rotate(176deg) translateY(3px); }
+  50%  { transform: scale(.52) rotate(184deg) translateY(-1px); }
+  75%  { transform: scale(.52) rotate(178deg) translateY(3px); }
+  100% { transform: scale(.52) rotate(180deg) translateY(-2px); }
+}
+
+@media (max-width: 520px) {
+  .stage { padding: 0; }
+  .sheet { width: 100%; height: 100dvh; max-height: none; aspect-ratio: auto;
+    border-radius: 0; border: 0; box-shadow: none;
+    padding: max(12px, env(safe-area-inset-top)) 14px max(10px, env(safe-area-inset-bottom)); }
+  .mascot-wrap { width: 132px; height: 132px; }
+  .mascot { width: 132px; height: 132px; }
+}
+
+/* Reduced motion: keep the pose, drop the wobble. The pen still turns
+   upside down and shrinks — that is the meaning, not decoration. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+  .task.enter .title-text { clip-path: none; }
+  .task.done .title-wrap::after { transform: scaleX(1) rotate(-.8deg); }
+  .task.done .tick-mark { stroke-dashoffset: 0; }
+  .mascot-wrap[data-mood="writing"] {
+    transform: scale(.52) rotate(180deg) translateY(-2px) !important;
+  }
+  .mascot-wrap[data-mood="listening"]:not([data-mood="writing"]) {
+    transform: rotate(-6deg) !important;
+  }
+}
+</style>
+</head>
+<body>
+
+<main class="stage">
+  <div class="sheet" id="sheet" data-mood="idle">
+
+    <header class="sheet-top">
+      <button class="pill pill-ghost" id="viewSchedule" type="button">
+        <svg class="pill-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <rect class="cal-frame" x="3.5" y="5" width="17" height="15.5" rx="3" />
+          <path class="cal-line" d="M3.5 9.6 h17" />
+          <path class="cal-tick" d="M8 3.4 v3.2 M16 3.4 v3.2" />
+          <circle class="cal-dot" cx="8.4" cy="14" r="1.15" />
+          <circle class="cal-dot" cx="12" cy="14" r="1.15" />
+        </svg>
+        <span class="pill-text">View schedule</span>
+      </button>
+    </header>
+
+    <div class="mascot-zone">
+      <button class="mascot-wrap" id="mascot" type="button"
+              data-mood="idle" aria-label="Talk to the pen" aria-pressed="false">
+        <svg class="mascot" viewBox="0 0 150 150" aria-hidden="true">
+          <!-- two hands, reaching down to the line it grips -->
+          <path class="pen-hand" d="M22 84 q-12 10 -11 24 q1 11 12 9 l9 -3 q7 -3 4 -11 z" />
+          <path class="pen-hand" d="M128 84 q12 10 11 24 q-1 11 -12 9 l-9 -3 q-7 -3 -4 -11 z" />
+          <path class="pen-grip" d="M17 112 h16 M117 112 h16" />
+          <!-- barrel -->
+          <rect class="pen-body" x="52" y="30" width="46" height="82" rx="14" />
+          <rect class="pen-cap" x="52" y="30" width="46" height="16" rx="8" />
+          <rect class="pen-band" x="52" y="70" width="46" height="7" />
+          <path class="pen-gloss" d="M60 42 v22" />
+          <!-- face: two eyes and a smile, no microphone -->
+          <circle class="pen-eye" cx="66" cy="57" r="4.2" />
+          <circle class="pen-eye" cx="84" cy="57" r="4.2" />
+          <path class="pen-smile" d="M65 68 q10 8 20 0" />
+        </svg>
+      </button>
+      <div class="grip-line" aria-hidden="true"></div>
+    </div>
+
+    <section class="tasks-zone">
+      <ul class="tasks" id="tasks"></ul>
+      <p class="empty" id="empty">
+        <span class="empty-lead">Nothing on the page yet.</span>
+        <span class="empty-ramble">Hold the prompt and talk, or type below.</span>
+      </p>
+    </section>
+
+    <footer class="sheet-bottom">
+      <button class="trash" id="trash" type="button" aria-label="Delete what you said" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M4 7 h16 M9 7 V5.5 h6 V7 M6.5 7 l1 12.5 h9 L17.5 7" />
+          <path d="M10.5 10.5 v6 M13.5 10.5 v6" />
+        </svg>
+      </button>
+
+      <div class="pill prompt-row" id="promptRow">
+        <button class="clip" id="clip" type="button" aria-label="Attach a file">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path class="clip-path"
+                  d="M17.6 10.9 11.2 17.3a4.2 4.2 0 0 1-5.9-5.9l7.3-7.3a2.9 2.9 0 0 1 4.1 4.1l-7.2 7.2a1.6 1.6 0 0 1-2.3-2.3l6.6-6.6" />
+          </svg>
+        </button>
+        <span class="pill-rule" aria-hidden="true"></span>
+        <label class="sr-only" for="prompt">Talk or type to add a task</label>
+        <input id="prompt" type="text" autocomplete="off" spellcheck="false"
+               placeholder="Talk or type to add task..." />
+        <button class="handsfree" id="handsfree" type="button" aria-pressed="false"
+                aria-label="Keep listening" title="Tap to keep listening">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect class="hf-capsule" x="9.4" y="2.6" width="5.2" height="10.5" rx="2.6" />
+            <path class="hf-arc" d="M6 11.4 a6 6 0 0 0 12 0" />
+            <path class="hf-stem" d="M12 17.4 v3.2 M9 20.6 h6" />
+          </svg>
+        </button>
+      </div>
+      <p class="ink-scratch" aria-hidden="true"></p>
+      <p class="hint" id="hint">Hold the prompt to talk · tap the pen · tap the mic to keep listening</p>
+    </footer>
+  </div>
+</main>
+
+<template id="taskTpl">
+  <li class="task">
+    <span class="dash" aria-hidden="true"></span>
+    <button class="tick" type="button" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path class="tick-mark" d="M4.5 12.6 L9.6 17.8 L19.6 6.6" /></svg>
+    </button>
+    <div class="task-body">
+      <span class="title-wrap"><span class="title-text"></span></span>
+      <span class="meta"></span>
+    </div>
+    <button class="kill" type="button" aria-label="Delete">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7 L17 17 M17 7 L7 17" /></svg>
+    </button>
+  </li>
+</template>
+
+<script>
+'use strict';
+/* Design reference only — mock data, no network calls. */
+
+const sheet     = document.getElementById('sheet');
+const mascot    = document.getElementById('mascot');
+const promptRow = document.getElementById('promptRow');
+const prompt    = document.getElementById('prompt');
+const handsfree = document.getElementById('handsfree');
+const trash     = document.getElementById('trash');
+const hint      = document.getElementById('hint');
+const tasksEl   = document.getElementById('tasks');
+const emptyEl   = document.getElementById('empty');
+
+const TAGS = {
+  School: 'var(--school)', Work: 'var(--work)', Health: 'var(--health)',
+  Errands: 'var(--errands)', Personal: 'var(--personal)', Other: 'var(--other)',
+};
+
+let tasks = [
+  { id: 'a', title: 'Finish the history response paper', due: 'Fri 3pm', dur: '2h',  label: 'School',   done: false },
+  { id: 'b', title: 'Call Sarah about presentation feedback', due: 'Mon 11am', dur: '30m', label: 'Work',  done: false },
+  { id: 'c', title: 'Review team velocity metrics', due: null, dur: '1h',  label: 'Health',   done: false },
+  { id: 'd', title: 'Sketch app concepts', due: 'Thu 2pm', dur: '2h',       label: 'Errands',  done: false },
+  { id: 'e', title: 'Pick up groceries', due: null, dur: '45m',               label: 'Personal', done: true  },
+];
+
+function render() {
+  tasksEl.textContent = '';
+  const ordered = [...tasks].sort((x, y) => (x.done === y.done ? 0 : x.done ? 1 : -1));
+  ordered.forEach((t) => tasksEl.appendChild(row(t)));
+  emptyEl.hidden = tasks.length > 0;
+
+  // `hidden` and `.show` have to agree, or [hidden] keeps display:none
+  const clearable = !!prompt.value.trim();
+  trash.hidden = !clearable;
+  trash.classList.toggle('show', clearable);
+}
+
+function row(t) {
+  const li = document.getElementById('taskTpl').content.firstElementChild.cloneNode(true);
+  li.dataset.id = t.id;
+  if (t.done) li.classList.add('done');
+  if (t.pencil) li.classList.add('pencil');
+
+  const tick = li.querySelector('.tick');
+  tick.setAttribute('aria-pressed', String(!!t.done));
+  tick.addEventListener('click', () => { t.done = !t.done; render(); });
+
+  li.querySelector('.title-text').textContent = t.title;
+
+  const meta = li.querySelector('.meta');
+  if (t.due) {
+    const d = document.createElement('span');
+    d.className = 'chip due';
+    d.textContent = t.due;
+    meta.appendChild(d);
+  }
+  if (t.dur) {
+    const s = document.createElement('span');
+    s.className = 'chip';
+    s.textContent = t.dur;
+    meta.appendChild(s);
+  }
+  if (t.label) {
+    const tag = document.createElement('span');
+    tag.className = 'chip tag';
+    tag.style.setProperty('--c', TAGS[t.label] || TAGS.Other);
+    tag.innerHTML = '<i></i>';
+    tag.appendChild(document.createTextNode(t.label));
+    meta.appendChild(tag);
+  }
+
+  li.querySelector('.kill').addEventListener('click', () => {
+    tasks = tasks.filter((x) => x.id !== t.id);
+    render();
+  });
+  return li;
+}
+
+/* ── mascot mood ──────────────────────────────────────────── */
+
+/* One flag per behaviour, so they can combine honestly: you can be writing
+   *and* listening at the same time, and the pen should still be writing. */
+const pose = { idle: true, listening: false, writing: false };
+
+function mood(next) {
+  mascot.dataset.mood = next;
+  sheet.dataset.mood = next;
+  mascot.setAttribute('aria-pressed', String(next === 'listening'));
+  hint.style.opacity = next === 'listening' ? '.45' : '1';
+}
+
+/* How far the pen has to drop to sit over the prompt. Measured, not guessed:
+   it changes with the prompt height and with the safe-area inset. */
+function measureDrop() {
+  const home = mascot.getBoundingClientRect();
+  const target = promptRow.getBoundingClientRect();
+  const drop = Math.round(target.top - home.top - home.height * 0.12);
+  mascot.style.setProperty('--to-prompt', `${drop}px`);
+}
+
+function settle() {
+  // Writing wins visually, but while you are still talking the pen must keep
+  // saying so through aria-pressed — the two are not the same thing.
+  const next = pose.writing ? 'writing' : pose.listening ? 'listening' : 'idle';
+  mood(next);
+  mascot.setAttribute('aria-pressed', String(pose.listening));
+}
+
+/* Typing or speaking: the pen shrinks, flips upside down and leans over the
+   prompt to write. Two seconds of quiet and it goes back to the grip. */
+let idleTimer = null;
+function goWriting() {
+  clearTimeout(idleTimer);
+  if (!pose.writing) measureDrop();     // only when it actually has to move
+  pose.writing = true;
+  settle();
+  idleTimer = setTimeout(() => {
+    pose.writing = false;
+    settle();
+  }, 2000);
+}
+
+prompt.addEventListener('input', goWriting);
+
+/* ── listening ────────────────────────────────────────────── */
+
+let listening = false;
+let holdTimer = null;
+let releaseTimer = null;
+
+/* Hold the prompt to talk; let go to stop. */
+promptRow.addEventListener('pointerdown', (e) => {
+  if (e.target.closest('button')) return;      // pen / clip / mic keep their own behaviour
+  clearTimeout(releaseTimer);
+  holdTimer = setTimeout(() => { prompt.focus(); startListening(); }, 140);
+});
+
+/* Swipe up on the prompt to delete the last thing you said. */
+let swipeStartY = null;
+promptRow.addEventListener('touchstart', (e) => {
+  swipeStartY = e.touches[0].clientY;
+}, { passive: true });
+promptRow.addEventListener('touchend', (e) => {
+  if (swipeStartY === null) return;
+  const dy = (e.changedTouches[0]?.clientY ?? swipeStartY) - swipeStartY;
+  swipeStartY = null;
+  if (dy < -45 && prompt.value) deleteLastSpoken();
+});
+
+promptRow.addEventListener('pointerup', () => {
+  clearTimeout(holdTimer);
+  releaseTimer = setTimeout(() => {
+    if (handsfree.getAttribute('aria-pressed') !== 'true') stopListening();
+  }, 90);
+});
+promptRow.addEventListener('pointercancel', () => {
+  clearTimeout(holdTimer);
+  if (handsfree.getAttribute('aria-pressed') !== 'true') stopListening();
+});
+
+/* Tap the pen: start talking, tap again to pause. */
+mascot.addEventListener('click', () => {
+  if (listening) { pauseListening(); return; }
+  prompt.focus();
+  startListening();
+});
+
+/* The small mic: tap once to keep listening, tap again to end. */
+handsfree.addEventListener('click', () => {
+  const on = handsfree.getAttribute('aria-pressed') === 'true';
+  if (on) { pauseListening(); return; }
+  clearTimeout(releaseTimer);
+  handsfree.setAttribute('aria-pressed', 'true');
+  prompt.focus();
+  startListening();
+});
+
+/* Trash: throw away what you just said and start over. */
+trash.addEventListener('click', () => {
+  prompt.value = '';
+  render();
+  prompt.focus();
+});
+
+function startListening() {
+  if (listening) return;
+  listening = true;
+  promptRow.classList.add('is-listening');
+  pose.listening = true;
+  goWriting();
+}
+
+function stopListening() {
+  if (!listening) return;
+  listening = false;
+  handsfree.setAttribute('aria-pressed', 'false');
+  promptRow.classList.remove('is-listening');
+  pose.listening = false;
+  submit();
+}
+
+/* Paused: keep the words, do not send. */
+function pauseListening() {
+  listening = false;
+  handsfree.setAttribute('aria-pressed', 'false');
+  promptRow.classList.remove('is-listening');
+  pose.listening = false;
+  clearTimeout(idleTimer);
+  pose.writing = false;
+  settle();
+  render();
+}
+
+/* Swipe up / trash: drop the last sentence you said. */
+function deleteLastSpoken() {
+  const text = prompt.value.trimEnd();
+  if (!text) return;
+  const parts = text.split(/(?<=[.!?])\s+/);
+  parts.pop();
+  prompt.value = parts.join(' ').trimEnd();
+  render();
+  goWriting();
+}
+
+function submit() {
+  const text = prompt.value.trim();
+  if (!text) return;
+  prompt.value = '';
+  const fresh = {
+    id: 'n' + Math.random().toString(36).slice(2, 7),
+    title: text,
+    due: null, dur: '30m', label: 'Other', done: false, fresh: true,
+  };
+  tasks.push(fresh);
+  render();
+
+  // it writes what it just heard. Use settle(), never a bare mood(), so a
+  // timer firing late cannot stomp a pose the user has since changed.
+  pose.writing = true;
+  settle();
+  setTimeout(() => {
+    const row = tasksEl.querySelector(`[data-id="${fresh.id}"]`);
+    if (row) row.classList.add('enter');
+  }, 60);
+  setTimeout(() => { pose.writing = false; settle(); }, 1100);
+}
+
+prompt.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); submit(); }
+});
+
+document.getElementById('viewSchedule').addEventListener('click', () => {
+  alert('View schedule — planner sheet goes here in the real build.');
+});
+document.getElementById('clip').addEventListener('click', () => {
+  alert('Paperclip — file picker goes here when the upload route lands.');
+});
+
+render();
+mood('idle');
+</script>
+</body>
+</html>
