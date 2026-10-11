@@ -1,4 +1,4 @@
-Replaceable sounds for ai-todo. Drop files here with exactly these names;
+Replaceable sounds for Rambl. Drop files here with exactly these names;
 no code change is needed. Missing files fall back to a tiny WebAudio synth.
 
   write.mp3   the pen writing a new task title

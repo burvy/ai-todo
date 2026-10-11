@@ -23,7 +23,7 @@ pub async fn calendar_ics(State(state): State<AppState>) -> Response {
         .header(header::CONTENT_TYPE, "text/calendar; charset=utf-8")
         .header(
             header::CONTENT_DISPOSITION,
-            "attachment; filename=ai-todo.ics",
+            "attachment; filename=rambl.ics",
         )
         .body(ics.into())
         .unwrap()
@@ -38,8 +38,8 @@ fn build_ics(tasks: &[todo_core::Task], placements: &[crate::PlacementOut]) -> S
         };
         let description = task
             .deadline
-            .map(|deadline| format!("Planned by ai-todo; deadline {}", deadline.to_rfc3339()))
-            .unwrap_or_else(|| "Planned by ai-todo".into());
+            .map(|deadline| format!("Planned by Rambl; deadline {}", deadline.to_rfc3339()))
+            .unwrap_or_else(|| "Planned by Rambl".into());
         let uid = format!("{}-{}@ai-todo", task.id, placement.start.timestamp());
         ics.push_str("BEGIN:VEVENT\r\n");
         ics.push_str(&format!("UID:{}\r\n", escape(&uid)));

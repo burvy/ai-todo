@@ -4,7 +4,7 @@
 
   const button = document.createElement('a');
   button.href = '/api/calendar.ics';
-  button.download = 'ai-todo.ics';
+  button.download = 'rambl.ics';
   button.textContent = 'Add to my calendar';
   button.style.cssText = 'background:none;border:0;color:inherit;cursor:pointer;font:inherit;text-decoration:underline;padding:.4rem .6rem;';
   tools.appendChild(button);
