@@ -444,6 +444,8 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
         value
     } else if let Ok(value) = chrono::NaiveDate::parse_from_str(candidate, "%m/%d/%Y") {
         value
+    } else if let Ok(dt) = DateTime::parse_from_rfc3339(candidate) {
+        return Some(dt.with_timezone(&Utc));
     } else {
         return None;
     };

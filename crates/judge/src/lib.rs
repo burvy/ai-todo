@@ -908,6 +908,50 @@ mod tests {
         assert!(find_date_candidates("Review the notes", now).is_empty());
     }
 
+    #[test]
+    fn processes_syllabus_text() {
+        let now = Utc.with_ymd_and_hms(2026, 10, 11, 12, 0, 0).unwrap();
+        let syllabus_text = r#"INTRODUCTION TO URBAN ECOLOGY - FALL 2026
+Instructor: Dr. Lena Ortiz    Course: BIO 214
+Meeting: Tuesday and Thursday, 10:00-11:15
+This course studies how plants, animals, and people shape city ecosystems.
+Read the assigned chapter before each discussion and bring one observation
+from your neighborhood.
+ASSIGNMENTS AND DUE DATES
+1. Neighborhood observation journal - September 18, 2026
+Three field observations with photographs and a 500-word reflection.
+2. Species profile - October 2, 2026
+Research one urban species and cite four reliable sources in two pages.
+3. Midterm data memo - October 23, 2026
+Analyze the class temperature dataset; submit methods and results memo.
+4. Team habitat proposal - November 13, 2026
+Propose a habitat improvement with a map, budget, and presentation.
+5. Final synthesis essay - December 11, 2026
+Submit a 1,500-word essay connecting two themes to course evidence.
+Late work loses 10 percent per day unless an extension is arranged in advance."#;
+        let sentences = split_sentences(syllabus_text);
+        println!("Sentences: {:?}", sentences);
+        for (i, s) in sentences.iter().enumerate() {
+            println!("{}: {}", i, s);
+            let candidates = find_date_candidates(s, now);
+            if !candidates.is_empty() {
+                println!("  DATE CANDIDATES: {:?}", candidates);
+            }
+            let (title, deadline) = extract_title_and_deadline(s);
+            if deadline.is_some() {
+                println!("  EXTRACTED: title='{}', deadline={:?}", title, deadline);
+            }
+        }
+        // The policy line should be filtered out
+        assert!(!sentences.iter().any(|s| s.contains("Late work loses")));
+        // Each assignment should be a clause with a date
+        assert!(sentences.iter().any(|s| s.contains("September 18")));
+        assert!(sentences.iter().any(|s| s.contains("October 2")));
+        assert!(sentences.iter().any(|s| s.contains("October 23")));
+        assert!(sentences.iter().any(|s| s.contains("November 13")));
+        assert!(sentences.iter().any(|s| s.contains("December 11")));
+    }
+
     #[tokio::test]
     #[ignore = "requires TYPESAFE_API_KEY and network access"]
     async fn live_jev_request() {
