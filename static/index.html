@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ai-todo</title>
+<meta name="description" content="Every scheduling tool asks you to do data entry. This one just listens." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;600;700&family=Inter:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="styles.css" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><text y='52' font-size='52'>&#9998;</text></svg>" />
+</head>
+<body>
+
+<a class="skip" href="#composer">Skip to the text box</a>
+
+<header class="masthead">
+  <div class="brand">
+    <h1>ai-todo</h1>
+    <p class="tagline">Ramble it. It writes your list.</p>
+  </div>
+
+  <div class="mascot-track" id="mascotTrack" aria-hidden="true">
+    <div class="mascot" id="mascot">
+      <svg viewBox="0 0 64 112" class="pen" role="presentation">
+        <g class="pen-body">
+          <rect class="pen-barrel" x="23" y="18" width="18" height="70" rx="9" />
+          <rect class="pen-cap"   x="23" y="18" width="18" height="11" rx="5" />
+          <path   class="pen-nib"  d="M23 88 L32 110 L41 88 Z" />
+          <path   class="pen-lead" d="M28.6 99.5 L32 110 L35.4 99.5 Z" />
+          <path   class="pen-gloss" d="M27 34 L27 78" />
+          <circle class="eye-white" cx="29.4" cy="55" r="4.6" />
+          <circle class="eye-black" cx="29.9" cy="55.4" r="2.1" />
+          <circle class="eye-white" cx="35.2" cy="55" r="4.6" />
+          <circle class="eye-black" cx="35.7" cy="55.4" r="2.1" />
+          <path   class="brow" d="M26.2 47.2 q3.2 -1.6 6.2 0" />
+          <path   class="brow" d="M32.4 47.2 q3.2 -1.6 6.2 0" />
+        </g>
+      </svg>
+      <span class="mascot-shadow"></span>
+    </div>
+  </div>
+
+  <div class="masthead-tools">
+    <button class="tool" id="speakToggle" type="button" aria-pressed="true" title="Read replies aloud">
+      <span class="tool-glyph" aria-hidden="true">🔊</span><span class="tool-label">Voice</span>
+    </button>
+    <button class="tool" id="themeToggle" type="button" title="Switch between paper and chalkboard">
+      <span class="tool-glyph" aria-hidden="true">🌙</span><span class="tool-label">Night desk</span>
+    </button>
+  </div>
+</header>
+
+<main class="desk">
+
+  <!-- ── Notebook ─────────────────────────────────────────────── -->
+  <section class="notebook" aria-labelledby="listHeading">
+    <div class="paper">
+      <div class="paper-head">
+        <h2 id="listHeading" class="notebook-title">To do</h2>
+        <p class="notebook-sub" id="taskSummary">Nothing on the page yet.</p>
+      </div>
+
+      <form class="add-line" id="addForm" autocomplete="off">
+        <span class="add-mark" aria-hidden="true">+</span>
+        <label class="sr-only" for="addBox">Add one task</label>
+        <input id="addBox" placeholder="write a new line — one task" />
+      </form>
+
+      <ul class="list ruled" id="taskList" aria-live="polite" aria-relevant="additions"></ul>
+
+      <p class="empty-note" id="emptyNote">
+        Hold the mic (or the <kbd>space</kbd> bar) and say what you have to do.<br />
+        Or just type below — there is no form to fill in.
+      </p>
+    </div>
+
+    <!-- Composer -->
+    <div class="composer" id="composer">
+      <div class="margin-note" id="marginNote" hidden>
+        <p class="margin-text" id="marginText"></p>
+        <button class="margin-replay" id="marginReplay" type="button" title="Read it again">read again</button>
+      </div>
+
+      <div class="composer-row">
+        <label class="sr-only" for="messageBox">Say or type what you need to do</label>
+        <textarea id="messageBox" rows="1" placeholder="I have to file the tax report before Friday…"
+                  autocomplete="off" spellcheck="true"></textarea>
+
+        <button class="mic" id="mic" type="button" aria-pressed="false"
+                title="Hold to talk (or hold space)">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect class="mic-capsule" x="9" y="2.5" width="6" height="11" rx="3" />
+            <path  class="mic-arc" d="M5.5 11.5 a6.5 6.5 0 0 0 13 0" />
+            <path  class="mic-stem" d="M12 18 v3.2 M8.6 21.4 h6.8" />
+          </svg>
+          <span class="mic-label">hold</span>
+        </button>
+      </div>
+      <p class="composer-hint" id="composerHint">Enter sends · <kbd>space</kbd> held = talking</p>
+      <p class="writing-note" id="writingNote" hidden><span class="caret"></span> the pen is writing…</p>
+    </div>
+  </section>
+
+  <!-- ── Planner ──────────────────────────────────────────────── -->
+  <section class="planner" aria-labelledby="planHeading">
+    <div class="planner-head">
+      <h2 id="planHeading" class="planner-title">Planner</h2>
+      <div class="week-nav">
+        <button class="nav-btn" id="weekPrev" type="button" aria-label="Previous week">‹</button>
+        <button class="week-label" id="weekLabel" type="button" title="Jump to this week">—</button>
+        <button class="nav-btn" id="weekNext" type="button" aria-label="Next week">›</button>
+      </div>
+      <button class="schedule-btn" id="scheduleBtn" type="button">Schedule it</button>
+    </div>
+
+    <div class="planner-scroll">
+      <div class="grid" id="grid">
+        <div class="gutter" id="gutter" aria-hidden="true"></div>
+        <div class="days" id="days"></div>
+      </div>
+      <p class="planner-empty" id="plannerEmpty">Nothing is placed yet. Say a few tasks and the pen will find the gaps.</p>
+    </div>
+
+    <ul class="legend" id="legend"></ul>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<template id="taskTemplate">
+  <li class="task">
+    <button class="tick" type="button" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path class="tick-mark" d="M4.5 12.6 L9.6 17.8 L19.6 6.6" /></svg>
+    </button>
+    <div class="task-body">
+      <span class="title-wrap"><span class="title-text"></span></span>
+      <div class="meta"></div>
+    </div>
+    <button class="kill" type="button" aria-label="Delete task">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path class="kill-body" d="M6.5 6.5 L17.5 17.5 M17.5 6.5 L6.5 17.5" />
+      </svg>
+    </button>
+    <span class="overdue-mark" aria-hidden="true"></span>
+  </li>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>
