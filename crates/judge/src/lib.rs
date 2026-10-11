@@ -407,7 +407,7 @@ fn split_compound(sentence: &str) -> Vec<String> {
 fn is_action_word(word: &str) -> bool {
     [
         "buy", "call", "clean", "email", "finish", "find", "make", "read", "review", "schedule",
-        "send", "share", "start", "submit", "upload", "write",
+        "book", "pay", "send", "share", "start", "submit", "upload", "write",
     ]
     .contains(
         &word
@@ -561,6 +561,10 @@ mod tests {
             )
             .iter()
             .any(|clause| clause.contains("Maya and Luis"))
+        );
+        assert_eq!(
+            split_sentences("book a dentist appointment and pay rent by Friday"),
+            vec!["book a dentist appointment", "pay rent by Friday"]
         );
     }
 
