@@ -2,9 +2,9 @@
 
 Read `docs/TEAM.md` first (status, API, visual direction). Tick `- [x]` in the same PR when you finish an item.
 
-Run: `.env` with `TYPESAFE_API_KEY=...`, then `cargo run -p server` from the repo root → `http://localhost:8080` (serves `static/`).
+Run: `.env` with `TYPESAFE_API_KEY=...`, then `.\run-local.ps1` from the repo root → `http://localhost:8080` (serves `static/`). Live: https://ai-todo-api.burvy.dev
 
-_Synced 2026-10-11 ~14:45 by the orchestrator from what is on `main` (PRs #20, #27)._
+_Synced 2026-10-11 ~15:45 by the orchestrator from what is on `main` (PRs #20, #27, #29)._
 
 ## P0: plain TODO list ✅
 - [x] Page shell: parchment, ruled lines, Caveat + Inter fonts
@@ -33,9 +33,14 @@ _Synced 2026-10-11 ~14:45 by the orchestrator from what is on `main` (PRs #20, #
 - [x] Empty-state hint with a sample sentence to say (taken from `demo/rambles.md`, set in handwriting so it reads like a note on the page)
 - [x] Phone width check — verified at 390x844 and 1400x900 in a real browser: no horizontal overflow, titles wrap, planner scrolls inside its own column, mascot hidden so it stops covering the page
 
+## P1b: import buttons (after week/month, as the routes land)
+- [ ] **Import calendar** button: file picker for `.ics` → `POST /api/calendar/import` with `{ics_text}` → redraw the planner from the response (same shape as `GET /api/calendar`). Owner of the route: backend 2.
+- [ ] **Drop an email / PDF**: file drop or picker → multipart `file` on `POST /api/capture` → new tasks come back as `{tasks}`; run the same "writing" animation. Owner of the route: new teammate (`docs/TASKS-pdf.md`).
+
 ## P3: only if time
 - [ ] Weather background (Open-Meteo, no key, plus browser location)
-- [ ] Calendar import button once the backend `/api/calendar/import` lands (file picker for `.ics`)
+
+**Week/month view and both buttons: PR by 17:30. Feature freeze 18:30.**
 
 ## Deploy handoff
 Nothing to do: the server serves `static/` and the app uses relative `/api/...` URLs, so it works on burvy.dev unchanged.

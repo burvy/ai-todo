@@ -10,10 +10,11 @@ Ramble (voice or text) and ai-todo writes your task list: Jev (TypeSafe's System
    ```text
    TYPESAFE_API_KEY=your-key-here
    ```
-2. Start the server from the repo root (it serves the web app from `static/`):
+2. Build and start it from the repo root (it serves the web app from `static/` and opens the browser):
    ```powershell
-   cargo run -p server
+   .\run-local.ps1          # -Fresh: throwaway data, -Port 9000, -LogCapture: log Jev judgments
    ```
+   (`cargo run -p server` also works.)
 3. Open `http://localhost:8080`. Hold the mic button or the space bar and ramble, or type in the box. Sample rambles: `demo/rambles.md`.
 
 | Env var | Default | Meaning |
@@ -53,7 +54,7 @@ Task: `id, title, notes, duration_min, deadline|null, priority 0-3, status, conf
 | `server/` | axum API, SQLite (`db.rs`), intent routing |
 | `static/` | Web app (parchment UI) |
 | `deploy/` | Windows build, run and install scripts |
-| `docs/` | `TEAM.md` (status, owners), task lists, `jev.md`, `deploy.md` |
+| `docs/` | `TEAM.md` (status, owners), task lists (`TASKS-frontend.md`, `TASKS-backend.md`, `TASKS-pdf.md`), `jev.md`, `deploy.md` |
 
 ## Checks (CI runs these on every PR)
 
@@ -65,11 +66,10 @@ cargo test --workspace
 
 ## Deploy (burvy.dev)
 
-Plan: `ai-todo-api.burvy.dev` → Cloudflare proxied CNAME + Origin Rule → port `3160` on the server PC. Details: `docs/deploy.md`.
+Live at **https://ai-todo-api.burvy.dev**: Cloudflare proxied CNAME + Origin Rule → port `3160` on the server PC. Details: `docs/deploy.md`.
 
-1. `deploy\build-release.ps1` builds and stages `deploy\dist\ai-todo\` (server.exe + static).
-2. Put the key in `C:\burvy\secrets\ai-todo\jev-key.env`.
-3. The startup task runs as the low-privilege `LocalService` account. Grant it access once (admin PowerShell):
-   `icacls C:\burvy\secrets\ai-todo /grant "NT AUTHORITY\LOCAL SERVICE:(OI)(CI)R"` and
-   `icacls <repo>\deploy /grant "NT AUTHORITY\LOCAL SERVICE:(OI)(CI)M"` (M: it writes the SQLite file).
-4. `deploy\install-task.ps1` as Administrator: registers the "ai-todo-server" startup task and opens TCP 3160.
+1. On a dev PC: `git pull`, then `deploy\build-release.ps1` stages `deploy\dist\ai-todo\` (server.exe + static).
+2. On the server: stop the server window, copy `server.exe` and `static\` over `deploy\dist\ai-todo\` (**not** `data\`), then run `deploy\run-server.ps1` again. A static-only change needs just `static\` copied, no restart.
+3. The key lives in `C:\burvy\secrets\ai-todo\jev-key.env`; `run-server.ps1` reads it and uses port 3160.
+
+`deploy\install-task.ps1` can instead register it as a startup task (LocalService); see `docs/deploy.md`.

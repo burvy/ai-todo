@@ -5,35 +5,44 @@ Ramble or drop a file, walk away, and your tasks are written and scheduled for y
 
 Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 
+**Live:** https://ai-todo-api.burvy.dev (anyone can open it; Chrome or Edge for the mic).
+**Run locally:** `.env` with `TYPESAFE_API_KEY=...` in the repo root, then `.\run-local.ps1` → http://localhost:8080 (`-Fresh` = throwaway data).
+
 ---
 
-## 1. Status (synced 2026-10-11 ~14:45)
+## 1. Status (synced 2026-10-11 ~16:10)
 
 **Works on `main` (all live-tested by the orchestrator against real Jev):**
 
 | Area | What works |
 |---|---|
-| Web app (`static/`) | Parchment UI, pen mascot, task list (check off, edit, delete, add), always-on text box, push-to-talk (mic button / space bar), spoken replies, week planner with busy blocks + placed tasks, "Schedule it", "pencilled in" low-confidence fields, Night desk theme |
+| Web app (`static/`) | Parchment UI (light by default), pen mascot, task list (check off, edit, delete, add), always-on text box, push-to-talk (mic button / space bar), spoken replies, 7-day planner starting today with busy blocks + placed tasks, "Schedule it", "pencilled in" low-confidence fields, sample sentence when the list is empty, phone layout, Night desk theme |
 | AI capture | Messy spoken rambles split into clauses; Jev keeps real tasks and drops chit-chat; clean titles ("Study for calc quiz"); relative dates (today, tomorrow, weekdays, "by the weekend", "next week") with 17:00 local deadlines; durations, priority, labels |
 | Conversation | `POST /api/message`: add tasks, "I finished X" (marks done, unschedules), "my 3pm got cancelled" (removes busy block, re-plans), "what does tomorrow look like" (jumps planner) |
 | Scheduler | Deadline first then priority; ≤2h chunks; 9:00–18:00 local; skips done tasks |
 | Persistence | SQLite (`data/ai-todo.db`): tasks and busy blocks survive restarts |
-| Ops | CI (fmt, clippy, tests), deploy guide + scripts, `.env` loading |
+| Ops | CI (fmt, clippy, tests), `run-local.ps1`, `.env` loading, **deployed** at `ai-todo-api.burvy.dev` |
 
-**Known gaps:** busy blocks are 3 fake demo blocks (no real calendar import yet); no PDF/email capture yet; not deployed yet; labels partly keyword-based.
+**Known gaps:** busy blocks are 3 fake demo blocks (no real calendar import yet); PDF/email parsing exists (`crates/capture`) but no upload route yet; no week/month view yet; labels partly keyword-based; no login (everyone shares one list on the live site).
 
 ---
 
 ## 2. Who owns what
 
-| Owner | Doing now | Next |
+| Owner | Doing now | Task list |
 |---|---|---|
-| **Frontend** | Week / month planner views | Polish (see `docs/TASKS-frontend.md`) |
-| **Backend (teammate 2)** | SQLite ✅ done | `.ics` calendar import, then email/PDF → tasks (`docs/TASKS-backend.md`) |
-| **burvy** | | **Deploy** to `ai-todo-api.burvy.dev` (Cloudflare, port forward 3160, `deploy/` scripts), then demo rehearsal |
-| **AI agents** | idle, ready | Bug fixes and backend help on request; orchestrator reviews and merges every PR |
+| **Frontend** | Week / month planner views, then import buttons | `docs/TASKS-frontend.md` |
+| **Backend 2** | Calendar import (`.ics` → busy blocks); email/PDF parsers done (#32) | `docs/TASKS-backend.md` |
+| **New teammate** | Email / PDF upload → tasks (uses `crates/capture`) | `docs/TASKS-pdf.md` (start here) |
+| **burvy** | Demo rehearsal, redeploys | |
+| **AI agents** | Review, merge, live-test, docs | |
 
-**Priority now:** P1 deploy + real calendar import → P2 email/PDF, month view → P3 Graph, weather.
+**Schedule (deadline ~19:55):**
+- **17:30** PRs up for week/month view, `.ics` import, email/PDF.
+- **18:30 feature freeze.** After this, only bug fixes. Orchestrator merges, builds the final release, burvy redeploys.
+- **18:30–19:30** rehearse the demo twice on the live site.
+
+**Avoid merge conflicts:** both backend people add a route in `server/src/main.rs`. Keep that edit to a few lines and put the logic in your own file (`server/src/ics.rs`, `server/src/email.rs`). Pull `main` before you push.
 
 **Tick your boxes:** when you finish an item, change `- [ ]` to `- [x]` in your task list in the same PR. The orchestrator updates this file.
 
@@ -69,7 +78,7 @@ All times are UTC ISO strings; convert to local time in the UI. A long task can 
 
 ## 4. Task lists
 
-Frontend: `docs/TASKS-frontend.md` · Backend: `docs/TASKS-backend.md`. Tick boxes as you finish.
+Frontend: `docs/TASKS-frontend.md` · Backend 2: `docs/TASKS-backend.md` · New teammate: `docs/TASKS-pdf.md`. Tick boxes as you finish.
 
 ---
 
