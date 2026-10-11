@@ -3,6 +3,7 @@
 //! Routes and payloads follow the frozen API contract in `hive/board.md`.
 
 mod db;
+mod export;
 mod ics;
 
 use std::collections::BTreeSet;
@@ -1109,6 +1110,7 @@ fn app(state: AppState) -> Router {
         .route("/api/tasks/{id}", patch(patch_task).delete(delete_task))
         .route("/api/schedule", post(schedule_tasks))
         .route("/api/calendar", get(calendar))
+        .route("/api/calendar.ics", get(export::calendar_ics))
         .route("/api/calendar/import", post(import_calendar))
         .with_state(state)
         .layer(CorsLayer::permissive());
