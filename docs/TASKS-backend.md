@@ -1,29 +1,26 @@
-# Task list: teammate 2 (backend)
+# Task list: backend 2 (email / PDF → tasks)
 
-Read `docs/TEAM.md` first (status, API). Tick `- [x]` in the same PR when you finish an item.
+Read `docs/TEAM.md` first (status, API, schedule). Tick `- [x]` in the same PR when you finish an item.
 
-Run: `.env` with `TYPESAFE_API_KEY=...`, then `cargo run -p server` from the repo root → `http://localhost:8080`.
+Run: `.env` with `TYPESAFE_API_KEY=...`, then `.\run-local.ps1` from the repo root → `http://localhost:8080`.
 
-_Synced 2026-10-11 ~14:45 by the orchestrator from what is on `main` (SQLite merged in PR #24)._
+_Synced 2026-10-11 ~15:45 by the orchestrator. Calendar import moved to the new teammate (`docs/TASKS-calendar.md`)._
 
 ## P0: SQLite database ✅
 - [x] `rusqlite` (bundled), `server/src/db.rs`, `tasks` + `busy_blocks` tables at `DATA_PATH`
-- [x] Every write path persists (add, capture, message, patch, delete, complete, cancel event). The orchestrator added the missing save for `POST /api/tasks` during merge.
+- [x] Every write path persists
 - [x] `data/` ignored; restart test passes
 
-## P1: calendar import (~1.5h), do next
-- [ ] `parse_ics(text) -> Vec<BusyRow>` (`icalendar` or `ical` crate; put it in a new `crates/capture` or `server/src/ics.rs`). Handle `TZID=America/New_York` → UTC. Test with `demo/outlook/week.ics` (9 events, Oct 12–16). *(45m)*
-- [ ] `POST /api/calendar/import` (multipart file or `{ics_text}`): replace busy blocks with `db.save_busy(...)` and the in-memory `busy` list, then return `/api/calendar`-shaped JSON. *(30m)*
-- [ ] Optional: `{ics_url}` to fetch a published Outlook or Google ICS link. *(15m)*
-- [ ] Tell the frontend the route is live (they add the import button).
-
-## P1: email / PDF → tasks (~1.5h)
+## P1: email / PDF → tasks, now (PR by 17:30)
 - [ ] `pdf_to_text(bytes)` with `pdf-extract`. *(20m)*
 - [ ] `parse_email(text) -> {subject, sent, from, body}`; cut quoted reply chains (`-----Original Message-----`, a second `From:`/`Sent:` block), signatures, disclaimers. *(40m)*
-- [ ] Multipart `file` on `POST /api/capture` → `capture_text(body, Source::Pdf, sent)`, using the **email's sent date as the anchor**. *(30m)*
-- [ ] Test with one real Outlook export (personal data removed).
+- [ ] Multipart `file` on `POST /api/capture` → `capture_text(body, Source::Pdf, sent)`, using the **email's sent date as the anchor** for "tomorrow", "Friday" etc. Return `{tasks:[Task]}` like text capture. *(30m)*
+- [ ] Test with one real Outlook PDF export (personal data removed); put it in `demo/` if it is clean.
+- [ ] Tell the frontend the route works (they add a file drop).
 
-## P2: only after P1
-- [ ] Microsoft Graph test, max 20 min: can a `psu.edu` account consent to `Calendars.Read` + `Mail.Read`? Yes → device code sign-in. "Need admin approval" → drop or use a personal outlook.com account.
+Put the logic in `server/src/email.rs` (or a new crate); keep the `main.rs` edit to the route only. The new teammate is also adding a route there, so pull `main` before you push.
 
-**Rules:** keep `server/src/main.rs` edits small; agents may also touch it, so pull `main` first and merge often. The orchestrator reviews and live-tests every PR before merging.
+## Dropped for today
+- Microsoft Graph sign-in: no time to finish safely before the deadline.
+
+**Feature freeze 18:30.** After that, only bug fixes. The orchestrator reviews and live-tests every PR before merging.
