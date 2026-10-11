@@ -3,4 +3,8 @@ name = "ai-todo"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+members = ["crates/scheduler"]
+resolver = "2"
+
 [dependencies]
