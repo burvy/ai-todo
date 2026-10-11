@@ -23,13 +23,14 @@ _Synced 2026-10-11 ~16:30 by the orchestrator (PRs #20, #27, #29, #33). New top 
 
 ## P0-now: the pen lives in the text box (burvy's direction, do this first)
 Build on the original UI (`index.html` / `app.js` / `styles.css`), not the phone page.
-- [ ] **Home position:** move `#mascotTrack` out of the masthead (`index.html` ~line 24) into `.composer-row`, at the right end of the text box, replacing `#mic`. Remove the `#mic` button.
-- [ ] **The pen is the button:** click the pen or press Enter → send (same `submit()`); hold the pen or hold space → talk, release → send. Real `<button>` with `aria-label="Send, or hold to talk"`.
-- [ ] **Listening pose** while held: pen leans toward the user, with the ink trail or a pulse.
-- [ ] **Pen goes up and writes:** when `/api/message` returns new tasks, the pen flies from the text box to the first new row, plays the writing animation on each new title in turn (reuse `--pen-x` / `--pen-y` in `app.js` ~lines 174–189), then flies home. If it's quick, done tasks get the same trip with a tick.
-- [ ] While the pen is away: show "the pen is writing…" and don't accept input. On an error: pen goes straight home, error shows.
-- [ ] Three poses only: idle (gentle bob in the text box), listening, writing.
-- [ ] **One UI:** remove the "Phone view" link and `static/mobile.html`, `mobile.js`, `mobile.css` in the same PR. Check the pen-button is easy to tap at 390px wide.
+- [x] **Home position:** moved `#mascotTrack` out of the masthead into `.composer-row`, at the right end of the text box, replacing `#mic`. The `#mic` button is gone.
+- [x] **The pen is the button:** tap the pen or press Enter → send (same `submit()`); hold the pen or hold space → talk, release → send. Real `<button aria-label="Send, or hold to talk">`. A hold that produced speech suppresses the trailing click so nothing sends twice.
+- [x] **Listening pose** while held: pen leans, brows lift, and an ink trail blooms above the nib — seven blobs merged into one by a `blur` + `contrast` filter.
+- [x] **Pen goes up and writes:** on new tasks it flies from the text box to each new row in turn, plays the writing animation, then flies home. Tasks that came back *done* get the same trip with a tick. Home is measured from the button, so repeated trips never compound.
+- [x] While the pen is away: "the pen is writing…" is shown and the text box plus pen are locked. On an error the pen goes straight home and the toast explains.
+- [x] Three poses only: idle (bobbing in the text box), listening, writing.
+- [x] **One UI:** removed the "Phone view" link and `static/mobile.html`, `mobile.js`, `mobile.css`.
+- [x] Pen is easy to tap at 390px — 58px target, and the composer is now sticky on phones so the pen stays in reach while the list scrolls (it used to sit ~450px below the fold once the list had more than a few tasks).
 
 ## P2: polish
 - [ ] **Week / month views**: optional now, only if the pen is done before 17:30
@@ -41,7 +42,7 @@ Build on the original UI (`index.html` / `app.js` / `styles.css`), not the phone
 - [x] **Opens in the light parchment theme** — no `prefers-color-scheme` rule anywhere in `static/`, so it always opens light; Night desk only if you ask for it, and that choice is remembered in `localStorage`
 - [x] **Planner starts at today**, not Monday: a rolling seven-day window from today, so a Sunday demo shows the Monday the tasks actually land on. Prev/next step seven days, the date label jumps back to today
 - [x] Empty-state hint with a sample sentence to say (taken from `demo/rambles.md`, set in handwriting so it reads like a note on the page)
-- [x] Phone width check (#29). Re-check after the pen moves into the text box: it must stay visible on phones now.
+- [x] Phone width check (#29). Re-checked after the pen moved into the text box: no horizontal overflow at 390px, pen on screen and pinned while scrolling.
 
 ## P1b: import buttons (after week/month, as the routes land)
 - [ ] **Import calendar** button: file picker for `.ics` → `POST /api/calendar/import` with `{ics_text}` → redraw the planner from the response (same shape as `GET /api/calendar`). Owner of the route: backend 2.

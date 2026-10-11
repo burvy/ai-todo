@@ -126,25 +126,49 @@ kbd {
 .tool[aria-pressed="false"] { opacity: .55; }
 .tool-glyph { font-size: 14px; line-height: 1; }
 
-/* ── Mascot: a pen with eyes, three moods ───────────────────── */
+/* ── The pen: home in the text box, the send button and the mic ── */
 
-/* absolutely positioned so the pen can walk down onto the page */
+.pen-btn {
+  position: relative;
+  flex: none;
+  width: 62px; height: 62px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  border: 1.4px solid var(--edge);
+  background: var(--paper);
+  touch-action: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: background .18s, border-color .18s, box-shadow .18s;
+}
+.pen-btn:hover { border-color: var(--accent); }
+.pen-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.pen-btn[aria-pressed="true"] {
+  background: rgba(47, 93, 158, .1);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(47, 93, 158, .12);
+}
+
+/* the pen travels on this element; it has to escape the composer row */
 .mascot-track {
   position: absolute;
-  left: 50%; top: 4px; margin-left: -30px;
-  z-index: 30; pointer-events: none;
-  width: 60px; height: 108px;
-  transform: translate(var(--pen-x, 0px), var(--pen-y, 0px)) rotate(var(--pen-tilt, 0deg)) scale(.92);
-  transition: transform .38s cubic-bezier(.2,.75,.25,1);
+  inset: 0;
+  z-index: 25;
+  display: grid; place-items: center;
+  pointer-events: none;
+  transform: translate(var(--pen-x, 0px), var(--pen-y, 0px)) scale(var(--pen-scale, 1));
+  transition: transform .42s cubic-bezier(.22, .8, .3, 1);
 }
+.mascot-track.is-flying { transition: transform .5s cubic-bezier(.3, .85, .25, 1); }
 
 .mascot {
   position: absolute; inset: 0;
-  transform-origin: 50% 96%;
+  display: grid; place-items: center;
+  transform-origin: 50% 88%;
   animation: bob 3.4s ease-in-out infinite;
 }
 
-.pen { width: 100%; height: 100%; overflow: visible; }
+.pen { width: 30px; height: 52px; overflow: visible; }
 .pen-barrel { fill: var(--accent); }
 .pen-cap    { fill: #24486F; }
 .pen-nib    { fill: #D9CFB8; }
@@ -155,20 +179,43 @@ kbd {
 .brow       { stroke: #24486F; stroke-width: 1.5; stroke-linecap: round; fill: none; opacity: .8; }
 
 .mascot-shadow {
-  position: absolute; left: 50%; bottom: 2px;
-  width: 26px; height: 5px; margin-left: -13px;
-  background: radial-gradient(ellipse, rgba(43,42,40,.28), transparent 70%);
+  position: absolute; left: 50%; bottom: 5px;
+  width: 22px; height: 4px; margin-left: -11px;
+  background: radial-gradient(ellipse, rgba(43,42,40,.26), transparent 70%);
   animation: shadow-breathe 3.4s ease-in-out infinite;
 }
 
+/* ink trail while it listens — one merged blob, not separate dots */
+.ink-trail { position: absolute; left: 50%; top: 12%; width: 1px; height: 1px; }
+.ink-trail i {
+  position: absolute; left: var(--x); top: var(--y);
+  width: calc(11px * var(--s)); height: calc(11px * var(--s));
+  margin: calc(-5.5px * var(--s)) 0 0 calc(-5.5px * var(--s));
+  border-radius: 50%;
+  background: var(--accent);
+  filter: blur(4px) contrast(20);
+  opacity: 0; transform: scale(.2);
+}
+.ink-trail i:nth-child(1) { --x: -13px; --y: -6px;  --s: 1;   }
+.ink-trail i:nth-child(2) { --x: -9px;  --y: -17px; --s: .7;  }
+.ink-trail i:nth-child(3) { --x:  9px;  --y: -17px; --s: .7;  }
+.ink-trail i:nth-child(4) { --x: 13px;  --y: -6px;  --s: .9;  }
+.ink-trail i:nth-child(5) { --x:  0px;  --y: -24px; --s: .55; }
+
 .mascot-track[data-mood="listening"] .mascot { animation: lean 1s ease-in-out infinite; }
 .mascot-track[data-mood="listening"] .brow   { animation: brow-raise 1s ease-in-out infinite; transform-origin: 32px 50px; }
-.mascot-track[data-mood="writing"]   .mascot { animation: scribble .18s linear infinite; }
-.mascot-track[data-mood="writing"]   .pen-gloss { opacity: 0; }
+.mascot-track[data-mood="listening"] .ink-trail i { animation: ink-pulse 1.5s ease-in-out infinite; }
+.mascot-track[data-mood="listening"] .ink-trail i:nth-child(2) { animation-delay: .18s; }
+.mascot-track[data-mood="listening"] .ink-trail i:nth-child(3) { animation-delay: .34s; }
+.mascot-track[data-mood="listening"] .ink-trail i:nth-child(4) { animation-delay: .1s; }
+.mascot-track[data-mood="listening"] .ink-trail i:nth-child(5) { animation-delay: .46s; }
+
+.mascot-track[data-mood="writing"] .mascot { animation: scribble .18s linear infinite; }
+.mascot-track[data-mood="writing"] .pen-gloss { opacity: 0; }
 
 @keyframes bob {
   0%, 100% { transform: translateY(0) rotate(-1.2deg); }
-  50%      { transform: translateY(-4px) rotate(1.2deg); }
+  50%      { transform: translateY(-3px) rotate(1.2deg); }
 }
 @keyframes shadow-breathe {
   0%, 100% { transform: scale(1); opacity: .8; }
@@ -188,6 +235,12 @@ kbd {
   50%  { transform: rotate(-11deg) translateY(0.5px); }
   75%  { transform: rotate(-6deg) translateY(-2px); }
   100% { transform: rotate(-9deg) translateY(0); }
+}
+@keyframes ink-pulse {
+  0%   { opacity: 0;   transform: scale(.15); }
+  35%  { opacity: .8; }
+  70%  { opacity: .45; transform: scale(1); }
+  100% { opacity: 0;   transform: scale(.3); }
 }
 
 /* ── Desk layout ────────────────────────────────────────────── */
@@ -461,44 +514,6 @@ kbd {
 }
 #messageBox::placeholder { color: var(--pencil); font-style: italic; }
 
-.mic {
-  display: grid; place-items: center; gap: 1px;
-  width: 54px; height: 54px;
-  background: var(--paper);
-  border: 1.6px solid var(--edge);
-  border-radius: 50%;
-  transition: transform .14s, background .18s, border-color .18s;
-  touch-action: none; user-select: none;
-}
-.mic svg { width: 24px; height: 24px; }
-.mic-capsule { fill: var(--accent); }
-.mic-arc, .mic-stem { stroke: var(--accent); stroke-width: 1.7; stroke-linecap: round; fill: none; }
-.mic-label { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--pencil); }
-
-.mic:hover { border-color: var(--accent); }
-.mic:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.mic { position: relative; }
-.mic::after {
-  content: ""; position: absolute; left: 50%; top: 50%;
-  width: 52px; height: 52px; margin: -26px 0 0 -26px;
-  border: 2px solid var(--accent); border-radius: 50%;
-  opacity: 0; pointer-events: none;
-}
-.mic[aria-pressed="true"] {
-  background: rgba(47, 93, 158, .12);
-  border-color: var(--accent);
-  transform: scale(1.06);
-}
-.mic[aria-pressed="true"] .mic-label { color: var(--accent); }
-.mic[aria-pressed="true"]::after { animation: pulse 1.3s ease-out infinite; }
-
-@keyframes pulse {
-  from { transform: scale(1);   opacity: .75; }
-  to   { transform: scale(1.8); opacity: 0; }
-}
-
-.mic[disabled] { opacity: .4; cursor: not-allowed; }
-
 .composer-hint { margin: 7px 2px 0; font-size: 12.5px; color: var(--pencil); }
 
 /* ── Planner ────────────────────────────────────────────────── */
@@ -699,7 +714,6 @@ body.is-busy .composer-row { border-color: var(--accent); }
 
 @media (max-width: 1040px) {
   .desk { grid-template-columns: minmax(0, 1fr); }
-  .mascot-track { left: auto; right: 10px; top: 46px; opacity: .35; }
 }
 
 @media (max-width: 720px) {
@@ -717,8 +731,18 @@ body.is-busy .composer-row { border-color: var(--accent); }
   .meta { flex-wrap: wrap; }
   .tool-label { display: none; }
   .tool { padding: 6px 9px; }
-  /* the pen is a desktop delight; on a phone it only covers the page */
-  .mascot-track { display: none; }
+  /* the pen now lives in the text box: keep it a comfortable tap target
+     and let it still reach up over the list */
+  .pen-btn { width: 58px; height: 58px; }
+  .composer-row { padding: 6px 6px 6px 10px; }
+  /* on a phone the list is taller than the screen, and the demo starts with
+     "hold push-to-talk" — so keep the pen within reach while scrolling */
+  .composer {
+    position: sticky; bottom: 0; z-index: 20;
+    margin: 0; padding: 8px 0 4px;
+    background: linear-gradient(to top, var(--paper-fresh) 72%, rgba(251, 247, 236, 0));
+    box-shadow: 0 -10px 18px -14px rgba(43, 42, 40, .7);
+  }
   .planner-head { flex-wrap: wrap; }
   .week-label { white-space: nowrap; font-size: 13px; }
   .schedule-btn { font-size: 20px; padding: 6px 11px 7px; }

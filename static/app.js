@@ -29,7 +29,7 @@ const list       = $('#taskList');
 const emptyNote  = $('#emptyNote');
 const summary    = $('#taskSummary');
 const box        = $('#messageBox');
-const micBtn     = $('#mic');
+const penBtn      = $('#penBtn');
 const mascotTrack = $('#mascotTrack');
 const marginNote = $('#marginNote');
 const marginText = $('#marginText');
@@ -168,23 +168,33 @@ async function addTask(title) {
   return api('/api/tasks', { method: 'POST', body: JSON.stringify({ title }) });
 }
 
-/* ── Mascot ─────────────────────────────────────────────────── */
+/* ── The pen: three poses, and the trip up to write ──────────── */
 
 function mood(next) {
   mascotTrack.dataset.mood = next;
+  penBtn.setAttribute('aria-pressed', String(next === 'listening'));
 }
 
-function penHome() {
+/* Home is wherever the composer happens to be. Measure it while the pen has no
+   transform on it, so repeated trips never compound. */
+let penHomeRect = null;
+function measurePenHome() {
+  penHomeRect = penBtn.getBoundingClientRect();
+}
+
+function penGoHome() {
+  mascotTrack.classList.remove('is-flying');
   mascotTrack.style.removeProperty('--pen-x');
   mascotTrack.style.removeProperty('--pen-y');
 }
 
-function penWalkTo(el) {
-  if (!el || reduceMotion) return;
-  const home = mascotTrack.getBoundingClientRect();
-  const box  = el.getBoundingClientRect();
-  const x = (box.left + Math.min(60, box.width * 0.4)) - home.left;
-  const y = (box.top + box.height / 2) - 34 - home.top;
+function penFlyTo(el) {
+  if (!el) return;
+  if (!penHomeRect) measurePenHome();
+  const target = el.getBoundingClientRect();
+  const x = (target.left + Math.min(70, target.width * 0.45)) - penHomeRect.left;
+  const y = (target.top + target.height / 2) - 22 - penHomeRect.top;
+  mascotTrack.classList.add('is-flying');
   mascotTrack.style.setProperty('--pen-x', `${Math.round(x)}px`);
   mascotTrack.style.setProperty('--pen-y', `${Math.round(y)}px`);
 }
@@ -302,19 +312,30 @@ function renderList() {
   }
 }
 
-async function announceNewTasks() {
+async function announceNewTasks(alsoDone = []) {
   const fresh = [...state.freshIds];
-  if (!fresh.length) return;
+  if (!fresh.length && !alsoDone.length) return;
+
+  measurePenHome();
   mood('writing');
 
   for (const id of fresh) {
     const row = list.querySelector(`.task[data-id="${CSS.escape(id)}"]`);
-    if (row) penWalkTo(row.querySelector('.title-wrap'));
+    penFlyTo(row ? row.querySelector('.title-wrap') : null);
     await wait(reduceMotion ? 30 : WRITE_MS);
   }
 
+  // "I finished the lab report" gets the same trip, with a tick
+  for (const id of alsoDone) {
+    const row = list.querySelector(`.task[data-id="${CSS.escape(id)}"]`);
+    penFlyTo(row ? row.querySelector('.tick') : null);
+    await wait(reduceMotion ? 30 : WRITE_MS);
+  }
+
+  // fly home, then settle
+  penGoHome();
+  await wait(reduceMotion ? 30 : 420);
   mood('idle');
-  setTimeout(penHome, 420);
 }
 
 /* ── Render the planner ─────────────────────────────────────── */
@@ -493,7 +514,9 @@ function setBusy(on) {
   document.body.classList.toggle('is-busy', state.working);
   $('#writingNote').hidden = !state.working;
   scheduleBtn.disabled = state.working;
-  if (SpeechRec) micBtn.disabled = state.working;
+  // while the pen is away writing, take no new input from the user
+  penBtn.disabled = state.working;
+  box.readOnly = state.working;
 }
 
 /* ── Send a message ─────────────────────────────────────────── */
@@ -507,7 +530,7 @@ async function submit(text, source = 'text') {
 
   try {
     const result = await sendMessage(body, source);
-    const before = new Set(state.byId.keys());
+    const before = new Map(state.tasks.map((t) => [t.id, t.status]));
     state.tasks = result.tasks || [];
     indexTasks();
     if (result.focus_date) {
@@ -517,6 +540,9 @@ async function submit(text, source = 'text') {
     state.placements = result.placements || [];
 
     state.freshIds = new Set(state.tasks.filter((t) => !before.has(t.id)).map((t) => t.id));
+    const newlyDone = state.tasks
+      .filter((t) => t.status === 'done' && before.has(t.id) && before.get(t.id) !== 'done')
+      .map((t) => t.id);
     renderList();
     renderPlanner();
 
@@ -525,11 +551,11 @@ async function submit(text, source = 'text') {
     speak(result.reply);
     clearToast();
 
-    await announceNewTasks();
+    await announceNewTasks(newlyDone);
     state.freshIds.clear();
     await refreshCalendar();
   } catch (err) {
-    penHome();
+    penGoHome();
     say('The server did not answer. Is it running?');
     console.error(err);
   } finally {
@@ -538,18 +564,22 @@ async function submit(text, source = 'text') {
   }
 }
 
-/* ── Push to talk ───────────────────────────────────────────── */
+/* ── Push to talk: the pen is the mic ───────────────────────── */
 
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
 let listening = false;
 let heardSomething = false;
+let startGuard = null;
+/* true when this press produced speech, so the click that follows a
+   press-and-hold does not also fire an empty send */
+let spokeThisPress = false;
 
 function setupRecognition() {
   if (!SpeechRec) {
-    micBtn.disabled = true;
-    micBtn.title = 'This browser has no speech recognition. Type instead.';
-    $('#composerHint').textContent = 'Enter sends · this browser has no speech recognition';
+    penBtn.dataset.noSpeech = 'true';
+    penBtn.title = 'This browser has no speech recognition. Tap to send, type instead.';
+    $('#composerHint').innerHTML = 'Tap the pen to send · this browser has no speech recognition';
     return;
   }
   recognition = new SpeechRec();
@@ -560,9 +590,10 @@ function setupRecognition() {
   const baseText = () => (box.dataset.base || '');
 
   recognition.onstart = () => {
+    clearTimeout(startGuard);
+    startGuard = null;
     listening = true;
     heardSomething = false;
-    micBtn.setAttribute('aria-pressed', 'true');
     mood('listening');
     box.dataset.base = box.value;
   };
@@ -590,40 +621,77 @@ function setupRecognition() {
   };
 
   recognition.onend = () => {
-    if (!listening) return;
+    clearTimeout(startGuard);
+    startGuard = null;
+    if (!listening) { mood('idle'); return; }
     listening = false;
-    micBtn.setAttribute('aria-pressed', 'false');
-    mood('idle');
     const spoken = box.value.trim();
     if (heardSomething && spoken) {
+      spokeThisPress = true;
       box.value = '';
+      delete box.dataset.base;
       submit(spoken, 'voice');
     } else {
       box.value = baseText();
+      delete box.dataset.base;
       autoGrow();
+      mood('idle');
     }
   };
 }
 
 function startListening() {
   if (!recognition || listening) return;
-  try { recognition.start(); } catch { /* already started */ }
+  // React to the press straight away. Some browsers advertise speech support
+  // but never fire `start` (no device, permission still pending), so don't hang.
+  mood('listening');
+  startGuard = setTimeout(() => {
+    startGuard = null;
+    if (!listening) {
+      mood('idle');
+      say('The microphone did not start. Check the permission?', 4000);
+    }
+  }, 2000);
+  try {
+    recognition.start();
+  } catch {
+    clearTimeout(startGuard);
+    startGuard = null;
+    mood('idle');
+  }
 }
 
 function stopListening() {
-  if (!recognition || !listening) return;
+  if (!recognition) return;
+  clearTimeout(startGuard);
+  startGuard = null;
+  if (!listening) return;
   try { recognition.stop(); } catch { /* not running */ }
 }
 
-/* hold the mic button */
-['pointerdown'].forEach((evt) =>
-  micBtn.addEventListener(evt, (event) => {
-    event.preventDefault();
-    micBtn.setPointerCapture?.(event.pointerId);
-    startListening();
-  }));
+/* The pen: press and hold to talk, tap to send. */
+penBtn.addEventListener('pointerdown', (event) => {
+  event.preventDefault();
+  // capture keeps the press alive if the finger slides off the nib; never let
+  // it throw and swallow the start of the recording
+  try { penBtn.setPointerCapture?.(event.pointerId); } catch { /* fine without it */ }
+  spokeThisPress = false;
+  startListening();
+});
 ['pointerup', 'pointercancel'].forEach((evt) =>
-  micBtn.addEventListener(evt, () => stopListening()));
+  penBtn.addEventListener(evt, () => stopListening()));
+
+penBtn.addEventListener('click', () => {
+  // a press-and-hold that produced speech already sent it
+  if (spokeThisPress) { spokeThisPress = false; return; }
+  if (state.working) return;
+  const text = box.value;
+  if (!text.trim()) return;
+  box.value = '';
+  delete box.dataset.base;
+  autoGrow();
+  submit(text, 'text');
+});
 
 /* hold the space bar */
 let spaceHeld = false;
