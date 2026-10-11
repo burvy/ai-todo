@@ -3,7 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>ai-todo</title>
+<meta name="darkreader-lock" />
+<meta name="color-scheme" content="light" />
+<title>Rambl</title>
 <meta name="description" content="Every scheduling tool asks you to do data entry. This one just listens." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -29,11 +31,14 @@
     <div class="paper">
       <div class="paper-head">
         <h2 id="listHeading" class="notebook-title">To do</h2>
-        <div class="masthead-tools">
+        <button class="gear" id="gearBtn" type="button" aria-label="Settings" aria-expanded="false" aria-controls="settingsPop" title="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.6a3.4 3.4 0 1 0 0 6.8 3.4 3.4 0 0 0 0-6.8Zm8.2 4.6.1-1.2-.1-1.2 2-1.6-2-3.4-2.4.9a7.6 7.6 0 0 0-2-1.2L15.4 3h-3.9l-.4 2.5a7.6 7.6 0 0 0-2 1.2l-2.4-.9-2 3.4 2 1.6-.1 1.2.1 1.2-2 1.6 2 3.4 2.4-.9c.6.5 1.3.9 2 1.2l.4 2.5h3.9l.4-2.5c.7-.3 1.4-.7 2-1.2l2.4.9 2-3.4-2-1.6Z"/></svg>
+        </button>
+        <div class="masthead-tools settings-pop" id="settingsPop" role="menu" hidden>
           <button class="tool" id="speakToggle" type="button" aria-pressed="true" title="Read replies aloud">
             <span class="tool-glyph" aria-hidden="true">🔊</span><span class="tool-label">Voice</span>
           </button>
-          <button class="tool" id="themeToggle" type="button" title="Switch between paper and chalkboard">
+          <button class="tool" id="themeToggle" type="button" title="Switch between paper and night desk">
             <span class="tool-glyph" aria-hidden="true">🌙</span><span class="tool-label">Night desk</span>
           </button>
         </div>
@@ -94,6 +99,39 @@
       </div>
       <p class="writing-note" id="writingNote" hidden><span class="caret"></span> the pen is writing…</p>
     </div>
+
+    <!-- Edit card: tap a task -->
+    <div class="edit-card" id="editCard" role="dialog" aria-modal="false" hidden>
+      <form id="cardForm" autocomplete="off">
+        <div class="card-revise">
+          <label class="sr-only" for="cardRevise">Tell Jev what to change</label>
+          <input id="cardRevise" name="revise" placeholder="Tell Jev what to change… e.g. Thursday at 2, about an hour" />
+          <button type="button" class="card-pen" id="cardPen" aria-label="Ask Jev to revise">&#9998;</button>
+        </div>
+        <label class="card-field card-title"><span>Title</span><input name="title" required /></label>
+        <div class="card-row">
+          <label class="card-field"><span>Day</span><input name="day" type="date" /></label>
+          <label class="card-field"><span>Time <em>(pins it)</em></span><input name="time" type="time" step="900" /></label>
+        </div>
+        <div class="card-row">
+          <label class="card-field"><span>Minutes</span><input name="duration" type="number" min="5" step="5" /></label>
+          <label class="card-field"><span>Label</span>
+            <select name="label">
+              <option>School</option><option>Work</option><option>Errands</option>
+              <option>Health</option><option>Personal</option><option>Other</option>
+            </select>
+          </label>
+        </div>
+        <label class="card-field"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
+        <div class="card-actions">
+          <label class="card-done"><input name="done" type="checkbox" /> Done</label>
+          <button type="button" class="card-delete" id="cardDelete">Delete</button>
+          <span class="card-spacer"></span>
+          <button type="button" class="nav-btn card-cancel" id="cardCancel">Cancel</button>
+          <button type="submit" class="schedule-btn card-save">Save</button>
+        </div>
+      </form>
+    </div>
   </section>
 
   <!-- ── Planner ──────────────────────────────────────────────── -->
@@ -105,15 +143,6 @@
         <button class="week-label" id="weekLabel" type="button" title="Jump back to today">—</button>
         <button class="nav-btn" id="weekNext" type="button" aria-label="Seven days later">›</button>
       </div>
-      <button class="schedule-btn" id="scheduleBtn" type="button">Schedule it</button>
-      <label class="import-btn" for="icsFile" title="Import an Outlook or Google .ics export">
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path class="imp-clip"
-                d="M17.6 10.9 11.2 17.3a4.2 4.2 0 0 1-5.9-5.9l7.3-7.3a2.9 2.9 0 0 1 4.1 4.1l-7.2 7.2a1.6 1.6 0 0 1-2.3-2.3l6.6-6.6" />
-        </svg>
-        <span>Import .ics</span>
-      </label>
-      <input id="icsFile" type="file" accept=".ics,text/calendar" class="sr-only" />
     </div>
 
     <div class="planner-scroll">
@@ -125,6 +154,29 @@
     </div>
 
     <ul class="legend" id="legend"></ul>
+
+    <div class="import-row">
+      <label class="import-btn" for="icsFile" title="Import an Outlook or Google .ics export">
+        <span aria-hidden="true">📅</span><span>Import calendar (.ics)</span>
+      </label>
+      <input id="icsFile" type="file" accept=".ics,text/calendar" class="sr-only" />
+      <label class="import-btn" for="docFile" title="Import an email or a PDF; its tasks are written on the list">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path class="imp-clip"
+                d="M17.6 10.9 11.2 17.3a4.2 4.2 0 0 1-5.9-5.9l7.3-7.3a2.9 2.9 0 0 1 4.1 4.1l-7.2 7.2a1.6 1.6 0 0 1-2.3-2.3l6.6-6.6" />
+        </svg>
+        <span>Import email / PDF</span>
+      </label>
+      <input id="docFile" type="file" accept=".pdf,.eml,.txt,application/pdf,message/rfc822,text/plain" class="sr-only" />
+    </div>
+    <div class="clash-note" id="clashNote" role="alertdialog" aria-labelledby="clashTitle" hidden>
+      <p id="clashTitle" class="clash-title"></p>
+      <ul class="clash-list" id="clashList"></ul>
+      <div class="clash-actions">
+        <button type="button" class="schedule-btn" id="clashYes">Import anyway</button>
+        <button type="button" class="nav-btn clash-no" id="clashNo">Cancel</button>
+      </div>
+    </div>
   </section>
 </main>
 
@@ -132,6 +184,7 @@
 
 <template id="taskTemplate">
   <li class="task">
+    <span class="grip" aria-hidden="true" title="Drag to reorder">⋮⋮</span>
     <button class="tick" type="button" aria-pressed="false">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path class="tick-mark" d="M4.5 12.6 L9.6 17.8 L19.6 6.6" /></svg>
     </button>

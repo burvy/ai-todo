@@ -5,7 +5,10 @@
 mod db;
 mod export;
 mod ics;
+#[cfg(test)]
+mod message_tests;
 mod reset;
+mod revise;
 mod upload;
 
 use std::collections::BTreeSet;
@@ -721,6 +724,7 @@ async fn capture(
     store.tasks.extend(created.iter().cloned());
     drop(store);
     state.db.save_tasks(&created);
+    reschedule(&state);
     Ok(Json(CaptureOut {
         tasks: created,
         note: None,
@@ -776,6 +780,7 @@ async fn create_task(
     store.tasks.push(task.clone());
     drop(store);
     state.db.save_tasks(std::slice::from_ref(&task));
+    reschedule(&state);
     Ok((StatusCode::CREATED, Json(task)))
 }
 
@@ -855,10 +860,12 @@ async fn patch_task(
     if move_position {
         let tasks = state.store.lock().unwrap().tasks.clone();
         state.db.save_tasks(&tasks);
+        reschedule(&state);
         let updated = tasks.into_iter().find(|task| task.id == id).unwrap();
         Ok(Json(updated))
     } else {
         state.db.save_task(&updated);
+        reschedule(&state);
         Ok(Json(updated))
     }
 }
@@ -871,6 +878,7 @@ async fn delete_task(State(state): State<AppState>, UrlPath(id): UrlPath<String>
     drop(store);
     if removed {
         state.db.remove_task(&id);
+        reschedule(&state);
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND
@@ -878,6 +886,12 @@ async fn delete_task(State(state): State<AppState>, UrlPath(id): UrlPath<String>
 }
 
 async fn schedule_tasks(State(state): State<AppState>) -> Json<ScheduleOut> {
+    Json(reschedule(&state))
+}
+
+/// Re-run the scheduler over the current tasks and busy blocks and store the
+/// placements. Every mutation calls this so the calendar is never stale.
+fn reschedule(state: &AppState) -> ScheduleOut {
     let mut store = state.store.lock().unwrap();
     let inputs: Vec<scheduler::Task> = store
         .tasks
@@ -931,16 +945,18 @@ async fn schedule_tasks(State(state): State<AppState>) -> Json<ScheduleOut> {
         }
     }
     store.placements = placements.clone();
-    Json(ScheduleOut {
+    ScheduleOut {
         placements,
         unscheduled,
-    })
+    }
 }
 
 async fn calendar(
     State(state): State<AppState>,
     Query(range): Query<RangeQuery>,
 ) -> Json<CalendarOut> {
+    // Placements are always derived from the current tasks and busy blocks.
+    reschedule(&state);
     let store = state.store.lock().unwrap();
     let in_range = |start: DateTime<Utc>, end: DateTime<Utc>| {
         range.from.is_none_or(|from| end > from) && range.to.is_none_or(|to| start < to)
@@ -1018,6 +1034,7 @@ async fn import_calendar(
 
     *state.busy.lock().unwrap() = blocks.clone();
     state.db.save_busy(&imported);
+    reschedule(&state);
 
     let placements = state.store.lock().unwrap().placements.clone();
     Ok(Json(CalendarOut {
@@ -1212,6 +1229,9 @@ fn query_date(text: &str, now: DateTime<Utc>) -> chrono::NaiveDate {
     if lower.contains("tomorrow") {
         return local.date_naive() + chrono::Duration::days(1);
     }
+    if lower.contains("yesterday") {
+        return local.date_naive() - chrono::Duration::days(1);
+    }
     let weekdays = [
         ("monday", chrono::Weekday::Mon),
         ("tuesday", chrono::Weekday::Tue),
@@ -1230,10 +1250,33 @@ fn query_date(text: &str, now: DateTime<Utc>) -> chrono::NaiveDate {
     local.date_naive()
 }
 
+/// Title with case, punctuation and spacing removed, so "Buy milk." and
+/// "buy  milk" count as the same task.
+fn normalized_title(title: &str) -> String {
+    title
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// "today", "tomorrow" or "on Tuesday" for a local date, relative to `today`.
+fn day_phrase(date: chrono::NaiveDate, today: chrono::NaiveDate) -> String {
+    match (date - today).num_days() {
+        0 => "today".into(),
+        1 => "tomorrow".into(),
+        _ => format!("on {}", date.format("%A")),
+    }
+}
+
 fn query_label(text: &str) -> String {
     let lower = text.to_ascii_lowercase();
     if lower.contains("tomorrow") {
         return "Tomorrow".into();
+    }
+    if lower.contains("yesterday") {
+        return "Yesterday".into();
     }
     for name in [
         "monday",
@@ -1252,6 +1295,13 @@ fn query_label(text: &str) -> String {
     "Today".into()
 }
 
+fn cancelled_event_reply(title: &str, start: DateTime<Utc>) -> String {
+    format!(
+        "Cancelled {title}, {}. Your plan is updated.",
+        start.with_timezone(&timezone()).format("%a %-I:%M %p")
+    )
+}
+
 async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> Json<MessageOut> {
     let mut intent = classify_intent(&body.text)
         .await
@@ -1263,12 +1313,29 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
     let mut focus_date = None;
     let mut cancelled_event = None;
     let mut completed_title = None;
+    let mut already_done_title = None;
+    let mut duplicates = 0usize;
     let next_query = is_next_query(&body.text);
     match intent.as_str() {
         "add_tasks" => {
-            created =
+            let captured =
                 capture_text(&body.text, body.source.unwrap_or(Source::Text), Utc::now()).await;
             let mut store = state.store.lock().unwrap();
+            // Skip anything already on the open list (or repeated within this
+            // message), so saying the same thing twice does not double the list.
+            let mut seen: BTreeSet<String> = store
+                .tasks
+                .iter()
+                .filter(|task| task.status != "done")
+                .map(|task| normalized_title(&task.title))
+                .collect();
+            for task in captured {
+                if seen.insert(normalized_title(&task.title)) {
+                    created.push(task);
+                } else {
+                    duplicates += 1;
+                }
+            }
             let next_position = store
                 .tasks
                 .iter()
@@ -1276,10 +1343,10 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                 .max()
                 .unwrap_or(-1)
                 + 1;
-            for task in &mut created {
+            for (offset, task) in created.iter_mut().enumerate() {
                 store.next_id += 1;
                 task.id = format!("t{}", store.next_id);
-                task.position += next_position;
+                task.position = next_position + offset as i64;
             }
             store.tasks.extend(created.iter().cloned());
             drop(store);
@@ -1390,6 +1457,15 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                 task.status = "done".into();
                 state.db.save_task(task);
                 completed_title = Some(title);
+            } else {
+                already_done_title = store
+                    .tasks
+                    .iter()
+                    .filter(|task| task.status == "done")
+                    .map(|task| (task_overlap(task, &body.text), task))
+                    .filter(|(overlap, _)| *overlap > 0)
+                    .max_by_key(|(overlap, _)| *overlap)
+                    .map(|(_, task)| task.title.clone());
             }
         }
         "query_day" => {
@@ -1403,24 +1479,48 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
     let reply = match intent.as_str() {
         "add_tasks" => {
             let noun = if created.len() == 1 { "task" } else { "tasks" };
-            format!("Got it, {} new {}.", created.len(), noun)
+            let mut notes = Vec::new();
+            let unfit = schedule
+                .unscheduled
+                .iter()
+                .filter(|item| created.iter().any(|task| task.id == item.task_id))
+                .count();
+            if unfit > 0 {
+                notes.push(format!("{unfit} couldn't fit before its deadline"));
+            }
+            if duplicates > 0 {
+                notes.push(format!("{duplicates} already on your list"));
+            }
+            if created.is_empty() && duplicates > 0 {
+                "That's already on your list.".to_string()
+            } else if notes.is_empty() {
+                format!("Got it, {} new {}.", created.len(), noun)
+            } else {
+                format!(
+                    "Got it, {} new {}; {}.",
+                    created.len(),
+                    noun,
+                    notes.join("; ")
+                )
+            }
         }
         "cancel_event" => cancelled_event.map_or_else(
             || "I couldn't find that event.".into(),
-            |(title, start)| {
-                format!(
-                    "Cancelled {title} at {}; your plan is updated.",
-                    start.with_timezone(&timezone()).format("%-I:%M")
-                )
-            },
+            |(title, start)| cancelled_event_reply(&title, start),
         ),
         "complete_task" => completed_title.map_or_else(
-            || "I couldn't tell which task you finished.".into(),
+            || match &already_done_title {
+                Some(title) => format!("Already done: {title}."),
+                None => "I couldn't tell which task you finished.".into(),
+            },
             |title| format!("Done: {title}."),
         ),
         "query_day" => {
             let now = Utc::now();
-            if next_query {
+            let today = now.with_timezone(&timezone()).date_naive();
+            if !next_query && query_date(&body.text, now) < today {
+                "That day has passed.".into()
+            } else if next_query {
                 schedule
                     .placements
                     .iter()
@@ -1432,16 +1532,21 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                             .find(|task| task.id == placement.task_id)?
                             .title
                             .clone();
+                        let start = placement.start.with_timezone(&timezone());
+                        let when = match day_phrase(start.date_naive(), today).as_str() {
+                            "today" => String::new(),
+                            phrase => format!(" {phrase}"),
+                        };
                         Some(format!(
-                            "Next: {title} at {} ({} minutes).",
-                            placement.start.with_timezone(&timezone()).format("%-I:%M"),
+                            "Next: {title}{when} at {} ({} minutes).",
+                            start.format("%-I:%M"),
                             (placement.end - placement.start).num_minutes()
                         ))
                     })
                     .unwrap_or_else(|| "Nothing is scheduled next.".into())
             } else {
                 let date = focus_date.as_deref().unwrap_or_default();
-                let matching: Vec<_> = schedule
+                let mut matching: Vec<_> = schedule
                     .placements
                     .iter()
                     .filter(|placement| {
@@ -1453,6 +1558,8 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                             == date
                     })
                     .collect();
+                // Placements come back in planning order, not time order.
+                matching.sort_by_key(|placement| placement.start);
                 let label = query_label(&body.text);
                 let distinct_tasks: BTreeSet<&str> = matching
                     .iter()
@@ -1467,8 +1574,13 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                             .title
                             .clone();
                         Some(format!(
-                            "{label}: {} tasks, starting with {title} at {}.",
+                            "{label}: {} {}, starting with {title} at {}.",
                             distinct_tasks.len(),
+                            if distinct_tasks.len() == 1 {
+                                "task"
+                            } else {
+                                "tasks"
+                            },
                             placement.start.with_timezone(&timezone()).format("%-I:%M")
                         ))
                     })
@@ -1494,6 +1606,7 @@ fn app(state: AppState) -> Router {
         .route("/api/tasks", get(list_tasks))
         .route("/api/tasks", post(create_task))
         .route("/api/tasks/{id}", patch(patch_task).delete(delete_task))
+        .route("/api/tasks/{id}/revise", post(revise::revise_task))
         .route("/api/schedule", post(schedule_tasks))
         .route("/api/calendar", get(calendar))
         .route("/api/calendar.ics", get(export::calendar_ics))
@@ -1732,6 +1845,15 @@ mod tests {
         };
         assert!(event_matches("cancel my 3pm", &event));
         assert!(!event_matches("cancel my 4pm", &event));
+    }
+
+    #[test]
+    fn cancellation_reply_includes_day_and_ampm_time() {
+        let start = Utc.with_ymd_and_hms(2026, 10, 12, 18, 0, 0).unwrap();
+        assert_eq!(
+            cancelled_event_reply("Campus bookstore shift", start),
+            "Cancelled Campus bookstore shift, Mon 2:00 PM. Your plan is updated."
+        );
     }
 
     #[test]

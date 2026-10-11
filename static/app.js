@@ -52,6 +52,7 @@ const state = {
   focusDate: null,
   speaking: true,
   freshIds: new Set(),
+  unwritten: new Set(),   // new tasks the pen has not written yet: not on the planner yet
   working: false,   // a request is in flight
   editing: false,   // an inline editor is open
 };
@@ -127,11 +128,19 @@ function minutesIntoDay(iso) {
 }
 
 let toastTimer;
-function say(message) {
+function say(message, undo) {
   toast.textContent = message;
+  if (undo) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-undo';
+    btn.textContent = 'Undo';
+    btn.addEventListener('click', () => { clearToast(); undo(); say('Undone.'); }, { once: true });
+    toast.append(' ', btn);
+  }
   toast.hidden = !message;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(clearToast, 3200);
+  toastTimer = setTimeout(clearToast, undo ? 5000 : 3200);
 }
 function clearToast() {
   clearTimeout(toastTimer);
@@ -182,10 +191,40 @@ function measurePenHome() {
   penHomeRect = penBtn.getBoundingClientRect();
 }
 
+/* Where the pen rests: his button, or the spot the user dropped him on
+   (kept for this session). Offsets are from the button, like a flight. */
+let penIdle = null;
+try { penIdle = JSON.parse(sessionStorage.getItem('ai-todo-pen-idle') || 'null'); } catch { penIdle = null; }
+function applyIdleSpot() {
+  if (penIdle) {
+    mascotTrack.style.setProperty('--pen-x', `${Math.round(penIdle.x)}px`);
+    mascotTrack.style.setProperty('--pen-y', `${Math.round(penIdle.y)}px`);
+  } else {
+    mascotTrack.style.removeProperty('--pen-x');
+    mascotTrack.style.removeProperty('--pen-y');
+  }
+  mascotTrack.classList.toggle('is-away', !!penIdle);
+}
+function saveIdleSpot(spot) {
+  penIdle = spot;
+  try {
+    if (spot) sessionStorage.setItem('ai-todo-pen-idle', JSON.stringify(spot));
+    else sessionStorage.removeItem('ai-todo-pen-idle');
+  } catch { /* fine for this page */ }
+  applyIdleSpot();
+}
+
 function penGoHomeQuiet() {
   mascotTrack.classList.remove('is-flying');
-  mascotTrack.style.removeProperty('--pen-x');
-  mascotTrack.style.removeProperty('--pen-y');
+  applyIdleSpot();
+}
+
+/* Put the nib at a page point (viewport coordinates). */
+function penAt(x, y) {
+  if (!penHomeRect) measurePenHome();
+  mascotTrack.classList.add('is-flying');
+  mascotTrack.style.setProperty('--pen-x', `${Math.round(x - penHomeRect.left)}px`);
+  mascotTrack.style.setProperty('--pen-y', `${Math.round(y - 22 - penHomeRect.top)}px`);
 }
 
 function penFlyTo(el) {
@@ -306,8 +345,7 @@ function penGoHome() {
   clearTimeout(penIdleTimer);
   penIdleTimer = null;
   mascotTrack.classList.remove('is-flying', 'is-writing');
-  mascotTrack.style.removeProperty('--pen-x');
-  mascotTrack.style.removeProperty('--pen-y');
+  applyIdleSpot();
   // a pen mid-write is an interruption: don't keep the writing pose on screen
   if (mascotTrack.dataset.mood === 'writing' && typeof listening !== 'undefined'
       && !listening) mood('idle');
@@ -325,7 +363,10 @@ function taskRow(task, isFresh) {
   const tentative = Number(task.confidence) < PENCIL_BELOW;
   const overdue = task.deadline && !done && new Date(task.deadline) < new Date();
 
-  if (isFresh) li.classList.add('enter');
+  if (isFresh) {
+    li.classList.add(reduceMotion ? 'enter' : 'pending');
+    li.style.setProperty('--speed', `${WRITE_MS}ms`);
+  }
   if (tentative) li.classList.add('pencil');
   if (done) li.classList.add('done');
   if (overdue) li.classList.add('overdue');
@@ -395,28 +436,53 @@ function taskRow(task, isFresh) {
   return li;
 }
 
+/* Everything a row shows. A row whose signature has not changed is kept as
+   the same DOM node, so adding tasks never replays old ticks or strikes. */
+function rowSig(t) {
+  return [t.title, t.status, t.deadline, t.duration_min, t.priority, t.label, t.confidence, t.position].join('|');
+}
+
+let prevOpen = -1;
+const orderOf = (t) => (Number.isFinite(t.position) ? t.position : Infinity);
+
 function renderList() {
   const ordered = [...state.tasks].sort((a, b) => {
     if ((a.status === 'done') !== (b.status === 'done')) return a.status === 'done' ? 1 : -1;
+    if (orderOf(a) !== orderOf(b)) return orderOf(a) - orderOf(b);
     const ad = a.deadline ? new Date(a.deadline).getTime() : Infinity;
     const bd = b.deadline ? new Date(b.deadline).getTime() : Infinity;
     if (ad !== bd) return ad - bd;
     return a.priority - b.priority;
   });
 
-  list.textContent = '';
-  ordered.forEach((task) => list.appendChild(taskRow(task, state.freshIds.has(task.id))));
+  const old = new Map([...list.children].map((li) => [li.dataset.id, li]));
+  ordered.forEach((task, i) => {
+    const sig = rowSig(task);
+    let li = old.get(task.id);
+    old.delete(task.id);
+    if (!li || li.dataset.sig !== sig) {
+      const fresh = state.freshIds.has(task.id) && !li;
+      const next = taskRow(task, fresh);
+      if (!fresh) next.classList.add('still');
+      next.dataset.sig = sig;
+      if (li) li.replaceWith(next);
+      li = next;
+    }
+    if (list.children[i] !== li) list.insertBefore(li, list.children[i] || null);
+  });
+  old.forEach((li) => li.remove());
 
   const open = ordered.filter((t) => t.status !== 'done').length;
-  const pencilled = ordered.filter((t) => t.status !== 'done' && Number(t.confidence) < PENCIL_BELOW).length;
 
+  if (ordered.length && !open && prevOpen > 0) penCheer();
+  prevOpen = open;
   emptyNote.hidden = ordered.length > 0;
   if (!ordered.length) {
     summary.textContent = 'Nothing on the page yet.';
   } else if (!open) {
     summary.textContent = `${ordered.length} done. An empty page.`;
   } else {
-    summary.textContent = `${open} open${pencilled ? ` · ${pencilled} pencilled in` : ''}`;
+    summary.textContent = `${open} open`;
   }
 }
 
@@ -434,9 +500,23 @@ async function announceNewTasks(alsoDone = []) {
 
   for (const id of fresh) {
     const row = list.querySelector(`.task[data-id="${CSS.escape(id)}"]`);
-    penFlyTo(row ? row.querySelector('.title-wrap') : null);
-    await wait(reduceMotion ? 30 : WRITE_MS);
+    if (!row) continue;
+    if (reduceMotion) { row.classList.add('enter'); continue; }
+    const text = row.querySelector('.title-text');
+    let r = text.getBoundingClientRect();
+    penAt(r.left, r.top + r.height / 2);
+    await wait(460);                        // the flight to the line
+    r = text.getBoundingClientRect();
+    row.classList.add('enter');             // the reveal starts under the nib
+    play('write');
+    mascotTrack.style.transition = `transform ${WRITE_MS}ms linear`;
+    penAt(r.right, r.top + r.height / 2);
+    await wait(WRITE_MS);
+    mascotTrack.style.removeProperty('transition');
+    state.unwritten.delete(id);             // the note lands as the line is finished
+    renderPlanner();
   }
+  list.querySelectorAll('.task.pending:not(.enter)').forEach((row) => row.classList.add('enter'));
 
   // "I finished the lab report" gets the same trip, with a tick
   for (const id of alsoDone) {
@@ -505,11 +585,14 @@ function renderPlanner() {
       const start = new Date(placement.start);
       if (!isSameDay(start, date)) continue;
       const task = state.byId.get(placement.task_id);
+      if (!task || state.unwritten.has(placement.task_id)) continue;
       entries.push({
         start: placement.start,
         end: placement.end,
         title: task ? task.title : 'task',
         kind: 'place',
+        taskId: placement.task_id,
+        pinned: !!(task && task.pinned_start),
         label: task ? task.label : 'Other',
         done: task && task.status === 'done',
         pencil: task && Number(task.confidence) < PENCIL_BELOW,
@@ -520,7 +603,7 @@ function renderPlanner() {
     entries.forEach((entry) => {
       body.appendChild(paint(
         entry.start, entry.end, entry.title, entry.kind,
-        entry.label, entry.done, entry.pencil,
+        entry.label, entry.done, entry.pencil, entry.taskId, entry.pinned,
       ));
     });
     day.appendChild(body);
@@ -541,8 +624,10 @@ function renderPlanner() {
     : 'Nothing is placed yet. Say a few tasks and the pen will find the gaps.';
 
   legend.textContent = '';
-  const used = [...new Set(state.tasks.map((t) => t.label).filter(Boolean))].sort();
-  if (!used.length) used.push('Other');
+  const used = [...new Set(state.placements
+    .map((p) => state.byId.get(p.task_id)?.label).filter(Boolean))].sort();
+  legend.hidden = used.length < 2;
+  if (used.length < 2) used.length = 0;
   for (const label of used) {
     const item = document.createElement('li');
     const swatch = document.createElement('i');
@@ -596,7 +681,7 @@ function layOutLanes(body) {
   flush();
 }
 
-function paint(startIso, endIso, title, kind, label, done, pencil) {
+function paint(startIso, endIso, title, kind, label, done, pencil, taskId, pinned) {
   const el = document.createElement('div');
   const spanMinutes = Math.max(0, minutesIntoDay(endIso) - minutesIntoDay(startIso));
   const top = ((minutesIntoDay(startIso) - DAY_START * 60) / ((DAY_END - DAY_START) * 60)) * 100;
@@ -611,7 +696,11 @@ function paint(startIso, endIso, title, kind, label, done, pencil) {
   el.setAttribute('role', 'button');
   el.setAttribute('tabindex', '0');
   el.setAttribute('aria-label', full);
-  el.addEventListener('click', () => showBlock(full));
+  if (taskId) el.dataset.taskId = taskId;
+  el.addEventListener('click', () => {
+    if (el.dataset.dragged) { delete el.dataset.dragged; return; }
+    showBlock(full);
+  });
   el.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showBlock(full); }
   });
@@ -620,6 +709,16 @@ function paint(startIso, endIso, title, kind, label, done, pencil) {
   name.className = 'block-title';
   name.textContent = title;
   el.appendChild(name);
+
+  if (pinned) {
+    const pin = document.createElement('button');
+    pin.type = 'button';
+    pin.className = 'pin';
+    pin.textContent = '📌';
+    pin.title = 'Pinned here. Tap to unpin';
+    pin.setAttribute('aria-label', `Unpin "${title}"`);
+    el.appendChild(pin);
+  }
 
   // a 30-minute block is only two text lines tall — keep it to the title
   if (spanMinutes >= 45) {
@@ -641,13 +740,27 @@ function showBlock(text) {
   note.hidden = false;
 }
 
-async function refreshCalendar() {
+/* The planner used to go blank after a reload: a failed or slow
+   /api/calendar call was swallowed and replaced the page with empty data,
+   and an older response could land after a newer one. Now only the latest
+   request may paint, a failure keeps what is on the page and retries once. */
+let calendarSeq = 0;
+async function refreshCalendar(retry = true) {
+  const seq = ++calendarSeq;
   const from = state.weekStart;
   const to = addDays(from, 7);
-  let data = { busy: [], placements: [] };
+  let data;
   try {
     data = await getCalendar(from.toISOString(), to.toISOString());
-  } catch { /* leave the page as it was rather than blanking the planner */ }
+  } catch (err) {
+    console.warn('calendar fetch failed', err);
+    if (retry && seq === calendarSeq) {
+      await wait(800);
+      if (seq === calendarSeq) return refreshCalendar(false);
+    }
+    return null;
+  }
+  if (seq !== calendarSeq) return data;      // a newer request owns the page
   state.busy = data.busy || [];
   state.placements = data.placements || [];
   renderPlanner();
@@ -665,10 +778,14 @@ async function loadTasks(fresh = []) {
   state.tasks = data.tasks || [];
   indexTasks();
   state.freshIds = new Set(fresh);
+  state.unwritten = new Set(fresh);
   renderList();
   renderPlanner();
+  const synced = fresh.length ? replan() : null;
   await announceNewTasks();
   state.freshIds.clear();
+  state.unwritten.clear();
+  if (synced) { await synced; renderPlanner(); }
 }
 
 async function replan() {
@@ -700,7 +817,6 @@ function setBusy(on) {
   state.working = busyCount > 0;
   document.body.classList.toggle('is-busy', state.working);
   $('#writingNote').hidden = !state.working;
-  scheduleBtn.disabled = state.working;
   // while the pen is away writing, take no new input from the user
   penBtn.disabled = state.working;
   box.readOnly = state.working;
@@ -714,6 +830,7 @@ async function submit(text, source = 'text') {
 
   setBusy(true);
   mood('writing');
+  play('send');
 
   try {
     const result = await sendMessage(body, source);
@@ -724,14 +841,16 @@ async function submit(text, source = 'text') {
       state.focusDate = result.focus_date;
       state.weekStart = startOfDay(new Date(result.focus_date + 'T00:00:00'));
     }
-    state.placements = result.placements || [];
+    if (Array.isArray(result.placements)) state.placements = result.placements;
 
     state.freshIds = new Set(state.tasks.filter((t) => !before.has(t.id)).map((t) => t.id));
     const newlyDone = state.tasks
       .filter((t) => t.status === 'done' && before.has(t.id) && before.get(t.id) !== 'done')
       .map((t) => t.id);
+    state.unwritten = new Set(state.freshIds);
     renderList();
     renderPlanner();
+    const synced = replan();
 
     marginText.textContent = result.reply || '';
     marginNote.hidden = !result.reply;
@@ -740,7 +859,9 @@ async function submit(text, source = 'text') {
 
     await announceNewTasks(newlyDone);
     state.freshIds.clear();
-    await refreshCalendar();
+    state.unwritten.clear();
+    await synced;
+    renderPlanner();
   } catch (err) {
     penGoHomeQuiet();
     say('The server did not answer. Is it running?');
@@ -836,6 +957,7 @@ function startListening() {
   // React to the press straight away. Some browsers advertise speech support
   // but never fire `start` (no device, permission still pending), so don't hang.
   mood('listening');
+  play('listen');
   startGuard = setTimeout(() => {
     startGuard = null;
     if (!listening) {
@@ -875,6 +997,7 @@ penBtn.addEventListener('pointerdown', (event) => {
 penBtn.addEventListener('click', () => {
   // a press-and-hold that produced speech already sent it
   if (spokeThisPress) { spokeThisPress = false; return; }
+  if (draggedThisPress) { draggedThisPress = false; return; }
   if (state.working) return;
   const text = box.value;
   if (!text.trim()) return;
@@ -971,6 +1094,7 @@ function beginEdit(li, field) {
   if (!host) return;
 
   state.editing = true;
+  delete li.dataset.sig;
   li.classList.add('editing');
   host.replaceWith(input);
   input.focus();
@@ -1023,22 +1147,29 @@ list.addEventListener('click', async (event) => {
   if (!task) return;
 
   if (event.target.closest('.kill')) {
-    li.classList.add('leaving');
-    try {
-      await deleteTask(id);
-      state.tasks = state.tasks.filter((t) => t.id !== id);
-      indexTasks();
-      setTimeout(() => { renderList(); renderPlanner(); }, 240);
-      await replan();
-    } catch { li.classList.remove('leaving'); say('Could not delete that one.'); }
+    removeTask(task);
     return;
   }
 
   if (event.target.closest('.tick')) {
     const done = task.status !== 'done';
+    li.classList.remove('still');
     li.querySelector('.tick').setAttribute('aria-pressed', String(done));
     li.classList.toggle('done', done);
     task.status = done ? 'done' : 'todo';
+    li.dataset.sig = rowSig(task);
+    if (done) {
+      play('tick');
+      say(`Done: ${task.title}.`, () => {
+        const row = list.querySelector(`.task[data-id="${CSS.escape(id)}"]`);
+        row?.querySelector('.tick').click();
+      });
+    }
+    if (done && !reduceMotion) {
+      measurePenHome();
+      penFlyTo(li.querySelector('.tick'));
+      setTimeout(penGoHomeQuiet, 520);
+    }
     try {
       await patchTask(id, { status: task.status });
       await replan();
@@ -1053,8 +1184,33 @@ list.addEventListener('click', async (event) => {
   if (state.editing) return;
   const field = event.target.closest('.chip.editable')?.dataset.field;
   if (field) { beginEdit(li, field); return; }
-  if (event.target.closest('.title-wrap')) beginEdit(li, 'title');
+  if (event.target.closest('.title-wrap, .task-body')) openCard(task);
 });
+
+/* Delete with a five-second undo: the row goes at once, the DELETE waits. */
+function removeTask(task) {
+  const id = task.id;
+  const at = state.tasks.indexOf(task);
+  state.tasks = state.tasks.filter((t) => t.id !== id);
+  indexTasks();
+  renderList();
+  renderPlanner();
+  let undone = false;
+  const timer = setTimeout(async () => {
+    if (undone) return;
+    try { await deleteTask(id); } catch { say('Could not delete that one.'); }
+    await replan();
+  }, 5000);
+  say(`Deleted "${task.title}".`, () => {
+    undone = true;
+    clearTimeout(timer);
+    state.tasks.splice(Math.max(0, at), 0, task);
+    indexTasks();
+    renderList();
+    renderPlanner();
+    replan();
+  });
+}
 
 /* keyboard route into the inline editor */
 list.addEventListener('keydown', (event) => {
@@ -1063,7 +1219,8 @@ list.addEventListener('keydown', (event) => {
   if (!holder || state.editing) return;
   event.preventDefault();
   const li = holder.closest('.task');
-  beginEdit(li, holder.dataset.field || 'title');
+  if (!holder.dataset.field) { openCard(state.byId.get(li.dataset.id)); return; }
+  beginEdit(li, holder.dataset.field);
 });
 
 /* ── Add one task by hand ───────────────────────────────────── */
@@ -1081,6 +1238,7 @@ addForm.addEventListener('submit', async (event) => {
   try {
     const created = await addTask(title);
     await loadTasks(created.id ? [created.id] : []);
+    if (!created.id) await replan();
     speak(`${created.title || title}. Added.`);
   } catch (err) {
     say('Could not add that one.');
@@ -1095,66 +1253,351 @@ addForm.addEventListener('submit', async (event) => {
 const icsFile = $('#icsFile');
 const importBtn = document.querySelector('.import-btn');
 
-icsFile.addEventListener('change', async () => {
-  const file = icsFile.files && icsFile.files[0];
-  icsFile.value = '';                       // let the same file be picked twice
-  if (!file || state.working) return;
+const clashNote = $('#clashNote');
+let clashFile = null;
 
+async function uploadIcs(file, confirm = false) {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  if (confirm) form.append('confirm', 'true');
+  const res = await fetch(API + '/api/calendar/import', { method: 'POST', body: form });
+  if (res.status === 409) return { clash: await res.json().catch(() => ({})) };
+  if (!res.ok) {
+    const error = new Error(`POST /api/calendar/import -> ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
+  return { data: await res.json() };
+}
+
+function describeClash(c) {
+  // server shape: {start, end, imported_title, existing_title}
+  const title = c.imported_title || c.title || 'event';
+  const when = c.start ? ` (${fmtDeadline(c.start)})` : '';
+  return `${title}${when}${c.existing_title ? ` overlaps ${c.existing_title}` : ''}`;
+}
+
+function showClashes(file, body) {
+  clashFile = file;
+  $('#clashTitle').textContent = body.error || 'Some of these events overlap your calendar.';
+  const ul = $('#clashList');
+  ul.textContent = '';
+  (body.conflicts || []).slice(0, 12).forEach((c) => {
+    const li = document.createElement('li');
+    li.textContent = typeof c === 'string' ? c : describeClash(c);
+    ul.appendChild(li);
+  });
+  clashNote.hidden = false;
+  $('#clashYes').focus();
+}
+
+async function importCalendar(file, confirm = false) {
+  if (!file || state.working) return;
   setBusy(true);
   importBtn.classList.add('is-busy');
   try {
-    const ics_text = await file.text();
-    const data = await api('/api/calendar/import', {
-      method: 'POST',
-      body: JSON.stringify({ ics_text }),
-    });
-    // the route replaces the busy blocks and answers in /api/calendar shape,
-    // so re-plan first or the new events would sit behind the old ones
-    await runSchedule();
-    state.busy = data.busy || [];
-    await refreshCalendar();
-    renderPlanner();
-    const n = state.busy.length;
+    const { data, clash } = await uploadIcs(file, confirm);
+    if (clash) { showClashes(file, clash); return; }
+    clashNote.hidden = true;
+    // the route replaces the busy blocks; re-plan so the tasks move out of the way
+    await replan();
+    const n = (data && data.busy ? data.busy : state.busy).length;
     say(n ? `Imported ${n} event${n === 1 ? '' : 's'} from ${file.name}.`
           : `No events found in ${file.name}.`);
   } catch (err) {
-    // A file the browser cannot read as a calendar is the user's problem to
-    // fix, not a defect: the toast says so, so don't shout in the console.
+    // A file the planner cannot read is the user's to fix, not a defect.
     const badFile = err.status === 400 || err.status === 422;
     if (!badFile) console.error(err);
-    say(badFile
-      ? 'That file is not a calendar the planner can read.'
-      : 'Could not import that calendar.');
+    say(badFile ? 'That file is not a calendar the planner can read.' : 'Could not import that calendar.');
   } finally {
     importBtn.classList.remove('is-busy');
     setBusy(false);
   }
+}
+
+icsFile.addEventListener('change', () => {
+  const file = icsFile.files && icsFile.files[0];
+  icsFile.value = '';                       // let the same file be picked twice
+  importCalendar(file);
 });
+$('#clashYes').addEventListener('click', () => {
+  clashNote.hidden = true;
+  importCalendar(clashFile, true);
+});
+$('#clashNo').addEventListener('click', () => { clashNote.hidden = true; clashFile = null; });
 
-/* ── Schedule it ────────────────────────────────────────────── */
+/* ── Import an email / PDF: its tasks are written like a ramble ── */
 
-const scheduleBtn = $('#scheduleBtn');
-scheduleBtn.addEventListener('click', async () => {
-  if (state.working) return;
+const docFile = $('#docFile');
+docFile.addEventListener('change', async () => {
+  const file = docFile.files && docFile.files[0];
+  docFile.value = '';
+  if (!file || state.working) return;
+  const label = document.querySelector('label[for="docFile"]');
   setBusy(true);
+  label.classList.add('is-busy');
   mood('writing');
   try {
-    await runSchedule();
-    await refreshCalendar();
-    const count = state.placements.length;
-    say(count ? `Placed ${count} block${count === 1 ? '' : 's'} on the page.` : 'Nothing left to place.');
+    const before = new Set(state.tasks.map((t) => t.id));
+    const form = new FormData();
+    form.append('file', file, file.name);
+    const res = await fetch(API + '/api/capture', { method: 'POST', body: form });
+    if (!res.ok) {
+      const error = new Error(`POST /api/capture -> ${res.status}`);
+      error.status = res.status;
+      throw error;
+    }
+    const data = await res.json();
+    const fresh = (data.tasks || []).map((t) => t.id).filter((id) => !before.has(id));
+    await loadTasks(fresh);
+    if (!fresh.length) await replan();
+    say(fresh.length ? `Found ${fresh.length} task${fresh.length === 1 ? '' : 's'} in ${file.name}.`
+                     : `No tasks found in ${file.name}.`);
   } catch (err) {
-    say('The schedule did not come back.');
-    console.error(err);
+    if (!err.status || err.status >= 500) console.error(err);
+    say(err.status && err.status < 500 ? 'The server could not read that file yet.' : 'Could not import that file.');
   } finally {
+    label.classList.remove('is-busy');
     setBusy(false);
     mood('idle');
   }
 });
 
+/* ── Reorder the list: drag a row by its grip ──────────────── */
+
+async function saveOrder() {
+  const jobs = [];
+  [...list.children].forEach((row, i) => {
+    const task = state.byId.get(row.dataset.id);
+    if (!task || task.position === i) return;
+    task.position = i;
+    row.dataset.sig = rowSig(task);
+    jobs.push(patchTask(task.id, { position: i }).catch(() => null));
+  });
+  if (!jobs.length) return;
+  await Promise.all(jobs);
+  await replan();
+}
+
+/* Shared drag plumbing: a press becomes a drag at once with a mouse or the
+   grip, after a 300ms still press on touch. While a drag runs the page does
+   not scroll under the finger. */
+const LONG_PRESS_MS = 300;
+let dragActive = false;
+document.addEventListener('touchmove', (event) => { if (dragActive) event.preventDefault(); }, { passive: false });
+
+function pressToDrag(event, el, { immediate, onStart, onMove, onEnd }) {
+  const sx = event.clientX, sy = event.clientY;
+  const pid = event.pointerId;
+  let started = false;
+  let timer = null;
+  const begin = () => {
+    started = true;
+    dragActive = true;
+    try { el.setPointerCapture(pid); } catch { /* fine */ }
+    onStart();
+    if (navigator.vibrate) try { navigator.vibrate(8); } catch { /* fine */ }
+  };
+  const move = (ev) => {
+    if (ev.pointerId !== pid) return;
+    const dx = ev.clientX - sx, dy = ev.clientY - sy;
+    if (!started) {
+      if (Math.hypot(dx, dy) < 6) return;
+      if (timer) { cleanup(); return; }       // moved before the long press: a scroll
+      begin();
+    }
+    ev.preventDefault();
+    onMove(ev, dx, dy);
+  };
+  const up = (ev) => {
+    if (ev.pointerId !== pid) return;
+    const was = started;
+    cleanup();
+    if (was) onEnd(ev, ev.type === 'pointercancel');
+  };
+  const cleanup = () => {
+    clearTimeout(timer);
+    timer = null;
+    dragActive = false;
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    document.removeEventListener('pointercancel', up);
+  };
+  document.addEventListener('pointermove', move, { passive: false });
+  document.addEventListener('pointerup', up);
+  document.addEventListener('pointercancel', up);
+  if (!immediate) timer = setTimeout(() => { timer = null; begin(); }, LONG_PRESS_MS);
+}
+
+function settle(el) {
+  if (reduceMotion) return;
+  el.classList.remove('settle');
+  void el.offsetWidth;
+  el.classList.add('settle');
+  el.addEventListener('animationend', () => el.classList.remove('settle'), { once: true });
+}
+
+/* Move a row in the list, sliding its neighbours (FLIP). */
+function moveRow(li, before) {
+  if (li.nextSibling === before || li === before) return;
+  const rows = [...list.children].filter((r) => r !== li);
+  const first = new Map(rows.map((r) => [r, r.getBoundingClientRect().top]));
+  list.insertBefore(li, before);
+  if (reduceMotion) return;
+  rows.forEach((r) => {
+    const dy = first.get(r) - r.getBoundingClientRect().top;
+    if (!dy) return;
+    r.style.transition = 'none';
+    r.style.transform = `translateY(${dy}px)`;
+    requestAnimationFrame(() => {
+      r.style.transition = 'transform 180ms ease-out';
+      r.style.transform = '';
+    });
+  });
+}
+
+list.addEventListener('pointerdown', (event) => {
+  if (state.working || state.editing || event.button > 0) return;
+  const grip = event.target.closest('.grip');
+  const li = event.target.closest('.task');
+  if (!li) return;
+  const touch = event.pointerType === 'touch';
+  // mouse: only the grip drags; touch: a long press anywhere on the row
+  if (!grip && !touch) return;
+  if (!grip && event.target.closest('.tick, .kill, input')) return;
+  if (grip) event.preventDefault();
+  let offset = 0;
+  const grabY = event.clientY;
+  const startSlot = li.offsetTop;
+  pressToDrag(event, li, {
+    immediate: !!grip && !touch,
+    onStart() {
+      li.classList.add('dragging');
+      li.dataset.dragged = '1';
+    },
+    onMove(ev) {
+      const over = [...list.children].find((row) => {
+        if (row === li) return false;
+        const b = row.getBoundingClientRect();
+        return ev.clientY >= b.top && ev.clientY <= b.bottom;
+      });
+      if (over) {
+        const b = over.getBoundingClientRect();
+        moveRow(li, ev.clientY < b.top + b.height / 2 ? over : over.nextSibling);
+      }
+      // follow the finger from wherever the row's slot now is
+      const slotTop = li.offsetTop;
+      offset = (ev.clientY - grabY) - (slotTop - startSlot);
+      li.style.transform = `translateY(${offset}px) scale(1.03) rotate(-1.2deg)`;
+    },
+    onEnd(_ev, cancelled) {
+      li.classList.remove('dragging');
+      li.style.transform = '';
+      settle(li);
+      setTimeout(() => { delete li.dataset.dragged; }, 0);
+      if (!cancelled) saveOrder();
+    },
+  });
+});
+
+/* a long-press drag must not also open the edit card */
+list.addEventListener('click', (event) => {
+  const li = event.target.closest('.task');
+  if (li && li.dataset.dragged) { event.stopImmediatePropagation(); delete li.dataset.dragged; }
+}, true);
+
+/* ── Reorder the planner: drag a note to a slot, tap the pin to free it ── */
+
+async function pinTask(id, iso) {
+  const task = state.byId.get(id);
+  try {
+    const updated = await patchTask(id, { pinned_start: iso });
+    if (task) Object.assign(task, updated || {}, { pinned_start: iso });
+  } catch { say('Could not move that one.'); }
+  await replan();
+}
+
+
+gridDays.addEventListener('pointerdown', (event) => {
+  const pin = event.target.closest('.pin');
+  if (pin) {
+    event.preventDefault();
+    const id = pin.closest('.block').dataset.taskId;
+    if (id && !state.working) pinTask(id, null);
+    return;
+  }
+  const el = event.target.closest('.block.place');
+  if (!el || !el.dataset.taskId || state.working || event.button > 0) return;
+  const body0 = el.parentElement;
+  const span = (DAY_END - DAY_START) * 60;
+  const startTop = el.offsetTop;
+  let target = null;   // { body, minutes }
+  const label = document.createElement('span');
+  label.className = 'drag-time';
+
+  const place = (ev, dx, dy) => {
+    const body = [...gridDays.querySelectorAll('.day-body')].find((b) => {
+      const r = b.getBoundingClientRect();
+      return ev.clientX >= r.left && ev.clientX <= r.right;
+    }) || body0;
+    const r = body.getBoundingClientRect();
+    const r0 = body0.getBoundingClientRect();
+    const pxPerMin = r.height / span;
+    let minutes = DAY_START * 60 + (startTop + dy) / pxPerMin;
+    minutes = Math.round(minutes / 15) * 15;
+    minutes = Math.max(DAY_START * 60, Math.min(DAY_END * 60 - 15, minutes));
+    target = { body, minutes };
+    // snap the note itself: 15-minute steps, and the column under the finger
+    const snappedY = (minutes - DAY_START * 60) * pxPerMin - startTop;
+    const snappedX = r.left - r0.left;
+    el.style.transform = `translate(${snappedX}px, ${snappedY}px) scale(1.03) rotate(-1.5deg)`;
+    const d = new Date(body.dataset.day);
+    d.setHours(0, minutes, 0, 0);
+    label.textContent = `${d.toLocaleDateString([], { weekday: 'short' })} ${fmtTime(d.toISOString())}`;
+  };
+
+  pressToDrag(event, el, {
+    immediate: event.pointerType !== 'touch',
+    onStart() {
+      el.classList.add('dragging');
+      el.appendChild(label);
+    },
+    onMove: place,
+    onEnd(_ev, cancelled) {
+      el.dataset.dragged = '1';
+      el.classList.remove('dragging');
+      label.remove();
+      if (cancelled || !target) { el.style.transform = ''; return; }
+      settle(el);
+      const start = new Date(target.body.dataset.day);
+      start.setHours(0, target.minutes, 0, 0);
+      pinTask(el.dataset.taskId, start.toISOString());
+    },
+  });
+});
+
+/* ── Schedule it ────────────────────────────────────────────── */
+
 $('#marginReplay').addEventListener('click', () => speak(marginText.textContent));
 
 /* ── Header tools ───────────────────────────────────────────── */
+
+const gearBtn = $('#gearBtn');
+const settingsPop = $('#settingsPop');
+function setSettings(open) {
+  settingsPop.hidden = !open;
+  gearBtn.setAttribute('aria-expanded', String(open));
+}
+gearBtn.addEventListener('click', (event) => {
+  event.stopPropagation();
+  setSettings(settingsPop.hidden);
+});
+document.addEventListener('click', (event) => {
+  if (!settingsPop.hidden && !settingsPop.contains(event.target)) setSettings(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !settingsPop.hidden) { setSettings(false); gearBtn.focus(); }
+});
 
 const speakToggle = $('#speakToggle');
 speakToggle.addEventListener('click', () => {
@@ -1184,6 +1627,7 @@ function showPage(index) {
   const page = desk.children[index];
   if (!page) return;
   desk.scrollTo({ left: page.offsetLeft, behavior: 'smooth' });
+  play('page');
 }
 
 function markPage(index) {
@@ -1240,10 +1684,341 @@ weekLabel.addEventListener('click', async () => {
   autoGrow();
   mood('idle');
 
+  // the planner must not depend on /api/tasks succeeding
   loadTasks()
-    .then(replan)
     .catch(() => {
       emptyNote.textContent = 'The server is not answering yet. Start it with: cargo run -p server';
       summary.textContent = 'Offline';
-    });
+    })
+    .then(replan);
+  // back/forward cache restores a stale page: refetch
+  window.addEventListener('pageshow', (event) => { if (event.persisted) loadTasks().then(replan).catch(() => {}); });
 })();
+/* ── Edit card: a paper index card over the list ────────────── */
+
+const card = $('#editCard');
+const cardForm = $('#cardForm');
+const cf = (name) => cardForm.elements[name];
+let cardTask = null;
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function dateInput(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function timeInput(d) { return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
+
+function fillCard(task, pencil = false) {
+  cf('title').value = task.title || '';
+  const when = task.pinned_start || task.deadline;
+  cf('day').value = when ? dateInput(new Date(when)) : '';
+  cf('time').value = task.pinned_start ? timeInput(new Date(task.pinned_start)) : '';
+  cf('duration').value = task.duration_min ?? 30;
+  cf('label').value = task.label || 'Other';
+  cf('notes').value = task.notes || '';
+  cf('done').checked = task.status === 'done';
+  card.classList.toggle('pencil', pencil);
+}
+
+function openCard(task) {
+  if (!task || state.editing) return;
+  cardTask = task;
+  fillCard(task);
+  cf('revise').value = '';
+  card.hidden = false;
+  card.setAttribute('aria-label', `Edit "${task.title}"`);
+  cf('title').focus();
+}
+
+function closeCard() {
+  card.hidden = true;
+  card.classList.remove('pencil');
+  cardTask = null;
+}
+
+/* the card's fields -> a PATCH body with only what changed */
+function cardPatch(task) {
+  const body = {};
+  const title = cf('title').value.trim();
+  if (title && title !== task.title) body.title = title;
+  const minutes = Math.round(Number(cf('duration').value));
+  if (minutes >= 5 && minutes !== task.duration_min) body.duration_min = minutes;
+  if (cf('label').value !== (task.label || 'Other')) body.label = cf('label').value;
+  if (cf('notes').value !== (task.notes || '')) body.notes = cf('notes').value;
+  const status = cf('done').checked ? 'done' : 'todo';
+  if (status !== task.status) body.status = status;
+
+  const day = cf('day').value, time = cf('time').value;
+  // a time pins the task on the calendar; a day alone is a deadline (5pm)
+  const pinned = day && time ? new Date(`${day}T${time}`).toISOString() : null;
+  if (pinned !== (task.pinned_start || null)) body.pinned_start = pinned;
+  if (day && !time) {
+    const deadline = new Date(`${day}T17:00`).toISOString();
+    const current = task.deadline ? dateInput(new Date(task.deadline)) : '';
+    if (current !== day) body.deadline = deadline;
+  }
+  return body;
+}
+
+cardForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const task = cardTask;
+  if (!task) return;
+  const body = cardPatch(task);
+  closeCard();
+  if (!Object.keys(body).length) return;
+  try {
+    const updated = await patchTask(task.id, body);
+    Object.assign(task, body, updated || {});
+    indexTasks();
+    renderList();
+    await replan();
+    say('Saved.');
+  } catch {
+    say('Could not save that change.');
+  }
+});
+
+$('#cardCancel').addEventListener('click', closeCard);
+$('#cardDelete').addEventListener('click', () => {
+  const task = cardTask;
+  closeCard();
+  if (task) removeTask(task);
+});
+
+/* "Tell Jev what to change": the server revises, the card shows it, Save keeps it */
+async function reviseCard() {
+  const task = cardTask;
+  const text = cf('revise').value.trim();
+  if (!task || !text) return;
+  const btn = $('#cardPen');
+  btn.disabled = true;
+  card.classList.add('is-busy');
+  play('send');
+  try {
+    const revised = await api(`/api/tasks/${task.id}/revise`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    });
+    if (cardTask !== task) return;
+    fillCard({ ...task, ...revised }, Number(revised.confidence) < PENCIL_BELOW);
+    play('write');
+  } catch (err) {
+    say(err.status === 404 || err.status === 405
+      ? 'Jev cannot revise yet. Edit the fields by hand.'
+      : 'Jev did not answer. Edit the fields by hand.');
+  } finally {
+    btn.disabled = false;
+    card.classList.remove('is-busy');
+  }
+}
+$('#cardPen').addEventListener('click', reviseCard);
+cf('revise').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') { event.preventDefault(); reviseCard(); }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !card.hidden) closeCard();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!card.hidden && !card.contains(event.target) && !event.target.closest('.task')) closeCard();
+});
+
+/* ── Sounds: replaceable files, WebAudio fallback ───────────── */
+
+/* static/assets/sounds/<name>.mp3 if it is there, else a tiny synth.
+   One at a time, quiet, only after the user has done something, and off
+   with Voice in the settings. */
+const SOUND_VOLUME = 0.3;
+const SYNTH = {
+  write:  [520, 0.05, 'triangle'],
+  tick:   [880, 0.07, 'sine'],
+  page:   [300, 0.06, 'triangle'],
+  listen: [660, 0.09, 'sine'],
+  send:   [440, 0.08, 'sine'],
+};
+const soundFiles = new Map();   // name -> Audio | null (missing)
+let soundNow = null;
+let userActed = false;
+let audioCtx = null;
+['pointerdown', 'keydown'].forEach((type) =>
+  document.addEventListener(type, () => { userActed = true; }, { once: true, capture: true }));
+
+function synth(name) {
+  const spec = SYNTH[name];
+  if (!spec) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const [freq, len, type] = spec;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(SOUND_VOLUME * 0.4, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + len);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + len);
+  } catch { /* no audio: stay quiet */ }
+}
+
+function play(name) {
+  if (!state.speaking || !userActed) return;
+  if (soundNow) { soundNow.pause(); soundNow = null; }
+  const cached = soundFiles.get(name);
+  if (cached === null) { synth(name); return; }
+  const audio = cached || new Audio(`assets/sounds/${name}.mp3`);
+  audio.volume = SOUND_VOLUME;
+  if (!cached) {
+    audio.addEventListener('error', () => { soundFiles.set(name, null); }, { once: true });
+    soundFiles.set(name, audio);
+  }
+  audio.currentTime = 0;
+  soundNow = audio;
+  audio.play().catch(() => { soundFiles.set(name, null); synth(name); });
+}
+
+/* Paper texture: use assets/paper.jpg when it exists, SVG grain otherwise. */
+(function paperAsset() {
+  const img = new Image();
+  img.onload = () => document.documentElement.classList.add('has-paper');
+  img.src = 'assets/paper.jpg';
+})();
+
+/* ── The pen guy: pick him up, put him anywhere, and he looks alive ── */
+
+/* Press and move more than 8px: he is picked up. A press that does not move
+   keeps its old meaning (tap = send, hold = talk); once he is picked up the
+   microphone is dropped and nothing is sent. */
+let penDrag = null;
+let draggedThisPress = false;
+
+function abortListening() {
+  clearTimeout(startGuard);
+  startGuard = null;
+  listening = false;
+  heardSomething = false;
+  if (recognition) { try { recognition.abort(); } catch { /* not running */ } }
+  if (box.dataset.base !== undefined) {
+    box.value = box.dataset.base;
+    delete box.dataset.base;
+    autoGrow();
+  }
+}
+
+penBtn.addEventListener('pointerdown', (event) => {
+  draggedThisPress = false;
+  penDrag = {
+    sx: event.clientX, sy: event.clientY,
+    base: penIdle || { x: 0, y: 0 },
+    held: false, lastX: event.clientX, lastT: performance.now(), dx: 0, dy: 0,
+  };
+});
+
+penBtn.addEventListener('pointermove', (event) => {
+  if (!penDrag || state.working) return;
+  const dx = event.clientX - penDrag.sx, dy = event.clientY - penDrag.sy;
+  if (!penDrag.held) {
+    if (Math.hypot(dx, dy) <= 8) return;
+    penDrag.held = true;
+    draggedThisPress = true;
+    abortListening();
+    clearTimeout(penIdleTimer);
+    mascotTrack.classList.remove('is-writing', 'is-flying');
+    mascotTrack.classList.add('is-held');
+    mood('idle');
+  }
+  const now = performance.now();
+  const vx = (event.clientX - penDrag.lastX) / Math.max(8, now - penDrag.lastT);
+  penDrag.lastX = event.clientX;
+  penDrag.lastT = now;
+  // he dangles from the cap: swing against the direction of travel
+  const swing = reduceMotion ? 0 : Math.max(-28, Math.min(28, -vx * 38));
+  mascotTrack.style.setProperty('--swing', `${swing.toFixed(1)}deg`);
+  penDrag.dx = dx;
+  penDrag.dy = dy;
+  mascotTrack.style.setProperty('--pen-x', `${Math.round(penDrag.base.x + dx)}px`);
+  mascotTrack.style.setProperty('--pen-y', `${Math.round(penDrag.base.y + dy)}px`);
+});
+
+function penDrop() {
+  const drag = penDrag;
+  penDrag = null;
+  if (!drag || !drag.held) return;
+  mascotTrack.classList.remove('is-held');
+  mascotTrack.style.setProperty('--swing', '0deg');
+  const spot = { x: drag.base.x + drag.dx, y: drag.base.y + drag.dy };
+  // dropped back on his button: that is home
+  saveIdleSpot(Math.hypot(spot.x, spot.y) < 24 ? null : spot);
+  penFidget('hop');
+}
+penBtn.addEventListener('pointerup', penDrop);
+penBtn.addEventListener('pointercancel', penDrop);
+
+/* double-click / double-tap: hop home into the text box */
+penBtn.addEventListener('dblclick', (event) => {
+  event.preventDefault();
+  if (!penIdle) return;
+  saveIdleSpot(null);
+  penFidget('hop');
+});
+
+/* eyes follow the pointer */
+let lookRaf = 0;
+let lastPointer = null;
+function lookAt(x, y) {
+  const pen = mascotTrack.querySelector('.pen');
+  if (!pen) return;
+  const r = pen.getBoundingClientRect();
+  const dx = x - (r.left + r.width / 2), dy = y - (r.top + r.height * 0.5);
+  const d = Math.hypot(dx, dy) || 1;
+  const k = Math.min(1, d / 140) * 1.4;
+  mascotTrack.style.setProperty('--look-x', `${(dx / d * k).toFixed(2)}px`);
+  mascotTrack.style.setProperty('--look-y', `${(dy / d * k).toFixed(2)}px`);
+}
+document.addEventListener('pointermove', (event) => {
+  lastPointer = [event.clientX, event.clientY];
+  if (lookRaf) return;
+  lookRaf = requestAnimationFrame(() => { lookRaf = 0; lookAt(...lastPointer); });
+}, { passive: true });
+
+/* blinks, idle fidgets, and a cheer when the list is empty */
+function penFidget(kind) {
+  if (reduceMotion) return;
+  const cls = `fidget-${kind}`;
+  mascotTrack.classList.remove(cls);
+  void mascotTrack.offsetWidth;
+  mascotTrack.classList.add(cls);
+  setTimeout(() => mascotTrack.classList.remove(cls), 900);
+}
+
+function penCheer() { penFidget('happy'); }
+
+function blinkLoop() {
+  setTimeout(() => {
+    if (!document.hidden) {
+      mascotTrack.classList.add('blink');
+      setTimeout(() => mascotTrack.classList.remove('blink'), 140);
+    }
+    blinkLoop();
+  }, 2600 + Math.random() * 3600);
+}
+
+function fidgetLoop() {
+  setTimeout(() => {
+    const calm = !document.hidden && !state.working && !penDrag
+      && mascotTrack.dataset.mood === 'idle'
+      && !mascotTrack.classList.contains('is-writing');
+    if (calm) {
+      if (Math.random() < 0.5) {
+        penFidget('hop');
+      } else {
+        // look around: left, right, then back to the pointer
+        mascotTrack.style.setProperty('--look-x', '-1.4px');
+        setTimeout(() => mascotTrack.style.setProperty('--look-x', '1.4px'), 450);
+        setTimeout(() => { if (lastPointer) lookAt(...lastPointer); else mascotTrack.style.setProperty('--look-x', '0px'); }, 950);
+      }
+    }
+    fidgetLoop();
+  }, 10000 + Math.random() * 10000);
+}
+
+applyIdleSpot();
+if (!reduceMotion) { blinkLoop(); fidgetLoop(); }

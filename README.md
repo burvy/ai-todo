@@ -1,8 +1,8 @@
-# ai-todo
+# Rambl
 
 > Every scheduling tool asks you to do data entry. This one just listens.
 
-Ramble (voice or text) and ai-todo writes your task list: Jev (TypeSafe's System One model) judges which sentences are tasks, their deadline, priority and duration; a deterministic scheduler places them into your free time. Tell it "my 3pm got cancelled" or "I finished the lab report" and the plan re-flows.
+Ramble (voice or text) and Rambl writes your task list: Jev (TypeSafe's System One model) judges which sentences are tasks, their deadline, priority and duration; a deterministic scheduler places them into your free time. Tell it "my 3pm got cancelled" or "I finished the lab report" and the plan re-flows.
 
 ## Run it
 
