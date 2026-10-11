@@ -179,23 +179,42 @@ struct CalendarOut {
 
 /// Turn each non-empty line into one task. Stub: the judge crate replaces this later.
 fn tasks_from_text(text: &str) -> Vec<Task> {
+    tasks_from_text_at(text, Utc::now())
+}
+
+fn tasks_from_text_at(text: &str, anchor: DateTime<Utc>) -> Vec<Task> {
     text.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .enumerate()
-        .map(|(index, line)| Task {
-            id: String::new(),
-            title: line.to_string(),
-            notes: String::new(),
-            duration_min: 30,
-            deadline: None,
-            priority: 0,
-            status: "todo".into(),
-            confidence: 0.5,
-            label: label_for(line),
-            source: Source::Text,
-            position: index as i64,
-            pinned_start: None,
+        .map(|(index, line)| {
+            let candidates = find_date_candidates(line, anchor);
+            let deadline = candidates
+                .iter()
+                .find_map(|candidate| parse_deadline(candidate, anchor));
+            let pinned_start = pinned_start_for(line, anchor);
+            let lower = line.to_ascii_lowercase();
+            let meeting = ["meeting", "appointment", "call"]
+                .iter()
+                .any(|word| lower.contains(word));
+            Task {
+                id: String::new(),
+                title: clean_title(line),
+                notes: String::new(),
+                duration_min: if pinned_start.is_some() && meeting {
+                    60
+                } else {
+                    30
+                },
+                deadline,
+                priority: 0,
+                status: "todo".into(),
+                confidence: 0.5,
+                label: label_for(line),
+                source: Source::Text,
+                position: index as i64,
+                pinned_start,
+            }
         })
         .collect()
 }
@@ -227,6 +246,7 @@ pub fn clean_title(sentence: &str) -> String {
             "can someone remind me to ",
             "make a task to ",
             "ugh ",
+            "uh ",
             "okay ",
             "ok ",
             "so ",
@@ -244,6 +264,10 @@ pub fn clean_title(sentence: &str) -> String {
             "also ",
             "and ",
             "please ",
+            "remind me to ",
+            "maybe ",
+            "basically ",
+            "you know ",
             "todo: ",
         ]
         .iter()
@@ -252,6 +276,22 @@ pub fn clean_title(sentence: &str) -> String {
         title = title[prefix.len()..].trim().to_owned();
         if *prefix == "i need " {
             title = format!("Buy {title}");
+        }
+    }
+    let lower = title.to_ascii_lowercase();
+    for weekday in [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    ] {
+        let prefix = format!("next {weekday} ");
+        if lower.starts_with(&prefix) {
+            title = title[prefix.len()..].trim().to_owned();
+            break;
         }
     }
     let lower = title.to_ascii_lowercase();
@@ -314,11 +354,38 @@ pub fn clean_title(sentence: &str) -> String {
         title.truncate(index);
         title = title.trim().to_owned();
     }
+    for suffix in [" on", " at"] {
+        if title.to_ascii_lowercase().ends_with(suffix) {
+            title.truncate(title.len() - suffix.len());
+            title = title.trim().to_owned();
+        }
+    }
+    if explicit_clock(&title).is_some()
+        && let Some(index) = title.to_ascii_lowercase().rfind(" at ")
+    {
+        title.truncate(index);
+        title = title.trim().to_owned();
+    }
     let mut chars = title.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => title,
     }
+}
+
+fn title_candidates(sentence: &str) -> Vec<String> {
+    let words: Vec<&str> = sentence.split_whitespace().collect();
+    let mut candidates = vec![clean_title(sentence)];
+    for start in 0..words.len().min(4) {
+        for end in (start + 2)..=words.len() {
+            let candidate = clean_title(&words[start..end].join(" "));
+            if !candidate.is_empty() && !candidates.contains(&candidate) {
+                candidates.push(candidate);
+            }
+        }
+    }
+    candidates.truncate(12);
+    candidates
 }
 
 fn label_for(text: &str) -> String {
@@ -439,7 +506,10 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
         let target = index as i64 + 1;
         let mut days = (target - current + 7) % 7;
         if days == 0 {
-            days = 7;
+            let local_now = now.with_timezone(&timezone());
+            if local_now.time() >= NaiveTime::from_hms_opt(17, 0, 0).unwrap() {
+                days = 7;
+            }
         }
         now.date_naive() + chrono::Duration::days(days)
     } else if let Ok(value) = chrono::NaiveDate::parse_from_str(candidate, "%Y-%m-%d") {
@@ -528,7 +598,8 @@ pub async fn capture_text(text: &str, source: Source, anchor: DateTime<Utc>) -> 
     }
     let results = join_all(sentences.iter().map(|sentence| async move {
         let candidates = find_date_candidates(sentence, anchor);
-        understand(sentence, &candidates, anchor)
+        let titles = title_candidates(sentence);
+        understand(sentence, &candidates, &titles, anchor)
             .await
             .map(|judgment| (sentence, candidates, judgment))
     }))
@@ -595,7 +666,10 @@ fn tasks_from_judgments(
                 format!("Study for {cleaned}")
             }
         } else {
-            clean_title(&sentence)
+            judgment
+                .title
+                .clone()
+                .unwrap_or_else(|| clean_title(&sentence))
         };
         tasks.push(Task {
             id: String::new(),
@@ -1694,7 +1768,67 @@ mod tests {
     fn capture_makes_one_task_per_non_empty_line() {
         let tasks = tasks_from_text("buy milk\n\n  call mom  \n");
         let titles: Vec<&str> = tasks.iter().map(|t| t.title.as_str()).collect();
-        assert_eq!(titles, ["buy milk", "call mom"]);
+        assert_eq!(titles, ["Buy milk", "Call mom"]);
+    }
+
+    #[test]
+    fn fallback_capture_cleans_titles_and_resolves_weekday_times() {
+        let anchor = Utc.with_ymd_and_hms(2026, 10, 11, 16, 0, 0).unwrap();
+        let tasks = tasks_from_text_at(
+            "um so I need to call mom on Tuesday at 3\nuh finish the lab report Wednesday\nnext Tuesday dentist at 10am\ntomorrow buy groceries",
+            anchor,
+        );
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task.title.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Call mom",
+                "Finish the lab report",
+                "Dentist",
+                "Buy groceries"
+            ]
+        );
+        let tz = timezone();
+        assert_eq!(
+            tasks[0]
+                .pinned_start
+                .unwrap()
+                .with_timezone(&tz)
+                .date_naive()
+                .to_string(),
+            "2026-10-13"
+        );
+        assert_eq!(tasks[0].pinned_start.unwrap().with_timezone(&tz).hour(), 15);
+        assert_eq!(
+            tasks[1]
+                .deadline
+                .unwrap()
+                .with_timezone(&tz)
+                .date_naive()
+                .to_string(),
+            "2026-10-14"
+        );
+        assert_eq!(
+            tasks[2]
+                .pinned_start
+                .unwrap()
+                .with_timezone(&tz)
+                .date_naive()
+                .to_string(),
+            "2026-10-13"
+        );
+        assert_eq!(tasks[2].pinned_start.unwrap().with_timezone(&tz).hour(), 10);
+        assert_eq!(
+            tasks[3]
+                .deadline
+                .unwrap()
+                .with_timezone(&tz)
+                .date_naive()
+                .to_string(),
+            "2026-10-12"
+        );
     }
 
     #[test]
@@ -1727,6 +1861,17 @@ mod tests {
         assert_eq!(
             clean_title("Schedule a meeting with Maya and Luis"),
             "Schedule a meeting with Maya and Luis"
+        );
+    }
+
+    #[test]
+    fn title_candidates_keep_beginning_and_action_span() {
+        let candidates = title_candidates("Um so I need to call mom on Tuesday at 3");
+        assert!(candidates.contains(&"Call mom".to_string()));
+        assert!(
+            candidates
+                .iter()
+                .any(|candidate| candidate.to_ascii_lowercase().contains("call mom"))
         );
     }
 
@@ -1922,6 +2067,7 @@ mod tests {
                         duration_min: 30,
                         confidence: 1.0,
                         label: None,
+                        title: None,
                     },
                 )
             })
@@ -2056,7 +2202,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let tasks = json["tasks"].as_array().expect("tasks array");
         assert_eq!(tasks.len(), 1, "got: {json}");
-        assert_eq!(tasks[0]["title"], "buy printer ink");
+        assert_eq!(tasks[0]["title"], "Buy printer ink");
         assert_eq!(tasks[0]["source"], "text", "JSON capture stays text");
     }
 

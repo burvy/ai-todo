@@ -57,7 +57,8 @@ pub async fn revise_task(
     let now = Utc::now();
     let candidates = find_date_candidates(&instruction, now);
     let state_text = format!("{}. {}", current.title, instruction);
-    let judgment = understand(&state_text, &candidates, now)
+    let title_candidates = vec![crate::clean_title(&instruction)];
+    let judgment = understand(&state_text, &candidates, &title_candidates, now)
         .await
         .map_err(|e| error(StatusCode::BAD_GATEWAY, format!("Jev revise failed: {e}")))?;
 
@@ -193,6 +194,7 @@ mod tests {
             duration_min: 90,
             confidence: 0.8,
             label: Some("Work".into()),
+            title: None,
         }
     }
 
