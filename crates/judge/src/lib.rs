@@ -315,7 +315,13 @@ fn split_compound(sentence: &str) -> Vec<String> {
             let index = offset + relative;
             let left = sentence[..index].trim();
             let right = sentence[index + marker.len()..].trim();
-            if word_count_without_filler(left) >= 2 && word_count_without_filler(right) >= 2 {
+            let bare_coordination = marker == " and "
+                && right.split_whitespace().count() <= 2
+                && !is_action_word(right.split_whitespace().next().unwrap_or_default());
+            if word_count_without_filler(left) >= 2
+                && word_count_without_filler(right) >= 2
+                && !bare_coordination
+            {
                 candidates.push((index, marker.len(), left.to_owned(), right.to_owned()));
             }
             offset = index + marker.len();
@@ -332,6 +338,19 @@ fn split_compound(sentence: &str) -> Vec<String> {
     } else {
         vec![sentence.to_owned()]
     }
+}
+
+fn is_action_word(word: &str) -> bool {
+    [
+        "buy", "call", "clean", "email", "finish", "find", "make", "read", "review", "schedule",
+        "send", "share", "start", "submit", "upload", "write",
+    ]
+    .contains(
+        &word
+            .trim_matches(|c: char| !c.is_ascii_alphabetic())
+            .to_ascii_lowercase()
+            .as_str(),
+    )
 }
 
 fn word_count_without_filler(sentence: &str) -> usize {
@@ -458,6 +477,14 @@ mod tests {
         assert_eq!(
             clauses,
             vec!["I should schedule a meeting with Maya and Luis"]
+        );
+    }
+
+    #[test]
+    fn keeps_bare_number_coordination() {
+        assert_eq!(
+            split_sentences("Review chapters six and seven"),
+            vec!["Review chapters six and seven"]
         );
     }
 
