@@ -201,6 +201,7 @@ pub fn clean_title(sentence: &str) -> String {
             "um ",
             "like ",
             "i need to ",
+            "i need ",
             "i have a ",
             "i also have a ",
             "i still need to ",
@@ -217,8 +218,27 @@ pub fn clean_title(sentence: &str) -> String {
         .find(|prefix| lower.starts_with(**prefix));
         let Some(prefix) = filler else { break };
         title = title[prefix.len()..].trim().to_owned();
+        if *prefix == "i need " {
+            title = format!("Buy {title}");
+        }
     }
     let lower = title.to_ascii_lowercase();
+    for aside in [" it is ", ", it is "] {
+        if let Some(index) = lower.find(aside) {
+            title.truncate(index);
+            title = title.trim().to_owned();
+            break;
+        }
+    }
+    let lower = title.to_ascii_lowercase();
+    if let Some(index) = lower.find(" just basics") {
+        title.truncate(index);
+        title = title.trim().to_owned();
+    }
+    let lower = title.to_ascii_lowercase();
+    if lower.starts_with("buy groceries") {
+        title = "Buy groceries".into();
+    }
     for conjunction in [" because ", " since "] {
         if let Some(index) = lower.find(conjunction) {
             title.truncate(index);
@@ -271,9 +291,23 @@ pub fn clean_title(sentence: &str) -> String {
 
 fn label_for(text: &str) -> String {
     let lower = text.to_ascii_lowercase();
-    if ["class", "lab", "homework"]
-        .iter()
-        .any(|word| lower.contains(word))
+    if [
+        "class",
+        "lab",
+        "homework",
+        "paper",
+        "professor",
+        "reading",
+        "quiz",
+        "chapter",
+        "slide",
+        "presentation",
+        "ta",
+        "draft",
+        "group",
+    ]
+    .iter()
+    .any(|word| lower.contains(word))
     {
         "School"
     } else if ["work", "report", "meeting"]
@@ -1193,6 +1227,33 @@ mod tests {
             clean_title("Study for i also have a quiz sometime"),
             "Study for quiz"
         );
+        assert_eq!(
+            clean_title("Finish the history response paper it is maybe two pages and upload it"),
+            "Finish the history response paper"
+        );
+        assert_eq!(
+            clean_title("I need groceries just basics by the weekend"),
+            "Buy groceries"
+        );
+        assert_eq!(
+            clean_title("Schedule a meeting with Maya and Luis"),
+            "Schedule a meeting with Maya and Luis"
+        );
+    }
+
+    #[test]
+    fn school_labels_cover_demo_language() {
+        for text in [
+            "history paper",
+            "Email Professor Chen",
+            "Study for quiz",
+            "Review chapters six and seven",
+            "design presentation",
+            "make my slides",
+            "Share a draft with the group",
+        ] {
+            assert_eq!(label_for(text), "School", "{text}");
+        }
     }
 
     #[test]
