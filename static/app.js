@@ -127,11 +127,19 @@ function minutesIntoDay(iso) {
 }
 
 let toastTimer;
-function say(message) {
+function say(message, undo) {
   toast.textContent = message;
+  if (undo) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'toast-undo';
+    btn.textContent = 'Undo';
+    btn.addEventListener('click', () => { clearToast(); undo(); say('Undone.'); }, { once: true });
+    toast.append(' ', btn);
+  }
   toast.hidden = !message;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(clearToast, 3200);
+  toastTimer = setTimeout(clearToast, undo ? 5000 : 3200);
 }
 function clearToast() {
   clearTimeout(toastTimer);
@@ -442,7 +450,6 @@ function renderList() {
   old.forEach((li) => li.remove());
 
   const open = ordered.filter((t) => t.status !== 'done').length;
-  const pencilled = ordered.filter((t) => t.status !== 'done' && Number(t.confidence) < PENCIL_BELOW).length;
 
   emptyNote.hidden = ordered.length > 0;
   if (!ordered.length) {
@@ -450,7 +457,7 @@ function renderList() {
   } else if (!open) {
     summary.textContent = `${ordered.length} done. An empty page.`;
   } else {
-    summary.textContent = `${open} open${pencilled ? ` · ${pencilled} pencilled in` : ''}`;
+    summary.textContent = `${open} open`;
   }
 }
 
@@ -476,6 +483,7 @@ async function announceNewTasks(alsoDone = []) {
     await wait(460);                        // the flight to the line
     r = text.getBoundingClientRect();
     row.classList.add('enter');             // the reveal starts under the nib
+    play('write');
     mascotTrack.style.transition = `transform ${WRITE_MS}ms linear`;
     penAt(r.right, r.top + r.height / 2);
     await wait(WRITE_MS);
@@ -588,8 +596,10 @@ function renderPlanner() {
     : 'Nothing is placed yet. Say a few tasks and the pen will find the gaps.';
 
   legend.textContent = '';
-  const used = [...new Set(state.tasks.map((t) => t.label).filter(Boolean))].sort();
-  if (!used.length) used.push('Other');
+  const used = [...new Set(state.placements
+    .map((p) => state.byId.get(p.task_id)?.label).filter(Boolean))].sort();
+  legend.hidden = used.length < 2;
+  if (used.length < 2) used.length = 0;
   for (const label of used) {
     const item = document.createElement('li');
     const swatch = document.createElement('i');
@@ -702,13 +712,27 @@ function showBlock(text) {
   note.hidden = false;
 }
 
-async function refreshCalendar() {
+/* The planner used to go blank after a reload: a failed or slow
+   /api/calendar call was swallowed and replaced the page with empty data,
+   and an older response could land after a newer one. Now only the latest
+   request may paint, a failure keeps what is on the page and retries once. */
+let calendarSeq = 0;
+async function refreshCalendar(retry = true) {
+  const seq = ++calendarSeq;
   const from = state.weekStart;
   const to = addDays(from, 7);
-  let data = { busy: [], placements: [] };
+  let data;
   try {
     data = await getCalendar(from.toISOString(), to.toISOString());
-  } catch { /* leave the page as it was rather than blanking the planner */ }
+  } catch (err) {
+    console.warn('calendar fetch failed', err);
+    if (retry && seq === calendarSeq) {
+      await wait(800);
+      if (seq === calendarSeq) return refreshCalendar(false);
+    }
+    return null;
+  }
+  if (seq !== calendarSeq) return data;      // a newer request owns the page
   state.busy = data.busy || [];
   state.placements = data.placements || [];
   renderPlanner();
@@ -775,6 +799,7 @@ async function submit(text, source = 'text') {
 
   setBusy(true);
   mood('writing');
+  play('send');
 
   try {
     const result = await sendMessage(body, source);
@@ -785,7 +810,7 @@ async function submit(text, source = 'text') {
       state.focusDate = result.focus_date;
       state.weekStart = startOfDay(new Date(result.focus_date + 'T00:00:00'));
     }
-    state.placements = result.placements || [];
+    if (Array.isArray(result.placements)) state.placements = result.placements;
 
     state.freshIds = new Set(state.tasks.filter((t) => !before.has(t.id)).map((t) => t.id));
     const newlyDone = state.tasks
@@ -897,6 +922,7 @@ function startListening() {
   // React to the press straight away. Some browsers advertise speech support
   // but never fire `start` (no device, permission still pending), so don't hang.
   mood('listening');
+  play('listen');
   startGuard = setTimeout(() => {
     startGuard = null;
     if (!listening) {
@@ -1085,14 +1111,7 @@ list.addEventListener('click', async (event) => {
   if (!task) return;
 
   if (event.target.closest('.kill')) {
-    li.classList.add('leaving');
-    try {
-      await deleteTask(id);
-      state.tasks = state.tasks.filter((t) => t.id !== id);
-      indexTasks();
-      setTimeout(() => { renderList(); renderPlanner(); }, 240);
-      await replan();
-    } catch { li.classList.remove('leaving'); say('Could not delete that one.'); }
+    removeTask(task);
     return;
   }
 
@@ -1103,6 +1122,13 @@ list.addEventListener('click', async (event) => {
     li.classList.toggle('done', done);
     task.status = done ? 'done' : 'todo';
     li.dataset.sig = rowSig(task);
+    if (done) {
+      play('tick');
+      say(`Done: ${task.title}.`, () => {
+        const row = list.querySelector(`.task[data-id="${CSS.escape(id)}"]`);
+        row?.querySelector('.tick').click();
+      });
+    }
     if (done && !reduceMotion) {
       measurePenHome();
       penFlyTo(li.querySelector('.tick'));
@@ -1122,8 +1148,32 @@ list.addEventListener('click', async (event) => {
   if (state.editing) return;
   const field = event.target.closest('.chip.editable')?.dataset.field;
   if (field) { beginEdit(li, field); return; }
-  if (event.target.closest('.title-wrap')) beginEdit(li, 'title');
+  if (event.target.closest('.title-wrap, .task-body')) openCard(task);
 });
+
+/* Delete with a five-second undo: the row goes at once, the DELETE waits. */
+function removeTask(task) {
+  const id = task.id;
+  const at = state.tasks.indexOf(task);
+  state.tasks = state.tasks.filter((t) => t.id !== id);
+  indexTasks();
+  renderList();
+  renderPlanner();
+  let undone = false;
+  const timer = setTimeout(async () => {
+    if (undone) return;
+    try { await deleteTask(id); } catch { say('Could not delete that one.'); }
+    await replan();
+  }, 5000);
+  say(`Deleted "${task.title}".`, () => {
+    undone = true;
+    clearTimeout(timer);
+    state.tasks.splice(Math.max(0, at), 0, task);
+    indexTasks();
+    renderList();
+    renderPlanner();
+  });
+}
 
 /* keyboard route into the inline editor */
 list.addEventListener('keydown', (event) => {
@@ -1132,7 +1182,8 @@ list.addEventListener('keydown', (event) => {
   if (!holder || state.editing) return;
   event.preventDefault();
   const li = holder.closest('.task');
-  beginEdit(li, holder.dataset.field || 'title');
+  if (!holder.dataset.field) { openCard(state.byId.get(li.dataset.id)); return; }
+  beginEdit(li, holder.dataset.field);
 });
 
 /* ── Add one task by hand ───────────────────────────────────── */
@@ -1449,6 +1500,7 @@ function showPage(index) {
   const page = desk.children[index];
   if (!page) return;
   desk.scrollTo({ left: page.offsetLeft, behavior: 'smooth' });
+  play('page');
 }
 
 function markPage(index) {
@@ -1505,10 +1557,200 @@ weekLabel.addEventListener('click', async () => {
   autoGrow();
   mood('idle');
 
+  // the planner must not depend on /api/tasks succeeding
   loadTasks()
-    .then(replan)
     .catch(() => {
       emptyNote.textContent = 'The server is not answering yet. Start it with: cargo run -p server';
       summary.textContent = 'Offline';
+    })
+    .then(replan);
+  // back/forward cache restores a stale page: refetch
+  window.addEventListener('pageshow', (event) => { if (event.persisted) loadTasks().then(replan).catch(() => {}); });
+})();
+/* ── Edit card: a paper index card over the list ────────────── */
+
+const card = $('#editCard');
+const cardForm = $('#cardForm');
+const cf = (name) => cardForm.elements[name];
+let cardTask = null;
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+function dateInput(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function timeInput(d) { return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
+
+function fillCard(task, pencil = false) {
+  cf('title').value = task.title || '';
+  const when = task.pinned_start || task.deadline;
+  cf('day').value = when ? dateInput(new Date(when)) : '';
+  cf('time').value = task.pinned_start ? timeInput(new Date(task.pinned_start)) : '';
+  cf('duration').value = task.duration_min ?? 30;
+  cf('label').value = task.label || 'Other';
+  cf('notes').value = task.notes || '';
+  cf('done').checked = task.status === 'done';
+  card.classList.toggle('pencil', pencil);
+}
+
+function openCard(task) {
+  if (!task || state.editing) return;
+  cardTask = task;
+  fillCard(task);
+  cf('revise').value = '';
+  card.hidden = false;
+  card.setAttribute('aria-label', `Edit "${task.title}"`);
+  cf('title').focus();
+}
+
+function closeCard() {
+  card.hidden = true;
+  card.classList.remove('pencil');
+  cardTask = null;
+}
+
+/* the card's fields -> a PATCH body with only what changed */
+function cardPatch(task) {
+  const body = {};
+  const title = cf('title').value.trim();
+  if (title && title !== task.title) body.title = title;
+  const minutes = Math.round(Number(cf('duration').value));
+  if (minutes >= 5 && minutes !== task.duration_min) body.duration_min = minutes;
+  if (cf('label').value !== (task.label || 'Other')) body.label = cf('label').value;
+  if (cf('notes').value !== (task.notes || '')) body.notes = cf('notes').value;
+  const status = cf('done').checked ? 'done' : 'todo';
+  if (status !== task.status) body.status = status;
+
+  const day = cf('day').value, time = cf('time').value;
+  // a time pins the task on the calendar; a day alone is a deadline (5pm)
+  const pinned = day && time ? new Date(`${day}T${time}`).toISOString() : null;
+  if (pinned !== (task.pinned_start || null)) body.pinned_start = pinned;
+  if (day && !time) {
+    const deadline = new Date(`${day}T17:00`).toISOString();
+    const current = task.deadline ? dateInput(new Date(task.deadline)) : '';
+    if (current !== day) body.deadline = deadline;
+  }
+  return body;
+}
+
+cardForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const task = cardTask;
+  if (!task) return;
+  const body = cardPatch(task);
+  closeCard();
+  if (!Object.keys(body).length) return;
+  try {
+    const updated = await patchTask(task.id, body);
+    Object.assign(task, body, updated || {});
+    indexTasks();
+    renderList();
+    await replan();
+    say('Saved.');
+  } catch {
+    say('Could not save that change.');
+  }
+});
+
+$('#cardCancel').addEventListener('click', closeCard);
+$('#cardDelete').addEventListener('click', () => {
+  const task = cardTask;
+  closeCard();
+  if (task) removeTask(task);
+});
+
+/* "Tell Jev what to change": the server revises, the card shows it, Save keeps it */
+async function reviseCard() {
+  const task = cardTask;
+  const text = cf('revise').value.trim();
+  if (!task || !text) return;
+  const btn = $('#cardPen');
+  btn.disabled = true;
+  card.classList.add('is-busy');
+  play('send');
+  try {
+    const revised = await api(`/api/tasks/${task.id}/revise`, {
+      method: 'POST',
+      body: JSON.stringify({ text }),
     });
+    if (cardTask !== task) return;
+    fillCard({ ...task, ...revised }, Number(revised.confidence) < PENCIL_BELOW);
+    play('write');
+  } catch (err) {
+    say(err.status === 404 || err.status === 405
+      ? 'Jev cannot revise yet. Edit the fields by hand.'
+      : 'Jev did not answer. Edit the fields by hand.');
+  } finally {
+    btn.disabled = false;
+    card.classList.remove('is-busy');
+  }
+}
+$('#cardPen').addEventListener('click', reviseCard);
+cf('revise').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') { event.preventDefault(); reviseCard(); }
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !card.hidden) closeCard();
+});
+document.addEventListener('pointerdown', (event) => {
+  if (!card.hidden && !card.contains(event.target) && !event.target.closest('.task')) closeCard();
+});
+
+/* ── Sounds: replaceable files, WebAudio fallback ───────────── */
+
+/* static/assets/sounds/<name>.mp3 if it is there, else a tiny synth.
+   One at a time, quiet, only after the user has done something, and off
+   with Voice in the settings. */
+const SOUND_VOLUME = 0.3;
+const SYNTH = {
+  write:  [520, 0.05, 'triangle'],
+  tick:   [880, 0.07, 'sine'],
+  page:   [300, 0.06, 'triangle'],
+  listen: [660, 0.09, 'sine'],
+  send:   [440, 0.08, 'sine'],
+};
+const soundFiles = new Map();   // name -> Audio | null (missing)
+let soundNow = null;
+let userActed = false;
+let audioCtx = null;
+['pointerdown', 'keydown'].forEach((type) =>
+  document.addEventListener(type, () => { userActed = true; }, { once: true, capture: true }));
+
+function synth(name) {
+  const spec = SYNTH[name];
+  if (!spec) return;
+  try {
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const [freq, len, type] = spec;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(SOUND_VOLUME * 0.4, audioCtx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + len);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start();
+    osc.stop(audioCtx.currentTime + len);
+  } catch { /* no audio: stay quiet */ }
+}
+
+function play(name) {
+  if (!state.speaking || !userActed) return;
+  if (soundNow) { soundNow.pause(); soundNow = null; }
+  const cached = soundFiles.get(name);
+  if (cached === null) { synth(name); return; }
+  const audio = cached || new Audio(`assets/sounds/${name}.mp3`);
+  audio.volume = SOUND_VOLUME;
+  if (!cached) {
+    audio.addEventListener('error', () => { soundFiles.set(name, null); }, { once: true });
+    soundFiles.set(name, audio);
+  }
+  audio.currentTime = 0;
+  soundNow = audio;
+  audio.play().catch(() => { soundFiles.set(name, null); synth(name); });
+}
+
+/* Paper texture: use assets/paper.jpg when it exists, SVG grain otherwise. */
+(function paperAsset() {
+  const img = new Image();
+  img.onload = () => document.documentElement.classList.add('has-paper');
+  img.src = 'assets/paper.jpg';
 })();

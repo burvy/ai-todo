@@ -978,3 +978,54 @@ body.is-busy .composer-row { border-color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   .task.pending .title-text { clip-path: none; }
 }
+
+/* replaceable paper: assets/paper.jpg over the SVG grain when it exists */
+:root.has-paper .paper, :root.has-paper .planner {
+  background-image: url("assets/paper.jpg");
+  background-size: 512px auto;
+}
+
+/* undo toast */
+.toast-undo {
+  margin-left: 8px; background: none; border: 0; padding: 0 2px;
+  color: var(--accent); font: inherit; font-weight: 600; text-decoration: underline; cursor: pointer;
+}
+
+/* edit card: a paper index card over the list */
+.notebook { position: relative; }
+.edit-card {
+  position: absolute; z-index: 40; top: 64px; left: 50%; width: min(440px, calc(100% - 24px));
+  transform: translateX(-50%) rotate(-.4deg);
+  background: var(--paper-fresh);
+  background-image: repeating-linear-gradient(to bottom, transparent 0 27px, var(--rule) 27px 28px);
+  border: 1px solid var(--edge); border-top: 3px solid var(--margin-line); border-radius: 3px;
+  box-shadow: 3px 10px 26px -10px rgba(43,42,40,.55);
+  padding: 12px 14px;
+}
+.edit-card[hidden] { display: none; }
+.edit-card form { display: grid; gap: 8px; }
+.card-revise { display: flex; gap: 6px; align-items: center; border-bottom: 1px dashed var(--edge); padding-bottom: 8px; }
+.card-revise input { flex: 1; min-width: 0; border: 0; background: transparent; font: italic 14px/1.4 var(--hand, inherit); font-size: 17px; color: var(--ink); padding: 4px 2px; }
+.card-revise input:focus { outline: none; border-bottom: 1px solid var(--accent); }
+.card-pen { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--edge); background: transparent; color: var(--accent); font-size: 17px; cursor: pointer; }
+.edit-card.is-busy .card-pen { opacity: .5; cursor: progress; }
+.card-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.card-field { display: grid; gap: 2px; font-size: 12px; color: var(--ink-soft); }
+.card-field em { font-style: italic; opacity: .8; }
+.card-field input, .card-field select, .card-field textarea {
+  font: 14px/1.35 inherit; font-family: inherit; color: var(--ink);
+  background: transparent; border: 0; border-bottom: 1px solid var(--edge); padding: 3px 2px; border-radius: 0;
+}
+.card-title input { font-family: var(--hand, inherit); font-size: 22px; }
+.card-field textarea { resize: vertical; }
+.card-field :focus { outline: none; border-bottom-color: var(--accent); }
+.edit-card.pencil .card-field input, .edit-card.pencil .card-field select { color: var(--pencil); font-style: italic; }
+.card-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+.card-spacer { flex: 1; }
+.card-done { display: flex; gap: 5px; align-items: center; font-size: 14px; }
+.card-delete { background: none; border: 0; color: var(--overdue, #b33); font: inherit; font-size: 13px; text-decoration: underline; cursor: pointer; }
+.card-cancel { width: auto; padding: 0 10px; height: 30px; }
+.legend[hidden] { display: none; }
+@media (max-width: 720px) {
+  .edit-card { position: fixed; top: auto; bottom: 0; left: 0; right: 0; width: auto; transform: none; border-radius: 6px 6px 0 0; max-height: 88vh; overflow: auto; }
+}

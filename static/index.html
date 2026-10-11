@@ -99,6 +99,39 @@
       </div>
       <p class="writing-note" id="writingNote" hidden><span class="caret"></span> the pen is writing…</p>
     </div>
+
+    <!-- Edit card: tap a task -->
+    <div class="edit-card" id="editCard" role="dialog" aria-modal="false" hidden>
+      <form id="cardForm" autocomplete="off">
+        <div class="card-revise">
+          <label class="sr-only" for="cardRevise">Tell Jev what to change</label>
+          <input id="cardRevise" name="revise" placeholder="Tell Jev what to change… e.g. Thursday at 2, about an hour" />
+          <button type="button" class="card-pen" id="cardPen" aria-label="Ask Jev to revise">&#9998;</button>
+        </div>
+        <label class="card-field card-title"><span>Title</span><input name="title" required /></label>
+        <div class="card-row">
+          <label class="card-field"><span>Day</span><input name="day" type="date" /></label>
+          <label class="card-field"><span>Time <em>(pins it)</em></span><input name="time" type="time" step="900" /></label>
+        </div>
+        <div class="card-row">
+          <label class="card-field"><span>Minutes</span><input name="duration" type="number" min="5" step="5" /></label>
+          <label class="card-field"><span>Label</span>
+            <select name="label">
+              <option>School</option><option>Work</option><option>Errands</option>
+              <option>Health</option><option>Personal</option><option>Other</option>
+            </select>
+          </label>
+        </div>
+        <label class="card-field"><span>Notes</span><textarea name="notes" rows="2"></textarea></label>
+        <div class="card-actions">
+          <label class="card-done"><input name="done" type="checkbox" /> Done</label>
+          <button type="button" class="card-delete" id="cardDelete">Delete</button>
+          <span class="card-spacer"></span>
+          <button type="button" class="nav-btn card-cancel" id="cardCancel">Cancel</button>
+          <button type="submit" class="schedule-btn card-save">Save</button>
+        </div>
+      </form>
+    </div>
   </section>
 
   <!-- ── Planner ──────────────────────────────────────────────── -->
