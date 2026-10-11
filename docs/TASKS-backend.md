@@ -8,11 +8,17 @@ Run the backend locally: `cargo run -p server` → `http://localhost:8080` (put 
 
 ## P0: SQLite database (~1–1.5h), do this first
 Today tasks and busy blocks live in memory (`Arc<Mutex<...>>` in `server/`) and are lost on restart. You own persistence; no agent will touch it.
-- [ ] Add `rusqlite` with the `bundled` feature (no system install needed). *(5m)*
-- [ ] New module `server/src/db.rs`: open the DB at env `DATA_PATH` (default `data/ai-todo.db`, create the folder), run `CREATE TABLE IF NOT EXISTS` for `tasks` (all Task fields: id, title, notes, duration_min, deadline, priority, status, confidence, source, label) and `busy_blocks` (id, start, end, title). *(30m)*
-- [ ] Replace the in-memory store: load on startup; insert/update/delete on every `POST /api/tasks`, `/api/capture`, `/api/message`, `PATCH`, `DELETE`, and when busy blocks change. Seed the 3 demo busy blocks only if the table is empty. *(40m)*
-- [ ] Add `data/` to `.gitignore`. *(1m)*
-- [ ] Test: create a task, restart the server, it is still there. Unit test a round trip with an in-memory DB (`:memory:`). *(15m)*
+- [x] Add `rusqlite` with the `bundled` feature (no system install needed). *(5m)*
+- [x] New module `server/src/db.rs`: open the DB at env `DATA_PATH` (default `data/ai-todo.db`, create the folder), run `CREATE TABLE IF NOT EXISTS` for `tasks` (all Task fields: id, title, notes, duration_min, deadline, priority, status, confidence, source, label) and `busy_blocks` (id, start, end, title). *(30m)*
+- [x] Replace the in-memory store: load on startup; insert/update/delete on every `POST /api/tasks`, `/api/capture`, `/api/message`, `PATCH`, `DELETE`, and when busy blocks change. Seed the 3 demo busy blocks only if the table is empty. *(40m)*
+- [x] Add `data/` to `.gitignore`. *(1m)*
+- [x] Test: create a task, restart the server, it is still there. Unit test a round trip with an in-memory DB (`:memory:`). *(15m)*
+
+Notes on the above, for whoever picks up P1:
+- The in-memory `Store` is still the working copy; SQLite is the durable record. Route behaviour is unchanged.
+- Writes log a warning instead of failing the request, so a database problem cannot take the API down mid-demo.
+- Ids continue from the highest stored id on startup, so adding a task after a restart cannot collide.
+- `POST /api/tasks` is **not** yet persisted from a dedicated route: the manual-add route from the other agent saves through the same write-through helper, so it is covered as soon as that route lands.
 
 ## P1: calendar import (~1.5h)
 - [ ] Create `crates/capture`, add it to workspace `members`. *(10m)*
