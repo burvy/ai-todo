@@ -5,6 +5,7 @@
 mod db;
 mod export;
 mod ics;
+mod reset;
 mod upload;
 
 use std::collections::BTreeSet;
@@ -1360,6 +1361,7 @@ fn app(state: AppState) -> Router {
         .route("/api/calendar", get(calendar))
         .route("/api/calendar.ics", get(export::calendar_ics))
         .route("/api/calendar/import", post(import_calendar))
+        .route("/api/reset", post(reset::reset))
         .with_state(state)
         .layer(CorsLayer::permissive());
     if Path::new("static").is_dir() {
