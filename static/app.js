@@ -52,6 +52,7 @@ const state = {
   focusDate: null,
   speaking: true,
   freshIds: new Set(),
+  unwritten: new Set(),   // new tasks the pen has not written yet: not on the planner yet
   working: false,   // a request is in flight
   editing: false,   // an inline editor is open
 };
@@ -488,6 +489,8 @@ async function announceNewTasks(alsoDone = []) {
     penAt(r.right, r.top + r.height / 2);
     await wait(WRITE_MS);
     mascotTrack.style.removeProperty('transition');
+    state.unwritten.delete(id);             // the note lands as the line is finished
+    renderPlanner();
   }
   list.querySelectorAll('.task.pending:not(.enter)').forEach((row) => row.classList.add('enter'));
 
@@ -558,6 +561,7 @@ function renderPlanner() {
       const start = new Date(placement.start);
       if (!isSameDay(start, date)) continue;
       const task = state.byId.get(placement.task_id);
+      if (!task || state.unwritten.has(placement.task_id)) continue;
       entries.push({
         start: placement.start,
         end: placement.end,
@@ -750,10 +754,14 @@ async function loadTasks(fresh = []) {
   state.tasks = data.tasks || [];
   indexTasks();
   state.freshIds = new Set(fresh);
+  state.unwritten = new Set(fresh);
   renderList();
   renderPlanner();
+  const synced = fresh.length ? replan() : null;
   await announceNewTasks();
   state.freshIds.clear();
+  state.unwritten.clear();
+  if (synced) { await synced; renderPlanner(); }
 }
 
 async function replan() {
@@ -785,7 +793,6 @@ function setBusy(on) {
   state.working = busyCount > 0;
   document.body.classList.toggle('is-busy', state.working);
   $('#writingNote').hidden = !state.working;
-  scheduleBtn.disabled = state.working;
   // while the pen is away writing, take no new input from the user
   penBtn.disabled = state.working;
   box.readOnly = state.working;
@@ -816,8 +823,10 @@ async function submit(text, source = 'text') {
     const newlyDone = state.tasks
       .filter((t) => t.status === 'done' && before.has(t.id) && before.get(t.id) !== 'done')
       .map((t) => t.id);
+    state.unwritten = new Set(state.freshIds);
     renderList();
     renderPlanner();
+    const synced = replan();
 
     marginText.textContent = result.reply || '';
     marginNote.hidden = !result.reply;
@@ -826,7 +835,9 @@ async function submit(text, source = 'text') {
 
     await announceNewTasks(newlyDone);
     state.freshIds.clear();
-    await refreshCalendar();
+    state.unwritten.clear();
+    await synced;
+    renderPlanner();
   } catch (err) {
     penGoHomeQuiet();
     say('The server did not answer. Is it running?');
@@ -1172,6 +1183,7 @@ function removeTask(task) {
     indexTasks();
     renderList();
     renderPlanner();
+    replan();
   });
 }
 
@@ -1201,6 +1213,7 @@ addForm.addEventListener('submit', async (event) => {
   try {
     const created = await addTask(title);
     await loadTasks(created.id ? [created.id] : []);
+    if (!created.id) await replan();
     speak(`${created.title || title}. Added.`);
   } catch (err) {
     say('Could not add that one.');
@@ -1262,8 +1275,7 @@ async function importCalendar(file, confirm = false) {
     if (clash) { showClashes(file, clash); return; }
     clashNote.hidden = true;
     // the route replaces the busy blocks; re-plan so the tasks move out of the way
-    await runSchedule();
-    await refreshCalendar();
+    await replan();
     const n = (data && data.busy ? data.busy : state.busy).length;
     say(n ? `Imported ${n} event${n === 1 ? '' : 's'} from ${file.name}.`
           : `No events found in ${file.name}.`);
@@ -1313,7 +1325,7 @@ docFile.addEventListener('change', async () => {
     const data = await res.json();
     const fresh = (data.tasks || []).map((t) => t.id).filter((id) => !before.has(id));
     await loadTasks(fresh);
-    await replan();
+    if (!fresh.length) await replan();
     say(fresh.length ? `Found ${fresh.length} task${fresh.length === 1 ? '' : 's'} in ${file.name}.`
                      : `No tasks found in ${file.name}.`);
   } catch (err) {
@@ -1342,34 +1354,132 @@ async function saveOrder() {
   await replan();
 }
 
-list.addEventListener('pointerdown', (event) => {
-  const grip = event.target.closest('.grip');
-  if (!grip || state.working || state.editing) return;
-  const li = grip.closest('.task');
-  event.preventDefault();
-  try { grip.setPointerCapture(event.pointerId); } catch { /* fine */ }
-  li.classList.add('dragging');
+/* Shared drag plumbing: a press becomes a drag at once with a mouse or the
+   grip, after a 300ms still press on touch. While a drag runs the page does
+   not scroll under the finger. */
+const LONG_PRESS_MS = 300;
+let dragActive = false;
+document.addEventListener('touchmove', (event) => { if (dragActive) event.preventDefault(); }, { passive: false });
+
+function pressToDrag(event, el, { immediate, onStart, onMove, onEnd }) {
+  const sx = event.clientX, sy = event.clientY;
+  const pid = event.pointerId;
+  let started = false;
+  let timer = null;
+  const begin = () => {
+    started = true;
+    dragActive = true;
+    try { el.setPointerCapture(pid); } catch { /* fine */ }
+    onStart();
+    if (navigator.vibrate) try { navigator.vibrate(8); } catch { /* fine */ }
+  };
   const move = (ev) => {
-    const over = [...list.children].find((row) => {
-      if (row === li) return false;
-      const b = row.getBoundingClientRect();
-      return ev.clientY >= b.top && ev.clientY <= b.bottom;
+    if (ev.pointerId !== pid) return;
+    const dx = ev.clientX - sx, dy = ev.clientY - sy;
+    if (!started) {
+      if (Math.hypot(dx, dy) < 6) return;
+      if (timer) { cleanup(); return; }       // moved before the long press: a scroll
+      begin();
+    }
+    ev.preventDefault();
+    onMove(ev, dx, dy);
+  };
+  const up = (ev) => {
+    if (ev.pointerId !== pid) return;
+    const was = started;
+    cleanup();
+    if (was) onEnd(ev, ev.type === 'pointercancel');
+  };
+  const cleanup = () => {
+    clearTimeout(timer);
+    timer = null;
+    dragActive = false;
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    document.removeEventListener('pointercancel', up);
+  };
+  document.addEventListener('pointermove', move, { passive: false });
+  document.addEventListener('pointerup', up);
+  document.addEventListener('pointercancel', up);
+  if (!immediate) timer = setTimeout(() => { timer = null; begin(); }, LONG_PRESS_MS);
+}
+
+function settle(el) {
+  if (reduceMotion) return;
+  el.classList.remove('settle');
+  void el.offsetWidth;
+  el.classList.add('settle');
+  el.addEventListener('animationend', () => el.classList.remove('settle'), { once: true });
+}
+
+/* Move a row in the list, sliding its neighbours (FLIP). */
+function moveRow(li, before) {
+  if (li.nextSibling === before || li === before) return;
+  const rows = [...list.children].filter((r) => r !== li);
+  const first = new Map(rows.map((r) => [r, r.getBoundingClientRect().top]));
+  list.insertBefore(li, before);
+  if (reduceMotion) return;
+  rows.forEach((r) => {
+    const dy = first.get(r) - r.getBoundingClientRect().top;
+    if (!dy) return;
+    r.style.transition = 'none';
+    r.style.transform = `translateY(${dy}px)`;
+    requestAnimationFrame(() => {
+      r.style.transition = 'transform 180ms ease-out';
+      r.style.transform = '';
     });
-    if (!over) return;
-    const b = over.getBoundingClientRect();
-    list.insertBefore(li, ev.clientY < b.top + b.height / 2 ? over : over.nextSibling);
-  };
-  const up = () => {
-    grip.removeEventListener('pointermove', move);
-    grip.removeEventListener('pointerup', up);
-    grip.removeEventListener('pointercancel', up);
-    li.classList.remove('dragging');
-    saveOrder();
-  };
-  grip.addEventListener('pointermove', move);
-  grip.addEventListener('pointerup', up);
-  grip.addEventListener('pointercancel', up);
+  });
+}
+
+list.addEventListener('pointerdown', (event) => {
+  if (state.working || state.editing || event.button > 0) return;
+  const grip = event.target.closest('.grip');
+  const li = event.target.closest('.task');
+  if (!li) return;
+  const touch = event.pointerType === 'touch';
+  // mouse: only the grip drags; touch: a long press anywhere on the row
+  if (!grip && !touch) return;
+  if (!grip && event.target.closest('.tick, .kill, input')) return;
+  if (grip) event.preventDefault();
+  let offset = 0;
+  const grabY = event.clientY;
+  const startSlot = li.offsetTop;
+  pressToDrag(event, li, {
+    immediate: !!grip && !touch,
+    onStart() {
+      li.classList.add('dragging');
+      li.dataset.dragged = '1';
+    },
+    onMove(ev) {
+      const over = [...list.children].find((row) => {
+        if (row === li) return false;
+        const b = row.getBoundingClientRect();
+        return ev.clientY >= b.top && ev.clientY <= b.bottom;
+      });
+      if (over) {
+        const b = over.getBoundingClientRect();
+        moveRow(li, ev.clientY < b.top + b.height / 2 ? over : over.nextSibling);
+      }
+      // follow the finger from wherever the row's slot now is
+      const slotTop = li.offsetTop;
+      offset = (ev.clientY - grabY) - (slotTop - startSlot);
+      li.style.transform = `translateY(${offset}px) scale(1.03) rotate(-1.2deg)`;
+    },
+    onEnd(_ev, cancelled) {
+      li.classList.remove('dragging');
+      li.style.transform = '';
+      settle(li);
+      setTimeout(() => { delete li.dataset.dragged; }, 0);
+      if (!cancelled) saveOrder();
+    },
+  });
 });
+
+/* a long-press drag must not also open the edit card */
+list.addEventListener('click', (event) => {
+  const li = event.target.closest('.task');
+  if (li && li.dataset.dragged) { event.stopImmediatePropagation(); delete li.dataset.dragged; }
+}, true);
 
 /* ── Reorder the planner: drag a note to a slot, tap the pin to free it ── */
 
@@ -1382,6 +1492,7 @@ async function pinTask(id, iso) {
   await replan();
 }
 
+
 gridDays.addEventListener('pointerdown', (event) => {
   const pin = event.target.closest('.pin');
   if (pin) {
@@ -1391,65 +1502,56 @@ gridDays.addEventListener('pointerdown', (event) => {
     return;
   }
   const el = event.target.closest('.block.place');
-  if (!el || !el.dataset.taskId || state.working) return;
-  const sx = event.clientX, sy = event.clientY;
-  let moved = false;
-  try { el.setPointerCapture(event.pointerId); } catch { /* fine */ }
-  const move = (ev) => {
-    const dx = ev.clientX - sx, dy = ev.clientY - sy;
-    if (!moved && Math.hypot(dx, dy) < 5) return;
-    moved = true;
-    el.classList.add('dragging');
-    el.style.transform = `translate(${dx}px, ${dy}px)`;
-  };
-  const up = (ev) => {
-    el.removeEventListener('pointermove', move);
-    el.removeEventListener('pointerup', up);
-    el.removeEventListener('pointercancel', up);
-    if (!moved) return;
-    el.dataset.dragged = '1';
-    const top = el.getBoundingClientRect().top;
-    el.classList.remove('dragging');
-    el.style.transform = '';
+  if (!el || !el.dataset.taskId || state.working || event.button > 0) return;
+  const body0 = el.parentElement;
+  const span = (DAY_END - DAY_START) * 60;
+  const startTop = el.offsetTop;
+  let target = null;   // { body, minutes }
+  const label = document.createElement('span');
+  label.className = 'drag-time';
+
+  const place = (ev, dx, dy) => {
     const body = [...gridDays.querySelectorAll('.day-body')].find((b) => {
       const r = b.getBoundingClientRect();
       return ev.clientX >= r.left && ev.clientX <= r.right;
-    });
-    if (!body) return;
+    }) || body0;
     const r = body.getBoundingClientRect();
-    const span = (DAY_END - DAY_START) * 60;
-    let minutes = DAY_START * 60 + ((top - r.top) / r.height) * span;
+    const r0 = body0.getBoundingClientRect();
+    const pxPerMin = r.height / span;
+    let minutes = DAY_START * 60 + (startTop + dy) / pxPerMin;
     minutes = Math.round(minutes / 15) * 15;
     minutes = Math.max(DAY_START * 60, Math.min(DAY_END * 60 - 15, minutes));
-    const start = new Date(body.dataset.day);
-    start.setHours(0, minutes, 0, 0);
-    pinTask(el.dataset.taskId, start.toISOString());
+    target = { body, minutes };
+    // snap the note itself: 15-minute steps, and the column under the finger
+    const snappedY = (minutes - DAY_START * 60) * pxPerMin - startTop;
+    const snappedX = r.left - r0.left;
+    el.style.transform = `translate(${snappedX}px, ${snappedY}px) scale(1.03) rotate(-1.5deg)`;
+    const d = new Date(body.dataset.day);
+    d.setHours(0, minutes, 0, 0);
+    label.textContent = `${d.toLocaleDateString([], { weekday: 'short' })} ${fmtTime(d.toISOString())}`;
   };
-  el.addEventListener('pointermove', move);
-  el.addEventListener('pointerup', up);
-  el.addEventListener('pointercancel', up);
+
+  pressToDrag(event, el, {
+    immediate: event.pointerType !== 'touch',
+    onStart() {
+      el.classList.add('dragging');
+      el.appendChild(label);
+    },
+    onMove: place,
+    onEnd(_ev, cancelled) {
+      el.dataset.dragged = '1';
+      el.classList.remove('dragging');
+      label.remove();
+      if (cancelled || !target) { el.style.transform = ''; return; }
+      settle(el);
+      const start = new Date(target.body.dataset.day);
+      start.setHours(0, target.minutes, 0, 0);
+      pinTask(el.dataset.taskId, start.toISOString());
+    },
+  });
 });
 
 /* ── Schedule it ────────────────────────────────────────────── */
-
-const scheduleBtn = $('#scheduleBtn');
-scheduleBtn.addEventListener('click', async () => {
-  if (state.working) return;
-  setBusy(true);
-  mood('writing');
-  try {
-    await runSchedule();
-    await refreshCalendar();
-    const count = state.placements.length;
-    say(count ? `Placed ${count} block${count === 1 ? '' : 's'} on the page.` : 'Nothing left to place.');
-  } catch (err) {
-    say('The schedule did not come back.');
-    console.error(err);
-  } finally {
-    setBusy(false);
-    mood('idle');
-  }
-});
 
 $('#marginReplay').addEventListener('click', () => speak(marginText.textContent));
 
