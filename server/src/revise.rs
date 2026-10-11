@@ -68,6 +68,7 @@ pub async fn revise_task(
         }
     }
     state.db.save_task(&updated);
+    crate::reschedule(&state);
     Ok(Json(updated))
 }
 
