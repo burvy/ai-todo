@@ -6,7 +6,7 @@ Ramble or drop a file, walk away, and your tasks are written and scheduled for y
 Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 
 **Live:** https://ai-todo-api.burvy.dev (anyone can open it; Chrome or Edge for the mic).
-**Run locally:** `.env` with `TYPESAFE_API_KEY=...` in the repo root, then `.\run-local.ps1` → http://localhost:8080 (`-Fresh` = throwaway data).
+**Run locally:** `.env` with `TYPESAFE_API_KEY=...` in the repo root, then `.\run-local.ps1` (Windows) or `./run-local.sh` (Linux/macOS) → http://localhost:8080 (`-Fresh` / `--fresh` = throwaway data).
 
 ---
 
@@ -22,7 +22,7 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 | Calendar import | `POST /api/calendar/import {ics_text}` replaces busy blocks with a real Outlook/Google `.ics` (`demo/outlook/week.ics` = 9 events) |
 | Alarms | "Add to my calendar" downloads `GET /api/calendar.ics`: every planned task with a 10-minute alarm, for Google / Outlook / iPhone. Open page: notification + spoken "Up next" 5 min before a task |
 | Scheduler / storage | Deadline first then priority, ≤2h chunks, 9:00–18:00 local; SQLite, survives restarts |
-| Ops | CI, `run-local.ps1`, deployed at `ai-todo-api.burvy.dev` |
+| Ops | CI, `run-local.ps1` / `run-local.sh`, deployed at `ai-todo-api.burvy.dev` |
 
 **Known gaps:** no PDF upload route yet; no phone swipe between list and planner or drag-to-reorder yet; task titles truncated in the list; overlapping planner blocks; no `/api/reset`; no login (everyone shares one list on the live site).
 
@@ -71,7 +71,7 @@ Task:
 | `POST /api/message` | `{text}` | `{reply, intent, tasks, placements, unscheduled, focus_date}` |
 | `POST /api/schedule` | | `{placements:[{task_id,start,end}], unscheduled:[{task_id,reason}]}` |
 | `GET /api/calendar?from&to` | | `{busy:[{start,end,title}], placements:[...]}` |
-| `POST /api/calendar/import` | `{ics_text}` (the whole `.ics` file as a string) | `{busy:[...], placements:[...]}` — **replaces** the busy blocks. `400 {error}` if it is not an `.ics` |
+| `POST /api/calendar/import` | `{ics_text, confirm?}` **or** multipart `file` (an `.ics`) + optional `confirm` | `{busy:[...], placements:[...]}` — **replaces** the busy blocks. `400 {error}` if it is not an `.ics`. `409 {error, conflicts:[{start,end,imported_title,existing_title}]}` if imported events overlap what is already in the app; nothing is changed until you resend with `confirm: true` |
 
 All times are UTC ISO strings; convert to local time in the UI. A long task can have **several placements** (chunks).
 
