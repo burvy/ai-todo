@@ -3,6 +3,7 @@
 //! Routes and payloads follow the frozen API contract in `hive/board.md`.
 
 mod db;
+mod ics;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -721,6 +722,40 @@ async fn calendar(
     Json(CalendarOut { busy, placements })
 }
 
+#[derive(Deserialize)]
+struct CalendarImportIn {
+    ics_text: String,
+}
+
+/// Replace the busy blocks with the ones in an uploaded `.ics` export.
+///
+/// Replaces rather than appends: importing twice must not double-book the
+/// same lecture, and re-exporting after moving an event must move it here too.
+async fn import_calendar(
+    State(state): State<AppState>,
+    Json(body): Json<CalendarImportIn>,
+) -> Result<Json<CalendarOut>, ics::ImportError> {
+    let imported = ics::parse_ics(&body.ics_text)?;
+
+    let blocks: Vec<BusyOut> = imported
+        .iter()
+        .map(|row| BusyOut {
+            start: row.start,
+            end: row.end,
+            title: row.title.clone(),
+        })
+        .collect();
+
+    *state.busy.lock().unwrap() = blocks.clone();
+    state.db.save_busy(&imported);
+
+    let placements = state.store.lock().unwrap().placements.clone();
+    Ok(Json(CalendarOut {
+        busy: blocks,
+        placements,
+    }))
+}
+
 fn fallback_intent(text: &str) -> &'static str {
     let lower = text.to_ascii_lowercase();
     if lower.contains("cancel") || lower.contains("got cancelled") {
@@ -1040,6 +1075,7 @@ fn app(state: AppState) -> Router {
         .route("/api/tasks/{id}", patch(patch_task).delete(delete_task))
         .route("/api/schedule", post(schedule_tasks))
         .route("/api/calendar", get(calendar))
+        .route("/api/calendar/import", post(import_calendar))
         .with_state(state)
         .layer(CorsLayer::permissive());
     if Path::new("static").is_dir() {
@@ -1370,5 +1406,149 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json["busy"].as_array().unwrap().len(), 3);
         assert_eq!(json["placements"].as_array().unwrap().len(), 1);
+    }
+
+    fn import_request(ics_text: &str) -> Request<Body> {
+        Request::builder()
+            .method("POST")
+            .uri("/api/calendar/import")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({ "ics_text": ics_text }).to_string(),
+            ))
+            .unwrap()
+    }
+
+    const TWO_EVENTS: &str = "BEGIN:VCALENDAR\nBEGIN:VEVENT\n\
+        SUMMARY:STAT 201 Lecture\n\
+        DTSTART;TZID=America/New_York:20261013T090000\n\
+        DTEND;TZID=America/New_York:20261013T101500\n\
+        END:VEVENT\nBEGIN:VEVENT\n\
+        SUMMARY:Campus bookstore shift\n\
+        DTSTART;TZID=America/New_York:20261014T140000\n\
+        DTEND;TZID=America/New_York:20261014T180000\n\
+        END:VEVENT\nEND:VCALENDAR\n";
+
+    #[tokio::test]
+    async fn importing_a_calendar_replaces_the_busy_blocks() {
+        let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
+        let router = app(new_state_with(db));
+
+        // The seeded state starts with 3 busy blocks.
+        let res = router
+            .clone()
+            .oneshot(import_request(TWO_EVENTS))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let busy = json["busy"].as_array().expect("a busy array");
+        assert_eq!(busy.len(), 2, "the seed blocks should be gone");
+
+        // The import is in UTC: 09:00 New York in October is 13:00 UTC.
+        assert_eq!(busy[0]["title"], "STAT 201 Lecture");
+        assert_eq!(busy[0]["start"], "2026-10-13T13:00:00Z");
+        assert_eq!(busy[0]["end"], "2026-10-13T14:15:00Z");
+
+        // And it survives a round trip through GET, so it really was saved.
+        let res = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/calendar")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["busy"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn importing_the_same_calendar_twice_does_not_double_book() {
+        let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
+        let router = app(new_state_with(db));
+
+        for _ in 0..2 {
+            let res = router
+                .clone()
+                .oneshot(import_request(TWO_EVENTS))
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::OK);
+        }
+
+        let res = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/calendar")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            json["busy"].as_array().unwrap().len(),
+            2,
+            "a second import must replace, not append"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_calendar_that_is_not_an_ics_is_a_400() {
+        let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
+        let router = app(new_state_with(db));
+
+        let res = router
+            .clone()
+            .oneshot(import_request("definitely not a calendar"))
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(json["error"].as_str().is_some(), "got {json}");
+
+        // And nothing was clobbered: the seeded blocks are still there.
+        let res = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/calendar")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            json["busy"].as_array().unwrap().len(),
+            3,
+            "a failed import must leave the old calendar alone"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_whole_demo_week_imports() {
+        let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
+        let router = app(new_state_with(db));
+        let week = include_str!("../../demo/outlook/week.ics");
+
+        let res = router.oneshot(import_request(week)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            json["busy"].as_array().unwrap().len(),
+            9,
+            "the Outlook fixture has 9 events"
+        );
     }
 }

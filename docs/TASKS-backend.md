@@ -15,9 +15,9 @@ _Synced 2026-10-11 ~16:10 by the orchestrator. Your email/PDF parsers merged in 
 - [x] `crates/capture`: `pdf_to_text(bytes)`, `parse_email(text)`, 15 tests
 
 ## P1b: calendar import, now (PR by 17:30)
-- [ ] `parse_ics(text) -> Vec<BusyRow>` in `crates/capture` (or `server/src/ics.rs`). `TZID=America/New_York` and floating times → UTC; `...Z` kept. Test: `demo/outlook/week.ics` gives 9 events, Oct 12–16. *(45m)*
-- [ ] `POST /api/calendar/import`, body `{ics_text}` (multipart `file` too if quick): replace busy blocks in memory **and** with `db.save_busy(...)`, return the same JSON as `GET /api/calendar`. *(30m)*
-- [ ] Tell the frontend the route works (they add the "Import calendar" button).
+- [x] `parse_ics(text) -> Vec<BusyRow>` in `crates/capture` (or `server/src/ics.rs`). `TZID=America/New_York` and floating times → UTC; `...Z` kept. Test: `demo/outlook/week.ics` gives 9 events, Oct 12–16. *(45m)*
+- [x] `POST /api/calendar/import`, body `{ics_text}` (multipart `file` too if quick): replace busy blocks in memory **and** with `db.save_busy(...)`, return the same JSON as `GET /api/calendar`. *(30m)*
+- [x] Tell the frontend the route works (they add the "Import calendar" button).
 - [ ] Optional, only if merged before 18:00: `{ics_url}` for a published Outlook or Google calendar link.
 
 **Merge order:** you and the new teammate both add a route in `server/src/main.rs`. Whoever merges second pulls `main` first. Keep the `main.rs` edit to the route only.
