@@ -1123,6 +1123,13 @@ fn query_label(text: &str) -> String {
     "Today".into()
 }
 
+fn cancelled_event_reply(title: &str, start: DateTime<Utc>) -> String {
+    format!(
+        "Cancelled {title}, {}. Your plan is updated.",
+        start.with_timezone(&timezone()).format("%a %-I:%M %p")
+    )
+}
+
 async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> Json<MessageOut> {
     let mut intent = classify_intent(&body.text)
         .await
@@ -1270,12 +1277,7 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
         }
         "cancel_event" => cancelled_event.map_or_else(
             || "I couldn't find that event.".into(),
-            |(title, start)| {
-                format!(
-                    "Cancelled {title} at {}; your plan is updated.",
-                    start.with_timezone(&timezone()).format("%-I:%M")
-                )
-            },
+            |(title, start)| cancelled_event_reply(&title, start),
         ),
         "complete_task" => completed_title.map_or_else(
             || "I couldn't tell which task you finished.".into(),
@@ -1591,6 +1593,15 @@ mod tests {
         };
         assert!(event_matches("cancel my 3pm", &event));
         assert!(!event_matches("cancel my 4pm", &event));
+    }
+
+    #[test]
+    fn cancellation_reply_includes_day_and_ampm_time() {
+        let start = Utc.with_ymd_and_hms(2026, 10, 12, 18, 0, 0).unwrap();
+        assert_eq!(
+            cancelled_event_reply("Campus bookstore shift", start),
+            "Cancelled Campus bookstore shift, Mon 2:00 PM. Your plan is updated."
+        );
     }
 
     #[test]
