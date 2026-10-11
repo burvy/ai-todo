@@ -219,10 +219,53 @@ fn answer_confidence(answer: &Value) -> f64 {
 
 pub fn split_sentences(text: &str) -> Vec<String> {
     text.split(['.', '!', '?', '\n'])
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .map(ToOwned::to_owned)
+        .flat_map(split_compound)
         .collect()
+}
+
+fn split_compound(sentence: &str) -> Vec<String> {
+    let sentence = sentence.trim();
+    let lower = sentence.to_ascii_lowercase();
+    for marker in [" and ", " also ", ", then "] {
+        if let Some(index) = lower.find(marker) {
+            let left = sentence[..index].trim();
+            let right = sentence[index + marker.len()..].trim();
+            if starts_with_verb(left) && starts_with_verb(right) {
+                return vec![left.to_owned(), right.to_owned()];
+            }
+        }
+    }
+    if sentence.is_empty() {
+        Vec::new()
+    } else {
+        vec![sentence.to_owned()]
+    }
+}
+
+fn starts_with_verb(sentence: &str) -> bool {
+    [
+        "buy",
+        "call",
+        "complete",
+        "email",
+        "finish",
+        "file",
+        "go",
+        "i need to",
+        "i should",
+        "i have to",
+        "make",
+        "review",
+        "send",
+        "write",
+    ]
+    .iter()
+    .any(|verb| {
+        sentence
+            .to_ascii_lowercase()
+            .starts_with(&format!("{verb} "))
+            || sentence.to_ascii_lowercase() == *verb
+    })
 }
 
 pub fn find_date_candidates(text: &str, now: DateTime<Utc>) -> Vec<String> {
@@ -244,7 +287,21 @@ pub fn find_date_candidates(text: &str, now: DateTime<Utc>) -> Vec<String> {
     ] {
         if lower.contains(name) {
             let label = if lower.contains(&format!("by {name}")) {
-                format!("by {name}")
+                let current = now.weekday().number_from_monday() as i64;
+                let target = match name {
+                    "monday" => 1,
+                    "tuesday" => 2,
+                    "wednesday" => 3,
+                    "thursday" => 4,
+                    "friday" => 5,
+                    "saturday" => 6,
+                    _ => 7,
+                };
+                let days = (target - current + 7) % 7;
+                let days = if days == 0 { 7 } else { days };
+                (now.date_naive() + Duration::days(days))
+                    .format("%Y-%m-%d")
+                    .to_string()
             } else {
                 name.to_owned()
             };
@@ -278,6 +335,10 @@ mod tests {
             split_sentences("One. Two!\nThree?"),
             vec!["One", "Two", "Three"]
         );
+        assert_eq!(
+            split_sentences("finish X and email Y"),
+            vec!["finish X", "email Y"]
+        );
     }
 
     #[test]
@@ -286,7 +347,7 @@ mod tests {
         let candidates =
             find_date_candidates("Finish today, by Friday, next week, or 2026-10-31", now);
         assert!(candidates.contains(&"today".into()));
-        assert!(candidates.contains(&"by friday".into()));
+        assert!(candidates.contains(&"2026-10-16".into()));
         assert!(candidates.contains(&"next week".into()));
         assert!(candidates.contains(&"2026-10-31".into()));
     }
