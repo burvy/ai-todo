@@ -723,6 +723,7 @@ async fn capture(
     store.tasks.extend(created.iter().cloned());
     drop(store);
     state.db.save_tasks(&created);
+    reschedule(&state);
     Ok(Json(CaptureOut {
         tasks: created,
         note: None,
@@ -778,6 +779,7 @@ async fn create_task(
     store.tasks.push(task.clone());
     drop(store);
     state.db.save_tasks(std::slice::from_ref(&task));
+    reschedule(&state);
     Ok((StatusCode::CREATED, Json(task)))
 }
 
@@ -833,6 +835,7 @@ async fn patch_task(
     let updated = task.clone();
     drop(store);
     state.db.save_task(&updated);
+    reschedule(&state);
     Ok(Json(updated))
 }
 
@@ -844,6 +847,7 @@ async fn delete_task(State(state): State<AppState>, UrlPath(id): UrlPath<String>
     drop(store);
     if removed {
         state.db.remove_task(&id);
+        reschedule(&state);
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND
@@ -851,6 +855,12 @@ async fn delete_task(State(state): State<AppState>, UrlPath(id): UrlPath<String>
 }
 
 async fn schedule_tasks(State(state): State<AppState>) -> Json<ScheduleOut> {
+    Json(reschedule(&state))
+}
+
+/// Re-run the scheduler over the current tasks and busy blocks and store the
+/// placements. Every mutation calls this so the calendar is never stale.
+fn reschedule(state: &AppState) -> ScheduleOut {
     let mut store = state.store.lock().unwrap();
     let inputs: Vec<scheduler::Task> = store
         .tasks
@@ -904,16 +914,18 @@ async fn schedule_tasks(State(state): State<AppState>) -> Json<ScheduleOut> {
         }
     }
     store.placements = placements.clone();
-    Json(ScheduleOut {
+    ScheduleOut {
         placements,
         unscheduled,
-    })
+    }
 }
 
 async fn calendar(
     State(state): State<AppState>,
     Query(range): Query<RangeQuery>,
 ) -> Json<CalendarOut> {
+    // Placements are always derived from the current tasks and busy blocks.
+    reschedule(&state);
     let store = state.store.lock().unwrap();
     let in_range = |start: DateTime<Utc>, end: DateTime<Utc>| {
         range.from.is_none_or(|from| end > from) && range.to.is_none_or(|to| start < to)
@@ -991,6 +1003,7 @@ async fn import_calendar(
 
     *state.busy.lock().unwrap() = blocks.clone();
     state.db.save_busy(&imported);
+    reschedule(&state);
 
     let placements = state.store.lock().unwrap().placements.clone();
     Ok(Json(CalendarOut {
@@ -1529,8 +1542,13 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                             .title
                             .clone();
                         Some(format!(
-                            "{label}: {} tasks, starting with {title} at {}.",
+                            "{label}: {} {}, starting with {title} at {}.",
                             distinct_tasks.len(),
+                            if distinct_tasks.len() == 1 {
+                                "task"
+                            } else {
+                                "tasks"
+                            },
                             placement.start.with_timezone(&timezone()).format("%-I:%M")
                         ))
                     })
