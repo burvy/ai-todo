@@ -836,13 +836,24 @@ async fn patch_task(
     }
     let updated = task.clone();
     if move_position {
-        store.tasks.sort_by(|left, right| {
-            left.position
-                .cmp(&right.position)
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        for (position, task) in store.tasks.iter_mut().enumerate() {
-            task.position = position as i64;
+        let requested = body.position.unwrap_or(0).max(0) as usize;
+        let mut open = store
+            .tasks
+            .iter()
+            .filter(|task| task.status != "done")
+            .cloned()
+            .collect::<Vec<_>>();
+        let moving = open
+            .iter()
+            .position(|task| task.id == id)
+            .map(|index| open.remove(index))
+            .expect("patched task must be in open task list");
+        let index = requested.min(open.len());
+        open.insert(index, moving);
+        for (position, moved) in open.into_iter().enumerate() {
+            if let Some(task) = store.tasks.iter_mut().find(|task| task.id == moved.id) {
+                task.position = position as i64;
+            }
         }
     }
     drop(store);
