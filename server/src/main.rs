@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex};
 use axum::{
     Json, Router,
     extract::{FromRequest, Path as UrlPath, Query, Request as HttpRequest, State},
-    http::{StatusCode, header},
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, patch, post},
 };
@@ -31,8 +31,10 @@ use judge::{choose, classify_intent, find_date_candidates, split_sentences, unde
 use scheduler::{BusyBlock, Placement, UnschedulableReason, WorkingHours};
 use serde::{Deserialize, Serialize};
 use todo_core::{Source, Task};
+use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 #[derive(Default)]
 struct Store {
@@ -1627,7 +1629,13 @@ fn app(state: AppState) -> Router {
         .with_state(state)
         .layer(CorsLayer::permissive());
     if Path::new("static").is_dir() {
-        router = router.fallback_service(ServeDir::new("static"));
+        let static_files = ServiceBuilder::new()
+            .layer(SetResponseHeaderLayer::overriding(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("no-cache, must-revalidate"),
+            ))
+            .service(ServeDir::new("static"));
+        router = router.fallback_service(static_files);
     }
     router
 }
