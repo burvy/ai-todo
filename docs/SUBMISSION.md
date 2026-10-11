@@ -1,8 +1,8 @@
-# ai-todo: submission
+# Rambl: submission
 
 > **Every scheduling tool asks you to do data entry. This one just listens.**
 
-**Live:** https://ai-todo-api.burvy.dev · **Code:** https://github.com/burvy/ai-todo
+**Rambl** (repo name: ai-todo) · **Live:** https://ai-todo-api.burvy.dev · **Code:** https://github.com/burvy/ai-todo
 
 ## The problem
 Planners like Motion, Reclaim and Google Tasks schedule well, but only after you type every task, duration and deadline into a form. Students and busy people don't plan badly; they skip the data entry. The list never gets written, so nothing gets scheduled.
@@ -10,7 +10,7 @@ Planners like Motion, Reclaim and Google Tasks schedule well, but only after you
 ## What it does
 You talk the way you'd talk to a friend: *"Okay, I need to finish the history paper and upload it by Friday, email Professor Chen about the missing reading, oh, and buy printer ink. The library closes early tonight, I think."*
 
-ai-todo:
+Rambl:
 1. **Writes the list.** Three tasks appear, written by a pen mascot: *Finish the history response paper* (due Friday 5pm, School), *Email Professor Chen about the missing reading* (School), *Buy printer ink* (Errands). The chit-chat about the library is ignored.
 2. **Plans the week.** It places every task into the free time around your real classes and shifts, deadline first, in chunks of at most two hours.
 3. **Keeps listening.** *"My 3pm got cancelled"* frees the slot and re-plans. *"I finished my slides"* ticks the task off. *"What does tomorrow look like?"* summarises the day aloud. *"What should I do now?"* names the next task.
