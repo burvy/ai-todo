@@ -7,6 +7,7 @@ edition = "2024"
 axum = "0.8"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = "0.10"
+dotenvy = "0.15"
 futures = "0.3"
 judge = { path = "../crates/judge" }
 todo-core = { path = "../crates/core" }

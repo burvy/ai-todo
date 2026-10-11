@@ -72,6 +72,30 @@ struct CaptureOut {
 }
 
 #[derive(Deserialize)]
+struct CreateTaskIn {
+    title: String,
+    #[serde(default)]
+    notes: String,
+    #[serde(default = "default_duration")]
+    duration_min: i64,
+    deadline: Option<DateTime<Utc>>,
+    #[serde(default = "default_priority")]
+    priority: u8,
+    #[serde(default = "default_label")]
+    label: String,
+}
+
+fn default_duration() -> i64 {
+    30
+}
+fn default_priority() -> u8 {
+    1
+}
+fn default_label() -> String {
+    "Other".into()
+}
+
+#[derive(Deserialize)]
 struct MessageIn {
     text: String,
     #[serde(default)]
@@ -242,7 +266,7 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
         now.date_naive()
     } else if lower == "tomorrow" {
         now.date_naive() + chrono::Duration::days(1)
-    } else if let Some(name) = lower.strip_prefix("by ").or(Some(lower.as_str())) {
+    } else if let Some(name) = lower.strip_prefix("by ") {
         let weekdays = [
             "monday",
             "tuesday",
@@ -261,6 +285,35 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
             days = 7;
         }
         now.date_naive() + chrono::Duration::days(days)
+    } else if [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    ]
+    .contains(&lower.as_str())
+    {
+        let weekdays = [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ];
+        let index = weekdays.iter().position(|day| *day == lower)?;
+        let target = chrono::Weekday::try_from(index as u8 + 1).ok()?;
+        let mut days =
+            (target.number_from_monday() as i64 - now.weekday().number_from_monday() as i64 + 7)
+                % 7;
+        if days == 0 {
+            days = 7;
+        }
+        now.date_naive() + chrono::Duration::days(days)
     } else if let Ok(value) = chrono::NaiveDate::parse_from_str(candidate, "%Y-%m-%d") {
         value
     } else if let Ok(value) = chrono::NaiveDate::parse_from_str(candidate, "%m/%d/%Y") {
@@ -268,7 +321,10 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
     } else {
         return None;
     };
-    Some(date.and_hms_opt(17, 0, 0)?.and_utc())
+    Some(local_time_as_utc(
+        timezone(),
+        date.and_time(NaiveTime::from_hms_opt(17, 0, 0).unwrap()),
+    ))
 }
 
 /// Understand captured text, with a deterministic line fallback when Jev is unavailable.
@@ -290,18 +346,32 @@ pub async fn capture_text(text: &str, source: Source, anchor: DateTime<Utc>) -> 
             .map(|judgment| (sentence, candidates, judgment))
     }))
     .await;
+    let judgments: Result<Vec<_>, _> = results
+        .into_iter()
+        .map(|result| {
+            result.map(|(sentence, candidates, judgment)| (sentence.clone(), candidates, judgment))
+        })
+        .collect();
+    let Ok(judgments) = judgments else {
+        eprintln!("warning: Jev capture failed; using line-per-task fallback");
+        return tasks_from_text(text)
+            .into_iter()
+            .map(|mut task| {
+                task.source = source;
+                task
+            })
+            .collect();
+    };
+    tasks_from_judgments(judgments, source, anchor)
+}
+
+fn tasks_from_judgments(
+    judgments: Vec<(String, Vec<String>, judge::Judgment)>,
+    source: Source,
+    anchor: DateTime<Utc>,
+) -> Vec<Task> {
     let mut tasks = Vec::new();
-    for result in results {
-        let Ok((sentence, candidates, judgment)) = result else {
-            eprintln!("warning: Jev capture failed; using line-per-task fallback");
-            return tasks_from_text(text)
-                .into_iter()
-                .map(|mut task| {
-                    task.source = source;
-                    task
-                })
-                .collect();
-        };
+    for (sentence, _candidates, judgment) in judgments {
         if judgment.is_task < 0.5 {
             continue;
         }
@@ -309,17 +379,16 @@ pub async fn capture_text(text: &str, source: Source, anchor: DateTime<Utc>) -> 
             .deadline
             .as_deref()
             .and_then(|candidate| parse_deadline(candidate, anchor));
-        let _ = candidates;
         tasks.push(Task {
             id: String::new(),
-            title: clean_title(sentence),
+            title: clean_title(&sentence),
             notes: String::new(),
             duration_min: i64::from(judgment.duration_min),
             deadline,
             priority: judgment.priority,
             status: "todo".into(),
             confidence: judgment.confidence,
-            label: label_for(sentence),
+            label: label_for(&sentence),
             source,
         });
     }
@@ -397,6 +466,28 @@ async fn list_tasks(State(state): State<AppState>) -> Json<TasksOut> {
     })
 }
 
+async fn create_task(
+    State(state): State<AppState>,
+    Json(body): Json<CreateTaskIn>,
+) -> (StatusCode, Json<Task>) {
+    let mut store = state.store.lock().unwrap();
+    store.next_id += 1;
+    let task = Task {
+        id: format!("t{}", store.next_id),
+        title: clean_title(&body.title),
+        notes: body.notes,
+        duration_min: body.duration_min,
+        deadline: body.deadline,
+        priority: body.priority,
+        status: "todo".into(),
+        confidence: 1.0,
+        label: body.label,
+        source: Source::Text,
+    };
+    store.tasks.push(task.clone());
+    (StatusCode::CREATED, Json(task))
+}
+
 async fn patch_task(
     State(state): State<AppState>,
     UrlPath(id): UrlPath<String>,
@@ -448,6 +539,7 @@ async fn schedule_tasks(State(state): State<AppState>) -> Json<ScheduleOut> {
     let inputs: Vec<scheduler::Task> = store
         .tasks
         .iter()
+        .filter(|task| task.status != "done")
         .map(|task| scheduler::Task {
             id: task.id.clone(),
             title: task.title.clone(),
@@ -564,6 +656,21 @@ fn mentioned_hour(text: &str) -> Option<u32> {
         })
 }
 
+fn task_matches_message(task: &Task, message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    let words: Vec<String> = task
+        .title
+        .split_whitespace()
+        .map(|word| word.trim_matches(|character: char| !character.is_ascii_alphanumeric()))
+        .filter(|word| !["a", "an", "and", "i", "my", "the", "to"].contains(word))
+        .map(str::to_ascii_lowercase)
+        .collect();
+    !words.is_empty()
+        && words
+            .iter()
+            .all(|word| message.contains(word) || message.contains(&format!("{word}ed")))
+}
+
 async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> Json<MessageOut> {
     let intent = classify_intent(&body.text)
         .await
@@ -597,7 +704,7 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
             if let Some(task) = store
                 .tasks
                 .iter_mut()
-                .find(|task| lower.contains(&task.title.to_ascii_lowercase()))
+                .find(|task| task_matches_message(task, &lower))
             {
                 task.status = "done".into();
             }
@@ -616,7 +723,10 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
     let Json(schedule) = schedule_tasks(State(state.clone())).await;
     let tasks = state.store.lock().unwrap().tasks.clone();
     let reply = match intent.as_str() {
-        "add_tasks" => format!("Got it, {} new tasks.", created.len()),
+        "add_tasks" => {
+            let noun = if created.len() == 1 { "task" } else { "tasks" };
+            format!("Got it, {} new {}.", created.len(), noun)
+        }
         "cancel_event" => "Got it, the event was cancelled.".into(),
         "complete_task" => "Got it, the task is marked done.".into(),
         "query_day" => "Here is your day.".into(),
@@ -637,6 +747,7 @@ fn app(state: AppState) -> Router {
         .route("/api/capture", post(capture))
         .route("/api/message", post(message))
         .route("/api/tasks", get(list_tasks))
+        .route("/api/tasks", post(create_task))
         .route("/api/tasks/{id}", patch(patch_task).delete(delete_task))
         .route("/api/schedule", post(schedule_tasks))
         .route("/api/calendar", get(calendar))
@@ -657,6 +768,7 @@ fn new_state() -> AppState {
 
 #[tokio::main]
 async fn main() {
+    dotenvy::dotenv().ok();
     let port: u16 = std::env::var("PORT")
         .ok()
         .and_then(|p| p.parse().ok())
@@ -693,6 +805,62 @@ mod tests {
             "Finish the chem lab report"
         );
         assert_eq!(clean_title("um, I should call mom tomorrow"), "Call mom");
+    }
+
+    #[test]
+    fn completion_matches_inflected_message() {
+        let task = Task {
+            id: "t1".into(),
+            title: "Finish my chem lab report".into(),
+            notes: String::new(),
+            duration_min: 30,
+            deadline: None,
+            priority: 1,
+            status: "todo".into(),
+            confidence: 1.0,
+            label: "School".into(),
+            source: Source::Text,
+        };
+        assert!(task_matches_message(
+            &task,
+            "I finished the chem lab report"
+        ));
+    }
+
+    #[test]
+    fn fake_judge_capture_keeps_two_tasks_and_friday_deadline() {
+        let anchor = Utc.with_ymd_and_hms(2026, 10, 11, 12, 0, 0).unwrap();
+        let sentences = judge::split_sentences(
+            "I need to finish my chem lab report by Friday and email Professor Lee tomorrow",
+        );
+        let judgments = sentences
+            .iter()
+            .map(|sentence| {
+                let candidates = find_date_candidates(sentence, anchor);
+                (
+                    sentence.clone(),
+                    candidates.clone(),
+                    judge::Judgment {
+                        is_task: 0.9,
+                        deadline: candidates.first().cloned(),
+                        priority: 1,
+                        duration_min: 30,
+                        confidence: 1.0,
+                    },
+                )
+            })
+            .collect();
+        let tasks = tasks_from_judgments(judgments, Source::Text, anchor);
+        assert_eq!(tasks.len(), 2);
+        assert_eq!(
+            tasks[0]
+                .deadline
+                .unwrap()
+                .with_timezone(&timezone())
+                .date_naive()
+                .to_string(),
+            "2026-10-16"
+        );
     }
 
     #[tokio::test]
