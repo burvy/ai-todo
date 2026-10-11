@@ -1130,10 +1130,10 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
             .await
             .ok()
             .flatten();
-            let fallback = state
-                .busy
-                .lock()
-                .unwrap()
+            // Snapshot the events once: locking `busy` again inside the `or_else`
+            // below while this guard was still alive deadlocked every later request.
+            let events = state.busy.lock().unwrap().clone();
+            let fallback = events
                 .iter()
                 .filter(|event| event_is_on_requested_day(&body.text, event))
                 .filter_map(|event| {
@@ -1148,10 +1148,7 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                 .map(|(event, _)| event)
                 .map(|event| (event.title.clone(), event.start))
                 .or_else(|| {
-                    state
-                        .busy
-                        .lock()
-                        .unwrap()
+                    events
                         .iter()
                         .filter(|event| event_matches(&body.text, event))
                         .min_by_key(|event| event.start)
