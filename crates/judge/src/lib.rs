@@ -247,6 +247,8 @@ fn is_time_fragment(clause: &str) -> bool {
             "next ",
             "this weekend",
             "weekend",
+            "just ",
+            "only ",
         ]
         .iter()
         .any(|prefix| lower.starts_with(prefix))
