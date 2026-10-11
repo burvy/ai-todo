@@ -4,3 +4,4 @@
 !.env.example
 .worktrees/
 deploy/dist/
+data/
