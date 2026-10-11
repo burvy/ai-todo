@@ -15,6 +15,43 @@ pub struct Judgment {
     pub confidence: f64,
 }
 
+/// Classify a conversational message with one Jev Choice question.
+pub async fn classify_intent(text: &str) -> Result<String> {
+    let key = std::env::var("TYPESAFE_API_KEY").context("TYPESAFE_API_KEY is not set")?;
+    let body = json!({
+        "state": text,
+        "model": "jev-latest",
+        "questions": {"intent": {
+            "type": "choice",
+            "instructions": "What does this conversational message intend to do?",
+            "criteria": {
+                "add_tasks": "Add or create one or more tasks",
+                "cancel_event": "Cancel an existing calendar event",
+                "complete_task": "Mark an existing task complete",
+                "query_day": "Ask what the day or calendar looks like",
+                "other": "Anything else"
+            }
+        }}
+    });
+    let response: Response = reqwest::Client::new()
+        .post(ENDPOINT)
+        .header(AUTHORIZATION, format!("Bearer {key}"))
+        .header(CONTENT_TYPE, "application/json")
+        .json(&body)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    response
+        .answers
+        .get("intent")
+        .and_then(|answer| answer.get("choice"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .context("missing intent choice")
+}
+
 #[derive(Serialize)]
 struct Request<'a> {
     state: State<'a>,

@@ -11,10 +11,10 @@ use axum::{
     http::StatusCode,
     routing::{get, patch, post},
 };
-use chrono::{DateTime, Datelike, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc};
 use chrono_tz::Tz;
 use futures::future::join_all;
-use judge::{find_date_candidates, split_sentences, understand};
+use judge::{classify_intent, find_date_candidates, split_sentences, understand};
 use scheduler::{BusyBlock, Placement, UnschedulableReason, WorkingHours};
 use serde::{Deserialize, Serialize};
 use todo_core::{Source, Task};
@@ -31,7 +31,7 @@ struct Store {
 #[derive(Clone)]
 struct AppState {
     store: Arc<Mutex<Store>>,
-    busy: Arc<Vec<BusyOut>>,
+    busy: Arc<Mutex<Vec<BusyOut>>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -69,6 +69,23 @@ struct CaptureIn {
 #[derive(Serialize)]
 struct CaptureOut {
     tasks: Vec<Task>,
+}
+
+#[derive(Deserialize)]
+struct MessageIn {
+    text: String,
+    #[serde(default)]
+    source: Option<Source>,
+}
+
+#[derive(Serialize)]
+struct MessageOut {
+    reply: String,
+    intent: String,
+    tasks: Vec<Task>,
+    placements: Vec<PlacementOut>,
+    unscheduled: Vec<UnscheduledOut>,
+    focus_date: Option<String>,
 }
 
 #[derive(Deserialize, Default)]
@@ -114,6 +131,7 @@ fn tasks_from_text(text: &str) -> Vec<Task> {
             priority: 0,
             status: "todo".into(),
             confidence: 0.5,
+            label: label_for(line),
             source: Source::Text,
         })
         .collect()
@@ -183,6 +201,39 @@ pub fn clean_title(sentence: &str) -> String {
         Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
         None => title,
     }
+}
+
+fn label_for(text: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    if ["class", "lab", "homework"]
+        .iter()
+        .any(|word| lower.contains(word))
+    {
+        "School"
+    } else if ["work", "report", "meeting"]
+        .iter()
+        .any(|word| lower.contains(word))
+    {
+        "Work"
+    } else if ["doctor", "gym", "health"]
+        .iter()
+        .any(|word| lower.contains(word))
+    {
+        "Health"
+    } else if ["buy", "shop", "grocer"]
+        .iter()
+        .any(|word| lower.contains(word))
+    {
+        "Errands"
+    } else if ["family", "friend", "mom"]
+        .iter()
+        .any(|word| lower.contains(word))
+    {
+        "Personal"
+    } else {
+        "Other"
+    }
+    .into()
 }
 
 fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
@@ -268,6 +319,7 @@ pub async fn capture_text(text: &str, source: Source, anchor: DateTime<Utc>) -> 
             priority: judgment.priority,
             status: "todo".into(),
             confidence: judgment.confidence,
+            label: label_for(sentence),
             source,
         });
     }
@@ -406,6 +458,8 @@ async fn schedule_tasks(State(state): State<AppState>) -> Json<ScheduleOut> {
         .collect();
     let busy: Vec<BusyBlock> = state
         .busy
+        .lock()
+        .unwrap()
         .iter()
         .map(|block| BusyBlock {
             start: block.start,
@@ -456,6 +510,8 @@ async fn calendar(
     };
     let busy = state
         .busy
+        .lock()
+        .unwrap()
         .iter()
         .filter(|block| in_range(block.start, block.end))
         .cloned()
@@ -469,9 +525,117 @@ async fn calendar(
     Json(CalendarOut { busy, placements })
 }
 
+fn fallback_intent(text: &str) -> &'static str {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("cancel") || lower.contains("got cancelled") {
+        "cancel_event"
+    } else if lower.contains("finished") || lower.contains("completed") || lower.contains("done") {
+        "complete_task"
+    } else if lower.contains("what does") || lower.contains("what's") || lower.contains("calendar")
+    {
+        "query_day"
+    } else if !lower.trim().is_empty() {
+        "add_tasks"
+    } else {
+        "other"
+    }
+}
+
+fn mentioned_hour(text: &str) -> Option<u32> {
+    text.to_ascii_lowercase()
+        .split_whitespace()
+        .find_map(|word| {
+            let token = word.trim_matches(|character: char| !character.is_ascii_alphanumeric());
+            let (digits, suffix) = token.split_at(token.len().saturating_sub(2));
+            if !matches!(suffix, "am" | "pm") {
+                return None;
+            }
+            let mut hour = digits.parse::<u32>().ok()?;
+            if hour == 0 || hour > 12 {
+                return None;
+            }
+            if suffix == "pm" && hour != 12 {
+                hour += 12;
+            }
+            if suffix == "am" && hour == 12 {
+                hour = 0;
+            }
+            Some(hour)
+        })
+}
+
+async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> Json<MessageOut> {
+    let intent = classify_intent(&body.text)
+        .await
+        .unwrap_or_else(|_| fallback_intent(&body.text).into());
+    let mut created = Vec::new();
+    let mut focus_date = None;
+    match intent.as_str() {
+        "add_tasks" => {
+            created =
+                capture_text(&body.text, body.source.unwrap_or(Source::Text), Utc::now()).await;
+            let mut store = state.store.lock().unwrap();
+            for task in &mut created {
+                store.next_id += 1;
+                task.id = format!("t{}", store.next_id);
+            }
+            store.tasks.extend(created.iter().cloned());
+        }
+        "cancel_event" => {
+            let lower = body.text.to_ascii_lowercase();
+            let hour = mentioned_hour(&body.text);
+            let mut busy = state.busy.lock().unwrap();
+            busy.retain(|event| {
+                let title_match = lower.contains(&event.title.to_ascii_lowercase());
+                let hour_match = hour == Some(event.start.with_timezone(&timezone()).hour());
+                !(title_match || hour_match)
+            });
+        }
+        "complete_task" => {
+            let lower = body.text.to_ascii_lowercase();
+            let mut store = state.store.lock().unwrap();
+            if let Some(task) = store
+                .tasks
+                .iter_mut()
+                .find(|task| lower.contains(&task.title.to_ascii_lowercase()))
+            {
+                task.status = "done".into();
+            }
+        }
+        "query_day" => {
+            let lower = body.text.to_ascii_lowercase();
+            let date = if lower.contains("tomorrow") {
+                Utc::now().date_naive() + chrono::Duration::days(1)
+            } else {
+                Utc::now().date_naive()
+            };
+            focus_date = Some(date.to_string());
+        }
+        _ => {}
+    }
+    let Json(schedule) = schedule_tasks(State(state.clone())).await;
+    let tasks = state.store.lock().unwrap().tasks.clone();
+    let reply = match intent.as_str() {
+        "add_tasks" => format!("Got it, {} new tasks.", created.len()),
+        "cancel_event" => "Got it, the event was cancelled.".into(),
+        "complete_task" => "Got it, the task is marked done.".into(),
+        "query_day" => "Here is your day.".into(),
+        _ => "I can add tasks, cancel events, complete tasks, or show your day.".into(),
+    };
+    Json(MessageOut {
+        reply,
+        intent,
+        tasks,
+        placements: schedule.placements,
+        unscheduled: schedule.unscheduled,
+        focus_date,
+    })
+}
+
 fn app(state: AppState) -> Router {
     let mut router = Router::new()
         .route("/api/capture", post(capture))
+        .route("/api/message", post(message))
         .route("/api/tasks", get(list_tasks))
         .route("/api/tasks/{id}", patch(patch_task).delete(delete_task))
         .route("/api/schedule", post(schedule_tasks))
@@ -487,7 +651,7 @@ fn app(state: AppState) -> Router {
 fn new_state() -> AppState {
     AppState {
         store: Arc::new(Mutex::new(Store::default())),
-        busy: Arc::new(seed_busy(Utc::now())),
+        busy: Arc::new(Mutex::new(seed_busy(Utc::now()))),
     }
 }
 

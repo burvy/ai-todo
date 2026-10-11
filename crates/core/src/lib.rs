@@ -16,6 +16,7 @@ pub struct Task {
     pub status: String,
     /// 0-1
     pub confidence: f64,
+    pub label: String,
     pub source: Source,
 }
 
