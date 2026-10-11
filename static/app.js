@@ -191,10 +191,32 @@ function measurePenHome() {
   penHomeRect = penBtn.getBoundingClientRect();
 }
 
+/* Where the pen rests: his button, or the spot the user dropped him on
+   (kept for this session). Offsets are from the button, like a flight. */
+let penIdle = null;
+try { penIdle = JSON.parse(sessionStorage.getItem('ai-todo-pen-idle') || 'null'); } catch { penIdle = null; }
+function applyIdleSpot() {
+  if (penIdle) {
+    mascotTrack.style.setProperty('--pen-x', `${Math.round(penIdle.x)}px`);
+    mascotTrack.style.setProperty('--pen-y', `${Math.round(penIdle.y)}px`);
+  } else {
+    mascotTrack.style.removeProperty('--pen-x');
+    mascotTrack.style.removeProperty('--pen-y');
+  }
+  mascotTrack.classList.toggle('is-away', !!penIdle);
+}
+function saveIdleSpot(spot) {
+  penIdle = spot;
+  try {
+    if (spot) sessionStorage.setItem('ai-todo-pen-idle', JSON.stringify(spot));
+    else sessionStorage.removeItem('ai-todo-pen-idle');
+  } catch { /* fine for this page */ }
+  applyIdleSpot();
+}
+
 function penGoHomeQuiet() {
   mascotTrack.classList.remove('is-flying');
-  mascotTrack.style.removeProperty('--pen-x');
-  mascotTrack.style.removeProperty('--pen-y');
+  applyIdleSpot();
 }
 
 /* Put the nib at a page point (viewport coordinates). */
@@ -323,8 +345,7 @@ function penGoHome() {
   clearTimeout(penIdleTimer);
   penIdleTimer = null;
   mascotTrack.classList.remove('is-flying', 'is-writing');
-  mascotTrack.style.removeProperty('--pen-x');
-  mascotTrack.style.removeProperty('--pen-y');
+  applyIdleSpot();
   // a pen mid-write is an interruption: don't keep the writing pose on screen
   if (mascotTrack.dataset.mood === 'writing' && typeof listening !== 'undefined'
       && !listening) mood('idle');
@@ -421,6 +442,7 @@ function rowSig(t) {
   return [t.title, t.status, t.deadline, t.duration_min, t.priority, t.label, t.confidence, t.position].join('|');
 }
 
+let prevOpen = -1;
 const orderOf = (t) => (Number.isFinite(t.position) ? t.position : Infinity);
 
 function renderList() {
@@ -452,6 +474,8 @@ function renderList() {
 
   const open = ordered.filter((t) => t.status !== 'done').length;
 
+  if (ordered.length && !open && prevOpen > 0) penCheer();
+  prevOpen = open;
   emptyNote.hidden = ordered.length > 0;
   if (!ordered.length) {
     summary.textContent = 'Nothing on the page yet.';
@@ -973,6 +997,7 @@ penBtn.addEventListener('pointerdown', (event) => {
 penBtn.addEventListener('click', () => {
   // a press-and-hold that produced speech already sent it
   if (spokeThisPress) { spokeThisPress = false; return; }
+  if (draggedThisPress) { draggedThisPress = false; return; }
   if (state.working) return;
   const text = box.value;
   if (!text.trim()) return;
@@ -1856,3 +1881,144 @@ function play(name) {
   img.onload = () => document.documentElement.classList.add('has-paper');
   img.src = 'assets/paper.jpg';
 })();
+
+/* ── The pen guy: pick him up, put him anywhere, and he looks alive ── */
+
+/* Press and move more than 8px: he is picked up. A press that does not move
+   keeps its old meaning (tap = send, hold = talk); once he is picked up the
+   microphone is dropped and nothing is sent. */
+let penDrag = null;
+let draggedThisPress = false;
+
+function abortListening() {
+  clearTimeout(startGuard);
+  startGuard = null;
+  listening = false;
+  heardSomething = false;
+  if (recognition) { try { recognition.abort(); } catch { /* not running */ } }
+  if (box.dataset.base !== undefined) {
+    box.value = box.dataset.base;
+    delete box.dataset.base;
+    autoGrow();
+  }
+}
+
+penBtn.addEventListener('pointerdown', (event) => {
+  draggedThisPress = false;
+  penDrag = {
+    sx: event.clientX, sy: event.clientY,
+    base: penIdle || { x: 0, y: 0 },
+    held: false, lastX: event.clientX, lastT: performance.now(), dx: 0, dy: 0,
+  };
+});
+
+penBtn.addEventListener('pointermove', (event) => {
+  if (!penDrag || state.working) return;
+  const dx = event.clientX - penDrag.sx, dy = event.clientY - penDrag.sy;
+  if (!penDrag.held) {
+    if (Math.hypot(dx, dy) <= 8) return;
+    penDrag.held = true;
+    draggedThisPress = true;
+    abortListening();
+    clearTimeout(penIdleTimer);
+    mascotTrack.classList.remove('is-writing', 'is-flying');
+    mascotTrack.classList.add('is-held');
+    mood('idle');
+  }
+  const now = performance.now();
+  const vx = (event.clientX - penDrag.lastX) / Math.max(8, now - penDrag.lastT);
+  penDrag.lastX = event.clientX;
+  penDrag.lastT = now;
+  // he dangles from the cap: swing against the direction of travel
+  const swing = reduceMotion ? 0 : Math.max(-28, Math.min(28, -vx * 38));
+  mascotTrack.style.setProperty('--swing', `${swing.toFixed(1)}deg`);
+  penDrag.dx = dx;
+  penDrag.dy = dy;
+  mascotTrack.style.setProperty('--pen-x', `${Math.round(penDrag.base.x + dx)}px`);
+  mascotTrack.style.setProperty('--pen-y', `${Math.round(penDrag.base.y + dy)}px`);
+});
+
+function penDrop() {
+  const drag = penDrag;
+  penDrag = null;
+  if (!drag || !drag.held) return;
+  mascotTrack.classList.remove('is-held');
+  mascotTrack.style.setProperty('--swing', '0deg');
+  const spot = { x: drag.base.x + drag.dx, y: drag.base.y + drag.dy };
+  // dropped back on his button: that is home
+  saveIdleSpot(Math.hypot(spot.x, spot.y) < 24 ? null : spot);
+  penFidget('hop');
+}
+penBtn.addEventListener('pointerup', penDrop);
+penBtn.addEventListener('pointercancel', penDrop);
+
+/* double-click / double-tap: hop home into the text box */
+penBtn.addEventListener('dblclick', (event) => {
+  event.preventDefault();
+  if (!penIdle) return;
+  saveIdleSpot(null);
+  penFidget('hop');
+});
+
+/* eyes follow the pointer */
+let lookRaf = 0;
+let lastPointer = null;
+function lookAt(x, y) {
+  const pen = mascotTrack.querySelector('.pen');
+  if (!pen) return;
+  const r = pen.getBoundingClientRect();
+  const dx = x - (r.left + r.width / 2), dy = y - (r.top + r.height * 0.5);
+  const d = Math.hypot(dx, dy) || 1;
+  const k = Math.min(1, d / 140) * 1.4;
+  mascotTrack.style.setProperty('--look-x', `${(dx / d * k).toFixed(2)}px`);
+  mascotTrack.style.setProperty('--look-y', `${(dy / d * k).toFixed(2)}px`);
+}
+document.addEventListener('pointermove', (event) => {
+  lastPointer = [event.clientX, event.clientY];
+  if (lookRaf) return;
+  lookRaf = requestAnimationFrame(() => { lookRaf = 0; lookAt(...lastPointer); });
+}, { passive: true });
+
+/* blinks, idle fidgets, and a cheer when the list is empty */
+function penFidget(kind) {
+  if (reduceMotion) return;
+  const cls = `fidget-${kind}`;
+  mascotTrack.classList.remove(cls);
+  void mascotTrack.offsetWidth;
+  mascotTrack.classList.add(cls);
+  setTimeout(() => mascotTrack.classList.remove(cls), 900);
+}
+
+function penCheer() { penFidget('happy'); }
+
+function blinkLoop() {
+  setTimeout(() => {
+    if (!document.hidden) {
+      mascotTrack.classList.add('blink');
+      setTimeout(() => mascotTrack.classList.remove('blink'), 140);
+    }
+    blinkLoop();
+  }, 2600 + Math.random() * 3600);
+}
+
+function fidgetLoop() {
+  setTimeout(() => {
+    const calm = !document.hidden && !state.working && !penDrag
+      && mascotTrack.dataset.mood === 'idle'
+      && !mascotTrack.classList.contains('is-writing');
+    if (calm) {
+      if (Math.random() < 0.5) {
+        penFidget('hop');
+      } else {
+        // look around: left, right, then back to the pointer
+        mascotTrack.style.setProperty('--look-x', '-1.4px');
+        setTimeout(() => mascotTrack.style.setProperty('--look-x', '1.4px'), 450);
+        setTimeout(() => { if (lastPointer) lookAt(...lastPointer); else mascotTrack.style.setProperty('--look-x', '0px'); }, 950);
+      }
+    }
+    fidgetLoop();
+  }, 10000 + Math.random() * 10000);
+}
+
+applyIdleSpot();
+if (!reduceMotion) { blinkLoop(); fidgetLoop(); }
