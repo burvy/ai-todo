@@ -315,9 +315,15 @@ fn split_compound(sentence: &str) -> Vec<String> {
             let index = offset + relative;
             let left = sentence[..index].trim();
             let right = sentence[index + marker.len()..].trim();
+            let right_first = right
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .trim_matches(|c: char| !c.is_ascii_alphanumeric())
+                .to_ascii_lowercase();
             let bare_coordination = marker == " and "
-                && right.split_whitespace().count() <= 2
-                && !is_action_word(right.split_whitespace().next().unwrap_or_default());
+                && !is_action_word(&right_first)
+                && !["i", "you", "we", "they", "a", "an", "the"].contains(&right_first.as_str());
             if word_count_without_filler(left) >= 2
                 && word_count_without_filler(right) >= 2
                 && !bare_coordination
@@ -485,6 +491,18 @@ mod tests {
         assert_eq!(
             split_sentences("Review chapters six and seven"),
             vec!["Review chapters six and seven"]
+        );
+        assert!(
+            split_sentences("Please make a task to review chapters six and seven, maybe an hour.")
+                .iter()
+                .any(|clause| clause.contains("chapters six and seven"))
+        );
+        assert!(
+            split_sentences(
+                "I should schedule a meeting with Maya and Luis, maybe Friday afternoon."
+            )
+            .iter()
+            .any(|clause| clause.contains("Maya and Luis"))
         );
     }
 
