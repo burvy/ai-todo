@@ -13,6 +13,8 @@ pub struct Task {
     pub duration_minutes: i64,
     pub deadline: Option<DateTime<Utc>>,
     pub priority: i32,
+    pub position: i64,
+    pub pinned_start: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -85,6 +87,13 @@ pub fn schedule(
 ) -> Vec<Placement> {
     let mut order: Vec<usize> = (0..tasks.len()).collect();
     order.sort_by(|&a, &b| {
+        let pinned_order = tasks[a]
+            .pinned_start
+            .is_none()
+            .cmp(&tasks[b].pinned_start.is_none());
+        if pinned_order != Ordering::Equal {
+            return pinned_order;
+        }
         let deadline_order = match (tasks[a].deadline, tasks[b].deadline) {
             (Some(left), Some(right)) => left.cmp(&right),
             (Some(_), None) => Ordering::Less,
@@ -92,6 +101,7 @@ pub fn schedule(
             (None, None) => Ordering::Equal,
         };
         deadline_order
+            .then_with(|| tasks[a].position.cmp(&tasks[b].position))
             .then_with(|| tasks[b].priority.cmp(&tasks[a].priority))
             .then(a.cmp(&b))
     });
@@ -124,6 +134,44 @@ pub fn schedule(
         let mut remaining = task.duration_minutes;
         let mut chunk = 1;
         let mut placements = Vec::new();
+        if let Some(pinned) = task.pinned_start {
+            let end = pinned + Duration::minutes(remaining);
+            let within_working_hours = working_hours
+                .days
+                .get(&pinned.weekday())
+                .into_iter()
+                .flatten()
+                .any(|window| pinned.time() >= window.start && end.time() <= window.end);
+            if pinned < now
+                || !within_working_hours
+                || task.deadline.is_some_and(|deadline| end > deadline)
+            {
+                result.push(Placement::Unschedulable {
+                    task_id: task.id.clone(),
+                    reason: UnschedulableReason::NoAvailableTime,
+                });
+                continue;
+            }
+            if occupied
+                .iter()
+                .any(|(start, finish)| *start < end && *finish > pinned)
+            {
+                result.push(Placement::Unschedulable {
+                    task_id: task.id.clone(),
+                    reason: UnschedulableReason::NoAvailableTime,
+                });
+                continue;
+            }
+            occupied.push((pinned, end));
+            result.push(Placement::Scheduled(ScheduledPlacement {
+                task_id: task.id.clone(),
+                title: task.title.clone(),
+                chunk: 1,
+                start: pinned,
+                end,
+            }));
+            continue;
+        }
         while remaining > 0 {
             let minutes = remaining.min(MAX_CHUNK_MINUTES);
             let Some(start) = next_slot(now, minutes, task.deadline, working_hours, &occupied)
@@ -219,6 +267,8 @@ mod tests {
             duration_minutes,
             deadline: None,
             priority: 0,
+            position: 0,
+            pinned_start: None,
         }
     }
 
@@ -239,6 +289,21 @@ mod tests {
                 end: at(11)
             })
         );
+    }
+
+    #[test]
+    fn pinned_tasks_are_first_at_their_requested_time() {
+        let mut pinned = task("pinned", 30);
+        pinned.position = 99;
+        pinned.pinned_start = Some(at(13));
+        let mut normal = task("normal", 30);
+        normal.position = 0;
+        let output = schedule(&[normal, pinned], &[], &hours(), at(8));
+        let Placement::Scheduled(first) = &output[0] else {
+            panic!("expected pinned placement")
+        };
+        assert_eq!(first.task_id, "pinned");
+        assert_eq!(first.start, at(13));
     }
 
     #[test]

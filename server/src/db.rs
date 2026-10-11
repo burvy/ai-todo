@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     confidence  REAL NOT NULL DEFAULT 0.5,
     source      TEXT NOT NULL DEFAULT 'text',
     label       TEXT NOT NULL DEFAULT ''
+    ,position   INTEGER NOT NULL DEFAULT 0
+    ,pinned_start TEXT
 );
 CREATE TABLE IF NOT EXISTS busy_blocks (
     id    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -91,7 +93,25 @@ impl Db {
     }
 
     fn migrate(&self) -> rusqlite::Result<()> {
-        self.conn.lock().expect("db mutex").execute_batch(SCHEMA)
+        let conn = self.conn.lock().expect("db mutex");
+        conn.execute_batch(SCHEMA)?;
+        for (name, definition) in [
+            ("position", "INTEGER NOT NULL DEFAULT 0"),
+            ("pinned_start", "TEXT"),
+        ] {
+            let exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tasks') WHERE name = ?1)",
+                [name],
+                |row| row.get(0),
+            )?;
+            if !exists {
+                conn.execute(
+                    &format!("ALTER TABLE tasks ADD COLUMN {name} {definition}"),
+                    [],
+                )?;
+            }
+        }
+        Ok(())
     }
 
     // -- write-through helpers ------------------------------------------
@@ -133,8 +153,8 @@ impl Db {
         let conn = self.conn.lock().expect("db mutex");
         let mut stmt = conn.prepare(
             "SELECT id, title, notes, duration_min, deadline, priority, status,
-                    confidence, source, label
-             FROM tasks ORDER BY CAST(id AS INTEGER) ASC, id ASC",
+                    confidence, source, label, position, pinned_start
+             FROM tasks ORDER BY position ASC, CAST(id AS INTEGER) ASC, id ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             // Column order: id, title, notes, duration_min, deadline,
@@ -152,6 +172,11 @@ impl Db {
                 confidence: row.get(7)?,
                 source: parse_source(&source),
                 label: row.get(9)?,
+                position: row.get(10)?,
+                pinned_start: row
+                    .get::<_, Option<String>>(11)?
+                    .as_deref()
+                    .and_then(parse_ts),
             })
         })?;
         rows.collect()
@@ -163,8 +188,8 @@ impl Db {
         let conn = self.conn.lock().expect("db mutex");
         let mut stmt = conn.prepare(
             "INSERT OR IGNORE INTO tasks
-                (id, title, notes, duration_min, deadline, priority, status, confidence, source, label)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                (id, title, notes, duration_min, deadline, priority, status, confidence, source, label, position, pinned_start)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         )?;
         for task in tasks {
             stmt.execute(params![
@@ -178,6 +203,8 @@ impl Db {
                 task.confidence,
                 source_str(task.source),
                 task.label,
+                task.position,
+                task.pinned_start.map(format_ts),
             ])?;
         }
         Ok(())
@@ -186,7 +213,7 @@ impl Db {
     fn update_task(&self, task: &Task) -> rusqlite::Result<()> {
         self.conn.lock().expect("db mutex").execute(
             "UPDATE tasks SET title = ?2, notes = ?3, duration_min = ?4, deadline = ?5,
-                    priority = ?6, status = ?7, confidence = ?8, source = ?9, label = ?10
+                    priority = ?6, status = ?7, confidence = ?8, source = ?9, label = ?10, position = ?11, pinned_start = ?12
              WHERE id = ?1",
             params![
                 task.id,
@@ -199,6 +226,8 @@ impl Db {
                 task.confidence,
                 source_str(task.source),
                 task.label,
+                task.position,
+                task.pinned_start.map(format_ts),
             ],
         )?;
         Ok(())
@@ -308,6 +337,8 @@ mod tests {
             confidence: 0.87,
             label: "School".into(),
             source: Source::Voice,
+            position: 0,
+            pinned_start: None,
         }
     }
 

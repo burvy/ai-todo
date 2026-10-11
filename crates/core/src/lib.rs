@@ -18,6 +18,10 @@ pub struct Task {
     pub confidence: f64,
     pub label: String,
     pub source: Source,
+    #[serde(default)]
+    pub position: i64,
+    #[serde(default)]
+    pub pinned_start: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

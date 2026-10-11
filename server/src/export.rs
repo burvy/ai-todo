@@ -84,6 +84,8 @@ mod tests {
                 confidence: 1.0,
                 label: "Work".into(),
                 source: Source::Text,
+                position: 0,
+                pinned_start: None,
             },
             todo_core::Task {
                 id: "t2".into(),
@@ -96,6 +98,8 @@ mod tests {
                 confidence: 1.0,
                 label: "School".into(),
                 source: Source::Text,
+                position: 1,
+                pinned_start: None,
             },
         ];
         let start = chrono::Utc
