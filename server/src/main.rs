@@ -270,6 +270,17 @@ fn label_for(text: &str) -> String {
     .into()
 }
 
+fn is_assessment(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    ["quiz", "exam", "test", "presentation", "interview"]
+        .iter()
+        .any(|word| {
+            lower
+                .split_whitespace()
+                .any(|part| part.trim_matches(|c: char| !c.is_ascii_alphanumeric()) == *word)
+        })
+}
+
 fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
     let lower = candidate.to_ascii_lowercase();
     let date = if lower == "today" {
@@ -356,6 +367,17 @@ pub async fn capture_text(text: &str, source: Source, anchor: DateTime<Utc>) -> 
             .map(|judgment| (sentence, candidates, judgment))
     }))
     .await;
+    if std::env::var("CAPTURE_DEBUG").ok().as_deref() == Some("1") {
+        for result in &results {
+            match result {
+                Ok((sentence, _, judgment)) => eprintln!(
+                    "capture clause={:?} is_task={:.3} deadline={:?} duration_min={}",
+                    sentence, judgment.is_task, judgment.deadline, judgment.duration_min
+                ),
+                Err(error) => eprintln!("capture clause error: {error}"),
+            }
+        }
+    }
     let judgments: Result<Vec<_>, _> = results
         .into_iter()
         .map(|result| {
@@ -382,18 +404,28 @@ fn tasks_from_judgments(
 ) -> Vec<Task> {
     let mut tasks = Vec::new();
     for (sentence, _candidates, judgment) in judgments {
-        if judgment.is_task < 0.5 {
+        if judgment.is_task < 0.4 {
             continue;
         }
         let deadline = judgment
             .deadline
             .as_deref()
             .and_then(|candidate| parse_deadline(candidate, anchor));
+        let assessment = is_assessment(&sentence);
+        let title = if assessment {
+            format!("Study for {}", clean_title(&sentence).to_ascii_lowercase())
+        } else {
+            clean_title(&sentence)
+        };
         tasks.push(Task {
             id: String::new(),
-            title: clean_title(&sentence),
+            title,
             notes: String::new(),
-            duration_min: i64::from(judgment.duration_min),
+            duration_min: if assessment {
+                i64::from(judgment.duration_min.max(60))
+            } else {
+                i64::from(judgment.duration_min)
+            },
             deadline,
             priority: judgment.priority,
             status: "todo".into(),
