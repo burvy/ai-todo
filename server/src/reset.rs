@@ -32,7 +32,10 @@ mod tests {
     async fn reset_clears_memory_and_database() {
         let db = Arc::new(Db::open_in_memory().unwrap());
         let state = new_state_with(db.clone());
-        assert!(!state.busy.lock().unwrap().is_empty(), "seeded busy blocks");
+        assert!(
+            state.busy.lock().unwrap().is_empty(),
+            "new calendars start empty"
+        );
         let created = app(state.clone())
             .oneshot(
                 Request::post("/api/tasks")

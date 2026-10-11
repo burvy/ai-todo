@@ -260,6 +260,15 @@ impl Db {
         rows.collect()
     }
 
+    /// Remove legacy synthetic calendar rows from databases created by older builds.
+    pub fn remove_seed_busy_rows(&self) -> rusqlite::Result<()> {
+        self.conn.lock().expect("db mutex").execute(
+            "DELETE FROM busy_blocks WHERE title IN ('Standup', 'Lunch', '1:1')",
+            [],
+        )?;
+        Ok(())
+    }
+
     /// Make the stored blocks exactly `rows`, as one transaction.
     ///
     /// Wholesale replacement keeps the server's busy list authoritative: the
