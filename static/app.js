@@ -188,6 +188,14 @@ function penGoHomeQuiet() {
   mascotTrack.style.removeProperty('--pen-y');
 }
 
+/* Put the nib at a page point (viewport coordinates). */
+function penAt(x, y) {
+  if (!penHomeRect) measurePenHome();
+  mascotTrack.classList.add('is-flying');
+  mascotTrack.style.setProperty('--pen-x', `${Math.round(x - penHomeRect.left)}px`);
+  mascotTrack.style.setProperty('--pen-y', `${Math.round(y - 22 - penHomeRect.top)}px`);
+}
+
 function penFlyTo(el) {
   if (!el) return;
   if (!penHomeRect) measurePenHome();
@@ -325,7 +333,10 @@ function taskRow(task, isFresh) {
   const tentative = Number(task.confidence) < PENCIL_BELOW;
   const overdue = task.deadline && !done && new Date(task.deadline) < new Date();
 
-  if (isFresh) li.classList.add('enter');
+  if (isFresh) {
+    li.classList.add(reduceMotion ? 'enter' : 'pending');
+    li.style.setProperty('--speed', `${WRITE_MS}ms`);
+  }
   if (tentative) li.classList.add('pencil');
   if (done) li.classList.add('done');
   if (overdue) li.classList.add('overdue');
@@ -395,17 +406,40 @@ function taskRow(task, isFresh) {
   return li;
 }
 
+/* Everything a row shows. A row whose signature has not changed is kept as
+   the same DOM node, so adding tasks never replays old ticks or strikes. */
+function rowSig(t) {
+  return [t.title, t.status, t.deadline, t.duration_min, t.priority, t.label, t.confidence, t.position].join('|');
+}
+
+const orderOf = (t) => (Number.isFinite(t.position) ? t.position : Infinity);
+
 function renderList() {
   const ordered = [...state.tasks].sort((a, b) => {
     if ((a.status === 'done') !== (b.status === 'done')) return a.status === 'done' ? 1 : -1;
+    if (orderOf(a) !== orderOf(b)) return orderOf(a) - orderOf(b);
     const ad = a.deadline ? new Date(a.deadline).getTime() : Infinity;
     const bd = b.deadline ? new Date(b.deadline).getTime() : Infinity;
     if (ad !== bd) return ad - bd;
     return a.priority - b.priority;
   });
 
-  list.textContent = '';
-  ordered.forEach((task) => list.appendChild(taskRow(task, state.freshIds.has(task.id))));
+  const old = new Map([...list.children].map((li) => [li.dataset.id, li]));
+  ordered.forEach((task, i) => {
+    const sig = rowSig(task);
+    let li = old.get(task.id);
+    old.delete(task.id);
+    if (!li || li.dataset.sig !== sig) {
+      const fresh = state.freshIds.has(task.id) && !li;
+      const next = taskRow(task, fresh);
+      if (!fresh) next.classList.add('still');
+      next.dataset.sig = sig;
+      if (li) li.replaceWith(next);
+      li = next;
+    }
+    if (list.children[i] !== li) list.insertBefore(li, list.children[i] || null);
+  });
+  old.forEach((li) => li.remove());
 
   const open = ordered.filter((t) => t.status !== 'done').length;
   const pencilled = ordered.filter((t) => t.status !== 'done' && Number(t.confidence) < PENCIL_BELOW).length;
@@ -434,9 +468,20 @@ async function announceNewTasks(alsoDone = []) {
 
   for (const id of fresh) {
     const row = list.querySelector(`.task[data-id="${CSS.escape(id)}"]`);
-    penFlyTo(row ? row.querySelector('.title-wrap') : null);
-    await wait(reduceMotion ? 30 : WRITE_MS);
+    if (!row) continue;
+    if (reduceMotion) { row.classList.add('enter'); continue; }
+    const text = row.querySelector('.title-text');
+    let r = text.getBoundingClientRect();
+    penAt(r.left, r.top + r.height / 2);
+    await wait(460);                        // the flight to the line
+    r = text.getBoundingClientRect();
+    row.classList.add('enter');             // the reveal starts under the nib
+    mascotTrack.style.transition = `transform ${WRITE_MS}ms linear`;
+    penAt(r.right, r.top + r.height / 2);
+    await wait(WRITE_MS);
+    mascotTrack.style.removeProperty('transition');
   }
+  list.querySelectorAll('.task.pending:not(.enter)').forEach((row) => row.classList.add('enter'));
 
   // "I finished the lab report" gets the same trip, with a tick
   for (const id of alsoDone) {
@@ -510,6 +555,8 @@ function renderPlanner() {
         end: placement.end,
         title: task ? task.title : 'task',
         kind: 'place',
+        taskId: placement.task_id,
+        pinned: !!(task && task.pinned_start),
         label: task ? task.label : 'Other',
         done: task && task.status === 'done',
         pencil: task && Number(task.confidence) < PENCIL_BELOW,
@@ -520,7 +567,7 @@ function renderPlanner() {
     entries.forEach((entry) => {
       body.appendChild(paint(
         entry.start, entry.end, entry.title, entry.kind,
-        entry.label, entry.done, entry.pencil,
+        entry.label, entry.done, entry.pencil, entry.taskId, entry.pinned,
       ));
     });
     day.appendChild(body);
@@ -596,7 +643,7 @@ function layOutLanes(body) {
   flush();
 }
 
-function paint(startIso, endIso, title, kind, label, done, pencil) {
+function paint(startIso, endIso, title, kind, label, done, pencil, taskId, pinned) {
   const el = document.createElement('div');
   const spanMinutes = Math.max(0, minutesIntoDay(endIso) - minutesIntoDay(startIso));
   const top = ((minutesIntoDay(startIso) - DAY_START * 60) / ((DAY_END - DAY_START) * 60)) * 100;
@@ -611,7 +658,11 @@ function paint(startIso, endIso, title, kind, label, done, pencil) {
   el.setAttribute('role', 'button');
   el.setAttribute('tabindex', '0');
   el.setAttribute('aria-label', full);
-  el.addEventListener('click', () => showBlock(full));
+  if (taskId) el.dataset.taskId = taskId;
+  el.addEventListener('click', () => {
+    if (el.dataset.dragged) { delete el.dataset.dragged; return; }
+    showBlock(full);
+  });
   el.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showBlock(full); }
   });
@@ -620,6 +671,16 @@ function paint(startIso, endIso, title, kind, label, done, pencil) {
   name.className = 'block-title';
   name.textContent = title;
   el.appendChild(name);
+
+  if (pinned) {
+    const pin = document.createElement('button');
+    pin.type = 'button';
+    pin.className = 'pin';
+    pin.textContent = '📌';
+    pin.title = 'Pinned here. Tap to unpin';
+    pin.setAttribute('aria-label', `Unpin "${title}"`);
+    el.appendChild(pin);
+  }
 
   // a 30-minute block is only two text lines tall — keep it to the title
   if (spanMinutes >= 45) {
@@ -971,6 +1032,7 @@ function beginEdit(li, field) {
   if (!host) return;
 
   state.editing = true;
+  delete li.dataset.sig;
   li.classList.add('editing');
   host.replaceWith(input);
   input.focus();
@@ -1036,9 +1098,16 @@ list.addEventListener('click', async (event) => {
 
   if (event.target.closest('.tick')) {
     const done = task.status !== 'done';
+    li.classList.remove('still');
     li.querySelector('.tick').setAttribute('aria-pressed', String(done));
     li.classList.toggle('done', done);
     task.status = done ? 'done' : 'todo';
+    li.dataset.sig = rowSig(task);
+    if (done && !reduceMotion) {
+      measurePenHome();
+      penFlyTo(li.querySelector('.tick'));
+      setTimeout(penGoHomeQuiet, 520);
+    }
     try {
       await patchTask(id, { status: task.status });
       await replan();
@@ -1095,40 +1164,219 @@ addForm.addEventListener('submit', async (event) => {
 const icsFile = $('#icsFile');
 const importBtn = document.querySelector('.import-btn');
 
-icsFile.addEventListener('change', async () => {
-  const file = icsFile.files && icsFile.files[0];
-  icsFile.value = '';                       // let the same file be picked twice
-  if (!file || state.working) return;
+const clashNote = $('#clashNote');
+let clashFile = null;
 
+async function uploadIcs(file, confirm = false) {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  if (confirm) form.append('confirm', 'true');
+  const res = await fetch(API + '/api/calendar/import', { method: 'POST', body: form });
+  if (res.status === 409) return { clash: await res.json().catch(() => ({})) };
+  if (!res.ok) {
+    const error = new Error(`POST /api/calendar/import -> ${res.status}`);
+    error.status = res.status;
+    throw error;
+  }
+  return { data: await res.json() };
+}
+
+function describeClash(c) {
+  // server shape: {start, end, imported_title, existing_title}
+  const title = c.imported_title || c.title || 'event';
+  const when = c.start ? ` (${fmtDeadline(c.start)})` : '';
+  return `${title}${when}${c.existing_title ? ` overlaps ${c.existing_title}` : ''}`;
+}
+
+function showClashes(file, body) {
+  clashFile = file;
+  $('#clashTitle').textContent = body.error || 'Some of these events overlap your calendar.';
+  const ul = $('#clashList');
+  ul.textContent = '';
+  (body.conflicts || []).slice(0, 12).forEach((c) => {
+    const li = document.createElement('li');
+    li.textContent = typeof c === 'string' ? c : describeClash(c);
+    ul.appendChild(li);
+  });
+  clashNote.hidden = false;
+  $('#clashYes').focus();
+}
+
+async function importCalendar(file, confirm = false) {
+  if (!file || state.working) return;
   setBusy(true);
   importBtn.classList.add('is-busy');
   try {
-    const ics_text = await file.text();
-    const data = await api('/api/calendar/import', {
-      method: 'POST',
-      body: JSON.stringify({ ics_text }),
-    });
-    // the route replaces the busy blocks and answers in /api/calendar shape,
-    // so re-plan first or the new events would sit behind the old ones
+    const { data, clash } = await uploadIcs(file, confirm);
+    if (clash) { showClashes(file, clash); return; }
+    clashNote.hidden = true;
+    // the route replaces the busy blocks; re-plan so the tasks move out of the way
     await runSchedule();
-    state.busy = data.busy || [];
     await refreshCalendar();
-    renderPlanner();
-    const n = state.busy.length;
+    const n = (data && data.busy ? data.busy : state.busy).length;
     say(n ? `Imported ${n} event${n === 1 ? '' : 's'} from ${file.name}.`
           : `No events found in ${file.name}.`);
   } catch (err) {
-    // A file the browser cannot read as a calendar is the user's problem to
-    // fix, not a defect: the toast says so, so don't shout in the console.
+    // A file the planner cannot read is the user's to fix, not a defect.
     const badFile = err.status === 400 || err.status === 422;
     if (!badFile) console.error(err);
-    say(badFile
-      ? 'That file is not a calendar the planner can read.'
-      : 'Could not import that calendar.');
+    say(badFile ? 'That file is not a calendar the planner can read.' : 'Could not import that calendar.');
   } finally {
     importBtn.classList.remove('is-busy');
     setBusy(false);
   }
+}
+
+icsFile.addEventListener('change', () => {
+  const file = icsFile.files && icsFile.files[0];
+  icsFile.value = '';                       // let the same file be picked twice
+  importCalendar(file);
+});
+$('#clashYes').addEventListener('click', () => {
+  clashNote.hidden = true;
+  importCalendar(clashFile, true);
+});
+$('#clashNo').addEventListener('click', () => { clashNote.hidden = true; clashFile = null; });
+
+/* ── Import an email / PDF: its tasks are written like a ramble ── */
+
+const docFile = $('#docFile');
+docFile.addEventListener('change', async () => {
+  const file = docFile.files && docFile.files[0];
+  docFile.value = '';
+  if (!file || state.working) return;
+  const label = document.querySelector('label[for="docFile"]');
+  setBusy(true);
+  label.classList.add('is-busy');
+  mood('writing');
+  try {
+    const before = new Set(state.tasks.map((t) => t.id));
+    const form = new FormData();
+    form.append('file', file, file.name);
+    const res = await fetch(API + '/api/capture', { method: 'POST', body: form });
+    if (!res.ok) {
+      const error = new Error(`POST /api/capture -> ${res.status}`);
+      error.status = res.status;
+      throw error;
+    }
+    const data = await res.json();
+    const fresh = (data.tasks || []).map((t) => t.id).filter((id) => !before.has(id));
+    await loadTasks(fresh);
+    await replan();
+    say(fresh.length ? `Found ${fresh.length} task${fresh.length === 1 ? '' : 's'} in ${file.name}.`
+                     : `No tasks found in ${file.name}.`);
+  } catch (err) {
+    if (!err.status || err.status >= 500) console.error(err);
+    say(err.status && err.status < 500 ? 'The server could not read that file yet.' : 'Could not import that file.');
+  } finally {
+    label.classList.remove('is-busy');
+    setBusy(false);
+    mood('idle');
+  }
+});
+
+/* ── Reorder the list: drag a row by its grip ──────────────── */
+
+async function saveOrder() {
+  const jobs = [];
+  [...list.children].forEach((row, i) => {
+    const task = state.byId.get(row.dataset.id);
+    if (!task || task.position === i) return;
+    task.position = i;
+    row.dataset.sig = rowSig(task);
+    jobs.push(patchTask(task.id, { position: i }).catch(() => null));
+  });
+  if (!jobs.length) return;
+  await Promise.all(jobs);
+  await replan();
+}
+
+list.addEventListener('pointerdown', (event) => {
+  const grip = event.target.closest('.grip');
+  if (!grip || state.working || state.editing) return;
+  const li = grip.closest('.task');
+  event.preventDefault();
+  try { grip.setPointerCapture(event.pointerId); } catch { /* fine */ }
+  li.classList.add('dragging');
+  const move = (ev) => {
+    const over = [...list.children].find((row) => {
+      if (row === li) return false;
+      const b = row.getBoundingClientRect();
+      return ev.clientY >= b.top && ev.clientY <= b.bottom;
+    });
+    if (!over) return;
+    const b = over.getBoundingClientRect();
+    list.insertBefore(li, ev.clientY < b.top + b.height / 2 ? over : over.nextSibling);
+  };
+  const up = () => {
+    grip.removeEventListener('pointermove', move);
+    grip.removeEventListener('pointerup', up);
+    grip.removeEventListener('pointercancel', up);
+    li.classList.remove('dragging');
+    saveOrder();
+  };
+  grip.addEventListener('pointermove', move);
+  grip.addEventListener('pointerup', up);
+  grip.addEventListener('pointercancel', up);
+});
+
+/* ── Reorder the planner: drag a note to a slot, tap the pin to free it ── */
+
+async function pinTask(id, iso) {
+  const task = state.byId.get(id);
+  try {
+    const updated = await patchTask(id, { pinned_start: iso });
+    if (task) Object.assign(task, updated || {}, { pinned_start: iso });
+  } catch { say('Could not move that one.'); }
+  await replan();
+}
+
+gridDays.addEventListener('pointerdown', (event) => {
+  const pin = event.target.closest('.pin');
+  if (pin) {
+    event.preventDefault();
+    const id = pin.closest('.block').dataset.taskId;
+    if (id && !state.working) pinTask(id, null);
+    return;
+  }
+  const el = event.target.closest('.block.place');
+  if (!el || !el.dataset.taskId || state.working) return;
+  const sx = event.clientX, sy = event.clientY;
+  let moved = false;
+  try { el.setPointerCapture(event.pointerId); } catch { /* fine */ }
+  const move = (ev) => {
+    const dx = ev.clientX - sx, dy = ev.clientY - sy;
+    if (!moved && Math.hypot(dx, dy) < 5) return;
+    moved = true;
+    el.classList.add('dragging');
+    el.style.transform = `translate(${dx}px, ${dy}px)`;
+  };
+  const up = (ev) => {
+    el.removeEventListener('pointermove', move);
+    el.removeEventListener('pointerup', up);
+    el.removeEventListener('pointercancel', up);
+    if (!moved) return;
+    el.dataset.dragged = '1';
+    const top = el.getBoundingClientRect().top;
+    el.classList.remove('dragging');
+    el.style.transform = '';
+    const body = [...gridDays.querySelectorAll('.day-body')].find((b) => {
+      const r = b.getBoundingClientRect();
+      return ev.clientX >= r.left && ev.clientX <= r.right;
+    });
+    if (!body) return;
+    const r = body.getBoundingClientRect();
+    const span = (DAY_END - DAY_START) * 60;
+    let minutes = DAY_START * 60 + ((top - r.top) / r.height) * span;
+    minutes = Math.round(minutes / 15) * 15;
+    minutes = Math.max(DAY_START * 60, Math.min(DAY_END * 60 - 15, minutes));
+    const start = new Date(body.dataset.day);
+    start.setHours(0, minutes, 0, 0);
+    pinTask(el.dataset.taskId, start.toISOString());
+  };
+  el.addEventListener('pointermove', move);
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
 });
 
 /* ── Schedule it ────────────────────────────────────────────── */
@@ -1155,6 +1403,23 @@ scheduleBtn.addEventListener('click', async () => {
 $('#marginReplay').addEventListener('click', () => speak(marginText.textContent));
 
 /* ── Header tools ───────────────────────────────────────────── */
+
+const gearBtn = $('#gearBtn');
+const settingsPop = $('#settingsPop');
+function setSettings(open) {
+  settingsPop.hidden = !open;
+  gearBtn.setAttribute('aria-expanded', String(open));
+}
+gearBtn.addEventListener('click', (event) => {
+  event.stopPropagation();
+  setSettings(settingsPop.hidden);
+});
+document.addEventListener('click', (event) => {
+  if (!settingsPop.hidden && !settingsPop.contains(event.target)) setSettings(false);
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !settingsPop.hidden) { setSettings(false); gearBtn.focus(); }
+});
 
 const speakToggle = $('#speakToggle');
 speakToggle.addEventListener('click', () => {

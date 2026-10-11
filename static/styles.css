@@ -905,3 +905,76 @@ body.is-busy .composer-row { border-color: var(--accent); }
   .task.done .title-text::before { transform: scaleX(1) rotate(-.7deg); }
   .task.done .tick-mark { stroke-dashoffset: 0; }
 }
+/* ── UI-SPEC polish (18:05 spec) ─────────────────────────────── */
+
+/* authentic paper: fine grain over the sheet */
+.paper, .planner {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .35 0 0 0 0 .3 0 0 0 0 .22 0 0 0 .09 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  box-shadow: var(--shadow), 0 1px 0 rgba(0,0,0,.04), 0 12px 28px -18px rgba(43,42,40,.45);
+}
+
+/* settings gear, right of "To do"; the tools live in a paper popover */
+.paper-head { grid-template-columns: auto auto minmax(0, 1fr); position: relative; }
+.paper-head .notebook-sub { grid-column: 1 / -1; }
+.gear {
+  grid-column: 2; grid-row: 1; justify-self: start;
+  width: 28px; height: 28px; padding: 4px; border: 0; background: transparent;
+  color: var(--ink-soft); border-radius: 50%; cursor: pointer;
+}
+.gear svg { width: 20px; height: 20px; fill: currentColor; display: block; }
+.gear:hover, .gear[aria-expanded="true"] { color: var(--accent); }
+.gear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.paper-head .settings-pop {
+  position: absolute; z-index: 30; top: 34px; left: 64px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 2px;
+  min-width: 190px; padding: 8px;
+  background: var(--paper-fresh); border: 1px solid var(--edge); border-radius: 3px;
+  box-shadow: 2px 6px 18px -8px rgba(43,42,40,.55);
+  transform: rotate(-.6deg);
+}
+.paper-head .settings-pop[hidden] { display: none; }
+.settings-pop .tool { justify-content: flex-start; width: 100%; }
+.settings-pop > a[href="/api/calendar.ics"] { justify-content: flex-start; }
+
+/* rows: settled rows never replay their tick / strike / write */
+.task { overflow: visible; }
+.task.still .tick-mark { animation: none; }
+.task.still.done .tick-mark { stroke-dashoffset: 0; }
+.task.still .title-text::before { animation: none; transform: scaleX(1) rotate(-.7deg); }
+.task.pending .title-text { clip-path: inset(-2px 100% -2px 0); }
+.task.pending.enter .title-text { clip-path: none; }
+
+/* pencil-note chips, not pills */
+.task .chip { border: 0; background: none; padding: 0 2px; color: var(--pencil); font-style: italic; }
+
+/* drag handle in the margin */
+.grip {
+  position: absolute; left: -30px; top: 50%; transform: translateY(-50%);
+  width: 18px; text-align: center; font-size: 14px; letter-spacing: -3px;
+  color: var(--ink-soft); opacity: .25; cursor: grab; touch-action: none; user-select: none;
+}
+.task:hover .grip { opacity: .7; }
+.task.dragging { opacity: .6; background: rgba(47,93,158,.06); }
+@media (hover: none) { .grip { opacity: .5; } }
+
+/* planner: drag notes, pins, import footer, clash prompt */
+.block.place { cursor: grab; touch-action: none; }
+.block.place.dragging { opacity: .75; cursor: grabbing; z-index: 20; box-shadow: 3px 8px 14px -6px rgba(43,42,40,.6); }
+.block .pin { position: absolute; top: 1px; right: 2px; font-size: 11px; line-height: 1; background: none; border: 0; padding: 1px; cursor: pointer; }
+.import-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; justify-content: flex-end; }
+.import-row .import-btn { font-size: 16px; padding: 4px 9px 5px; border-style: dotted; }
+.import-row .import-btn.is-busy { opacity: .5; cursor: progress; }
+.clash-note {
+  margin-top: 10px; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 3px;
+  background: var(--paper-fresh); box-shadow: 2px 5px 14px -8px rgba(43,42,40,.5);
+  transform: rotate(-.4deg); font-size: 13.5px;
+}
+.clash-note[hidden] { display: none; }
+.clash-title { margin: 0 0 6px; font-weight: 600; }
+.clash-list { margin: 0 0 8px; padding-left: 18px; color: var(--ink-soft); max-height: 120px; overflow: auto; }
+.clash-actions { display: flex; gap: 10px; align-items: center; }
+.clash-no { width: auto; padding: 0 10px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .task.pending .title-text { clip-path: none; }
+}
