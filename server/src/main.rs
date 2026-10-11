@@ -534,6 +534,8 @@ async fn create_task(
         source: Source::Text,
     };
     store.tasks.push(task.clone());
+    drop(store);
+    state.db.save_tasks(std::slice::from_ref(&task));
     (StatusCode::CREATED, Json(task))
 }
 
