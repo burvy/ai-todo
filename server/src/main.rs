@@ -200,6 +200,7 @@ pub fn clean_title(sentence: &str) -> String {
             "like ",
             "i need to ",
             "i have a ",
+            "i also have a ",
             "i still need to ",
             "i should ",
             "i have to ",
@@ -221,6 +222,13 @@ pub fn clean_title(sentence: &str) -> String {
             title.truncate(index);
             break;
         }
+    }
+    let lower = title.to_ascii_lowercase();
+    if let Some(rest) = lower.strip_prefix("study for ") {
+        let rest = rest
+            .trim_start_matches("i also have a ")
+            .trim_start_matches("i have a ");
+        title = format!("Study for {rest}");
     }
     let lower = title.to_ascii_lowercase();
     let trailing = [
@@ -310,8 +318,16 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
     } else if lower == "tomorrow" {
         now.date_naive() + chrono::Duration::days(1)
     } else if lower == "weekend" || lower == "this weekend" {
-        let days = 6 - now.weekday().number_from_monday() as i64;
-        now.date_naive() + chrono::Duration::days(days.max(1))
+        let current = now.weekday().number_from_monday() as i64;
+        let mut days = (6 - current + 7) % 7;
+        if days == 0 {
+            days = 7;
+        }
+        now.date_naive() + chrono::Duration::days(days)
+    } else if lower == "next week" {
+        let current = now.weekday().number_from_monday() as i64;
+        let days = if current == 7 { 8 } else { 8 - current };
+        now.date_naive() + chrono::Duration::days(days)
     } else if let Some(name) = lower.strip_prefix("by ") {
         let weekdays = [
             "monday",
@@ -323,10 +339,9 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
             "sunday",
         ];
         let index = weekdays.iter().position(|day| *day == name)?;
-        let target = chrono::Weekday::try_from(index as u8 + 1).ok()?;
-        let mut days =
-            (target.number_from_monday() as i64 - now.weekday().number_from_monday() as i64 + 7)
-                % 7;
+        let current = now.weekday().number_from_monday() as i64;
+        let target = index as i64 + 1;
+        let mut days = (target - current + 7) % 7;
         if days == 0 {
             days = 7;
         }
@@ -352,10 +367,9 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
             "sunday",
         ];
         let index = weekdays.iter().position(|day| *day == lower)?;
-        let target = chrono::Weekday::try_from(index as u8 + 1).ok()?;
-        let mut days =
-            (target.number_from_monday() as i64 - now.weekday().number_from_monday() as i64 + 7)
-                % 7;
+        let current = now.weekday().number_from_monday() as i64;
+        let target = index as i64 + 1;
+        let mut days = (target - current + 7) % 7;
         if days == 0 {
             days = 7;
         }
@@ -437,10 +451,17 @@ fn tasks_from_judgments(
             .as_deref()
             .and_then(|candidate| parse_deadline(candidate, anchor));
         let assessment = is_assessment(&sentence);
-        let title = if assessment && sentence.to_ascii_lowercase().contains("presentation") {
-            format!("Prepare {}", clean_title(&sentence).to_ascii_lowercase())
-        } else if assessment {
-            format!("Study for {}", clean_title(&sentence).to_ascii_lowercase())
+        let title = if assessment {
+            let cleaned = clean_title(&sentence)
+                .to_ascii_lowercase()
+                .replace("i also have a ", "")
+                .replace("i have a ", "");
+            let cleaned = cleaned.trim_start_matches("study for ");
+            if sentence.to_ascii_lowercase().contains("presentation") {
+                format!("Prepare {cleaned}")
+            } else {
+                format!("Study for {cleaned}")
+            }
         } else {
             clean_title(&sentence)
         };
@@ -949,6 +970,10 @@ mod tests {
             clean_title("I gotta pick up my prescription today"),
             "Pick up my prescription"
         );
+        assert_eq!(
+            clean_title("Study for i also have a quiz sometime"),
+            "Study for quiz"
+        );
     }
 
     #[test]
@@ -969,6 +994,35 @@ mod tests {
             &task,
             "I finished the chem lab report"
         ));
+    }
+
+    #[test]
+    fn date_strings_map_to_expected_local_dates() {
+        let anchor = Utc.with_ymd_and_hms(2026, 10, 11, 12, 0, 0).unwrap();
+        assert_eq!(
+            parse_deadline("thursday", anchor)
+                .unwrap()
+                .with_timezone(&timezone())
+                .date_naive()
+                .to_string(),
+            "2026-10-15"
+        );
+        assert_eq!(
+            parse_deadline("weekend", anchor)
+                .unwrap()
+                .with_timezone(&timezone())
+                .date_naive()
+                .to_string(),
+            "2026-10-17"
+        );
+        assert_eq!(
+            parse_deadline("next week", anchor)
+                .unwrap()
+                .with_timezone(&timezone())
+                .date_naive()
+                .to_string(),
+            "2026-10-19"
+        );
     }
 
     #[test]
