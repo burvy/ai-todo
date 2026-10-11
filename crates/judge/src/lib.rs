@@ -224,7 +224,17 @@ pub fn split_sentences(text: &str) -> Vec<String> {
         .collect();
     let mut merged: Vec<String> = Vec::new();
     for clause in raw {
+        if is_hedged_self_talk(&clause) {
+            continue;
+        }
         if is_time_fragment(&clause)
+            && let Some(previous) = merged.last_mut()
+        {
+            previous.push(' ');
+            previous.push_str(clause.trim());
+            continue;
+        }
+        if (is_pronoun_clause(&clause) || is_pronoun_object_action(&clause))
             && let Some(previous) = merged.last_mut()
         {
             previous.push(' ');
@@ -234,6 +244,47 @@ pub fn split_sentences(text: &str) -> Vec<String> {
         merged.push(clause);
     }
     merged
+}
+
+fn is_hedged_self_talk(clause: &str) -> bool {
+    let lower = clause.trim().to_ascii_lowercase();
+    [
+        "i should probably ",
+        "i guess ",
+        "maybe i'll ",
+        "maybe i will ",
+    ]
+    .iter()
+    .any(|prefix| lower.starts_with(prefix))
+}
+
+fn is_pronoun_clause(clause: &str) -> bool {
+    [
+        "it ", "that ", "this ", "them ", "it,", "that,", "this,", "them,",
+    ]
+    .iter()
+    .any(|prefix| clause.trim().to_ascii_lowercase().starts_with(prefix))
+}
+
+fn is_pronoun_object_action(clause: &str) -> bool {
+    let words: Vec<&str> = clause.split_whitespace().collect();
+    let words = words.strip_prefix(&["and"]).unwrap_or(&words);
+    words.len() >= 2
+        && [
+            "upload", "send", "share", "email", "finish", "review", "read", "submit", "return",
+        ]
+        .contains(
+            &words[0]
+                .trim_matches(|c: char| !c.is_ascii_alphabetic())
+                .to_ascii_lowercase()
+                .as_str(),
+        )
+        && ["it", "that", "this", "them"].contains(
+            &words[1]
+                .trim_matches(|c: char| !c.is_ascii_alphabetic())
+                .to_ascii_lowercase()
+                .as_str(),
+        )
 }
 
 fn is_time_fragment(clause: &str) -> bool {
@@ -388,6 +439,26 @@ mod tests {
                     .all(|clause| clause.split_whitespace().count() <= 20)
             );
         }
+    }
+
+    #[test]
+    fn merges_pronoun_upload_and_drops_hedged_self_talk() {
+        let clauses = split_sentences(
+            "I have to finish the history response paper, it is two pages, and upload it by Friday. I should probably start the response before I panic.",
+        );
+        assert_eq!(clauses.len(), 1, "{clauses:?}");
+        assert!(clauses[0].contains("finish the history response paper"));
+        assert!(clauses[0].contains("upload it by Friday"));
+        assert!(!clauses.iter().any(|clause| clause.contains("panic")));
+    }
+
+    #[test]
+    fn keeps_coordinated_names_in_one_clause() {
+        let clauses = split_sentences("I should schedule a meeting with Maya and Luis");
+        assert_eq!(
+            clauses,
+            vec!["I should schedule a meeting with Maya and Luis"]
+        );
     }
 
     #[test]
