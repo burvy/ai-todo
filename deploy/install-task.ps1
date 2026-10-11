@@ -6,7 +6,7 @@ $workingDirectory = Join-Path $PSScriptRoot 'dist\ai-todo'
 $action = New-ScheduledTaskAction -Execute 'PowerShell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$runScript`"" -WorkingDirectory $workingDirectory
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $settings = New-ScheduledTaskSettingsSet -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-$principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITYocalservice' -logontype serviceaccount -runlevel limited
+$principal = New-ScheduledTaskPrincipal -UserId 'NT AUTHORITY\LocalService' -LogonType ServiceAccount -RunLevel Limited
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
 
 if (-not (Get-NetFirewallRule -DisplayName 'ai-todo-server TCP 3160' -ErrorAction SilentlyContinue)) {
