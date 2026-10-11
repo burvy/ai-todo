@@ -46,6 +46,17 @@ pub fn parse_ics(text: &str) -> Result<Vec<BusyRow>, ImportError> {
     let mut busy: Vec<BusyRow> = calendar
         .events()
         .filter_map(|event| {
+            if event
+                .properties()
+                .get("STATUS")
+                .is_some_and(|value| value.value().eq_ignore_ascii_case("CANCELLED"))
+                || event
+                    .properties()
+                    .get("TRANSP")
+                    .is_some_and(|value| value.value().eq_ignore_ascii_case("TRANSPARENT"))
+            {
+                return None;
+            }
             let start = to_utc(&date_of(event, "DTSTART")?)?;
             // `DTEND` is the norm, but `DURATION` is legal and Google uses it.
             // A missing `DTEND` must not drop the event, so no `?` here.

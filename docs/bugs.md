@@ -24,7 +24,7 @@ test green; that is the signal it is done.
 
 ## Open
 
-- [ ] **1. Cancelled events still block time**
+- [x] **1. Cancelled events still block time**
       `server/src/ics.rs` — `parse_ics`
 
       Outlook keeps cancelled meetings in the export with `STATUS:CANCELLED`.
@@ -42,7 +42,7 @@ test green; that is the signal it is done.
 
       *Fix:* skip events whose `STATUS` is `CANCELLED` in the `filter_map`.
 
-- [ ] **2. `TRANSP:TRANSPARENT` events still block time**
+- [x] **2. `TRANSP:TRANSPARENT` events still block time**
       `server/src/ics.rs` — `parse_ics`
 
       `TRANSP:TRANSPARENT` is the iCalendar way of saying "display this, but do
@@ -59,7 +59,7 @@ test green; that is the signal it is done.
 
       *Fix:* skip events whose `TRANSP` is `TRANSPARENT`. Same place as (1).
 
-- [ ] **3. Gmail / Apple Mail quoted replies are not cut**
+- [x] **3. Gmail / Apple Mail quoted replies are not cut**
       `crates/capture` — `parse_email`
 
       We cut at Outlook's `-----Original Message-----`, the underscore rule,
@@ -81,7 +81,7 @@ test green; that is the signal it is done.
       variant), which is what both clients emit. Also worth handling
       `----- Message snippe` and the `__________` variant Gmail uses.
 
-- [ ] **4. Folded headers truncate the subject (and can break the date anchor)**
+- [x] **4. Folded headers truncate the subject (and can break the date anchor)**
       `crates/capture` — `parse_email` / `split_headers`
 
       RFC 5322 folds any header longer than 78 octets onto a continuation line
@@ -102,7 +102,7 @@ test green; that is the signal it is done.
       *Fix:* in `split_headers`, a line starting with a space or tab continues
       the previous header rather than starting the body.
 
-- [ ] **5. A reply that adds no words of its own yields phantom text**
+- [x] **5. A reply that adds no words of its own yields phantom text**
       `crates/capture` — `parse_email`
 
       Direct consequence of (3). A reply containing only a quoted message

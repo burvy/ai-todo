@@ -18,11 +18,13 @@ pub struct Email {
 }
 
 /// Markers that mean "everything below this is quoted history".
-const QUOTE_MARKERS: [&str; 4] = [
+const QUOTE_MARKERS: [&str; 6] = [
     "-----original message-----",
     "________________________________",
     "-------- forwarded message --------",
     "begin forwarded message:",
+    "---------- forwarded message",
+    "----- message snippet",
 ];
 
 /// Legal boilerplate that shows up in every university signature block.
@@ -59,12 +61,20 @@ pub fn parse_email(text: &str) -> Email {
 /// also stop when a line stops looking like a header.
 fn split_headers(text: &str) -> (Vec<(String, String)>, String) {
     let mut headers: Vec<(String, String)> = Vec::new();
-    let mut lines = text.lines();
-    let mut body_start = None;
-
-    for (index, line) in lines.clone().enumerate() {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut body_start = lines.len();
+    for (index, line) in lines.iter().enumerate() {
         if line.trim().is_empty() {
-            body_start = Some(index + 1);
+            body_start = index + 1;
+            break;
+        }
+        if line.starts_with([' ', '\t']) {
+            if let Some((_, value)) = headers.last_mut() {
+                value.push(' ');
+                value.push_str(line.trim());
+                continue;
+            }
+            body_start = index;
             break;
         }
         match line.split_once(':') {
@@ -80,15 +90,12 @@ fn split_headers(text: &str) -> (Vec<(String, String)>, String) {
             // A line with no colon (or an obviously non-header one) means the
             // headers are over, even without a blank line in between.
             _ => {
-                body_start = Some(index);
+                body_start = index;
                 break;
             }
         }
-        lines.next();
     }
-
-    let start = body_start.unwrap_or_else(|| lines.count());
-    let body = text.lines().skip(start).collect::<Vec<_>>().join("\n");
+    let body = lines[body_start..].join("\n");
     (headers, body)
 }
 
@@ -113,6 +120,9 @@ fn clean_body(body: &str) -> String {
             break;
         }
         if QUOTE_MARKERS.iter().any(|marker| lower.starts_with(marker)) {
+            break;
+        }
+        if lower.starts_with("on ") && (lower.contains(" wrote:") || lower.contains(" wrote :")) {
             break;
         }
         if DISCLAIMERS.iter().any(|d| lower.starts_with(d)) {
