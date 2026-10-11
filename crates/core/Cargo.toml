@@ -1,0 +1,11 @@
+[package]
+name = "todo-core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "todo_core"
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+serde = { version = "1", features = ["derive"] }
