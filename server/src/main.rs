@@ -5,7 +5,9 @@
 mod db;
 mod export;
 mod ics;
+mod reset;
 mod revise;
+mod upload;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -14,8 +16,8 @@ use std::sync::{Arc, Mutex};
 
 use axum::{
     Json, Router,
-    extract::{Path as UrlPath, Query, Request as HttpRequest, State},
-    http::StatusCode,
+    extract::{FromRequest, Path as UrlPath, Query, Request as HttpRequest, State},
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, patch, post},
 };
@@ -594,10 +596,49 @@ fn reason_text(reason: &UnschedulableReason) -> &'static str {
     }
 }
 
-async fn capture(State(state): State<AppState>, Json(body): Json<CaptureIn>) -> Json<CaptureOut> {
-    // TODO: multipart `file` (PDF) capture. Needs a PDF-to-text step in crates/capture.
-    let mut created =
-        capture_text(&body.text, body.source.unwrap_or(Source::Text), Utc::now()).await;
+/// `POST /api/capture` - either JSON `{text, source}` or a multipart `file`.
+///
+/// The two shapes are told apart by Content-Type: JSON is the existing
+/// contract, multipart is the PDF/email upload. Everything after "which shape
+/// is this" is shared, so both return the same `{tasks:[Task]}`.
+async fn capture(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+) -> Result<Json<CaptureOut>, (StatusCode, Json<serde_json::Value>)> {
+    let content_type = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    let (text, source, anchor) = if content_type.starts_with("multipart/form-data") {
+        let mut multipart = axum::extract::Multipart::from_request(request, &state)
+            .await
+            .map_err(|e| bad_request(format!("malformed upload: {e}")))?;
+        let (_name, bytes) = upload::read_file(&mut multipart)
+            .await
+            .map_err(|e| bad_request(e.to_string()))?;
+        let found = upload::extract(&bytes)
+            .await
+            .map_err(|e| bad_request(e.to_string()))?;
+        // Source::Pdf, and the anchor is the email's own sent date when it is
+        // an email, so "tomorrow" means the day after it was sent.
+        let shape = if found.was_email { "email" } else { "pdf" };
+        eprintln!(
+            "capture: {shape} upload, {} chars, anchored at {}",
+            found.text.len(),
+            found.anchor.to_rfc3339()
+        );
+        (found.text, Source::Pdf, found.anchor)
+    } else {
+        let Json(body) = Json::<CaptureIn>::from_request(request, &state)
+            .await
+            .map_err(|e| bad_request(format!("expected a JSON body with text: {e}")))?;
+        (body.text, body.source.unwrap_or(Source::Text), Utc::now())
+    };
+
+    let mut created = capture_text(&text, source, anchor).await;
     let mut store = state.store.lock().unwrap();
     for task in &mut created {
         store.next_id += 1;
@@ -606,7 +647,14 @@ async fn capture(State(state): State<AppState>, Json(body): Json<CaptureIn>) -> 
     store.tasks.extend(created.iter().cloned());
     drop(store);
     state.db.save_tasks(&created);
-    Json(CaptureOut { tasks: created })
+    Ok(Json(CaptureOut { tasks: created }))
+}
+
+fn bad_request(message: String) -> (StatusCode, Json<serde_json::Value>) {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({ "error": message })),
+    )
 }
 
 async fn list_tasks(State(state): State<AppState>) -> Json<TasksOut> {
@@ -1315,6 +1363,7 @@ fn app(state: AppState) -> Router {
         .route("/api/calendar", get(calendar))
         .route("/api/calendar.ics", get(export::calendar_ics))
         .route("/api/calendar/import", post(import_calendar))
+        .route("/api/reset", post(reset::reset))
         .with_state(state)
         .layer(CorsLayer::permissive());
     if Path::new("static").is_dir() {
@@ -1720,6 +1769,112 @@ mod tests {
                 serde_json::json!({ "ics_text": ics_text, "confirm": confirm }).to_string(),
             ))
             .unwrap()
+    }
+
+    const SYLLABUS_PDF: &[u8] = include_bytes!("../../demo/syllabus.pdf");
+
+    /// A multipart body with one `file` part, the shape a browser file drop
+    /// sends. `multer` is not a dependency, so the body is written by hand.
+    fn multipart_request(filename: &str, bytes: &[u8]) -> Request<Body> {
+        const BOUNDARY: &str = "ai-todo-test-boundary";
+        let mut body: Vec<u8> = Vec::new();
+        body.extend_from_slice(format!("--{BOUNDARY}\r\n").as_bytes());
+        body.extend_from_slice(
+            format!("Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n")
+                .as_bytes(),
+        );
+        body.extend_from_slice(b"Content-Type: application/pdf\r\n\r\n");
+        body.extend_from_slice(bytes);
+        body.extend_from_slice(format!("\r\n--{BOUNDARY}--\r\n").as_bytes());
+
+        Request::builder()
+            .method("POST")
+            .uri("/api/capture")
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={BOUNDARY}"),
+            )
+            .body(Body::from(body))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn capture_still_accepts_json() {
+        let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
+        let router = app(new_state_with(db));
+
+        let res = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/capture")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "text": "buy printer ink" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(res.status(), StatusCode::OK);
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let tasks = json["tasks"].as_array().expect("tasks array");
+        assert_eq!(tasks.len(), 1, "got: {json}");
+        assert_eq!(tasks[0]["title"], "buy printer ink");
+        assert_eq!(tasks[0]["source"], "text", "JSON capture stays text");
+    }
+
+    #[tokio::test]
+    async fn capture_accepts_a_pdf_upload() {
+        let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
+        let router = app(new_state_with(db));
+
+        let res = router
+            .oneshot(multipart_request("syllabus.pdf", SYLLABUS_PDF))
+            .await
+            .unwrap();
+
+        assert_eq!(res.status(), StatusCode::OK);
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let tasks = json["tasks"].as_array().expect("tasks array");
+        assert!(!tasks.is_empty(), "a syllabus should yield tasks: {json}");
+        assert_eq!(tasks[0]["source"], "pdf", "an upload is source pdf");
+    }
+
+    #[tokio::test]
+    async fn a_junk_upload_is_a_400_not_a_crash() {
+        let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
+        let router = app(new_state_with(db));
+
+        let res = router
+            .clone()
+            .oneshot(multipart_request("notes.txt", b"this is not a pdf at all"))
+            .await
+            .unwrap();
+
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let bytes = res.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(
+            json["error"].as_str().is_some_and(|e| !e.is_empty()),
+            "expected an error message, got: {json}"
+        );
+
+        // the server is still up and serving after a rejected upload
+        let res = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/tasks")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
     }
 
     const TWO_EVENTS: &str = "BEGIN:VCALENDAR\nBEGIN:VEVENT\n\
