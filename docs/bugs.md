@@ -119,6 +119,83 @@ test green; that is the signal it is done.
 
       *Fix:* none needed separately once (3) is fixed — this test then passes.
 
+- [ ] **6. "What does tomorrow look like" skips the first task of the day**
+      `server/src/main.rs` — `query_day` reply
+
+      After the demo rambles + `week.ics`, Monday's first placement is
+      *Clean up the chemistry lab data* at 9:00 (one chunk of a split task).
+
+      ```
+      POST /api/message {"text":"what does tomorrow look like"}
+      -> "Tomorrow: 8 tasks, starting with Share a draft with the group at 11:15."
+      POST /api/message {"text":"what should I do now"}
+      -> "Next: Clean up the chemistry lab data at 9:00 (60 minutes)."
+      ```
+
+      The two replies contradict each other. *Impact:* medium, both are demo lines.
+
+- [ ] **7. "What should I do now" does not say it is tomorrow**
+      Asked Sunday 18:10 local: `"Next: Clean up the chemistry lab data at 9:00 (60 minutes)."`
+      Reads as if it is 9:00 today. *Impact:* low-medium.
+
+- [ ] **8. Past days are answered as if they were today**
+      ```
+      "what does yesterday look like" -> "Today is free."  (focus_date = today)
+      ```
+      *Impact:* low.
+
+- [ ] **9. Reply to a ramble hides tasks that could not be placed**
+      After ramble 4 (`Today I need to submit the financial aid form`) the task
+      gets deadline today 17:00 (already past at 18:00 local) and is returned in
+      `unscheduled` with `deadline_passed`, but the reply is only
+      `"Got it, 6 new tasks."`. Same for a task that did not fit
+      (`no_available_time`, seen for *Clean up the chemistry lab data* before a
+      cancellation). *Impact:* medium: the spoken reply claims success.
+
+- [ ] **10. Finishing an already-finished task gives a misleading reply**
+      ```
+      "I finished the history paper"   -> "Done: Finish the history response paper."
+      "I finished the history paper"   -> "I couldn't tell which task you finished."
+      ```
+      Should say it is already done. *Impact:* low.
+
+- [ ] **11. Same text submitted twice creates duplicate tasks**
+      Sending ramble 1 then 2, 3, 4 is fine, but re-sending the same text (or a
+      sentence repeated 400 times: `"I need to call mom. " x400`) creates 400
+      identical tasks and 400 placements (4.2 s, server stays up). No dedupe.
+      *Impact:* medium: a double tap of the mic button on stage doubles the list.
+
+- [ ] **12. Garbled and raw titles**
+      ```
+      ramble 4 -> task "Study for make flashcards before the exam on"
+      ramble 4 -> task "I also promised to call my mom tonight"   (no clean-up, no deadline,
+                  placed Tue 17:30; "tonight" is Sunday)
+      ```
+      *Impact:* medium: titles are visible in the demo (`judge` / `clean_title`).
+
+- [ ] **13. Valid-looking inputs silently dropped**
+      ```
+      "I need to do a 20 hour project by tomorrow" -> intent other, "I can add tasks, cancel..."
+      "my bookstore shift got cancelled" (a Thursday shift exists) -> intent other, same reply
+      ```
+      Honest, but unhelpful. *Impact:* low.
+
+- [ ] **14. `PATCH /api/tasks/:id` accepts any status** (Jim's area, not edited)
+      ```
+      PATCH {"status":"bogus"} -> 200, status stored as "bogus"
+      ```
+      *Impact:* low. Should be 400.
+
+- [ ] **15. "Cancelled ... at 2:00" has no am/pm** in the cancel reply.
+      `"my 2pm on Monday got cancelled"` -> `"Cancelled Campus bookstore shift at 2:00; your plan is updated."`
+      *Impact:* low.
+
+Checked clean in this pass (demo script by API, `week.ics` import 409 then `confirm=true`,
+all four rambles, `/api/schedule`, `/api/calendar.ics`, empty/garbage/emoji input, invalid
+JSON -> 400, non-ics upload -> 400): no placement overlapped a busy block or another
+placement, none was in the past or outside 9:00-18:00 local (UTC-4), chunks always summed
+to the task duration, no request took over 5 s.
+
 ---
 
 ## Checked and clean
