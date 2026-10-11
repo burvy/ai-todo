@@ -706,16 +706,17 @@ async fn capture(
 
     let mut created = capture_text(&text, source, anchor).await;
     let mut store = state.store.lock().unwrap();
+    let next_position = store
+        .tasks
+        .iter()
+        .map(|existing| existing.position)
+        .max()
+        .unwrap_or(-1)
+        + 1;
     for task in &mut created {
         store.next_id += 1;
         task.id = format!("t{}", store.next_id);
-        task.position = store
-            .tasks
-            .iter()
-            .map(|existing| existing.position)
-            .max()
-            .unwrap_or(-1)
-            + 1;
+        task.position += next_position;
     }
     store.tasks.extend(created.iter().cloned());
     drop(store);
@@ -784,6 +785,7 @@ async fn patch_task(
     Json(body): Json<PatchIn>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
     let mut store = state.store.lock().unwrap();
+    let move_position = body.position.is_some();
     let task = store.tasks.iter_mut().find(|task| task.id == id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "task not found"})),
@@ -828,9 +830,26 @@ async fn patch_task(
         task.pinned_start = v;
     }
     let updated = task.clone();
+    if move_position {
+        store.tasks.sort_by(|left, right| {
+            left.position
+                .cmp(&right.position)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        for (position, task) in store.tasks.iter_mut().enumerate() {
+            task.position = position as i64;
+        }
+    }
     drop(store);
-    state.db.save_task(&updated);
-    Ok(Json(updated))
+    if move_position {
+        let tasks = state.store.lock().unwrap().tasks.clone();
+        state.db.save_tasks(&tasks);
+        let updated = tasks.into_iter().find(|task| task.id == id).unwrap();
+        Ok(Json(updated))
+    } else {
+        state.db.save_task(&updated);
+        Ok(Json(updated))
+    }
 }
 
 async fn delete_task(State(state): State<AppState>, UrlPath(id): UrlPath<String>) -> StatusCode {
@@ -1239,16 +1258,17 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
             created =
                 capture_text(&body.text, body.source.unwrap_or(Source::Text), Utc::now()).await;
             let mut store = state.store.lock().unwrap();
+            let next_position = store
+                .tasks
+                .iter()
+                .map(|existing| existing.position)
+                .max()
+                .unwrap_or(-1)
+                + 1;
             for task in &mut created {
                 store.next_id += 1;
                 task.id = format!("t{}", store.next_id);
-                task.position = store
-                    .tasks
-                    .iter()
-                    .map(|existing| existing.position)
-                    .max()
-                    .unwrap_or(-1)
-                    + 1;
+                task.position += next_position;
             }
             store.tasks.extend(created.iter().cloned());
             drop(store);
