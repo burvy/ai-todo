@@ -789,11 +789,8 @@ async function loadTasks(fresh = []) {
 }
 
 async function replan() {
-  try {
-    const data = await runSchedule();
-    state.placements = data.placements || [];
-    state.unscheduled = data.unscheduled || [];
-  } catch { /* server will re-plan on the next message */ }
+  // Mutating API calls already re-plan server-side; refresh the resulting
+  // calendar once instead of issuing a second schedule request.
   await refreshCalendar();
 }
 
@@ -1367,15 +1364,19 @@ docFile.addEventListener('change', async () => {
 
 async function saveOrder() {
   const jobs = [];
-  [...list.children].forEach((row, i) => {
+  const openRows = [...list.children].filter((row) => {
+    const task = state.byId.get(row.dataset.id);
+    return task && task.status !== 'done';
+  });
+  openRows.forEach((row, i) => {
     const task = state.byId.get(row.dataset.id);
     if (!task || task.position === i) return;
     task.position = i;
     row.dataset.sig = rowSig(task);
-    jobs.push(patchTask(task.id, { position: i }).catch(() => null));
+    jobs.push(() => patchTask(task.id, { position: i }).catch(() => null));
   });
   if (!jobs.length) return;
-  await Promise.all(jobs);
+  for (const job of jobs) await job();
   await replan();
 }
 

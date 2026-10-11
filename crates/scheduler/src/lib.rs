@@ -136,32 +136,9 @@ pub fn schedule(
         let mut placements = Vec::new();
         if let Some(pinned) = task.pinned_start {
             let end = pinned + Duration::minutes(remaining);
-            let within_working_hours = working_hours
-                .days
-                .get(&pinned.weekday())
-                .into_iter()
-                .flatten()
-                .any(|window| pinned.time() >= window.start && end.time() <= window.end);
-            if pinned < now
-                || !within_working_hours
-                || task.deadline.is_some_and(|deadline| end > deadline)
-            {
-                result.push(Placement::Unschedulable {
-                    task_id: task.id.clone(),
-                    reason: UnschedulableReason::NoAvailableTime,
-                });
-                continue;
-            }
-            if occupied
-                .iter()
-                .any(|(start, finish)| *start < end && *finish > pinned)
-            {
-                result.push(Placement::Unschedulable {
-                    task_id: task.id.clone(),
-                    reason: UnschedulableReason::NoAvailableTime,
-                });
-                continue;
-            }
+            // A pinned appointment is an explicit user override: render it at
+            // the requested instant for its full duration, even outside work
+            // hours, over a busy block, or beyond its deadline.
             occupied.push((pinned, end));
             result.push(Placement::Scheduled(ScheduledPlacement {
                 task_id: task.id.clone(),
@@ -304,6 +281,24 @@ mod tests {
         };
         assert_eq!(first.task_id, "pinned");
         assert_eq!(first.start, at(13));
+    }
+
+    #[test]
+    fn pinned_tasks_override_hours_busy_blocks_and_deadlines() {
+        let mut pinned = task("pinned", 180);
+        pinned.pinned_start = Some(at(16));
+        pinned.deadline = Some(at(10));
+        let output = schedule(
+            &[pinned],
+            &[BusyBlock {
+                start: at(16),
+                end: at(17),
+            }],
+            &hours(),
+            at(8),
+        );
+        assert!(matches!(&output[0], Placement::Scheduled(p)
+            if p.task_id == "pinned" && p.start == at(16) && p.end == at(19)));
     }
 
     #[test]

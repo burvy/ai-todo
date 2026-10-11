@@ -634,42 +634,19 @@ fn local_time_as_utc(tz: Tz, local: NaiveDateTime) -> DateTime<Utc> {
 }
 
 /// Busy blocks for the next weekday in the configured local timezone, returned as UTC.
-fn seed_busy(today: DateTime<Utc>) -> Vec<BusyOut> {
-    let tz = timezone();
-    let local_today = today.with_timezone(&tz);
-    let weekday = local_today.weekday().number_from_monday() as i64;
-    let days_until_weekday = if weekday >= 5 { 8 - weekday } else { 1 };
-    let local_date = local_today.date_naive() + chrono::Duration::days(days_until_weekday);
-    let at = |h: u32, m: u32| {
-        local_time_as_utc(
-            tz,
-            local_date.and_time(NaiveTime::from_hms_opt(h, m, 0).unwrap()),
-        )
-    };
-    vec![
-        BusyOut {
-            start: at(9, 0),
-            end: at(10, 0),
-            title: "Standup".into(),
-        },
-        BusyOut {
-            start: at(12, 0),
-            end: at(13, 0),
-            title: "Lunch".into(),
-        },
-        BusyOut {
-            start: at(15, 0),
-            end: at(15, 30),
-            title: "1:1".into(),
-        },
-    ]
-}
-
 fn reason_text(reason: &UnschedulableReason) -> &'static str {
     match reason {
         UnschedulableReason::InvalidDuration => "invalid_duration",
         UnschedulableReason::DeadlinePassed => "deadline_passed",
         UnschedulableReason::NoAvailableTime => "no_available_time",
+    }
+}
+
+fn busy_row(block: &BusyOut) -> BusyRow {
+    BusyRow {
+        start: block.start,
+        end: block.end,
+        title: block.title.clone(),
     }
 }
 
@@ -1640,14 +1617,6 @@ fn app(state: AppState) -> Router {
     router
 }
 
-fn busy_row(block: &BusyOut) -> BusyRow {
-    BusyRow {
-        start: block.start,
-        end: block.end,
-        title: block.title.clone(),
-    }
-}
-
 fn new_state() -> AppState {
     let db = Db::open_from_env().unwrap_or_else(|e| {
         eprintln!("error: could not open the database ({e}); falling back to in-memory only");
@@ -1674,6 +1643,9 @@ fn new_state_with(db: Arc<Db>) -> AppState {
         Err(e) => eprintln!("warning: could not load tasks from SQLite: {e}"),
     }
 
+    if let Err(error) = db.remove_seed_busy_rows() {
+        eprintln!("warning: could not remove legacy seed calendar rows: {error}");
+    }
     let busy = match db.load_busy() {
         Ok(rows) if !rows.is_empty() => rows
             .into_iter()
@@ -1683,12 +1655,7 @@ fn new_state_with(db: Arc<Db>) -> AppState {
                 title: row.title,
             })
             .collect(),
-        _ => {
-            // Seed the demo calendar only on a first run, never on every start.
-            let seeded = seed_busy(Utc::now());
-            db.save_busy(&seeded.iter().map(busy_row).collect::<Vec<_>>());
-            seeded
-        }
+        _ => Vec::new(),
     };
 
     AppState {
@@ -1818,20 +1785,6 @@ mod tests {
         };
         assert_eq!(task_overlap(&task, "I finished my slides"), 1);
         assert!(!task_matches_message(&task, "I finished the report"));
-    }
-
-    #[test]
-    fn seeded_busy_blocks_are_on_next_weekday() {
-        let sunday = Utc.with_ymd_and_hms(2026, 10, 11, 12, 0, 0).unwrap();
-        let blocks = seed_busy(sunday);
-        assert!(blocks.iter().all(|block| {
-            block
-                .start
-                .with_timezone(&timezone())
-                .date_naive()
-                .to_string()
-                == "2026-10-12"
-        }));
     }
 
     #[test]
@@ -2032,7 +1985,7 @@ mod tests {
             .unwrap();
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(json["busy"].as_array().unwrap().len(), 3);
+        assert_eq!(json["busy"].as_array().unwrap().len(), 0);
         assert_eq!(json["placements"].as_array().unwrap().len(), 1);
     }
 
@@ -2173,7 +2126,7 @@ mod tests {
         let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
         let router = app(new_state_with(db));
 
-        // The seeded state starts with 3 busy blocks.
+        // A new state starts with an empty calendar.
         let res = router
             .clone()
             .oneshot(import_request(TWO_EVENTS))
@@ -2184,7 +2137,7 @@ mod tests {
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let busy = json["busy"].as_array().expect("a busy array");
-        assert_eq!(busy.len(), 2, "the seed blocks should be gone");
+        assert_eq!(busy.len(), 2, "the imported events should be present");
 
         // The import is in UTC: 09:00 New York in October is 13:00 UTC.
         assert_eq!(busy[0]["title"], "STAT 201 Lecture");
@@ -2290,7 +2243,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(json["error"].as_str().is_some(), "got {json}");
 
-        // And nothing was clobbered: the seeded blocks are still there.
+        // A failed import leaves the empty calendar alone.
         let res = router
             .oneshot(
                 Request::builder()
@@ -2304,7 +2257,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             json["busy"].as_array().unwrap().len(),
-            3,
+            0,
             "a failed import must leave the old calendar alone"
         );
     }
@@ -2315,8 +2268,7 @@ mod tests {
         let router = app(new_state_with(db));
         let week = include_str!("../../demo/outlook/week.ics");
 
-        // The seeded demo blocks overlap the real week, so confirm it.
-        let res = router.oneshot(import_confirmed(week, true)).await.unwrap();
+        let res = router.oneshot(import_confirmed(week, false)).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
 
         let bytes = res.into_body().collect().await.unwrap().to_bytes();
@@ -2362,7 +2314,11 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(res.status(), StatusCode::CONFLICT, "overlaps the seed");
+        assert_eq!(
+            res.status(),
+            StatusCode::OK,
+            "empty calendar accepts the import"
+        );
 
         // The same upload with confirm=1 goes through.
         let mut body = Vec::new();
