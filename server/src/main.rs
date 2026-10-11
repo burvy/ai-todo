@@ -870,8 +870,26 @@ fn mentioned_hour(text: &str) -> Option<u32> {
 
 fn event_matches(text: &str, event: &BusyOut) -> bool {
     let lower = text.to_ascii_lowercase();
-    lower.contains(&event.title.to_ascii_lowercase())
-        || mentioned_hour(text) == Some(event.start.with_timezone(&timezone()).hour())
+    let local = event.start.with_timezone(&timezone());
+    let title_match = lower.contains(&event.title.to_ascii_lowercase());
+    let hour_match = mentioned_hour(text) == Some(local.hour());
+    let day_match = if lower.contains("tomorrow") {
+        local.date_naive()
+            == Utc::now().with_timezone(&timezone()).date_naive() + chrono::Duration::days(1)
+    } else {
+        [
+            ("monday", chrono::Weekday::Mon),
+            ("tuesday", chrono::Weekday::Tue),
+            ("wednesday", chrono::Weekday::Wed),
+            ("thursday", chrono::Weekday::Thu),
+            ("friday", chrono::Weekday::Fri),
+            ("saturday", chrono::Weekday::Sat),
+            ("sunday", chrono::Weekday::Sun),
+        ]
+        .iter()
+        .any(|(name, day)| lower.contains(name) && local.weekday() == *day)
+    };
+    hour_match || (title_match && (day_match || !lower.contains("tomorrow")))
 }
 
 fn content_words(text: &str) -> Vec<String> {
@@ -1001,13 +1019,14 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
             state.db.save_tasks(&created);
         }
         "cancel_event" => {
-            let candidates: Vec<(String, DateTime<Utc>)> = state
+            let candidates: Vec<(String, String, DateTime<Utc>)> = state
                 .busy
                 .lock()
                 .unwrap()
                 .iter()
                 .map(|event| {
                     (
+                        event.title.clone(),
                         format!(
                             "{} at {}",
                             event.title,
@@ -1017,11 +1036,13 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                     )
                 })
                 .collect();
+            let local_today = Utc::now().with_timezone(&timezone()).date_naive();
+            let state_text = format!("Today is {local_today}. {}", body.text);
             let choice = choose(
-                &body.text,
+                &state_text,
                 &candidates
                     .iter()
-                    .map(|(title, _)| title.clone())
+                    .map(|(_, candidate, _)| candidate.clone())
                     .collect::<Vec<_>>(),
             )
             .await
@@ -1032,32 +1053,17 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                 .lock()
                 .unwrap()
                 .iter()
-                .find(|event| event_matches(&body.text, event))
-                .map(|event| {
-                    (
-                        format!(
-                            "{} at {}",
-                            event.title,
-                            event.start.with_timezone(&timezone()).format("%-I:%M %p")
-                        ),
-                        event.start,
-                    )
-                });
+                .filter(|event| event_matches(&body.text, event))
+                .min_by_key(|event| event.start)
+                .map(|event| (event.title.clone(), event.start));
             let selected = choice
-                .and_then(|title| candidates.iter().find(|(candidate, _)| candidate == &title))
-                .map(|(title, start)| (title.clone(), *start))
+                .and_then(|candidate| candidates.iter().find(|(_, text, _)| text == &candidate))
+                .map(|(title, _, start)| (title.clone(), *start))
                 .or(fallback);
             let mut busy = state.busy.lock().unwrap();
-            cancelled_event = selected.map(|(title, start)| {
-                (
-                    title.split(" at ").next().unwrap_or(&title).to_string(),
-                    start,
-                )
-            });
-            let selected_title = cancelled_event.as_ref().map(|(title, _)| title.clone());
-            busy.retain(|event| !event_matches(&body.text, event));
-            if let Some(title) = selected_title {
-                busy.retain(|event| event.title != title);
+            cancelled_event = selected.clone();
+            if let Some((title, start)) = selected {
+                busy.retain(|event| !(event.title == title && event.start == start));
             }
             state
                 .db
