@@ -709,20 +709,22 @@ async fn capture(
 
     let mut created = capture_text(&text, source, anchor).await;
     let mut store = state.store.lock().unwrap();
+    let next_position = store
+        .tasks
+        .iter()
+        .map(|existing| existing.position)
+        .max()
+        .unwrap_or(-1)
+        + 1;
     for task in &mut created {
         store.next_id += 1;
         task.id = format!("t{}", store.next_id);
-        task.position = store
-            .tasks
-            .iter()
-            .map(|existing| existing.position)
-            .max()
-            .unwrap_or(-1)
-            + 1;
+        task.position += next_position;
     }
     store.tasks.extend(created.iter().cloned());
     drop(store);
     state.db.save_tasks(&created);
+    reschedule(&state);
     Ok(Json(CaptureOut {
         tasks: created,
         note: None,
@@ -778,6 +780,7 @@ async fn create_task(
     store.tasks.push(task.clone());
     drop(store);
     state.db.save_tasks(std::slice::from_ref(&task));
+    reschedule(&state);
     Ok((StatusCode::CREATED, Json(task)))
 }
 
@@ -787,6 +790,7 @@ async fn patch_task(
     Json(body): Json<PatchIn>,
 ) -> Result<Json<Task>, (StatusCode, Json<serde_json::Value>)> {
     let mut store = state.store.lock().unwrap();
+    let move_position = body.position.is_some();
     let task = store.tasks.iter_mut().find(|task| task.id == id).ok_or((
         StatusCode::NOT_FOUND,
         Json(serde_json::json!({"error": "task not found"})),
@@ -831,9 +835,28 @@ async fn patch_task(
         task.pinned_start = v;
     }
     let updated = task.clone();
+    if move_position {
+        store.tasks.sort_by(|left, right| {
+            left.position
+                .cmp(&right.position)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        for (position, task) in store.tasks.iter_mut().enumerate() {
+            task.position = position as i64;
+        }
+    }
     drop(store);
-    state.db.save_task(&updated);
-    Ok(Json(updated))
+    if move_position {
+        let tasks = state.store.lock().unwrap().tasks.clone();
+        state.db.save_tasks(&tasks);
+        reschedule(&state);
+        let updated = tasks.into_iter().find(|task| task.id == id).unwrap();
+        Ok(Json(updated))
+    } else {
+        state.db.save_task(&updated);
+        reschedule(&state);
+        Ok(Json(updated))
+    }
 }
 
 async fn delete_task(State(state): State<AppState>, UrlPath(id): UrlPath<String>) -> StatusCode {
@@ -844,6 +867,7 @@ async fn delete_task(State(state): State<AppState>, UrlPath(id): UrlPath<String>
     drop(store);
     if removed {
         state.db.remove_task(&id);
+        reschedule(&state);
         StatusCode::NO_CONTENT
     } else {
         StatusCode::NOT_FOUND
@@ -851,6 +875,12 @@ async fn delete_task(State(state): State<AppState>, UrlPath(id): UrlPath<String>
 }
 
 async fn schedule_tasks(State(state): State<AppState>) -> Json<ScheduleOut> {
+    Json(reschedule(&state))
+}
+
+/// Re-run the scheduler over the current tasks and busy blocks and store the
+/// placements. Every mutation calls this so the calendar is never stale.
+fn reschedule(state: &AppState) -> ScheduleOut {
     let mut store = state.store.lock().unwrap();
     let inputs: Vec<scheduler::Task> = store
         .tasks
@@ -904,16 +934,18 @@ async fn schedule_tasks(State(state): State<AppState>) -> Json<ScheduleOut> {
         }
     }
     store.placements = placements.clone();
-    Json(ScheduleOut {
+    ScheduleOut {
         placements,
         unscheduled,
-    })
+    }
 }
 
 async fn calendar(
     State(state): State<AppState>,
     Query(range): Query<RangeQuery>,
 ) -> Json<CalendarOut> {
+    // Placements are always derived from the current tasks and busy blocks.
+    reschedule(&state);
     let store = state.store.lock().unwrap();
     let in_range = |start: DateTime<Utc>, end: DateTime<Utc>| {
         range.from.is_none_or(|from| end > from) && range.to.is_none_or(|to| start < to)
@@ -991,6 +1023,7 @@ async fn import_calendar(
 
     *state.busy.lock().unwrap() = blocks.clone();
     state.db.save_busy(&imported);
+    reschedule(&state);
 
     let placements = state.store.lock().unwrap().placements.clone();
     Ok(Json(CalendarOut {
@@ -1292,16 +1325,17 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                     duplicates += 1;
                 }
             }
-            for task in &mut created {
+            let next_position = store
+                .tasks
+                .iter()
+                .map(|existing| existing.position)
+                .max()
+                .unwrap_or(-1)
+                + 1;
+            for (offset, task) in created.iter_mut().enumerate() {
                 store.next_id += 1;
                 task.id = format!("t{}", store.next_id);
-                task.position = store
-                    .tasks
-                    .iter()
-                    .map(|existing| existing.position)
-                    .max()
-                    .unwrap_or(-1)
-                    + 1;
+                task.position = next_position + offset as i64;
             }
             store.tasks.extend(created.iter().cloned());
             drop(store);
@@ -1529,8 +1563,13 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
                             .title
                             .clone();
                         Some(format!(
-                            "{label}: {} tasks, starting with {title} at {}.",
+                            "{label}: {} {}, starting with {title} at {}.",
                             distinct_tasks.len(),
+                            if distinct_tasks.len() == 1 {
+                                "task"
+                            } else {
+                                "tasks"
+                            },
                             placement.start.with_timezone(&timezone()).format("%-I:%M")
                         ))
                     })
