@@ -226,14 +226,24 @@ pub fn split_sentences(text: &str) -> Vec<String> {
 fn split_compound(sentence: &str) -> Vec<String> {
     let sentence = sentence.trim();
     let lower = sentence.to_ascii_lowercase();
-    for marker in [" and ", " also ", ", then "] {
-        if let Some(index) = lower.find(marker) {
+    let mut candidates = Vec::new();
+    for marker in [",", " oh and ", " also ", " and ", " then ", " plus "] {
+        let mut offset = 0;
+        while let Some(relative) = lower[offset..].find(marker) {
+            let index = offset + relative;
             let left = sentence[..index].trim();
             let right = sentence[index + marker.len()..].trim();
-            if starts_with_verb(left) && starts_with_verb(right) {
-                return vec![left.to_owned(), right.to_owned()];
+            if word_count_without_filler(left) >= 2 && word_count_without_filler(right) >= 2 {
+                candidates.push((index, marker.len(), left.to_owned(), right.to_owned()));
             }
+            offset = index + marker.len();
         }
+    }
+    if let Some((_, _, left, right)) = candidates.into_iter().min_by_key(|(index, _, _, _)| *index)
+    {
+        let mut clauses = split_compound(&left);
+        clauses.extend(split_compound(&right));
+        return clauses;
     }
     if sentence.is_empty() {
         Vec::new()
@@ -242,30 +252,15 @@ fn split_compound(sentence: &str) -> Vec<String> {
     }
 }
 
-fn starts_with_verb(sentence: &str) -> bool {
-    [
-        "buy",
-        "call",
-        "complete",
-        "email",
-        "finish",
-        "file",
-        "go",
-        "i need to",
-        "i should",
-        "i have to",
-        "make",
-        "review",
-        "send",
-        "write",
-    ]
-    .iter()
-    .any(|verb| {
-        sentence
-            .to_ascii_lowercase()
-            .starts_with(&format!("{verb} "))
-            || sentence.to_ascii_lowercase() == *verb
-    })
+fn word_count_without_filler(sentence: &str) -> usize {
+    sentence
+        .split_whitespace()
+        .map(|word| word.trim_matches(|character: char| !character.is_ascii_alphanumeric()))
+        .filter(|word| {
+            !["ugh", "uh", "um", "like", "okay", "so"].contains(&word.to_ascii_lowercase().as_str())
+        })
+        .filter(|word| !word.is_empty())
+        .count()
 }
 
 pub fn find_date_candidates(text: &str, now: DateTime<Utc>) -> Vec<String> {
@@ -339,6 +334,29 @@ mod tests {
             split_sentences("finish X and email Y"),
             vec!["finish X", "email Y"]
         );
+        let clauses = split_sentences(
+            "Ugh okay so I have a calc quiz Thursday, um, also mom called, and I gotta pick up my prescription today",
+        );
+        assert!(clauses.len() >= 2);
+        assert!(
+            clauses
+                .iter()
+                .all(|clause| clause.split_whitespace().count() <= 20)
+        );
+    }
+
+    #[test]
+    fn demo_rambles_split_into_short_clauses() {
+        let rambles = include_str!("../../../demo/rambles.md");
+        for paragraph in rambles.split("## ").skip(1) {
+            let clauses = split_sentences(paragraph);
+            assert!(clauses.len() >= 2);
+            assert!(
+                clauses
+                    .iter()
+                    .all(|clause| clause.split_whitespace().count() <= 20)
+            );
+        }
     }
 
     #[test]
