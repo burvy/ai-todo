@@ -4,6 +4,7 @@
 
 mod db;
 
+use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -499,10 +500,13 @@ fn local_time_as_utc(tz: Tz, local: NaiveDateTime) -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
-/// Busy blocks for today in the configured local timezone, returned as UTC.
+/// Busy blocks for the next weekday in the configured local timezone, returned as UTC.
 fn seed_busy(today: DateTime<Utc>) -> Vec<BusyOut> {
     let tz = timezone();
-    let local_date = today.with_timezone(&tz).date_naive();
+    let local_today = today.with_timezone(&tz);
+    let weekday = local_today.weekday().number_from_monday() as i64;
+    let days_until_weekday = if weekday >= 5 { 8 - weekday } else { 1 };
+    let local_date = local_today.date_naive() + chrono::Duration::days(days_until_weekday);
     let at = |h: u32, m: u32| {
         local_time_as_utc(
             tz,
@@ -723,7 +727,10 @@ fn fallback_intent(text: &str) -> &'static str {
         "cancel_event"
     } else if lower.contains("finished") || lower.contains("completed") || lower.contains("done") {
         "complete_task"
-    } else if lower.contains("what does") || lower.contains("what's") || lower.contains("calendar")
+    } else if is_next_query(&lower)
+        || lower.contains("what does")
+        || lower.contains("what's")
+        || lower.contains("calendar")
     {
         "query_day"
     } else if !lower.trim().is_empty() {
@@ -731,6 +738,14 @@ fn fallback_intent(text: &str) -> &'static str {
     } else {
         "other"
     }
+}
+
+fn is_next_query(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("what should i do now")
+        || lower.contains("what's next")
+        || lower.contains("whats next")
+        || lower.contains("what is next")
 }
 
 fn mentioned_hour(text: &str) -> Option<u32> {
@@ -756,27 +771,125 @@ fn mentioned_hour(text: &str) -> Option<u32> {
         })
 }
 
+fn event_matches(text: &str, event: &BusyOut) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains(&event.title.to_ascii_lowercase())
+        || mentioned_hour(text) == Some(event.start.with_timezone(&timezone()).hour())
+}
+
+fn content_words(text: &str) -> Vec<String> {
+    text.split_whitespace()
+        .map(|word| {
+            word.trim_matches(|character: char| !character.is_ascii_alphanumeric())
+                .to_ascii_lowercase()
+        })
+        .filter(|word| {
+            !word.is_empty()
+                && ![
+                    "a",
+                    "an",
+                    "and",
+                    "i",
+                    "my",
+                    "the",
+                    "to",
+                    "make",
+                    "makes",
+                    "made",
+                    "do",
+                    "did",
+                    "finish",
+                    "finished",
+                    "prepare",
+                    "prepared",
+                    "complete",
+                    "completed",
+                ]
+                .contains(&word.as_str())
+        })
+        .collect()
+}
+
+fn word_matches(left: &str, right: &str) -> bool {
+    left == right
+        || left.strip_suffix("ed").is_some_and(|stem| stem == right)
+        || right.strip_suffix("ed").is_some_and(|stem| stem == left)
+}
+
+fn task_overlap(task: &Task, message: &str) -> usize {
+    let message_words = content_words(message);
+    content_words(&task.title)
+        .iter()
+        .filter(|word| {
+            message_words
+                .iter()
+                .any(|candidate| word_matches(word, candidate))
+        })
+        .count()
+}
+
 fn task_matches_message(task: &Task, message: &str) -> bool {
-    let message = message.to_ascii_lowercase();
-    let words: Vec<String> = task
-        .title
-        .split_whitespace()
-        .map(|word| word.trim_matches(|character: char| !character.is_ascii_alphanumeric()))
-        .filter(|word| !["a", "an", "and", "i", "my", "the", "to"].contains(word))
-        .map(str::to_ascii_lowercase)
-        .collect();
-    !words.is_empty()
-        && words
-            .iter()
-            .all(|word| message.contains(word) || message.contains(&format!("{word}ed")))
+    task_overlap(task, message) > 0
+}
+
+fn query_date(text: &str, now: DateTime<Utc>) -> chrono::NaiveDate {
+    let local = now.with_timezone(&timezone());
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("tomorrow") {
+        return local.date_naive() + chrono::Duration::days(1);
+    }
+    let weekdays = [
+        ("monday", chrono::Weekday::Mon),
+        ("tuesday", chrono::Weekday::Tue),
+        ("wednesday", chrono::Weekday::Wed),
+        ("thursday", chrono::Weekday::Thu),
+        ("friday", chrono::Weekday::Fri),
+        ("saturday", chrono::Weekday::Sat),
+        ("sunday", chrono::Weekday::Sun),
+    ];
+    if let Some((_, requested)) = weekdays.iter().find(|(name, _)| lower.contains(name)) {
+        let current = local.weekday().number_from_monday() as i64;
+        let target = requested.number_from_monday() as i64;
+        let days = (target - current).rem_euclid(7).max(1);
+        return local.date_naive() + chrono::Duration::days(days);
+    }
+    local.date_naive()
+}
+
+fn query_label(text: &str) -> String {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("tomorrow") {
+        return "Tomorrow".into();
+    }
+    for name in [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    ] {
+        if lower.contains(name) {
+            let mut chars = name.chars();
+            return chars.next().unwrap().to_uppercase().collect::<String>() + chars.as_str();
+        }
+    }
+    "Today".into()
 }
 
 async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> Json<MessageOut> {
-    let intent = classify_intent(&body.text)
+    let mut intent = classify_intent(&body.text)
         .await
         .unwrap_or_else(|_| fallback_intent(&body.text).into());
+    if is_next_query(&body.text) {
+        intent = "query_day".into();
+    }
     let mut created = Vec::new();
     let mut focus_date = None;
+    let mut cancelled_event = None;
+    let mut completed_title = None;
+    let next_query = is_next_query(&body.text);
     match intent.as_str() {
         "add_tasks" => {
             created =
@@ -791,37 +904,40 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
             state.db.save_tasks(&created);
         }
         "cancel_event" => {
-            let lower = body.text.to_ascii_lowercase();
-            let hour = mentioned_hour(&body.text);
             let mut busy = state.busy.lock().unwrap();
-            busy.retain(|event| {
-                let title_match = lower.contains(&event.title.to_ascii_lowercase());
-                let hour_match = hour == Some(event.start.with_timezone(&timezone()).hour());
-                !(title_match || hour_match)
-            });
+            cancelled_event = busy
+                .iter()
+                .find(|event| event_matches(&body.text, event))
+                .map(|event| (event.title.clone(), event.start));
+            busy.retain(|event| !event_matches(&body.text, event));
             state
                 .db
                 .save_busy(&busy.iter().map(busy_row).collect::<Vec<_>>());
         }
         "complete_task" => {
-            let lower = body.text.to_ascii_lowercase();
             let mut store = state.store.lock().unwrap();
-            if let Some(task) = store
+            let selected = store
                 .tasks
-                .iter_mut()
-                .find(|task| task_matches_message(task, &lower))
-            {
+                .iter()
+                .filter(|task| task.status != "done")
+                .filter_map(|task| {
+                    let overlap = task_overlap(task, &body.text);
+                    task_matches_message(task, &body.text).then_some((
+                        task.id.clone(),
+                        task.title.clone(),
+                        overlap,
+                    ))
+                })
+                .max_by_key(|(_, _, overlap)| *overlap);
+            if let Some((id, title, _)) = selected {
+                let task = store.tasks.iter_mut().find(|task| task.id == id).unwrap();
                 task.status = "done".into();
                 state.db.save_task(task);
+                completed_title = Some(title);
             }
         }
         "query_day" => {
-            let lower = body.text.to_ascii_lowercase();
-            let date = if lower.contains("tomorrow") {
-                Utc::now().date_naive() + chrono::Duration::days(1)
-            } else {
-                Utc::now().date_naive()
-            };
+            let date = query_date(&body.text, Utc::now());
             focus_date = Some(date.to_string());
         }
         _ => {}
@@ -833,9 +949,76 @@ async fn message(State(state): State<AppState>, Json(body): Json<MessageIn>) -> 
             let noun = if created.len() == 1 { "task" } else { "tasks" };
             format!("Got it, {} new {}.", created.len(), noun)
         }
-        "cancel_event" => "Got it, the event was cancelled.".into(),
-        "complete_task" => "Got it, the task is marked done.".into(),
-        "query_day" => "Here is your day.".into(),
+        "cancel_event" => cancelled_event.map_or_else(
+            || "I couldn't find that event.".into(),
+            |(title, start)| {
+                format!(
+                    "Cancelled {title} at {}; your plan is updated.",
+                    start.with_timezone(&timezone()).format("%-I:%M")
+                )
+            },
+        ),
+        "complete_task" => completed_title.map_or_else(
+            || "I couldn't tell which task you finished.".into(),
+            |title| format!("Done: {title}."),
+        ),
+        "query_day" => {
+            let now = Utc::now();
+            if next_query {
+                schedule
+                    .placements
+                    .iter()
+                    .filter(|placement| placement.start >= now)
+                    .min_by_key(|placement| placement.start)
+                    .and_then(|placement| {
+                        let title = tasks
+                            .iter()
+                            .find(|task| task.id == placement.task_id)?
+                            .title
+                            .clone();
+                        Some(format!(
+                            "Next: {title} at {} ({} minutes).",
+                            placement.start.with_timezone(&timezone()).format("%-I:%M"),
+                            (placement.end - placement.start).num_minutes()
+                        ))
+                    })
+                    .unwrap_or_else(|| "Nothing is scheduled next.".into())
+            } else {
+                let date = focus_date.as_deref().unwrap_or_default();
+                let matching: Vec<_> = schedule
+                    .placements
+                    .iter()
+                    .filter(|placement| {
+                        placement
+                            .start
+                            .with_timezone(&timezone())
+                            .date_naive()
+                            .to_string()
+                            == date
+                    })
+                    .collect();
+                let label = query_label(&body.text);
+                let distinct_tasks: BTreeSet<&str> = matching
+                    .iter()
+                    .map(|placement| placement.task_id.as_str())
+                    .collect();
+                matching
+                    .first()
+                    .and_then(|placement| {
+                        let title = tasks
+                            .iter()
+                            .find(|task| task.id == placement.task_id)?
+                            .title
+                            .clone();
+                        Some(format!(
+                            "{label}: {} tasks, starting with {title} at {}.",
+                            distinct_tasks.len(),
+                            placement.start.with_timezone(&timezone()).format("%-I:%M")
+                        ))
+                    })
+                    .unwrap_or_else(|| format!("{label} is free."))
+            }
+        }
         _ => "I can add tasks, cancel events, complete tasks, or show your day.".into(),
     };
     Json(MessageOut {
@@ -994,6 +1177,84 @@ mod tests {
             &task,
             "I finished the chem lab report"
         ));
+    }
+
+    #[test]
+    fn completion_uses_best_content_word_overlap() {
+        let task = Task {
+            id: "t1".into(),
+            title: "Make my slides".into(),
+            notes: String::new(),
+            duration_min: 30,
+            deadline: None,
+            priority: 1,
+            status: "todo".into(),
+            confidence: 1.0,
+            label: "Work".into(),
+            source: Source::Text,
+        };
+        assert_eq!(task_overlap(&task, "I finished my slides"), 1);
+        assert!(!task_matches_message(&task, "I finished the report"));
+    }
+
+    #[test]
+    fn seeded_busy_blocks_are_on_next_weekday() {
+        let sunday = Utc.with_ymd_and_hms(2026, 10, 11, 12, 0, 0).unwrap();
+        let blocks = seed_busy(sunday);
+        assert!(blocks.iter().all(|block| {
+            block
+                .start
+                .with_timezone(&timezone())
+                .date_naive()
+                .to_string()
+                == "2026-10-12"
+        }));
+    }
+
+    #[test]
+    fn query_dates_use_local_tomorrow_and_next_weekday() {
+        let sunday = Utc.with_ymd_and_hms(2026, 10, 11, 23, 30, 0).unwrap();
+        assert_eq!(query_date("tomorrow", sunday).to_string(), "2026-10-12");
+        assert_eq!(
+            query_date("what does Friday look like", sunday).to_string(),
+            "2026-10-16"
+        );
+    }
+
+    #[test]
+    fn cancellation_requires_a_matching_event() {
+        let event = BusyOut {
+            start: local_time_as_utc(
+                timezone(),
+                NaiveDateTime::new(
+                    chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+                    NaiveTime::from_hms_opt(15, 0, 0).unwrap(),
+                ),
+            ),
+            end: local_time_as_utc(
+                timezone(),
+                NaiveDateTime::new(
+                    chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+                    NaiveTime::from_hms_opt(15, 30, 0).unwrap(),
+                ),
+            ),
+            title: "1:1".into(),
+        };
+        assert!(event_matches("cancel my 3pm", &event));
+        assert!(!event_matches("cancel my 4pm", &event));
+    }
+
+    #[test]
+    fn next_query_is_local_fallback_intent() {
+        assert!(is_next_query("what should I do now?"));
+        assert_eq!(fallback_intent("what's next?"), "query_day");
+    }
+
+    #[test]
+    fn query_labels_follow_requested_day() {
+        assert_eq!(query_label("what does Friday look like"), "Friday");
+        assert_eq!(query_label("what is tomorrow like"), "Tomorrow");
+        assert_eq!(query_label("show my day"), "Today");
     }
 
     #[test]
