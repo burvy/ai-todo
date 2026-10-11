@@ -109,4 +109,44 @@ mod tests {
         let out = normalise("A\n\n\n\n\nB\n");
         assert_eq!(out, "A\nB");
     }
+
+    #[test]
+    fn it_does_not_panic_on_hostile_or_truncated_pdfs() {
+        // pdf-extract walks xref tables and object streams by hand and is
+        // known to panic on malformed input. If that panic reaches the server
+        // it takes the whole process down, so pdf_to_text must turn every one
+        // of these into an Err. docs/TASKS-pdf.md calls this out explicitly.
+        let cases: Vec<(&str, &[u8])> = vec![
+            ("just a header", b"%PDF-1.4\n"),
+            ("header and EOF only", b"%PDF-1.4\n%%EOF\n"),
+            (
+                "empty xref table",
+                b"%PDF-1.4\nxref\n0 0\ntrailer\n<< /Size 0 >>\n%%EOF\n",
+            ),
+            (
+                "dangling object reference",
+                b"%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 99 0 R >>\nendobj\n\
+                 xref\n0 2\n0000000000 65535 f \ntrailer\n<< /Size 2 /Root 1 0 R >>\n\
+                 startxref\n9\n%%EOF\n",
+            ),
+            (
+                "binary junk after the header",
+                b"%PDF-1.4\n\x00\x01\x02\x03\xff\xfe\n",
+            ),
+            ("truncated mid-object", b"%PDF-1.4\n1 0 obj\n<< /Type /Pa"),
+            (
+                "negative object count",
+                b"%PDF-1.4\nxref\n0 -5\ntrailer\n<< /Size -1 >>\n%%EOF\n",
+            ),
+        ];
+
+        for (name, bytes) in cases {
+            let outcome = std::panic::catch_unwind(|| pdf_to_text(bytes));
+            match outcome {
+                Ok(Ok(text)) => println!("  {name}: parsed ({})", text.len()),
+                Ok(Err(_)) => println!("  {name}: rejected cleanly"),
+                Err(_) => panic!("pdf_to_text PANICKED on: {name}"),
+            }
+        }
+    }
 }

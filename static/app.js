@@ -182,7 +182,7 @@ function measurePenHome() {
   penHomeRect = penBtn.getBoundingClientRect();
 }
 
-function penGoHome() {
+function penGoHomeQuiet() {
   mascotTrack.classList.remove('is-flying');
   mascotTrack.style.removeProperty('--pen-x');
   mascotTrack.style.removeProperty('--pen-y');
@@ -197,6 +197,120 @@ function penFlyTo(el) {
   mascotTrack.classList.add('is-flying');
   mascotTrack.style.setProperty('--pen-x', `${Math.round(x)}px`);
   mascotTrack.style.setProperty('--pen-y', `${Math.round(y)}px`);
+}
+
+/* ── The pen writing along with you ──────────────────────────── */
+
+/* While you type or speak, the pen comes to the text box, shrinks, and moves
+   along the line you are on, so it looks like it is writing what you are.
+   Two seconds of silence and it drifts back to its button.
+
+   The 2s is the ask; the reset on send/blur is so it never sits parked on an
+   empty box after you have already told it everything. */
+const PEN_WRITE_LINGER_MS = 2000;
+/* the pen's drawn size and the scale it writes at — these mirror .pen and
+   .mascot-track.is-writing in styles.css, and place the nib on the caret */
+const PEN_WIDTH = 30;
+const PEN_HEIGHT = 52;
+const PEN_SCALE = 0.78;
+let penIdleTimer = null;
+
+/* Where should the nib land? A textarea has no caret API, so mirror the text
+   into an offscreen copy, put a marker where the caret is, and measure it.
+   The marker lands on the caret's visual line even when the text has
+   wrapped, which a plain "count the newlines" would get wrong. */
+function caretPoint() {
+  if (!penHomeRect) measurePenHome();
+  const rect = box.getBoundingClientRect();
+  if (!rect.width) return null;
+
+  const style = getComputedStyle(box);
+  const mirror = document.createElement('div');
+  for (const prop of ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle',
+                      'letterSpacing', 'lineHeight', 'textTransform',
+                      'paddingTop', 'paddingBottom', 'paddingLeft',
+                      'paddingRight', 'borderRightWidth', 'borderLeftWidth',
+                      'boxSizing', 'wordSpacing', 'tabSize', 'textIndent']) {
+    mirror.style[prop] = style[prop];
+  }
+  mirror.style.position = 'absolute';
+  mirror.style.visibility = 'hidden';
+  mirror.style.whiteSpace = 'pre-wrap';
+  mirror.style.overflowWrap = 'break-word';
+  mirror.style.top = '0';
+  mirror.style.left = '-9999px';
+  mirror.style.width = rect.width + 'px';
+  mirror.style.height = 'auto';
+
+  mirror.textContent = box.value.slice(0, box.selectionStart ?? box.value.length);
+  const marker = document.createElement('span');
+  // a zero-width space so the marker has a box even at the end of a line
+  marker.textContent = '';
+  mirror.appendChild(marker);
+  document.body.appendChild(mirror);
+
+  const boxStyle = getComputedStyle(mirror);
+  const markerRect = marker.getBoundingClientRect();
+  const mirrorRect = mirror.getBoundingClientRect();
+  const lineHeight = parseFloat(boxStyle.lineHeight) || rect.height;
+
+  // caret position relative to the text box's own padding box
+  const x = markerRect.left - mirrorRect.left
+          + (parseFloat(boxStyle.paddingLeft) || 0);
+  const y = markerRect.top - mirrorRect.top
+          + (parseFloat(boxStyle.paddingTop) || 0)
+          + lineHeight * 0.82;          // sit on the baseline, not the cap height
+  mirror.remove();
+
+  return {
+    x: rect.left + x,
+    y: rect.top + y,
+    lineHeight,
+    right: rect.right,
+    left: rect.left,
+  };
+}
+
+/* Park the pen with its nib on the caret and put it in writing pose.
+   Safe to call on every keystroke: it only moves things that changed. */
+function penWrites() {
+  if (state.working) return;
+  const point = caretPoint();
+  if (!point) return;
+
+  // The track is the pen button's box, and it shrinks about its own centre,
+  // so the nib ends up (half the pen's height * scale) below the centre.
+  const home = penBtn.getBoundingClientRect();
+  const homeCx = home.left + home.width / 2;
+  const homeCy = home.top + home.height / 2;
+  const nibDrop = (PEN_HEIGHT / 2) * PEN_SCALE;
+
+  const x = point.x - homeCx;
+  // never let the pen walk past the right edge of the box
+  const maxX = point.right - 6 - PEN_WIDTH * PEN_SCALE - homeCx;
+  const y = (point.y - nibDrop) - homeCy;
+
+  if (!mascotTrack.classList.contains('is-writing')) {
+    mascotTrack.classList.add('is-writing');
+    mood('writing');
+  }
+  mascotTrack.classList.add('is-flying');
+  mascotTrack.style.setProperty('--pen-x', `${Math.round(Math.min(x, maxX))}px`);
+  mascotTrack.style.setProperty('--pen-y', `${Math.round(y)}px`);
+
+  clearTimeout(penIdleTimer);
+  penIdleTimer = setTimeout(penGoHome, PEN_WRITE_LINGER_MS);
+}
+
+function penGoHome() {
+  clearTimeout(penIdleTimer);
+  penIdleTimer = null;
+  mascotTrack.classList.remove('is-flying', 'is-writing');
+  mascotTrack.style.removeProperty('--pen-x');
+  mascotTrack.style.removeProperty('--pen-y');
+  // a pen mid-write is an interruption: don't keep the writing pose on screen
+  if (mascotTrack.dataset.mood === 'writing' && typeof listening !== 'undefined'
+      && !listening) mood('idle');
 }
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -274,14 +388,8 @@ function taskRow(task, isFresh) {
     meta.appendChild(label);
   }
 
-  if (task.source) {
-    const src = document.createElement('span');
-    src.className = 'chip';
-    src.textContent = task.source;
-    src.style.opacity = '.6';
-    meta.appendChild(src);
-  }
-
+  // the "text" / "voice" source chip is dropped: it was noise, and the space
+  // goes to the title and the deadline instead (#2 on the task list)
   li.querySelector('.kill').setAttribute('aria-label', `Delete "${task.title}"`);
 
   return li;
@@ -316,6 +424,11 @@ async function announceNewTasks(alsoDone = []) {
   const fresh = [...state.freshIds];
   if (!fresh.length && !alsoDone.length) return;
 
+  // this owns the pen for a while: drop any pending idle timer so it cannot
+  // yank the pen home halfway through the flight below
+  clearTimeout(penIdleTimer);
+  penIdleTimer = null;
+  returnToList();
   measurePenHome();
   mood('writing');
 
@@ -333,7 +446,7 @@ async function announceNewTasks(alsoDone = []) {
   }
 
   // fly home, then settle
-  penGoHome();
+  penGoHomeQuiet();
   await wait(reduceMotion ? 30 : 420);
   mood('idle');
 }
@@ -380,27 +493,41 @@ function renderPlanner() {
     body.className = 'day-body';
     body.dataset.day = date.toDateString();
 
+    // Gather the day's blocks first, then lay them out in lanes: anything
+    // that overlaps in time shares the column instead of stacking.
+    const entries = [];
     for (const block of state.busy) {
       const start = new Date(block.start);
       if (!isSameDay(start, date)) continue;
-      body.appendChild(paint(block.start, block.end, block.title, 'busy'));
+      entries.push({ start: block.start, end: block.end, title: block.title, kind: 'busy' });
     }
-
     for (const placement of state.placements) {
       const start = new Date(placement.start);
       if (!isSameDay(start, date)) continue;
       const task = state.byId.get(placement.task_id);
-      const title = task ? task.title : 'task';
-      body.appendChild(paint(
-        placement.start, placement.end, title, 'place',
-        task ? task.label : 'Other',
-        task && task.status === 'done',
-        task && Number(task.confidence) < PENCIL_BELOW,
-      ));
+      entries.push({
+        start: placement.start,
+        end: placement.end,
+        title: task ? task.title : 'task',
+        kind: 'place',
+        label: task ? task.label : 'Other',
+        done: task && task.status === 'done',
+        pencil: task && Number(task.confidence) < PENCIL_BELOW,
+      });
     }
+    entries.sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end));
 
+    entries.forEach((entry) => {
+      body.appendChild(paint(
+        entry.start, entry.end, entry.title, entry.kind,
+        entry.label, entry.done, entry.pencil,
+      ));
+    });
     day.appendChild(body);
     gridDays.appendChild(day);
+    // Must run after the day is in the document: lanes are measured from the
+    // painted geometry, and offsetTop is 0 on a detached element.
+    layOutLanes(body);
   }
 
   const placed = state.busy.length + state.placements.length;
@@ -426,6 +553,49 @@ function renderPlanner() {
   }
 }
 
+/* Give blocks that visually overlap their own lane. Measures what was painted,
+   so a block's minimum height counts as the overlap it really is. */
+function layOutLanes(body) {
+  const blocks = [...body.children].sort(
+    (a, b) => a.offsetTop - b.offsetTop || a.offsetHeight - b.offsetHeight,
+  );
+  if (!blocks.length) return;
+
+  let cluster = [];
+  let clusterBottom = null;
+
+  const flush = () => {
+    if (!cluster.length) return;
+    const laneBottoms = [];
+    for (const el of cluster) {
+      let lane = laneBottoms.findIndex((bottom) => bottom <= el.offsetTop);
+      if (lane === -1) { lane = laneBottoms.length; laneBottoms.push(0); }
+      laneBottoms[lane] = el.offsetTop + el.offsetHeight;
+      el.dataset.laneIndex = String(lane);
+    }
+    const total = laneBottoms.length;
+    for (const el of cluster) {
+      if (total === 1) { delete el.dataset.laneIndex; continue; }
+      const width = 100 / total;
+      const lane = Number(el.dataset.laneIndex);
+      el.style.left = `calc(${lane * width}% + 1px)`;
+      el.style.right = 'auto';
+      el.style.width = `calc(${width}% - 2px)`;
+      el.dataset.lane = `${lane + 1}/${total}`;
+    }
+    cluster = [];
+    clusterBottom = null;
+  };
+
+  for (const el of blocks) {
+    if (clusterBottom !== null && el.offsetTop >= clusterBottom) flush();
+    cluster.push(el);
+    const bottom = el.offsetTop + el.offsetHeight;
+    clusterBottom = clusterBottom === null || bottom > clusterBottom ? bottom : clusterBottom;
+  }
+  flush();
+}
+
 function paint(startIso, endIso, title, kind, label, done, pencil) {
   const el = document.createElement('div');
   const spanMinutes = Math.max(0, minutesIntoDay(endIso) - minutesIntoDay(startIso));
@@ -435,7 +605,16 @@ function paint(startIso, endIso, title, kind, label, done, pencil) {
   el.style.top = `${Math.max(0, top)}%`;
   el.style.height = `max(16px, ${(spanMinutes / ((DAY_END - DAY_START) * 60)) * 100}%)`;
   if (kind === 'place') el.style.setProperty('--block-color', LABELS[label] || LABELS.Other);
-  el.title = `${title} · ${fmtTime(startIso)}–${fmtTime(endIso)}`;
+
+  const full = `${title} · ${fmtTime(startIso)}–${fmtTime(endIso)}`;
+  el.title = full;                       // hover, and the a11y name
+  el.setAttribute('role', 'button');
+  el.setAttribute('tabindex', '0');
+  el.setAttribute('aria-label', full);
+  el.addEventListener('click', () => showBlock(full));
+  el.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showBlock(full); }
+  });
 
   const name = document.createElement('span');
   name.className = 'block-title';
@@ -453,18 +632,26 @@ function paint(startIso, endIso, title, kind, label, done, pencil) {
   return el;
 }
 
+/* Tapping a block shows the whole title; a column is too narrow for it. */
+function showBlock(text) {
+  const note = $('#marginNote');
+  const text_ = $('#marginText');
+  if (!note || !text_) return;
+  text_.textContent = text;
+  note.hidden = false;
+}
+
 async function refreshCalendar() {
   const from = state.weekStart;
   const to = addDays(from, 7);
+  let data = { busy: [], placements: [] };
   try {
-    const data = await getCalendar(from.toISOString(), to.toISOString());
-    state.busy = data.busy || [];
-    state.placements = data.placements || [];
-  } catch {
-    state.busy = [];
-    state.placements = [];
-  }
+    data = await getCalendar(from.toISOString(), to.toISOString());
+  } catch { /* leave the page as it was rather than blanking the planner */ }
+  state.busy = data.busy || [];
+  state.placements = data.placements || [];
   renderPlanner();
+  return data;
 }
 
 /* ── Data refresh ───────────────────────────────────────────── */
@@ -555,7 +742,7 @@ async function submit(text, source = 'text') {
     state.freshIds.clear();
     await refreshCalendar();
   } catch (err) {
-    penGoHome();
+    penGoHomeQuiet();
     say('The server did not answer. Is it running?');
     console.error(err);
   } finally {
@@ -609,6 +796,9 @@ function setupRecognition() {
     const base = baseText();
     box.value = (base ? base.replace(/\s+$/, '') + ' ' : '') + final + interim;
     autoGrow();
+    // writing into the box by hand does not raise `input`, so call the pen
+    // directly: it should be seen following along with what you are saying
+    penWrites();
   };
 
   recognition.onerror = (event) => {
@@ -629,11 +819,13 @@ function setupRecognition() {
       spokeThisPress = true;
       box.value = '';
       delete box.dataset.base;
+      penGoHome();            // spoken and sent: same as tapping send
       submit(spoken, 'voice');
     } else {
       box.value = baseText();
       delete box.dataset.base;
       autoGrow();
+      penGoHome();            // nothing usable was said; un-write the box
       mood('idle');
     }
   };
@@ -717,7 +909,14 @@ function autoGrow() {
   box.style.height = Math.min(160, box.scrollHeight) + 'px';
 }
 
-box.addEventListener('input', autoGrow);
+/* Typing, dictation and voice all end up in the same box, so one input
+   listener covers all three. The pen writes, then goes home by itself. */
+box.addEventListener('input', () => {
+  autoGrow();
+  if (box.value.trim()) penWrites();
+  else penGoHome();
+});
+box.addEventListener('blur', () => { if (!state.working) penGoHome(); });
 box.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
@@ -725,6 +924,7 @@ box.addEventListener('keydown', (event) => {
     box.value = '';
     box.dataset.base = '';
     autoGrow();
+    penGoHome();              // sent: nothing left to write
     submit(text, 'text');
   }
 });
@@ -890,6 +1090,47 @@ addForm.addEventListener('submit', async (event) => {
   }
 });
 
+/* ── Import a calendar (.ics) ───────────────────────────────── */
+
+const icsFile = $('#icsFile');
+const importBtn = document.querySelector('.import-btn');
+
+icsFile.addEventListener('change', async () => {
+  const file = icsFile.files && icsFile.files[0];
+  icsFile.value = '';                       // let the same file be picked twice
+  if (!file || state.working) return;
+
+  setBusy(true);
+  importBtn.classList.add('is-busy');
+  try {
+    const ics_text = await file.text();
+    const data = await api('/api/calendar/import', {
+      method: 'POST',
+      body: JSON.stringify({ ics_text }),
+    });
+    // the route replaces the busy blocks and answers in /api/calendar shape,
+    // so re-plan first or the new events would sit behind the old ones
+    await runSchedule();
+    state.busy = data.busy || [];
+    await refreshCalendar();
+    renderPlanner();
+    const n = state.busy.length;
+    say(n ? `Imported ${n} event${n === 1 ? '' : 's'} from ${file.name}.`
+          : `No events found in ${file.name}.`);
+  } catch (err) {
+    // A file the browser cannot read as a calendar is the user's problem to
+    // fix, not a defect: the toast says so, so don't shout in the console.
+    const badFile = err.status === 400 || err.status === 422;
+    if (!badFile) console.error(err);
+    say(badFile
+      ? 'That file is not a calendar the planner can read.'
+      : 'Could not import that calendar.');
+  } finally {
+    importBtn.classList.remove('is-busy');
+    setBusy(false);
+  }
+});
+
 /* ── Schedule it ────────────────────────────────────────────── */
 
 const scheduleBtn = $('#scheduleBtn');
@@ -929,6 +1170,48 @@ themeToggle.addEventListener('click', () => {
   themeToggle.querySelector('.tool-glyph').textContent = night ? '🌙' : '☀️';
   localStorage.setItem('ai-todo-theme', document.documentElement.dataset.theme);
 });
+
+/* ── Phone pages: To do | Planner ─────────────────────────────── */
+
+/* At phone width the list and the planner are two snap pages side by side.
+   The scrolling itself is CSS scroll-snap; this only keeps the tab strip
+   honest and offers a tappable way across. */
+const desk = $('#desk');
+const pageTabs = $('#pageTabs');
+const pageDots = [...document.querySelectorAll('.page-dots i')];
+
+function showPage(index) {
+  const page = desk.children[index];
+  if (!page) return;
+  desk.scrollTo({ left: page.offsetLeft, behavior: 'smooth' });
+}
+
+function markPage(index) {
+  const tabs = pageTabs.querySelectorAll('.page-tab');
+  tabs.forEach((tab, i) => {
+    const on = i === index;
+    tab.classList.toggle('is-on', on);
+    if (on) tab.setAttribute('aria-current', 'page');
+    else tab.removeAttribute('aria-current');
+  });
+  pageDots.forEach((dot, i) => dot.classList.toggle('on', i === index));
+}
+
+pageTabs.addEventListener('click', (event) => {
+  const tab = event.target.closest('.page-tab');
+  if (tab) showPage(Number(tab.dataset.page));
+});
+
+desk.addEventListener('scroll', () => {
+  const width = desk.clientWidth || 1;
+  markPage(Math.round(desk.scrollLeft / width) === 0 ? 0 : 1);
+}, { passive: true });
+
+/* New tasks have to be written on the list, so come back to it.
+   `paged` is true only in the phone layout, where the two are side by side. */
+function returnToList() {
+  if (desk.scrollWidth > desk.clientWidth + 4) showPage(0);
+}
 
 $('#weekPrev').addEventListener('click', async () => {
   state.weekStart = addDays(state.weekStart, -7);

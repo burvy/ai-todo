@@ -21,7 +21,7 @@
   --hand: "Caveat", "Bradley Hand", "Segoe Print", cursive;
   --chrome: "Inter", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
 
-  --line: 46px;              /* one ruled line == one task row */
+  --line: 66px;              /* one ruled line == one task row (two title lines) */
   --label-school:  #2F5D9E;
   --label-work:    #6B4E9E;
   --label-health:  #3F7A54;
@@ -88,29 +88,23 @@ kbd {
   border-radius: 4px; padding: 0 4px;
 }
 
-/* ── Masthead ───────────────────────────────────────────────── */
+/* ── Desk tools ─────────────────────────────────────────────── */
 
-.masthead {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 18px 28px 6px;
-}
-
-.brand h1 {
-  margin: 0;
-  font-size: 30px; font-weight: 600; letter-spacing: -.01em;
-}
-.tagline {
-  margin: 2px 0 0;
-  font-size: 14.5px; font-style: italic; color: var(--ink-soft);
-}
-
+/* The desk switches live in the top-right of the To do card. There is no
+   masthead any more — on a phone it was eating a whole row of height and
+   squeezing the list, and the title said nothing the card did not. */
 .masthead-tools { display: flex; gap: 8px; justify-content: flex-end; }
+
+.paper-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
+  row-gap: 2px;
+}
+.paper-head .notebook-title { grid-column: 1; grid-row: 1; white-space: nowrap; }
+.paper-head .masthead-tools  { grid-column: 2; grid-row: 1; }
+.paper-head .notebook-sub    { grid-column: 1 / -1; grid-row: 2; }
 
 .tool {
   display: inline-flex; align-items: center; gap: 7px;
@@ -125,6 +119,41 @@ kbd {
 .tool:hover { background: var(--paper-fresh); color: var(--ink); }
 .tool[aria-pressed="false"] { opacity: .55; }
 .tool-glyph { font-size: 14px; line-height: 1; }
+
+/* "Add to my calendar" — appended by static/reminders.js, which is not ours to
+   edit. It sets an inline cssText, so matching it needs !important to win. */
+.masthead-tools > a[href="/api/calendar.ics"] {
+  display: inline-flex !important;
+  align-items: center;
+  gap: 7px;
+  min-height: 30px;
+  padding: 5px 12px !important;
+  border: 1px solid var(--edge) !important;
+  border-radius: 999px !important;
+  background: transparent !important;
+  color: var(--ink-soft) !important;
+  font: inherit;
+  font-size: 13.5px;
+  text-decoration: none !important;
+  white-space: nowrap;
+  transition: background .18s, color .18s, border-color .18s;
+}
+.masthead-tools > a[href="/api/calendar.ics"]::before {
+  content: "";
+  width: 14px; height: 14px;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M7 3v3M17 3v3M3.5 9.5h17M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v12A1.5 1.5 0 0 1 19 20.5H5A1.5 1.5 0 0 1 3.5 19V7A1.5 1.5 0 0 1 5 5.5z' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/></svg>") center/contain no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M7 3v3M17 3v3M3.5 9.5h17M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v12A1.5 1.5 0 0 1 19 20.5H5A1.5 1.5 0 0 1 3.5 19V7A1.5 1.5 0 0 1 5 5.5z' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/></svg>") center/contain no-repeat;
+}
+.masthead-tools > a[href="/api/calendar.ics"]:hover {
+  background: var(--paper-fresh) !important;
+  color: var(--ink) !important;
+}
+.masthead-tools > a[href="/api/calendar.ics"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 /* ── The pen: home in the text box, the send button and the mic ── */
 
@@ -213,6 +242,17 @@ kbd {
 .mascot-track[data-mood="writing"] .mascot { animation: scribble .18s linear infinite; }
 .mascot-track[data-mood="writing"] .pen-gloss { opacity: 0; }
 
+/* Writing along with you at the text box: the pen shrinks out of the way of
+   the words and leans over the line. `--pen-scale` shrinks the whole track
+   about its centre, so the offset maths in app.js stays in unscaled pixels
+   and the nib still lands on the caret. */
+.mascot-track.is-writing { --pen-scale: .78; }
+.mascot-track.is-writing .mascot {
+  transform-origin: 50% 96%;
+  rotate: 34deg;
+}
+.mascot-track.is-writing .mascot-shadow { opacity: 0; }
+
 @keyframes bob {
   0%, 100% { transform: translateY(0) rotate(-1.2deg); }
   50%      { transform: translateY(-3px) rotate(1.2deg); }
@@ -254,6 +294,9 @@ kbd {
   padding: 12px 28px 64px;
   align-items: start;
 }
+
+/* Phone page strip: hidden until the single-column phone layout needs it */
+.page-tabs { display: none; }
 
 /* ── The page ───────────────────────────────────────────────── */
 
@@ -299,9 +342,10 @@ kbd {
   grid-template-columns: 30px minmax(0, 1fr) 26px;
   align-items: center;
   gap: 10px;
-  height: var(--line);
-  padding: 8px 2px 0;   /* sit the text down on the rule */
-  overflow: hidden;     /* one task, one ruled line */
+  min-height: var(--line);
+  height: auto;
+  padding: 8px 2px 6px;   /* sit the text down on the rule */
+  overflow: hidden;
 }
 
 .task.enter .title-text { animation: write var(--speed) cubic-bezier(.35,.7,.35,1) forwards; }
@@ -330,18 +374,20 @@ kbd {
   border-radius: 3px;
 }
 
+/* Full titles: wrap to two lines, then clamp. The old single-line ellipsis
+   was cutting real tasks down to "Call my …". */
 .title-text {
   position: relative;
-  display: inline-block;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   max-width: 100%;
-  vertical-align: top;
-  font-family: var(--hand);
-  font-size: 27px;
-  line-height: 1.05;
-  color: var(--ink);
-  white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  font-family: var(--hand);
+  font-size: 25px;
+  line-height: 1.04;
+  color: var(--ink);
+  overflow-wrap: anywhere;
 }
 
 /* the little squiggle the pen leaves under a fresh title */
@@ -683,6 +729,24 @@ kbd {
 .schedule-btn[disabled] { opacity: .45; cursor: progress; }
 .schedule-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* Import .ics — quieter than Schedule it, same hand-lettered shape */
+.import-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  flex: none; cursor: pointer;
+  font-family: var(--hand); font-size: 19px; line-height: 1;
+  color: var(--ink-soft);
+  border: 1.3px dashed var(--edge);
+  border-radius: 5px;
+  padding: 6px 11px 7px;
+  transform: rotate(-.5deg);
+  transition: color .18s, border-color .18s, background .18s;
+}
+.import-btn:hover { color: var(--accent); border-color: var(--accent); background: rgba(47, 93, 158, .06); }
+.import-btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.import-btn svg { width: 16px; height: 16px; }
+.imp-clip { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.import-btn.is-busy { opacity: .5; pointer-events: none; }
+
 /* ── Loading note ───────────────────────────────────────────── */
 
 .writing-note {
@@ -713,8 +777,6 @@ body.is-busy .composer-row { border-color: var(--accent); }
 
 @media (max-width: 720px) {
   :root { --line: 78px; }
-  .masthead { padding: 14px 16px 4px; }
-  .desk { padding: 10px 16px 56px; }
   .paper, .planner { padding: 16px 14px 14px; }
   .paper::before { left: 12px; }
   .list, .empty-note, .composer { padding-left: 0; margin-left: 12px; }
@@ -722,10 +784,34 @@ body.is-busy .composer-row { border-color: var(--accent); }
   .inline-input.title-input { font-size: 23px; width: 100%; }
   .task { grid-template-columns: 28px minmax(0, 1fr) 24px; gap: 8px; height: auto; min-height: var(--line); padding-bottom: 6px; }
   .task-body { flex-direction: column; align-items: flex-start; gap: 1px; }
-  .title-text { font-size: 24px; white-space: normal; overflow: visible; }
+  /* phones already wrap fully; keep the two-line clamp but let it breathe */
+  .title-text { font-size: 24px; line-height: 1.08; }
   .meta { flex-wrap: wrap; }
   .tool-label { display: none; }
   .tool { padding: 6px 9px; }
+  /* three pills + the calendar link will not fit on one phone row next to the
+     title, so the link becomes an icon-only button. The text is reminders.js's
+     and we are not editing it: `font-size: 0` collapses it without removing it
+     from the accessibility tree, so the link is still announced as
+     "Add to my calendar". The icon is absolutely centred over the top of the
+     pill, so nothing bleeds through. */
+  .masthead-tools > a[href="/api/calendar.ics"] {
+    gap: 0;
+    min-height: 30px;
+    padding: 7px 8px !important;
+    flex: none;
+    width: 31px;
+    overflow: hidden;
+    position: relative;
+    /* reminders.js sets an inline `font: inherit`, and the font shorthand
+       resets font-size — so this has to be !important to actually collapse */
+    font-size: 0 !important;
+  }
+  .masthead-tools > a[href="/api/calendar.ics"]::before {
+    position: absolute;
+    left: 50%; top: 50%;
+    margin: -7.5px 0 0 -7.5px;
+  }
   /* the pen now lives in the text box: keep it a comfortable tap target
      and let it still reach up over the list */
   .pen-btn { width: 58px; height: 58px; }
@@ -738,6 +824,71 @@ body.is-busy .composer-row { border-color: var(--accent); }
     background: linear-gradient(to top, var(--paper-fresh) 72%, rgba(251, 247, 236, 0));
     box-shadow: 0 -10px 18px -14px rgba(43, 42, 40, .7);
   }
+
+  /* ── Two pages, one screen: To do | Planner ──────────────────
+     Native scroll-snap does the gesture work — no touch handlers, so a
+     vertical flick inside a page still scrolls that page, not sideways. */
+  .page-tabs {
+    display: flex; align-items: center; gap: 2px;
+    max-width: 1400px; margin: 0 auto; padding: 0 16px 8px;
+  }
+  .page-tab {
+    font-size: 13.5px; color: var(--pencil);
+    background: transparent; border: 0;
+    padding: 6px 10px 7px; border-radius: 999px;
+    transition: color .18s, background .18s;
+  }
+  .page-tab.is-on { color: var(--ink); background: var(--paper-fresh); }
+  .page-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .page-dots { display: inline-flex; gap: 4px; margin-left: 6px; }
+  .page-dots i {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--rule); display: block;
+    transition: background .2s, transform .2s;
+  }
+  .page-dots i.on { background: var(--accent); transform: scale(1.25); }
+
+  body {
+    height: 100dvh; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .page-tabs { flex: none; }
+
+  .desk {
+    display: flex; flex: 1 1 auto; min-height: 0;
+    max-width: none; margin: 0;
+    padding: 0; gap: 0;
+    overflow-x: auto; overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+  }
+  .desk::-webkit-scrollbar { display: none; }
+
+  /* each page is one screen wide and scrolls on its own */
+  .desk > .notebook,
+  .desk > .planner {
+    flex: 0 0 100%; width: 100%; min-width: 0;
+    scroll-snap-align: start; scroll-snap-stop: always;
+    overflow-y: auto; -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    padding: 10px 16px 96px;   /* room for the fixed pen row */
+  }
+
+  /* The pen row leaves the flow so it stays put on BOTH pages. */
+  .composer {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    margin: 0; padding: 8px 16px max(8px, env(safe-area-inset-bottom));
+    background: var(--paper-fresh);
+    box-shadow: 0 -10px 20px -14px rgba(43, 42, 40, .7);
+  }
+  .composer::after {
+    content: ""; position: absolute; inset: 0;
+    border-top: 1px solid var(--edge);
+    pointer-events: none;
+  }
+  /* the page strip sits just above the pen row */
+  .writing-note { bottom: calc(78px + env(safe-area-inset-bottom)); }
   .planner-head { flex-wrap: wrap; }
   .week-label { white-space: nowrap; font-size: 13px; }
   .schedule-btn { font-size: 20px; padding: 6px 11px 7px; }

@@ -15,29 +15,28 @@
 
 <a class="skip" href="#composer">Skip to the text box</a>
 
-<header class="masthead">
-  <div class="brand">
-    <h1>ai-todo</h1>
-    <p class="tagline">Ramble it. It writes your list.</p>
-  </div>
+<!-- Phone only: one page per screen, swipe or tap to move between them -->
+<nav class="page-tabs" id="pageTabs" aria-label="Switch between the list and the planner">
+  <button type="button" class="page-tab is-on" data-page="0" aria-current="page">To do</button>
+  <button type="button" class="page-tab" data-page="1">Planner</button>
+  <span class="page-dots" aria-hidden="true"><i class="on"></i><i></i></span>
+</nav>
 
-  <div class="masthead-tools">
-    <button class="tool" id="speakToggle" type="button" aria-pressed="true" title="Read replies aloud">
-      <span class="tool-glyph" aria-hidden="true">🔊</span><span class="tool-label">Voice</span>
-    </button>
-    <button class="tool" id="themeToggle" type="button" title="Switch between paper and chalkboard">
-      <span class="tool-glyph" aria-hidden="true">🌙</span><span class="tool-label">Night desk</span>
-    </button>
-  </div>
-</header>
-
-<main class="desk">
+<main class="desk" id="desk">
 
   <!-- ── Notebook ─────────────────────────────────────────────── -->
   <section class="notebook" aria-labelledby="listHeading">
     <div class="paper">
       <div class="paper-head">
         <h2 id="listHeading" class="notebook-title">To do</h2>
+        <div class="masthead-tools">
+          <button class="tool" id="speakToggle" type="button" aria-pressed="true" title="Read replies aloud">
+            <span class="tool-glyph" aria-hidden="true">🔊</span><span class="tool-label">Voice</span>
+          </button>
+          <button class="tool" id="themeToggle" type="button" title="Switch between paper and chalkboard">
+            <span class="tool-glyph" aria-hidden="true">🌙</span><span class="tool-label">Night desk</span>
+          </button>
+        </div>
         <p class="notebook-sub" id="taskSummary">Nothing on the page yet.</p>
       </div>
 
@@ -107,6 +106,14 @@
         <button class="nav-btn" id="weekNext" type="button" aria-label="Seven days later">›</button>
       </div>
       <button class="schedule-btn" id="scheduleBtn" type="button">Schedule it</button>
+      <label class="import-btn" for="icsFile" title="Import an Outlook or Google .ics export">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path class="imp-clip"
+                d="M17.6 10.9 11.2 17.3a4.2 4.2 0 0 1-5.9-5.9l7.3-7.3a2.9 2.9 0 0 1 4.1 4.1l-7.2 7.2a1.6 1.6 0 0 1-2.3-2.3l6.6-6.6" />
+        </svg>
+        <span>Import .ics</span>
+      </label>
+      <input id="icsFile" type="file" accept=".ics,text/calendar" class="sr-only" />
     </div>
 
     <div class="planner-scroll">
