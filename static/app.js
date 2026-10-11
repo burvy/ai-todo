@@ -160,20 +160,11 @@ const sendMessage   = (text, source) => api('/api/message', { method: 'POST', bo
 const runSchedule   = () => api('/api/schedule', { method: 'POST' });
 const getCalendar   = (from, to) => api(`/api/calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
 
-/* POST /api/tasks is still landing; fall back to /api/capture until then. */
-let canPostTasks = true;
+/* POST /api/tasks landed (f8cd143): 201 CREATED with the saved Task.
+   The server runs clean_title and stamps confidence 1.0, so a manually
+   added task always comes back in firm ink, never pencilled in. */
 async function addTask(title) {
-  if (canPostTasks) {
-    try {
-      const task = await api('/api/tasks', { method: 'POST', body: JSON.stringify({ title }) });
-      if (task && task.id) return task;
-    } catch (err) {
-      if (![404, 405, 501].includes(err.status)) throw err;
-      canPostTasks = false;   // stop probing on every keystroke
-    }
-  }
-  const data = await api('/api/capture', { method: 'POST', body: JSON.stringify({ text: title, source: 'text' }) });
-  return (data.tasks || []).slice(-1)[0] || null;
+  return api('/api/tasks', { method: 'POST', body: JSON.stringify({ title }) });
 }
 
 /* ── Mascot ─────────────────────────────────────────────────── */
@@ -821,8 +812,8 @@ addForm.addEventListener('submit', async (event) => {
   setBusy(true);
   try {
     const created = await addTask(title);
-    await loadTasks(created ? [created.id] : []);
-    speak(`${title}. Added.`);
+    await loadTasks(created.id ? [created.id] : []);
+    speak(`${created.title || title}. Added.`);
   } catch (err) {
     say('Could not add that one.');
     console.error(err);
