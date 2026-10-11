@@ -10,6 +10,9 @@ New-Item -ItemType Directory -Force -Path $stage | Out-Null
 Copy-Item -Force (Join-Path $repoRoot 'target\release\server.exe') (Join-Path $stage 'server.exe')
 $static = Join-Path $repoRoot 'static'
 if (Test-Path $static) {
-    Copy-Item -Recurse -Force $static (Join-Path $stage 'static')
+    # Replace the staged copy; copying onto an existing folder would nest it as static\static.
+    $stagedStatic = Join-Path $stage 'static'
+    if (Test-Path $stagedStatic) { Remove-Item -Recurse -Force $stagedStatic }
+    Copy-Item -Recurse -Force $static $stagedStatic
 }
 Write-Host "Staged release at $stage"
