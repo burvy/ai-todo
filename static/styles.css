@@ -399,10 +399,26 @@ kbd {
 }
 
 .empty-note {
-  margin: 12px 0 4px 58px;
+  margin: 16px 0 6px 58px;
   font-size: 14.5px; font-style: italic; color: var(--ink-soft);
   line-height: 1.7;
+  max-width: 46ch;
 }
+
+.sample-lead, .sample-tail { display: block; }
+.sample-lead { font-size: 12.5px; letter-spacing: .04em; color: var(--pencil); }
+.sample-ramble {
+  display: block;
+  margin: 6px 0 8px;
+  padding: 8px 0 8px 14px;
+  border-left: 2.5px solid var(--accent);
+  font-family: var(--hand);
+  font-size: 23px;
+  line-height: 1.25;
+  font-style: normal;
+  color: var(--ink);
+}
+.sample-tail { font-size: 13px; }
 
 /* ── Composer ───────────────────────────────────────────────── */
 
@@ -700,6 +716,12 @@ body.is-busy .composer-row { border-color: var(--accent); }
   .meta { flex-wrap: wrap; }
   .tool-label { display: none; }
   .tool { padding: 6px 9px; }
+  /* the pen is a desktop delight; on a phone it only covers the page */
+  .mascot-track { display: none; }
+  .planner-head { flex-wrap: wrap; }
+  .week-label { white-space: nowrap; font-size: 13px; }
+  .schedule-btn { font-size: 20px; padding: 6px 11px 7px; }
+  .sample-ramble { font-size: 21px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
