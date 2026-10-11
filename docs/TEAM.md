@@ -7,34 +7,37 @@ Repo: `github.com/burvy/ai-todo`. Run `git pull origin main` before you start.
 
 ---
 
-## 1. What is done (on `main`)
+## 1. Status (synced 2026-10-11 ~14:45)
 
-| Area | What works | Where |
-|---|---|---|
-| Server | All API routes, port `8080` (`PORT` env). **Tasks are in memory: lost on restart.** | `server/` |
-| AI capture | Text → sentences → date candidates → Jev judges (is it a task, deadline, priority, duration) → clean tasks. Falls back to one task per line if Jev fails. Live-tested. | `crates/judge`, `server/` |
-| Conversation | `POST /api/message` routes any message with Jev: add tasks, mark done, cancel an event, ask about a day. Re-plans after every change. Live-tested. | `server/` |
-| Scheduler | Nearest deadline first, then priority. Blocks of 2h or less, 9:00–18:00 Eastern (`TZ_NAME`), avoids busy time. | `crates/scheduler` |
-| CI | fmt + clippy + tests on every push and PR | `.github/workflows/ci.yml` |
-| Deploy | Guide plus build, run and install scripts for `ai-todo-api.burvy.dev:3160` | `docs/deploy.md`, `deploy/` |
-| Demo inputs | 4 sample rambles, a syllabus PDF, an Outlook calendar week (`.ics`) | `demo/` |
+**Works on `main` (all live-tested by the orchestrator against real Jev):**
 
-**Known bugs:** "do X and Y" in one sentence becomes 1 task; tasks marked done still get scheduled; reply says "1 new tasks"; labels come from keyword rules, not Jev.
+| Area | What works |
+|---|---|
+| Web app (`static/`) | Parchment UI, pen mascot, task list (check off, edit, delete, add), always-on text box, push-to-talk (mic button / space bar), spoken replies, week planner with busy blocks + placed tasks, "Schedule it", "pencilled in" low-confidence fields, Night desk theme |
+| AI capture | Messy spoken rambles split into clauses; Jev keeps real tasks and drops chit-chat; clean titles ("Study for calc quiz"); relative dates (today, tomorrow, weekdays, "by the weekend", "next week") with 17:00 local deadlines; durations, priority, labels |
+| Conversation | `POST /api/message`: add tasks, "I finished X" (marks done, unschedules), "my 3pm got cancelled" (removes busy block, re-plans), "what does tomorrow look like" (jumps planner) |
+| Scheduler | Deadline first then priority; ≤2h chunks; 9:00–18:00 local; skips done tasks |
+| Persistence | SQLite (`data/ai-todo.db`): tasks and busy blocks survive restarts |
+| Ops | CI (fmt, clippy, tests), deploy guide + scripts, `.env` loading |
+
+**Known gaps:** busy blocks are 3 fake demo blocks (no real calendar import yet); no PDF/email capture yet; not deployed yet; labels partly keyword-based.
 
 ---
 
 ## 2. Who owns what
 
-| Owner | Work | Priority |
+| Owner | Doing now | Next |
 |---|---|---|
-| **Frontend teammate** | Whole UI (see §4) | P0 now |
-| **Teammate 2** | Outlook export → text (PDF/email) and `.ics` → busy blocks. Optional: 20-min Microsoft Graph test (admin consent may block `psu.edu`). | P2 |
-| **burvy** | Deploy: Cloudflare CNAME + Origin Rule, router port forward 3160, run `deploy/` scripts. Then demo script and rehearsal. | P1 |
-| **AI agents** | Manual add (`POST /api/tasks`) + saving tasks to disk (next), then the bug list above. | P0 |
+| **Frontend** | Week / month planner views | Polish (see `docs/TASKS-frontend.md`) |
+| **Backend (teammate 2)** | SQLite ✅ done | `.ics` calendar import, then email/PDF → tasks (`docs/TASKS-backend.md`) |
+| **burvy** | | **Deploy** to `ai-todo-api.burvy.dev` (Cloudflare, port forward 3160, `deploy/` scripts), then demo rehearsal |
+| **AI agents** | idle, ready | Bug fixes and backend help on request; orchestrator reviews and merges every PR |
 
-**Priority order:** P0 a plain to-do list works → P1 AI capture and the schedule show on screen → P2 conversation re-plan, TTS replies, `.ics` → P3 Graph, weather.
+**Priority now:** P1 deploy + real calendar import → P2 email/PDF, month view → P3 Graph, weather.
 
-**Git rules:** branch `yourname/feature`, small PRs, never push to `main`, never commit `.env` or keys. Run `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings` before pushing.
+**Tick your boxes:** when you finish an item, change `- [ ]` to `- [x]` in your task list in the same PR. The orchestrator updates this file.
+
+**Git rules:** branch `yourname/feature`, small PRs, pull `main` before pushing, never push to `main`, never commit `.env`, keys or `data/`. Run `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings` before pushing.
 
 ---
 
@@ -50,7 +53,7 @@ Task:
 | Call | Body | Returns |
 |---|---|---|
 | `GET /api/tasks` | | `{tasks:[Task]}` |
-| `POST /api/tasks` *(coming)* | `{title}` | `Task` |
+| `POST /api/tasks` | `{title}` | `201` Task |
 | `PATCH /api/tasks/:id` | e.g. `{"status":"done"}` | `Task` |
 | `DELETE /api/tasks/:id` | | `204` |
 | `POST /api/capture` | `{text, source:"voice"\|"text"}` | `{tasks:[Task]}` (new ones) |
@@ -64,13 +67,9 @@ All times are UTC ISO strings; convert to local time in the UI. A long task can 
 
 ---
 
-## 4. Frontend checklist (in order)
+## 4. Task lists
 
-1. **List:** tasks with checkbox (PATCH done), delete, low-confidence fields (< 0.6) shown faded or underlined "pencilled in".
-2. **Input:** always-visible text box + push-to-talk (hold button or spacebar → `webkitSpeechRecognition` → `/api/message`).
-3. **Timeline:** day/week view of busy blocks (grey) and placements (by label colour).
-4. **TTS:** speak `reply` (max 2 sentences, it never reads lists).
-5. *Stretch:* weather background (Open-Meteo, no key), timeline scrolls to `focus_date`.
+Frontend: `docs/TASKS-frontend.md` · Backend: `docs/TASKS-backend.md`. Tick boxes as you finish.
 
 ---
 

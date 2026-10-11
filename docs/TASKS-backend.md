@@ -1,38 +1,29 @@
 # Task list: teammate 2 (backend)
 
-Read `docs/TEAM.md` first (API, status, visual direction). Work top to bottom; do not start a P2 item until your P1 works end to end.
+Read `docs/TEAM.md` first (status, API). Tick `- [x]` in the same PR when you finish an item.
 
-Run the backend locally: `cargo run -p server` → `http://localhost:8080` (put `TYPESAFE_API_KEY=...` in `.env`).
+Run: `.env` with `TYPESAFE_API_KEY=...`, then `cargo run -p server` from the repo root → `http://localhost:8080`.
 
-**Goal:** tasks survive restarts (database), then get real Outlook data in: calendar → busy time, emails/PDFs → tasks.
+_Synced 2026-10-11 ~14:45 by the orchestrator from what is on `main` (SQLite merged in PR #24)._
 
-## P0: SQLite database (~1–1.5h), do this first
-Today tasks and busy blocks live in memory (`Arc<Mutex<...>>` in `server/`) and are lost on restart. You own persistence; no agent will touch it.
-- [x] Add `rusqlite` with the `bundled` feature (no system install needed). *(5m)*
-- [x] New module `server/src/db.rs`: open the DB at env `DATA_PATH` (default `data/ai-todo.db`, create the folder), run `CREATE TABLE IF NOT EXISTS` for `tasks` (all Task fields: id, title, notes, duration_min, deadline, priority, status, confidence, source, label) and `busy_blocks` (id, start, end, title). *(30m)*
-- [x] Replace the in-memory store: load on startup; insert/update/delete on every `POST /api/tasks`, `/api/capture`, `/api/message`, `PATCH`, `DELETE`, and when busy blocks change. Seed the 3 demo busy blocks only if the table is empty. *(40m)*
-- [x] Add `data/` to `.gitignore`. *(1m)*
-- [x] Test: create a task, restart the server, it is still there. Unit test a round trip with an in-memory DB (`:memory:`). *(15m)*
+## P0: SQLite database ✅
+- [x] `rusqlite` (bundled), `server/src/db.rs`, `tasks` + `busy_blocks` tables at `DATA_PATH`
+- [x] Every write path persists (add, capture, message, patch, delete, complete, cancel event). The orchestrator added the missing save for `POST /api/tasks` during merge.
+- [x] `data/` ignored; restart test passes
 
-Notes on the above, for whoever picks up P1:
-- The in-memory `Store` is still the working copy; SQLite is the durable record. Route behaviour is unchanged.
-- Writes log a warning instead of failing the request, so a database problem cannot take the API down mid-demo.
-- Ids continue from the highest stored id on startup, so adding a task after a restart cannot collide.
-- `POST /api/tasks` is **not** yet persisted from a dedicated route: the manual-add route from the other agent saves through the same write-through helper, so it is covered as soon as that route lands.
-
-## P1: calendar import (~1.5h)
-- [ ] Create `crates/capture`, add it to workspace `members`. *(10m)*
-- [ ] `parse_ics(text) -> Vec<BusyBlock>` with the `icalendar` or `ical` crate. Handle `TZID=America/New_York` → UTC. Test with `demo/outlook/week.ics` (9 events). *(45m)*
-- [ ] `POST /api/calendar/import` (multipart file or `{ics_text}`): replace the server's busy blocks, reschedule. *(30m)*
+## P1: calendar import (~1.5h), do next
+- [ ] `parse_ics(text) -> Vec<BusyRow>` (`icalendar` or `ical` crate; put it in a new `crates/capture` or `server/src/ics.rs`). Handle `TZID=America/New_York` → UTC. Test with `demo/outlook/week.ics` (9 events, Oct 12–16). *(45m)*
+- [ ] `POST /api/calendar/import` (multipart file or `{ics_text}`): replace busy blocks with `db.save_busy(...)` and the in-memory `busy` list, then return `/api/calendar`-shaped JSON. *(30m)*
 - [ ] Optional: `{ics_url}` to fetch a published Outlook or Google ICS link. *(15m)*
+- [ ] Tell the frontend the route is live (they add the import button).
 
 ## P1: email / PDF → tasks (~1.5h)
-- [ ] `pdf_to_text(bytes)` with the `pdf-extract` crate. *(20m)*
-- [ ] `parse_email(text) -> Email {subject, sent, from, body}`: read `From:`, `Sent:`, `Subject:`; cut the quoted reply chain (`-----Original Message-----` or a second `From:`/`Sent:` block), signatures and disclaimers. *(40m)*
-- [ ] Wire the PDF upload in `POST /api/capture` (multipart `file`) → `capture_text(body, Source::Pdf, sent)`, using the **email's sent date as the anchor** so "by Friday" means the Friday after it was sent. *(30m)*
-- [ ] Unit tests on one real Outlook PDF export with personal data removed.
+- [ ] `pdf_to_text(bytes)` with `pdf-extract`. *(20m)*
+- [ ] `parse_email(text) -> {subject, sent, from, body}`; cut quoted reply chains (`-----Original Message-----`, a second `From:`/`Sent:` block), signatures, disclaimers. *(40m)*
+- [ ] Multipart `file` on `POST /api/capture` → `capture_text(body, Source::Pdf, sent)`, using the **email's sent date as the anchor**. *(30m)*
+- [ ] Test with one real Outlook export (personal data removed).
 
 ## P2: only after P1
-- [ ] Microsoft Graph test, max 20 minutes: can a `psu.edu` account consent to `Calendars.Read` and `Mail.Read` for our app? Yes → plan device code sign-in. "Need admin approval" → drop it, or demo with a personal outlook.com account.
+- [ ] Microsoft Graph test, max 20 min: can a `psu.edu` account consent to `Calendars.Read` + `Mail.Read`? Yes → device code sign-in. "Need admin approval" → drop or use a personal outlook.com account.
 
-**Rules:** you own the store and persistence in `server/`. An agent is adding only the `POST /api/tasks` route (manual add) in the next ~15 minutes: pull `main` before you replace the store, and keep other edits to `server/src/main.rs` small. Merge often. Run `cargo fmt` and `cargo clippy --workspace --all-targets -- -D warnings` before every PR.
+**Rules:** keep `server/src/main.rs` edits small; agents may also touch it, so pull `main` first and merge often. The orchestrator reviews and live-tests every PR before merging.
