@@ -11,7 +11,9 @@ use axum::{
     http::StatusCode,
     routing::{get, patch, post},
 };
-use chrono::{DateTime, NaiveTime, Utc};
+use chrono::{DateTime, Datelike, NaiveTime, Utc};
+use futures::future::join_all;
+use judge::{find_date_candidates, split_sentences, understand};
 use scheduler::{BusyBlock, Placement, UnschedulableReason, WorkingHours};
 use serde::{Deserialize, Serialize};
 use todo_core::{Source, Task};
@@ -59,6 +61,8 @@ struct TasksOut {
 #[derive(Deserialize)]
 struct CaptureIn {
     text: String,
+    #[serde(default)]
+    source: Option<Source>,
 }
 
 #[derive(Serialize)]
@@ -114,6 +118,112 @@ fn tasks_from_text(text: &str) -> Vec<Task> {
         .collect()
 }
 
+fn clean_title(sentence: &str) -> String {
+    let mut title = sentence.trim().to_owned();
+    for filler in [
+        "um, i need to ",
+        "i need to ",
+        "need to ",
+        "please ",
+        "todo: ",
+    ] {
+        if title.to_lowercase().starts_with(filler) {
+            title = title[filler.len()..].trim().to_owned();
+            break;
+        }
+    }
+    title
+}
+
+fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let lower = candidate.to_ascii_lowercase();
+    let date = if lower == "today" {
+        now.date_naive()
+    } else if lower == "tomorrow" {
+        now.date_naive() + chrono::Duration::days(1)
+    } else if let Some(name) = lower.strip_prefix("by ").or(Some(lower.as_str())) {
+        let weekdays = [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ];
+        let index = weekdays.iter().position(|day| *day == name)?;
+        let target = chrono::Weekday::try_from(index as u8 + 1).ok()?;
+        let mut days =
+            (target.number_from_monday() as i64 - now.weekday().number_from_monday() as i64 + 7)
+                % 7;
+        if days == 0 {
+            days = 7;
+        }
+        now.date_naive() + chrono::Duration::days(days)
+    } else if let Ok(value) = chrono::NaiveDate::parse_from_str(candidate, "%Y-%m-%d") {
+        value
+    } else if let Ok(value) = chrono::NaiveDate::parse_from_str(candidate, "%m/%d/%Y") {
+        value
+    } else {
+        return None;
+    };
+    Some(date.and_hms_opt(17, 0, 0)?.and_utc())
+}
+
+/// Understand captured text, with a deterministic line fallback when Jev is unavailable.
+pub async fn capture_text(text: &str, source: Source, anchor: DateTime<Utc>) -> Vec<Task> {
+    let sentences = split_sentences(text);
+    if sentences.is_empty() || std::env::var("TYPESAFE_API_KEY").is_err() {
+        return tasks_from_text(text)
+            .into_iter()
+            .map(|mut task| {
+                task.source = source;
+                task
+            })
+            .collect();
+    }
+    let results = join_all(sentences.iter().map(|sentence| async move {
+        let candidates = find_date_candidates(sentence, anchor);
+        understand(sentence, &candidates, anchor)
+            .await
+            .map(|judgment| (sentence, candidates, judgment))
+    }))
+    .await;
+    let mut tasks = Vec::new();
+    for result in results {
+        let Ok((sentence, candidates, judgment)) = result else {
+            eprintln!("warning: Jev capture failed; using line-per-task fallback");
+            return tasks_from_text(text)
+                .into_iter()
+                .map(|mut task| {
+                    task.source = source;
+                    task
+                })
+                .collect();
+        };
+        if judgment.is_task < 0.5 {
+            continue;
+        }
+        let deadline = judgment
+            .deadline
+            .as_deref()
+            .and_then(|candidate| parse_deadline(candidate, anchor));
+        let _ = candidates;
+        tasks.push(Task {
+            id: String::new(),
+            title: clean_title(sentence),
+            notes: String::new(),
+            duration_min: i64::from(judgment.duration_min),
+            deadline,
+            priority: judgment.priority,
+            status: "todo".into(),
+            confidence: judgment.confidence,
+            source,
+        });
+    }
+    tasks
+}
+
 /// Busy blocks for today (UTC), seeded so the demo has something to schedule around.
 fn seed_busy(today: DateTime<Utc>) -> Vec<BusyOut> {
     let at = |h: u32, m: u32| {
@@ -151,9 +261,9 @@ fn reason_text(reason: &UnschedulableReason) -> &'static str {
 
 async fn capture(State(state): State<AppState>, Json(body): Json<CaptureIn>) -> Json<CaptureOut> {
     // TODO: multipart `file` (PDF) capture. Needs a PDF-to-text step in crates/capture.
-    // TODO: swap tasks_from_text for the judge crate (Jev) once it lands.
+    let mut created =
+        capture_text(&body.text, body.source.unwrap_or(Source::Text), Utc::now()).await;
     let mut store = state.store.lock().unwrap();
-    let mut created = tasks_from_text(&body.text);
     for task in &mut created {
         store.next_id += 1;
         task.id = format!("t{}", store.next_id);
