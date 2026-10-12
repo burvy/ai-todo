@@ -185,9 +185,15 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 name = "capture"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "chrono",
+ "chrono-tz",
+ "dates",
+ "judge",
  "pdf-extract",
  "serde",
+ "todo-core",
+ "tokio",
 ]
 
 [[package]]
@@ -902,10 +908,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "futures",
  "regex",
  "reqwest",
  "serde",
  "serde_json",
+ "todo-core",
  "tokio",
 ]
 
