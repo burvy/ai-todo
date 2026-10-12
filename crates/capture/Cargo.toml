@@ -4,6 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+dates = { path = "../dates" }
+judge = { path = "../judge" }
 pdf-extract = "0.12"
 serde = { version = "1", features = ["derive"] }
+todo-core = { path = "../core" }
+
+[dev-dependencies]
+chrono-tz = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
