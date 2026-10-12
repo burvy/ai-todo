@@ -36,10 +36,11 @@ impl Default for WorkingHours {
     }
 }
 
-/// Place fixed tasks exactly and fill flexible tasks in list order.
+/// Place fixed tasks exactly, then overdue tasks first and flexible tasks in
+/// list order, all sharing one slot-finding pass.
 ///
-/// Overdue tasks — `DueBy` whose deadline has already passed — are placed first,
-/// starting from now, so the user gets a chance to catch up.
+/// Overdue tasks — `DueBy` whose deadline is now or in the past — are placed
+/// first from now, so the user gets a chance to catch up.
 pub fn plan(
     tasks: &[todo_core::Task],
     hours: &WorkingHours,
@@ -64,7 +65,7 @@ pub fn plan(
                 });
                 occupied.push((start, end));
             }
-            When::DueBy(deadline) if deadline < ctx.now => overdue.push(index),
+            When::DueBy(deadline) if deadline <= ctx.now => overdue.push(index),
             When::DueBy(_) | When::Anytime => flexible.push(index),
         }
     }
@@ -73,36 +74,14 @@ pub fn plan(
 
     let mut unplaced = Vec::new();
 
-    // Overdue tasks go first: they lose their deadline constraint and are placed
-    // from now into the next free slot, just like Anytime tasks.
-    for index in overdue {
+    // Overdue tasks go first and lose their deadline constraint; flexible tasks
+    // keep theirs. One ordered pass feeds the same next_slot/push loop.
+    for (index, deadline) in overdue.into_iter().map(|index| (index, None)).chain(
+        flexible
+            .into_iter()
+            .map(|index| (index, deadline_of(&tasks[index]))),
+    ) {
         let task = &tasks[index];
-        let Some(start) = next_slot(
-            ctx.now,
-            i64::from(task.duration_min),
-            None,
-            hours,
-            &occupied,
-        ) else {
-            unplaced.push(task.id.clone());
-            continue;
-        };
-        let end = start + Duration::minutes(i64::from(task.duration_min));
-        placements.push(todo_core::Placement {
-            task: task.id.clone(),
-            start,
-            end,
-        });
-        occupied.push((start, end));
-    }
-
-    for index in flexible {
-        let task = &tasks[index];
-        let deadline = match task.when {
-            When::DueBy(deadline) => Some(deadline),
-            When::Anytime => None,
-            When::At(_) => unreachable!(),
-        };
         let Some(start) = next_slot(
             ctx.now,
             i64::from(task.duration_min),
@@ -124,6 +103,16 @@ pub fn plan(
     todo_core::Plan {
         placements,
         unplaced,
+    }
+}
+
+/// The latest allowed end for a flexible task; `None` when unconstrained
+/// (`Anytime`, or overdue tasks placed from now).
+fn deadline_of(task: &todo_core::Task) -> Option<DateTime<Utc>> {
+    match task.when {
+        When::DueBy(deadline) => Some(deadline),
+        When::Anytime => None,
+        When::At(_) => unreachable!("fixed tasks are placed exactly, never in this queue"),
     }
 }
 
@@ -374,7 +363,7 @@ mod tests {
             &hours,
             &ctx(now, chrono_tz::UTC),
         );
-        // Overdue is placed first, so it gets the earlier slot.
+        // Overdue is placed first, so it gets the earlier slot: 10:00, then 11:00.
         let overdue_start = result
             .placements
             .iter()
@@ -387,12 +376,72 @@ mod tests {
             .find(|p| p.task.0 == "normal")
             .unwrap()
             .start;
-        assert!(
-            overdue_start <= normal_start,
-            "overdue ({:?}) should not start after normal ({:?})",
+        assert_eq!(
             overdue_start,
-            normal_start
+            Utc.with_ymd_and_hms(2026, 1, 5, 10, 0, 0).unwrap(),
+            "overdue task should take the first free slot from now"
         );
+        assert_eq!(
+            normal_start,
+            Utc.with_ymd_and_hms(2026, 1, 5, 11, 0, 0).unwrap(),
+            "normal flexible task should follow the overdue task"
+        );
+    }
+
+    #[test]
+    fn task_due_exactly_now_is_overdue() {
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        let now = Utc.with_ymd_and_hms(2026, 1, 5, 10, 0, 0).unwrap();
+        let result = plan(
+            &[
+                task("normal", 60, When::Anytime, 1),
+                task("just-due", 60, When::DueBy(now), 0),
+            ],
+            &hours,
+            &ctx(now, chrono_tz::UTC),
+        );
+        // Due at exactly now counts as overdue (deadline <= now) and takes the
+        // first free slot, ahead of the Anytime task.
+        assert!(!result.unplaced.iter().any(|id| id.0 == "just-due"));
+        assert_eq!(result.placements[0].task.0, "just-due");
+        assert_eq!(result.placements[0].start, now);
+        assert_eq!(
+            result.placements[1].start,
+            Utc.with_ymd_and_hms(2026, 1, 5, 11, 0, 0).unwrap()
+        );
+    }
+
+    #[test]
+    fn two_overdue_tasks_are_placed_in_order() {
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        // Now is 10:00; both tasks were due at 09:00.
+        let now = Utc.with_ymd_and_hms(2026, 1, 5, 10, 0, 0).unwrap();
+        let overdue_due = Utc.with_ymd_and_hms(2026, 1, 5, 9, 0, 0).unwrap();
+        let result = plan(
+            &[
+                task("first", 30, When::DueBy(overdue_due), 1),
+                task("second", 30, When::DueBy(overdue_due), 0),
+            ],
+            &hours,
+            &ctx(now, chrono_tz::UTC),
+        );
+        // Sorted by order: "second" (order 0) first, then "first" (order 1).
+        assert_eq!(result.placements[0].task.0, "second");
+        assert_eq!(result.placements[0].start, now);
+        assert_eq!(result.placements[1].task.0, "first");
+        assert_eq!(
+            result.placements[1].start,
+            Utc.with_ymd_and_hms(2026, 1, 5, 10, 30, 0).unwrap()
+        );
+        assert!(result.unplaced.is_empty());
     }
 
     #[test]

@@ -216,11 +216,14 @@ c. Code: `server/src/v2/mod.rs:app_from_env`;
 `server/src/v2/http.rs:jev_daily_cap_from_env, zone_from_env`.
 
 ### 5. Task order and overdue state
-a. New tasks appear newest first. Unfinished tasks past their `DueBy` deadline
-remain in the list as overdue and are scheduled into the next free slot from now,
-before any normal flexible tasks. Rambo teases about overdue tasks.
+a. *(planned; decided in docs/ARCHITECTURE.md 4.1)* New tasks appear newest first.
+Unfinished tasks past their `DueBy` deadline remain in the list as overdue and are
+scheduled into the next free slot from now, before any normal flexible tasks. Rambo
+teases about overdue tasks.
 b. Add tasks in sequence, then inspect the list and a task whose due time has passed.
 c. Code: `crates/scheduler/src/lib.rs:plan` (overdue detection and priority placement);
+`web/src/lib.rs:is_overdue, TaskList` (overdue badge);
+`web/src/brain.rs:108` (emits `TaskOverdue`);
 `crates/rambl-brain/src/lib.rs:Event::TaskOverdue`;
 `crates/rambl-brain/content/lines.toml` (overdue teasing lines).
 
