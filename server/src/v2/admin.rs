@@ -29,19 +29,19 @@ pub fn parse_command(input: &str) -> Result<Command, &'static str> {
         ["unblock", "ip", value] if !value.is_empty() => Ok(Command::UnblockIp((*value).into())),
         _ => Err("expected usage, blocked, block/unblock user <value>, or block/unblock ip <addr>"),
     }
+}
 
-    pub fn start_console() {
-        std::thread::spawn(|| {
-            let stdin = std::io::stdin();
-            for line in stdin.lines().map_while(Result::ok) {
-                if let Ok(command) = parse_command(&line) {
-                    eprintln!("admin command received: {command:?}");
-                } else {
-                    eprintln!("invalid admin command");
-                }
+pub fn start_console() {
+    std::thread::spawn(|| {
+        let stdin = std::io::stdin();
+        for line in stdin.lines().map_while(Result::ok) {
+            if let Ok(command) = parse_command(&line) {
+                eprintln!("admin command received: {command:?}");
+            } else {
+                eprintln!("invalid admin command");
             }
-        });
-    }
+        }
+    });
 }
 
 #[cfg(test)]
