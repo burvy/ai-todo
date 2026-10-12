@@ -1,97 +1,72 @@
 # AGENTS.md
 
-Guidance for AI agents working in this repository (Rambl, repo name `ai-todo`).
+Instructions for any AI coding agent working in this repository. Read this before your first edit.
+
+Rambl is a speed-focused to-do list: you ramble, Jev (TypeSafe's model) helps turn it into tasks, a scheduler plans your week, and Rambl the pen mascot lives beside the capture box. Fast, readable and well tested is the bar.
 
 ## Read first
 
-- **`docs/ARCHITECTURE.md` is the single design document and it is authoritative.**
-  Where code disagrees with it, the doc wins; when changing behavior, update the doc
-  first, then the code. It defines the data model, API, invariants, and the v2 phase plan.
-- `docs/jev.md` documents the Jev (TypeSafe System One) HTTP API: question primitives
-  (`noul`/`choice`/`score`), limits, and the exact request shapes the judge sends.
+- `docs/ARCHITECTURE.md` is the spec. Where code and spec disagree, the spec wins. If your change alters behaviour, update the spec in the same PR.
+- `docs/FEATURES.md` lists every feature and where it lives.
+- `docs/jev.md` describes the Jev API.
 
-## Two systems coexist (v1 → v2 migration in progress)
+## Where things are
 
-- **v1 (hackathon build, live in production)**: `server/src/main.rs` + `static/`.
-  This is what `make run` actually serves today. Fix production bugs here.
-- **v2 (rewrite, in progress)**: `crates/{core,dates,judge,capture,scheduler}` and
-  `web/` (Leptos CSR). Recent work lands here per the phase plan in
-  `docs/ARCHITECTURE.md` §10. `static/` and the old routes get deleted in phase 4.
-- Root `src/main.rs` is a stub ("Hello, world") — vestigial root package, ignore it.
+| Path | What |
+|---|---|
+| `crates/core` | Shared types (`Task`, `When`, `Snapshot`, `ApiError`) |
+| `crates/dates` | Date and time phrases, always in the user's time zone |
+| `crates/judge` | Jev client and the offline `FakeJudge` |
+| `crates/capture` | Ramble to tasks: split clauses, find candidates, ask the judge |
+| `crates/scheduler` | Plans tasks into working hours |
+| `crates/rambl-brain` | The mascot's behaviour; no web code |
+| `server/src/v2` | HTTP API, storage, accounts |
+| `web/` | Leptos page built with trunk |
+| `static/`, old `server/src` routes | v1, being deleted; do not extend |
 
-## Commands
+## Working rules
+
+1. **Own branch, own worktree.** `git worktree add <path> origin/main -b <you>/<topic>`. Never edit the main checkout or commit to `main`.
+2. **Stay in scope.** Touch only the files your task names. If the fix needs another area, stop and ask.
+3. **Idiomatic Rust.** Prefer expressive, idiomatic code: iterators and combinators over index loops, enums and `match` over flags, types that make bad states unrepresentable, small pure functions. Clever is welcome when it makes the code shorter, clearer or easier to extend; it is not when only its author can follow it. Prefer deleting code to adding it, and add no dependency without a reason in the PR.
+4. **Time.** Never read the wall clock or assume UTC outside `core`'s `Clock` and `LocalContext`.
+5. **Secrets.** Never commit `.env`, keys or `data/`. Never print a key.
+
+## Definition of done (run all of it, once, at the end)
+
+Make all your edits first, then run the gate once. Re-running it after every small edit wastes budget and trips the office's loop detector.
 
 ```sh
-make run      # cargo run -p server (the v1 server; reads .env, port 8080)
-make check    # fmt + lint + test — run before pushing
-make fmt      # cargo fmt --all
-make lint     # cargo clippy --workspace --all-targets -- -D warnings
-make test     # cargo test --workspace
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo check -p rambl-web --target wasm32-unknown-unknown   # web code only compiles fully for the browser
+cd web && trunk build --release                              # only if you touched web/
 ```
 
-- **CI (`.github/workflows/ci.yml`) is stricter than the Makefile**: it uses
-  `--all-features` on both clippy and test. Run
-  `cargo clippy --workspace --all-targets --all-features -- -D warnings` and
-  `cargo test --workspace --all-features` before pushing to avoid CI-only failures.
-- Local run scripts (with useful flags):
-  `./run-local.sh --fresh` (in-memory DB, clean demo), `--debug` (fast debug build
-  instead of ~100s `--release`), `--port N`, `--log-capture` (`CAPTURE_DEBUG=1`).
-  `run-local.ps1` is the Windows counterpart.
-- Deploy (Windows): `deploy/build-release.ps1` stages only the server;
-  `deploy/update-server.ps1 -From <staged>` updates the server install keeping its `data/`.
-- The `web/` crate builds with Trunk (`trunk build --release` → `web/dist`); it needs
-  the `wasm32-unknown-unknown` target. Its tests are `wasm_bindgen_test` and run in a
-  browser, not under plain `cargo test`.
+Then verify your pushed branch from a **fresh** checkout, because ignored folders (for example any `data/`) never reach Git:
 
-## Environment / secrets
+```sh
+git worktree add <tmp> origin/<your-branch> && cd <tmp> && cargo test --workspace
+```
 
-- `TYPESAFE_API_KEY` — Jev API key. Server loads `.env` itself (dotenvy).
-  `run-local.sh` also falls back to `jev-api-key.env` in the repo root (untracked,
-  either `TYPESAFE_API_KEY=...` or the bare key). **Never commit a key or print its value.**
-- Without a key, capture falls back to one-task-per-line via `FakeJudge` — everything
-  still works and tests run without network.
-- v1 env vars: `PORT`, `TZ_NAME` (default `America/New_York`), `DATA_PATH`
-  (default `data/ai-todo.db`, `:memory:` for throwaway), `CAPTURE_DEBUG`.
-  The v2 design renames these to `RAMBL_DATA` / `RAMBL_DEFAULT_TZ` — check
-  `server/src/main.rs` for what the current code reads.
+## Test what you changed
 
-## Hard rules (from ARCHITECTURE.md; each prevents a real v1 bug)
+- Add a test for every behaviour you add or fix. A bug fix comes with a test that fails without the fix; check that it does.
+- Test the rule, not the implementation: inputs and outputs, invariants (no two placed tasks overlap, each user sees only their own tasks), golden files for capture.
+- Fixed clocks and seeded randomness only; no network in tests (use `FakeJudge` and fake verifiers).
 
-- **All time goes through `LocalContext { now, tz }`.** Nothing outside
-  `core::clock` may call `Utc::now()` or `.date_naive()` on a UTC value. The
-  user's timezone arrives as the `X-Rambl-TZ` header (IANA name from the browser).
-- **Jev only selects among candidates that code found** — it never generates dates
-  or titles itself. Candidate extraction lives in `crates/dates`; turning a chosen
-  candidate into an instant is pure code.
-- **Every mutating API call returns the full `Snapshot`** (tasks + plan). The client
-  never computes placements; the server is the only planner.
-- **Locks are never held across a call that locks again** — one `App` method per
-  request, load/mutate/re-plan/return inside one critical section.
-- **Imported calendar events are ordinary tasks** (`source: Calendar`,
-  `when: At(start)`, `external_uid` = iCalendar UID). There is no "busy" or grey
-  type; re-import updates by UID instead of duplicating.
-- Every kept bug fix carries a regression test; tests are the definition of done.
+## Review your own diff before reporting
 
-## Testing patterns
+Read `git diff origin/main` top to bottom and check:
 
-- `FakeJudge` (deterministic, picks first candidate) makes capture tests run end to
-  end without network. Live Jev tests are `#[ignore]` and run by hand.
-- Server tests use `MemoryStore` + `FixedClock` + `FakeJudge` via
-  `tower::ServiceExt::oneshot`. A shared check runs on every returned snapshot
-  (placement shown for open tasks, none for done/deleted).
-- `crates/dates` has a phrase table at fixed instants including DST transitions and
-  Sunday 21:00 New York (already Monday in UTC).
-- `RAMBL_SAMPLE_ICS` points at a personal calendar file outside the repo for a local
-  `#[ignore]` test — never commit that sample.
+- [ ] Does exactly what the task asked, nothing extra.
+- [ ] No dead code, debug prints, commented-out blocks or TODOs without an owner.
+- [ ] Names say what things are; comments explain why, not what.
+- [ ] Errors are handled, not unwrapped, on any path a user can reach.
+- [ ] Spec and README updated if behaviour changed.
+- [ ] Anything you were unsure about is listed in your report.
 
-## Conventions
+## Report
 
-- Rust edition 2024, workspace resolver 2. Clippy warnings are errors.
-- Crate naming: the core crate's package name is `todo-core` (dir `crates/core`);
-  the web crate is `rambl-web`.
-- `crates/core` must stay wasm-safe (serde + chrono only — no tokio, no IO).
-- Commits are conventional-style with a scope, e.g. `feat(core): ...`,
-  `fix(capture): ...`, squashed per PR with the PR number appended.
-- Dev machine is Windows; the shell may lack coreutils (`sed`, `head`), so prefer
-  `rg`, and read files with tooling instead of shell pipelines. Scripts and paths
-  must work on both Windows (PowerShell) and Linux (CI, deploy target).
+Open one PR. In your done message give: the PR number and head commit, what changed (short), how you tested it, and anything a reviewer should look at. Say plainly if something failed or was skipped.

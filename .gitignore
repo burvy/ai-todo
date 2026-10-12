@@ -5,4 +5,4 @@
 .worktrees/
 deploy/dist/
 data/
-.aider*
+web/dist/
