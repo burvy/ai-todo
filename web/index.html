@@ -37,10 +37,12 @@
     .week { display: grid; grid-template-columns: repeat(7, 1fr); gap: .25rem; overflow-x: auto; }
     .week-scroll { max-height: 70vh; overflow-y: auto; }
     .week { grid-template-columns: repeat(var(--days), minmax(9rem, 1fr)); }
-    .day { min-width: 7rem; border-left: 1px solid currentColor; padding: .25rem; }
+    .day { position: relative; min-width: 7rem; border-left: 1px solid currentColor; padding: .25rem; }
     .hour { min-height: 4rem; border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
     .hour span { font-size: .75rem; opacity: .7; }
     .placement { border: 1px solid currentColor; border-radius: .25rem; padding: .2rem; }
+    .version { font-size: .8rem; opacity: .7; }
+    .now-line { position: absolute; left: 0; right: 0; border-top: 2px solid #d33; pointer-events: none; }
     @media (max-width: 700px) { main { grid-template-columns: 1fr; } }
   </style>
 </head>

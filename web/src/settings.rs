@@ -78,6 +78,16 @@ pub fn SettingsPanel(
                         }
                     } />
             </label>
+            <p class="version">
+                "Rambl "
+                {env!("CARGO_PKG_VERSION")}
+                " (built "
+                {env!("RAMBL_BUILD_DATE")}
+                ")"
+            </p>
+            <a href="/api/v1/calendar.ics" download="rambl-calendar.ics">
+                "Download calendar (.ics)"
+            </a>
         </details>
     }
 }
