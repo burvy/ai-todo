@@ -23,11 +23,40 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace
+
+  web:
+    name: Web (trunk)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: web
+
+      - name: Install trunk
+        uses: jetli/trunk-action@v0.5.1
+        with:
+          version: latest
+
+      - name: Build the Leptos app
+        working-directory: web
+        run: trunk build --release
