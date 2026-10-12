@@ -128,7 +128,8 @@ pub fn Controller(
             }
         })
     };
-    on_cleanup(move || drop(tick));
+    // The brain lives for the whole page, so the interval is never cancelled.
+    tick.forget();
 
     view! { <span class="brain-speech" aria-live="polite"></span> }
 }
