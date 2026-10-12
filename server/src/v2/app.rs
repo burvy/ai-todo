@@ -156,6 +156,7 @@ impl<S: Store> App<S> {
             priority: draft.priority,
             source: draft.source,
             created: ctx.now,
+            updated_at: ctx.now,
             external_uid: None,
         };
         self.store
@@ -243,6 +244,7 @@ impl<S: Store> App<S> {
                 priority: Priority::Low,
                 source: Source::Calendar,
                 created: ctx.now,
+                updated_at: ctx.now,
                 external_uid: event.uid.clone(),
             };
             order += 1;
@@ -254,7 +256,8 @@ impl<S: Store> App<S> {
         }
         Ok(ImportResult {
             created,
-            updated,
+            updated: updated.clone(),
+            updated_at: updated,
             snapshot: Self::snapshot_of(tasks, &ctx, tz),
         })
     }
@@ -287,6 +290,7 @@ impl<S: Store> App<S> {
                 priority: draft.priority,
                 source: draft.source,
                 created: ctx.now,
+                updated_at: ctx.now,
                 external_uid: None,
             };
             ids.push(task.id.clone());
@@ -438,6 +442,7 @@ pub struct ImportedEvent {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ImportResult {
     pub created: Vec<TaskId>,
+    updated_at: Vec<TaskId>,
     pub updated: Vec<TaskId>,
     pub snapshot: Snapshot,
 }
@@ -506,6 +511,9 @@ mod tests {
     }
 
     impl Store for CountingStore {
+        fn expire_anonymous(&self, _cutoff: DateTime<Utc>) -> Result<(), StoreError> {
+            Ok(())
+        }
         fn tasks(&self, user: &str) -> Result<Vec<Task>, StoreError> {
             self.reads.fetch_add(1, Ordering::SeqCst);
             self.inner.tasks(user)

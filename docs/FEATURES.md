@@ -385,3 +385,19 @@ c. Code: `DEPLOY.md`; `deploy/build-release.ps1`.
 a. Formatting, linting, workspace tests and the web build run in continuous integration.
 b. Not visible; inspect `.github/workflows/ci.yml`.
 c. Code: `.github/workflows/ci.yml`.
+
+## XIV. ANONYMOUS ACCOUNT EXPIRY
+
+### 1. 30-day anonymous account expiry
+	a. Anonymous accounts (plan 'anon', ids anon_<32hex>) are deleted with their tasks after 30 days without a visit.
+	b. Track last_activity_at; cleanup runs in the daily backup/maintenance task after the backup.
+	c. Signed-in accounts are never expired.
+	d. Code: server/src/v2/store.rs (MIGRATION_6, last_activity_at); server/src/v2/backup.rs (expire_stale_anonymous); server/src/v2/auth.rs (Plan::Anon).
+
+## XV. LAST-WRITE-WINS TASK EDITS
+
+### 1. Task edits use updated_at last-write-wins
+	a. A client update carrying an older updated_at than the stored one is rejected with ApiError (code StaleUpdate in crates/core).
+	b. The client keeps the newer server copy; server always wins.
+	c. Migration via PRAGMA user_version (SCHEMA_VERSION 6, MIGRATION_6) safe on existing databases.
+	d. Code: crates/core/src/lib.rs (Task.updated_at, ErrorCode::StaleUpdate); server/src/v2/store.rs (SqliteStore.put last-write-wins check, read_task); server/src/v2/store.rs MIGRATION_6.

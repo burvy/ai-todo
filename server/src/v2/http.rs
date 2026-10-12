@@ -135,6 +135,7 @@ impl IntoResponse for HttpError {
             ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::Conflict => StatusCode::CONFLICT,
+            ErrorCode::StaleUpdate => StatusCode::CONFLICT,
             ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
             // A dependency being down is 503, "come back later"; our own
             // failure is 500. The two are different things to a client, which
@@ -815,6 +816,7 @@ mod tests {
             (ErrorCode::BadRequest, StatusCode::BAD_REQUEST),
             (ErrorCode::NotFound, StatusCode::NOT_FOUND),
             (ErrorCode::Conflict, StatusCode::CONFLICT),
+            (ErrorCode::StaleUpdate, StatusCode::CONFLICT),
             // A dependency is down: come back later.
             (ErrorCode::Unavailable, StatusCode::SERVICE_UNAVAILABLE),
             (ErrorCode::Upstream, StatusCode::BAD_GATEWAY),
@@ -1987,6 +1989,7 @@ mod tests {
                     priority: Priority::Low,
                     source: Source::Text,
                     created: Utc::now(),
+                    updated_at: Utc::now(),
                     external_uid: None,
                 },
             )

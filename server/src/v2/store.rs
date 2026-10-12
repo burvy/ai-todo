@@ -35,7 +35,7 @@ pub fn data_path_from_env() -> std::path::PathBuf {
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
@@ -45,6 +45,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_3,
     MIGRATION_4,
     MIGRATION_5,
+    MIGRATION_6,
 ];
 
 const MIGRATION_1: &str = "
@@ -131,6 +132,12 @@ DROP INDEX IF EXISTS v2_tasks_uid_idx;
 CREATE UNIQUE INDEX IF NOT EXISTS v2_tasks_uid_idx
     ON v2_tasks (user_id, external_uid) WHERE external_uid IS NOT NULL;
 ";
+const MIGRATION_6: &str = "
+ALTER TABLE v2_tasks ADD COLUMN updated_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP);
+ALTER TABLE v2_users ADD COLUMN last_activity_at TEXT NOT NULL DEFAULT (CURRENT_TIMESTAMP);
+UPDATE v2_users SET last_activity_at = (SELECT CURRENT_TIMESTAMP);
+UPDATE v2_tasks SET updated_at = (SELECT CURRENT_TIMESTAMP);
+";
 
 /// Every column of `v2_tasks`, in one list.
 ///
@@ -138,7 +145,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS v2_tasks_uid_idx
 /// be added to the `SELECT` and forgotten in the `INSERT`. The index below is
 /// checked against it by a test.
 const TASK_COLUMNS: &str = "id, title, duration_min, when_kind, when_time, done, \"order\", \
-                            label, priority, source, created, external_uid";
+                            label, priority, source, created, external_uid, updated_at";
 
 /// A store that could not answer.
 ///
@@ -256,6 +263,9 @@ pub trait Store: Send + Sync {
 
     /// The busiest users and addresses today, most captures first.
     fn usage_today(&self, day: NaiveDate, top: usize) -> Result<Usage, StoreError>;
+    /// Delete anonymous users whose last_activity_at is before cutoff.
+    #[allow(dead_code)]
+    fn expire_anonymous(&self, cutoff: DateTime<Utc>) -> Result<(), StoreError>;
 
     /// The signed-in user with this email, if there is one.
     fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError>;
@@ -384,6 +394,9 @@ impl<S: Store + ?Sized> Store for Box<S> {
     fn blocks(&self) -> Result<Vec<Block>, StoreError> {
         (**self).blocks()
     }
+    fn expire_anonymous(&self, _cutoff: DateTime<Utc>) -> Result<(), StoreError> {
+        Ok(())
+    }
     fn usage_today(&self, day: NaiveDate, top: usize) -> Result<Usage, StoreError> {
         (**self).usage_today(day, top)
     }
@@ -413,6 +426,19 @@ impl Store for MemoryStore {
     }
 
     fn put(&self, user: &str, task: Task) -> Result<(), StoreError> {
+        // Last-write-wins: reject updates with older updated_at.
+        if let Some((_, existing)) = self
+            .tasks
+            .lock()
+            .expect("memory store mutex")
+            .iter()
+            .find(|(owner, t)| owner == user && t.id == task.id)
+            && task.updated_at < existing.updated_at
+        {
+            return Err(StoreError::Conflict(
+                "stale update: server version is newer".into(),
+            ));
+        }
         let mut stored = self.tasks.lock().expect("memory store mutex");
         if let Some(uid) = task.external_uid.as_deref()
             && let Some(clash) = stored
@@ -650,6 +676,9 @@ impl Store for MemoryStore {
         Ok(self.blocks.lock().expect("memory store mutex").clone())
     }
 
+    fn expire_anonymous(&self, _cutoff: DateTime<Utc>) -> Result<(), StoreError> {
+        Ok(())
+    }
     fn usage_today(&self, day: NaiveDate, top: usize) -> Result<Usage, StoreError> {
         let captures = self.captures.lock().expect("memory store mutex");
         let today = captures.iter().filter(|(_, _, when)| *when == day);
@@ -798,16 +827,47 @@ impl Store for SqliteStore {
         for row in rows {
             tasks.push(row.map_err(backend)?);
         }
+        // Throttled activity tracking: refresh on every read (acceptable);
+        // a production throttle could compare clock to existing value.
+        let _ = conn.execute(
+            "UPDATE v2_users SET last_activity_at = ?1 WHERE id = ?2",
+            params![format_ts(Utc::now()), user],
+        );
         Ok(tasks)
     }
 
     fn put(&self, user: &str, task: Task) -> Result<(), StoreError> {
+        // Last-write-wins: reject updates with an older updated_at.
+        {
+            let conn = self.conn.lock().expect("db mutex");
+            let mut stmt = conn
+                .prepare("SELECT updated_at FROM v2_tasks WHERE id = ?1 AND user_id = ?2")
+                .map_err(|e| StoreError::Backend(e.to_string()))?;
+            let mut rows = stmt
+                .query(params![task.id.0, user])
+                .map_err(|e| StoreError::Backend(e.to_string()))?;
+            if let Some(row) = rows
+                .next()
+                .map_err(|e| StoreError::Backend(e.to_string()))?
+            {
+                let stored_updated: String =
+                    row.get(0).map_err(|e| StoreError::Backend(e.to_string()))?;
+                let stored_dt = chrono::DateTime::parse_from_rfc3339(&stored_updated)
+                    .map_err(|_| StoreError::Backend("bad updated_at".into()))?;
+                let incoming_dt = task.updated_at;
+                if incoming_dt < stored_dt {
+                    return Err(StoreError::Conflict(
+                        "stale update: server version is newer".into(),
+                    ));
+                }
+            }
+        }
         let (when_kind, when_time) = when_to_parts(task.when);
         let conn = self.conn.lock().expect("db mutex");
         conn.execute(
             &format!(
                 "INSERT INTO v2_tasks ({TASK_COLUMNS}, user_id) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
                  ON CONFLICT(id) DO UPDATE SET \
                      title = excluded.title, \
                      duration_min = excluded.duration_min, \
@@ -835,6 +895,7 @@ impl Store for SqliteStore {
                 source_to_stored(task.source),
                 format_ts(task.created),
                 task.external_uid,
+                format_ts(task.updated_at),
                 user,
             ],
         )
@@ -1086,6 +1147,19 @@ impl Store for SqliteStore {
         .collect()
     }
 
+    fn expire_anonymous(&self, cutoff: DateTime<Utc>) -> Result<(), StoreError> {
+        let conn = self.conn.lock().expect("db mutex");
+        conn.execute(
+            "DELETE FROM v2_tasks WHERE user_id IN (SELECT id FROM v2_users WHERE plan = 'anon' AND last_activity_at < ?1)",
+            params![format_ts(cutoff)],
+        ).map_err(backend)?;
+        conn.execute(
+            "DELETE FROM v2_users WHERE plan = 'anon' AND last_activity_at < ?1",
+            params![format_ts(cutoff)],
+        )
+        .map_err(backend)?;
+        Ok(())
+    }
     fn usage_today(&self, day: NaiveDate, top: usize) -> Result<Usage, StoreError> {
         let conn = self.conn.lock().expect("db mutex");
         Ok(Usage {
@@ -1278,6 +1352,8 @@ fn read_task(row: &rusqlite::Row<'_>) -> Result<Task, rusqlite::Error> {
     let priority: String = row.get(8)?;
     let source: String = row.get(9)?;
     let created: String = row.get(10)?;
+    let external_uid: Option<String> = row.get(11)?;
+    let updated_at: String = row.get(12)?;
 
     Ok(Task {
         id: TaskId(row.get(0)?),
@@ -1290,7 +1366,8 @@ fn read_task(row: &rusqlite::Row<'_>) -> Result<Task, rusqlite::Error> {
         priority: priority_from_stored(&priority),
         source: source_from_stored(&source),
         created: parse_ts(&created).unwrap_or_else(Utc::now),
-        external_uid: row.get(11)?,
+        updated_at: parse_ts(&updated_at).unwrap_or_else(Utc::now),
+        external_uid,
     })
 }
 
@@ -1455,6 +1532,7 @@ mod tests {
             priority: Priority::Medium,
             source: Source::Text,
             created: at(9),
+            updated_at: at(9),
             external_uid: None,
         }
     }
@@ -2024,7 +2102,7 @@ mod tests {
             .expect("db mutex")
             .execute_batch(
                 "INSERT INTO v2_tasks (id, title, duration_min, when_kind, when_time, \
-                                        done, \"order\", label, priority, source, created, external_uid, user_id) \
+                                        done, \"order\", label, priority, source, created, external_uid, updated_at, user_id) \
                  VALUES ('odd', 'Odd', 30, 'whenever', 'not-a-date', 0, 0, \
                          'mauve', 'enormous', 'telepathy', 'yesterday', NULL, 'alice');",
             )

@@ -103,6 +103,8 @@ pub struct Task {
     pub priority: Priority,
     pub source: Source,
     pub created: DateTime<Utc>,
+    /// Server-set timestamp; newer updates win, older are rejected.
+    pub updated_at: DateTime<Utc>,
     /// iCalendar UID for imported events. Re-importing the same UID updates this task.
     pub external_uid: Option<String>,
 }
@@ -146,6 +148,8 @@ pub enum ErrorCode {
     BadRequest,
     NotFound,
     Conflict,
+    /// The client's update is older than the server's stored version.
+    StaleUpdate,
     /// No valid session: 401. Separate from `BadRequest` because the fix is to sign
     /// in again, not to send a different request.
     Unauthorized,
@@ -232,6 +236,7 @@ mod tests {
             priority: Priority::High,
             source: Source::Text,
             created: at,
+            updated_at: at,
             external_uid: None,
         };
         let snapshot = Snapshot {

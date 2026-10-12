@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Local, Utc};
 use rusqlite::Connection;
@@ -52,7 +52,7 @@ impl BackupService {
     fn spawn(service: Arc<Self>) {
         tokio::spawn(async move {
             Self::run_backup(&service).await;
-            let mut interval = time::interval(Duration::from_secs(24 * 60 * 60));
+            let mut interval = time::interval(StdDuration::from_secs(24 * 60 * 60));
             loop {
                 interval.tick().await;
                 Self::run_backup(&service).await;
@@ -109,6 +109,10 @@ fn run_backup_sync(db_path: &Path, now: DateTime<Local>) -> Result<(), String> {
 
     delete_old_backups(&backup_dir, today)?;
 
+    // Delete anonymous accounts (plan 'anon') unused for 30 days.
+    // Signed-in accounts are never expired.
+    expire_stale_anonymous(db_path, now)?;
+
     Ok(())
 }
 
@@ -137,6 +141,31 @@ fn delete_old_backups(backup_dir: &Path, today: chrono::NaiveDate) -> Result<(),
         }
     }
 
+    Ok(())
+}
+
+/// Delete anonymous accounts whose last visit was 30 or more days ago,
+/// and remove their tasks. Signed-in accounts are never expired.
+fn expire_stale_anonymous(db_path: &Path, now: DateTime<Local>) -> Result<(), String> {
+    let conn = Connection::open(db_path).map_err(|e| format!("opening db for cleanup: {e}"))?;
+    let cutoff = (now - chrono::Duration::days(30)).date_naive();
+    let cutoff_str = format!("{}", cutoff);
+    // First delete the anonymous user's tasks, then the user itself.
+    // Ignore missing tables (tests create partial DBs) or missing rows.
+    let _ = conn.execute(
+        "DELETE FROM v2_tasks WHERE user_id IN (SELECT id FROM v2_users WHERE plan = 'anon' AND last_activity_at < ?1)",
+        [&cutoff_str],
+    );
+    let _ = conn.execute(
+        "DELETE FROM v2_users WHERE plan = 'anon' AND last_activity_at < ?1",
+        [&cutoff_str],
+    );
+    let _ = conn
+        .execute(
+            "DELETE FROM v2_users WHERE plan = 'anon' AND last_activity_at < ?1",
+            [&cutoff_str],
+        )
+        .map_err(|e| format!("deleting stale anonymous users: {e}"))?;
     Ok(())
 }
 
