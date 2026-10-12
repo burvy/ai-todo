@@ -5,6 +5,7 @@ use todo_core::{Label, Priority, Source, TaskDraft, TaskId, When};
 use wasm_bindgen::JsCast;
 
 pub mod api;
+pub mod brain;
 pub mod mascot;
 pub mod settings;
 pub mod speech;
@@ -23,6 +24,9 @@ pub fn App() -> impl IntoView {
     let (snapshot, set_snapshot) = signal(api::fixture_snapshot());
     let (view_settings, set_view_settings) = signal(settings::load());
     let (error, set_error) = signal::<Option<String>>(None);
+    let (brain_speech, set_brain_speech) = signal::<Option<String>>(None);
+    let (brain_pose, set_brain_pose) = signal("home".to_owned());
+    let (brain_event, set_brain_event) = signal::<Option<rambl_brain::Event>>(None);
 
     // Load snapshot from API on mount
     Effect::new(move |_| {
@@ -60,6 +64,7 @@ pub fn App() -> impl IntoView {
             <div class="error" aria-live="assertive">{e}</div>
         })}
         <settings::SettingsPanel settings=view_settings set_settings=set_view_settings />
+        <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event set_speech=set_brain_speech set_pose=set_brain_pose />
         <main>
             <ImportIcs set_snapshot set_error />
             <TaskList snapshot set_snapshot set_mascot_state />
@@ -72,6 +77,9 @@ pub fn App() -> impl IntoView {
             set_talking
             snapshot
             set_snapshot
+            brain_speech
+            brain_pose
+            set_brain_event
         />
     }
 }
@@ -183,6 +191,9 @@ fn Mascot(
     set_talking: WriteSignal<bool>,
     snapshot: ReadSignal<Snapshot>,
     set_snapshot: WriteSignal<Snapshot>,
+    brain_speech: ReadSignal<Option<String>>,
+    brain_pose: ReadSignal<String>,
+    set_brain_event: WriteSignal<Option<rambl_brain::Event>>,
 ) -> impl IntoView {
     let (animation, set_animation) = signal("home");
     let start_return = move || {
@@ -211,15 +222,19 @@ fn Mascot(
 
     view! {
         <span
-            class=move || format!("mascot {}", animation.get())
+            class=move || format!("mascot {} {}", animation.get(), brain_pose.get())
             draggable="true"
-            on:dragstart=move |_| set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Grab))
+            on:dragstart=move |_| {
+                set_brain_event.set(Some(rambl_brain::Event::Dragged));
+                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Grab))
+            }
             on:dragend=move |_| {
                 if matches!(state.get_untracked(), mascot::State::Dragging) {
                     start_return();
                 }
             }
             on:pointerdown=move |_| {
+                set_brain_event.set(Some(rambl_brain::Event::Poked));
                 set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Talk));
                 set_talking.set(true);
             }
@@ -227,6 +242,7 @@ fn Mascot(
             <img src="assets/pen.svg" alt="Rambl" />
         </span>
         <span class="mascot-status" aria-live="polite">
+            {move || brain_speech.get().map(|line| view! { <span class="brain-line">{line}</span> })}
             {move || match state.get_untracked() {
                 mascot::State::Asking { ref title, .. } => view! {
                     <span class="ask">

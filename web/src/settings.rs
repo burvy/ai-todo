@@ -1,10 +1,24 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RamblMode {
+    Interactive,
+    Instant,
+    Lobotomized,
+}
+
+impl Default for RamblMode {
+    fn default() -> Self {
+        Self::Interactive
+    }
+}
+
 const DEFAULTS: Settings = Settings {
     start_hour: 0,
     end_hour: 24,
     days: 7,
+    mode: RamblMode::Interactive,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -12,6 +26,8 @@ pub struct Settings {
     pub start_hour: u8,
     pub end_hour: u8,
     pub days: u8,
+    #[serde(default)]
+    pub mode: RamblMode,
 }
 
 impl Default for Settings {
@@ -28,6 +44,7 @@ impl Settings {
             start_hour,
             end_hour,
             days: self.days.clamp(1, 7),
+            mode: self.mode,
         }
     }
 
@@ -77,6 +94,21 @@ pub fn SettingsPanel(
                             update(Settings { days, ..settings.get() });
                         }
                     } />
+            </label>
+            <label>
+                "Rambl mode "
+                <select on:change=move |event| {
+                    let mode = match event_target_value(&event).as_str() {
+                        "instant" => RamblMode::Instant,
+                        "lobotomized" => RamblMode::Lobotomized,
+                        _ => RamblMode::Interactive,
+                    };
+                    update(Settings { mode, ..settings.get() });
+                }>
+                    <option value="interactive" selected=move || settings.get().mode == RamblMode::Interactive>"Interactive"</option>
+                    <option value="instant" selected=move || settings.get().mode == RamblMode::Instant>"Instant"</option>
+                    <option value="lobotomized" selected=move || settings.get().mode == RamblMode::Lobotomized>"Lobotomized"</option>
+                </select>
             </label>
             <p class="version">
                 "Rambl "
@@ -133,6 +165,7 @@ mod tests {
                 start_hour: 99,
                 end_hour: 0,
                 days: 0
+                , mode: RamblMode::Interactive
             }
             .clamped(),
             Settings {
@@ -155,7 +188,8 @@ mod tests {
             Settings {
                 start_hour: 8,
                 end_hour: 24,
-                days: 7
+                days: 7,
+                mode: RamblMode::Interactive
             }
         );
     }
