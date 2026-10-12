@@ -798,6 +798,71 @@ button {
   }
 }
 
+/* ── Rambo pen CSS ── */
+
+.pen-rig {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.pen-rig-pen {
+  position: absolute;
+  width: 30px;
+  height: 52px;
+  left: -15px;
+  top: -26px;
+  transform: translate(var(--pen-x), var(--pen-y));
+}
+
+.pen-rig.is-away.is-caret .pen-rig-pen {
+  transform: translate(var(--pen-x), var(--pen-y)) rotate(34deg) scale(0.78);
+}
+
+.pen-rig.is-away.is-flying .pen-rig-pen {
+  transition: transform var(--dur-slow) ease;
+}
+
+.pen-rig.is-away.is-writing .pen-rig-pen {
+  transform: translate(var(--pen-x), var(--pen-y)) rotate(34deg) scale(0.78);
+}
+
+.mascot-home.away img {
+  visibility: hidden;
+}
+
+.mascot-home {
+  touch-action: none;
+}
+
+.pen-title {
+  max-width: 100%;
+  overflow: hidden;
+  transition: max-width 0.6s linear;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.pen-pending .pen-title {
+  max-width: 0;
+}
+
+.pen-writing .pen-title {
+  max-width: 100%;
+}
+
+.pen-underline {
+  display: none;
+}
+
+.pen-writing .pen-underline {
+  display: inline-block;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -809,6 +874,19 @@ button {
   .mascot-home,
   .mascot {
     animation: none;
+  }
+
+  .pen-rig-pen {
+    transition: none !important;
+  }
+
+  .pen-title {
+    transition: none !important;
+    max-width: 100% !important;
+  }
+
+  .pen-underline {
+    display: none !important;
   }
 }
 .placement { position: absolute; left: 0; right: 0; box-sizing: border-box; border: 1px solid var(--rule); background: var(--paper); }
