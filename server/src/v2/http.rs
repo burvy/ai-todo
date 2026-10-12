@@ -39,11 +39,11 @@ impl IntoResponse for HttpError {
             ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::Conflict => StatusCode::CONFLICT,
-            // A store failure is this server's fault, not the caller's, so it is a 500
-            // rather than the 503 the variant name suggests. `Unavailable` is part
-            // of the frozen wire enum in `todo_core`, so the name stays and only
-            // the status is what we mean here.
-            ErrorCode::Unavailable => StatusCode::INTERNAL_SERVER_ERROR,
+            // A dependency being down is 503, "come back later"; our own
+            // failure is 500. The two are different things to a client, which
+            // is why they are different codes.
+            ErrorCode::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::Upstream => StatusCode::BAD_GATEWAY,
         };
         #[derive(Serialize)]
@@ -328,6 +328,50 @@ mod tests {
     use http_body_util::BodyExt;
     use todo_core::{FixedClock, Source, When};
     use tower::ServiceExt;
+
+    /// Every code maps to the status a client should see, and the body is
+    /// always `{ "error": { code, message } }`. Pinned because the mapping is
+    /// the contract, and `Internal` vs `Unavailable` is exactly the kind of
+    /// pair that gets quietly swapped.
+    #[test]
+    fn every_error_code_maps_to_its_status() {
+        let expected = [
+            (ErrorCode::BadRequest, StatusCode::BAD_REQUEST),
+            (ErrorCode::NotFound, StatusCode::NOT_FOUND),
+            (ErrorCode::Conflict, StatusCode::CONFLICT),
+            // A dependency is down: come back later.
+            (ErrorCode::Unavailable, StatusCode::SERVICE_UNAVAILABLE),
+            (ErrorCode::Upstream, StatusCode::BAD_GATEWAY),
+            // Our own failure.
+            (ErrorCode::Internal, StatusCode::INTERNAL_SERVER_ERROR),
+        ];
+
+        for (code, want) in expected {
+            let response = HttpError(ApiError {
+                code,
+                message: "boom".into(),
+            })
+            .into_response();
+            assert_eq!(response.status(), want, "wrong status for {code:?}");
+        }
+    }
+
+    #[test]
+    fn an_error_body_is_error_code_message() {
+        let response = HttpError(ApiError {
+            code: ErrorCode::Internal,
+            message: "storage is unhappy".into(),
+        })
+        .into_response();
+
+        let bytes =
+            futures::executor::block_on(axum::body::to_bytes(response.into_body(), usize::MAX))
+                .expect("read body");
+        let json: serde_json::Value = serde_json::from_slice(&bytes).expect("body is JSON");
+
+        assert_eq!(json["error"]["code"], "internal");
+        assert_eq!(json["error"]["message"], "storage is unhappy");
+    }
 
     fn router_at(now: chrono::DateTime<Utc>) -> Router {
         super::router(

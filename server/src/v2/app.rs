@@ -64,7 +64,7 @@ impl<S: Store> App<S> {
         let code = match error {
             StoreError::NotFound => ErrorCode::NotFound,
             StoreError::Conflict(_) => ErrorCode::Conflict,
-            StoreError::Backend(_) => ErrorCode::Unavailable,
+            StoreError::Backend(_) => ErrorCode::Internal,
         };
         ApiError {
             code,
