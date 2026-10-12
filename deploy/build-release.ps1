@@ -19,7 +19,8 @@ Copy-Item -Recurse -Force (Join-Path $repoRoot 'static') (Join-Path $stage 'stat
 # Copy to .env (next to server.exe) on the server and fill in the key.
 TYPESAFE_API_KEY=
 PORT=3160
-TZ_NAME=America/New_York
+RAMBL_DATA=data/rambl.db
+RAMBL_DEFAULT_TZ=America/New_York
 '@ | Set-Content -Encoding utf8 (Join-Path $stage '.env.example')
 
 Write-Host "Staged release at $stage"

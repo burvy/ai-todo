@@ -1696,7 +1696,10 @@ fn app(state: AppState) -> Router {
         .with_state(state)
         .layer(CorsLayer::permissive());
     router = router.merge(v2::http::router(
-        v2::app_from_env(),
+        v2::app_from_env().unwrap_or_else(|problem| {
+            eprintln!("{problem}");
+            std::process::exit(1);
+        }),
         judge::AnyJudge::from_env(),
     ));
     if Path::new("static").is_dir() {

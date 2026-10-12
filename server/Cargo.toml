@@ -13,6 +13,7 @@ dotenvy = "0.15"
 futures = "0.3"
 icalendar = "0.17"
 judge = { path = "../crates/judge" }
+reqwest = "0.12"
 todo-core = { path = "../crates/core" }
 scheduler = { path = "../crates/scheduler" }
 serde = { version = "1", features = ["derive"] }
@@ -24,4 +25,5 @@ tower = "0.5"
 
 [dev-dependencies]
 http-body-util = "0.1"
+tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

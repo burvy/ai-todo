@@ -21,6 +21,7 @@ if (-not $env:TYPESAFE_API_KEY -and -not (Test-Path '.env')) {
 }
 
 $env:PORT = "$Port"
+if (-not $env:RAMBL_DEFAULT_TZ) { $env:RAMBL_DEFAULT_TZ = 'America/New_York' }
 if ($Fresh) { $env:DATA_PATH = ':memory:' }
 if ($LogCapture) { $env:CAPTURE_DEBUG = '1' }
 
