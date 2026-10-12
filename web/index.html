@@ -41,6 +41,10 @@
     .hour { min-height: 4rem; border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
     .hour span { font-size: .75rem; opacity: .7; }
     .placement { border: 1px solid currentColor; border-radius: .25rem; padding: .2rem; }
+    .label-filters { display: flex; flex-wrap: wrap; gap: .25rem; margin-bottom: .75rem; }
+    .label-filters button.active { font-weight: 700; outline: 2px solid currentColor; }
+    .task-editor { display: inline-flex; flex-wrap: wrap; gap: .25rem; align-items: center; }
+    .calendar-notice { flex-basis: 100%; margin: 0; font-size: .85rem; }
     .version { font-size: .8rem; opacity: .7; }
     .now-line { position: absolute; left: 0; right: 0; border-top: 2px solid #d33; pointer-events: none; }
     @media (max-width: 700px) { main { grid-template-columns: 1fr; } }
