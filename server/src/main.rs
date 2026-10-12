@@ -188,7 +188,7 @@ fn tasks_from_text_at(text: &str, anchor: DateTime<Utc>) -> Vec<Task> {
         .filter(|line| !line.is_empty())
         .enumerate()
         .map(|(index, line)| {
-            let candidates = find_date_candidates(line, anchor);
+            let candidates = date_candidates_local(line, anchor);
             let deadline = candidates
                 .iter()
                 .find_map(|candidate| parse_deadline(candidate, anchor));
@@ -217,6 +217,15 @@ fn tasks_from_text_at(text: &str, anchor: DateTime<Utc>) -> Vec<Task> {
             }
         })
         .collect()
+}
+
+fn local_anchor_for_judge(anchor: DateTime<Utc>) -> DateTime<Utc> {
+    let local = anchor.with_timezone(&timezone());
+    Utc.from_utc_datetime(&local.naive_local())
+}
+
+fn date_candidates_local(text: &str, anchor: DateTime<Utc>) -> Vec<String> {
+    find_date_candidates(text, local_anchor_for_judge(anchor))
 }
 
 pub fn clean_title(sentence: &str) -> String {
@@ -448,6 +457,9 @@ fn is_assessment(text: &str) -> bool {
 
 fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
     let lower = candidate.to_ascii_lowercase();
+    // Day words are relative to the user's local day, not UTC's (Sunday 9pm EDT
+    // is already Monday in UTC, which made "tomorrow" land on Tuesday).
+    let now = local_anchor_for_judge(now);
     let date = if lower == "today" {
         now.date_naive()
     } else if lower == "tomorrow" {
@@ -506,8 +518,7 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
         let target = index as i64 + 1;
         let mut days = (target - current + 7) % 7;
         if days == 0 {
-            let local_now = now.with_timezone(&timezone());
-            if local_now.time() >= NaiveTime::from_hms_opt(17, 0, 0).unwrap() {
+            if now.time() >= NaiveTime::from_hms_opt(17, 0, 0).unwrap() {
                 days = 7;
             }
         }
@@ -572,7 +583,7 @@ fn explicit_clock(text: &str) -> Option<(u32, u32)> {
 
 fn pinned_start_for(sentence: &str, anchor: DateTime<Utc>) -> Option<DateTime<Utc>> {
     let (hour, minute) = explicit_clock(sentence)?;
-    let date_candidate = find_date_candidates(sentence, anchor)
+    let date_candidate = date_candidates_local(sentence, anchor)
         .into_iter()
         .find(|candidate| parse_deadline(candidate, anchor).is_some())?;
     let date = parse_deadline(&date_candidate, anchor)?
@@ -597,9 +608,10 @@ pub async fn capture_text(text: &str, source: Source, anchor: DateTime<Utc>) -> 
             .collect();
     }
     let results = join_all(sentences.iter().map(|sentence| async move {
-        let candidates = find_date_candidates(sentence, anchor);
+        let candidates = date_candidates_local(sentence, anchor);
         let titles = title_candidates(sentence);
-        understand(sentence, &candidates, &titles, anchor)
+        let local_now = anchor.with_timezone(&timezone()).to_rfc3339();
+        understand(sentence, &candidates, &titles, anchor, &local_now)
             .await
             .map(|judgment| (sentence, candidates, judgment))
     }))
@@ -2016,6 +2028,27 @@ mod tests {
             round_up_quarter(now).to_rfc3339(),
             "2026-10-11T21:15:00+00:00"
         );
+    }
+
+    #[test]
+    fn sunday_evening_eastern_tomorrow_is_monday() {
+        // Sunday 21:03 EDT = Monday 01:03 UTC
+        let anchor = Utc.with_ymd_and_hms(2026, 10, 12, 1, 3, 0).unwrap();
+        let day = |c: &str| {
+            parse_deadline(c, anchor)
+                .unwrap()
+                .with_timezone(&timezone())
+                .date_naive()
+                .to_string()
+        };
+        assert_eq!(day("tomorrow"), "2026-10-12");
+        assert_eq!(day("today"), "2026-10-11");
+        assert_eq!(day("tuesday"), "2026-10-13");
+        assert_eq!(day("wednesday"), "2026-10-14");
+        let pin = pinned_start_for("call mom tomorrow at 3", anchor)
+            .unwrap()
+            .with_timezone(&timezone());
+        assert_eq!(pin.to_rfc3339(), "2026-10-12T15:00:00-04:00");
     }
 
     #[test]

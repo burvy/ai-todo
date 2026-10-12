@@ -164,7 +164,8 @@ pub async fn understand(
     sentence: &str,
     date_candidates: &[String],
     title_candidates: &[String],
-    now: DateTime<Utc>,
+    _now: DateTime<Utc>,
+    local_now: &str,
 ) -> Result<Judgment> {
     let key = std::env::var("TYPESAFE_API_KEY").context("TYPESAFE_API_KEY is not set")?;
     let questions = json!({
@@ -203,7 +204,7 @@ pub async fn understand(
         state: State {
             transcript: sentence,
             parsed_date_candidates: date_candidates,
-            now: now.to_rfc3339(),
+            now: local_now.to_owned(),
         },
         model: "jev-latest",
         questions,
@@ -1001,8 +1002,14 @@ Late work loses 10 percent per day unless an extension is arranged in advance."#
     #[tokio::test]
     #[ignore = "requires TYPESAFE_API_KEY and network access"]
     async fn live_jev_request() {
-        let _ = understand("File taxes by Friday", &[], &[], Utc::now())
-            .await
-            .unwrap();
+        let _ = understand(
+            "File taxes by Friday",
+            &[],
+            &[],
+            Utc::now(),
+            "2026-10-11T20:00:00-04:00",
+        )
+        .await
+        .unwrap();
     }
 }
