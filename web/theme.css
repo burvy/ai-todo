@@ -1,0 +1,791 @@
+/* Rambl's parchment theme: aged paper, ink, calm and readable.
+   MOBILE FIRST: the base rules are written for a 360px phone; the wide layout starts
+   at @media (min-width: 701px). Layout behaviour (panes, scroll-snap, 64px hour rows)
+   comes from Ryan's PR #135 and is kept as it is; colours, fonts, spacing, paper and
+   ruled lines are decided here. Design spec: docs/THEME.md. */
+
+:root {
+  color-scheme: light;
+
+  /* Palette, light: parchment and iron-gall ink. */
+  --paper: #f2e6cd;
+  --paper-raised: #f8efdb;
+  --paper-sunken: #eadcc0;
+  --ink: #2b2318;
+  --ink-soft: #5f5138;
+  /* 5.3:1 on --paper-raised, so 12px meta text passes WCAG AA. */
+  --ink-faint: #6f6248;
+  --rule: #c9b58c;
+  --accent: #8a4b1f;
+  --danger: #a5342a;
+  --now: #b03a2a;
+  --wash: rgba(138, 75, 31, 0.12);
+  --shadow: 0 1px 2px rgba(43, 35, 24, 0.18);
+  --backdrop: rgba(43, 35, 24, 0.35);
+
+  /* Type: system stacks only. */
+  --font-heading: Georgia, "Iowan Old Style", "Times New Roman", serif;
+  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Task titles, in the human's hand. System handwriting fonts only, no downloads. */
+  --font-hand: "Segoe Print", "Bradley Hand", "Comic Sans MS", "Chalkboard SE",
+    "Marker Felt", cursive;
+  --text-xs: 0.75rem;
+  --text-sm: 0.85rem;
+  --text-base: 1rem;
+  --text-lg: 1.15rem;
+  --text-xl: 1.4rem;
+  --text-2xl: 1.75rem;
+
+  /* Spacing and shape. */
+  --gutter: 1rem;
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-round: 50%;
+
+  /* Touch: every tappable control is at least this tall. */
+  --tap: 2.75rem;
+
+  /* One hour of the week planner, in CSS pixels. week.rs places the now-line
+     with the same number, so change both together. */
+  --hour-h: 64px;
+
+  /* The torn edge strip under the masthead (assets/theme/edge.svg). */
+  --edge-h: 24px;
+
+  /* Motion. */
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 450ms;
+  --ease: ease;
+
+  /* Paper texture (web/assets/theme/; the flat colours carry the page if one is missing). */
+  --texture-paper: url("assets/theme/paper.svg");
+  --texture-edge: url("assets/theme/edge.svg");
+  --texture-stain: url("assets/theme/stain.svg");
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    /* Palette, dark: the same paper, aged and lamp-lit. */
+    --paper: #1e1811;
+    --paper-raised: #272016;
+    --paper-sunken: #171209;
+    --ink: #e9dcc0;
+    --ink-soft: #c3b294;
+    --ink-faint: #9a8a6d;
+    --rule: #453a2a;
+    --accent: #d9a45c;
+    --danger: #e0705f;
+    --now: #d96a4f;
+    --wash: rgba(217, 164, 92, 0.16);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+    --backdrop: rgba(10, 8, 5, 0.55);
+    --texture-paper: url("assets/theme/paper-dark.svg");
+  }
+
+  /* The placeholder edge is drawn pale for light paper; darken it here so it
+     reads as a torn edge on a dark sheet instead of a bright strip. */
+  header::before {
+    filter: brightness(0.42) saturate(0.7);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--gutter);
+  /* Room for the fixed capture bar, plus the phone's home-indicator inset. */
+  padding-bottom: calc(var(--tap) + var(--space-4) + var(--space-2) + env(safe-area-inset-bottom, 0px));
+  color: var(--ink);
+  font: var(--text-base) / 1.5 var(--font-body);
+  background-color: var(--paper);
+  background-image: var(--texture-paper);
+  background-repeat: repeat;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+h1 {
+  margin: 0;
+  font-size: var(--text-2xl);
+}
+
+h2 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-xl);
+}
+
+h3 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+/* --- Masthead --- */
+
+header {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  /* The torn edge is as tall as --edge-h: keep the text clear of it (top and
+     bottom padding >= the edge, so the strip never runs through the h1). */
+  padding-top: var(--space-3);
+  padding-bottom: calc(var(--edge-h) + var(--space-2));
+  border-bottom: 1px solid var(--rule);
+  background-color: var(--paper-raised);
+}
+
+/* The torn edge: a strip along the bottom of the masthead, on its own layer so
+   the dark mode can tint it without touching the text. */
+header::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--edge-h);
+  background: var(--texture-edge) repeat-x left bottom / auto var(--edge-h);
+  pointer-events: none;
+}
+
+/* A faint stain in the corner of the masthead, clipped to the header. */
+header::after {
+  content: "";
+  position: absolute;
+  top: -140px;
+  right: -70px;
+  width: 256px;
+  height: 256px;
+  background: var(--texture-stain) center / contain no-repeat;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* --- Layout: the two panes sit side by side in a scroll-snap row on a phone --- */
+
+main {
+  position: relative;
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  align-items: start;
+}
+
+main::-webkit-scrollbar {
+  display: none;
+}
+
+main > * {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  min-width: 0;
+}
+
+.tasks-pane {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.pane-switch {
+  display: flex;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+
+/* The tabs are targets in their own right, 44x44. */
+.pane-switch button {
+  min-width: var(--tap);
+  min-height: var(--tap);
+}
+
+.pane-switch button.active {
+  font-weight: 700;
+  color: var(--accent);
+  background-color: var(--wash);
+  outline: 2px solid var(--accent);
+}
+
+section {
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  background-color: var(--paper-raised);
+  box-shadow: var(--shadow);
+}
+
+/* --- Controls: 44px targets, 16px text (inputs never zoom) --- */
+
+button,
+input,
+select {
+  min-height: var(--tap);
+  padding: var(--space-2);
+  color: var(--ink);
+  font: inherit;
+  background-color: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+}
+
+/* Checkboxes and radios stay small (1.25rem): their 44px hit area comes from
+   the row or the label they sit in, not from the control itself. */
+input[type="checkbox"],
+input[type="radio"] {
+  width: 1.25rem;
+  height: 1.25rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  background-color: var(--paper);
+  accent-color: var(--accent);
+}
+
+button {
+  cursor: pointer;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Task rows only: scoped so it never styles some other list. */
+.task-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.task-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  min-height: var(--tap);
+  padding: var(--space-1) 0;
+  border-bottom: 1px dashed var(--rule);
+}
+
+.task-list li:last-child {
+  border-bottom: none;
+}
+
+/* --- Capture box: a fixed bar at the bottom edge, under the thumb --- */
+
+.capture {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--gutter);
+  padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+  background-color: var(--paper-raised);
+  background-image: var(--texture-paper);
+  border-top: 1px solid var(--rule);
+  box-shadow: var(--shadow);
+}
+
+.capture input {
+  flex: 1;
+  min-width: 0;
+}
+
+.mic {
+  min-width: var(--tap);
+  white-space: nowrap;
+}
+
+.mic.listening {
+  color: var(--accent);
+  background-color: var(--wash);
+  border-color: var(--accent);
+}
+
+/* Rambo */
+.mascot-home {
+  flex: none;
+  width: var(--tap);
+  height: var(--tap);
+  padding: var(--space-1);
+  background-color: var(--paper-sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-round);
+}
+
+.mascot-home img {
+  width: 100%;
+  height: 100%;
+}
+
+.mascot {
+  display: inline-flex;
+  width: var(--tap);
+  height: var(--tap);
+  padding: var(--space-1);
+  background-color: var(--paper-sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-round);
+  cursor: grab;
+}
+
+.mascot img {
+  width: 100%;
+  height: 100%;
+}
+
+.mascot:active {
+  cursor: grabbing;
+}
+
+.mascot-status {
+  display: block;
+  min-height: 1.2em;
+  font-size: var(--text-sm);
+}
+
+.brain-line,
+.talking {
+  font-family: var(--font-heading);
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+.ask {
+  position: absolute;
+  z-index: 4;
+  left: var(--gutter);
+  right: var(--gutter);
+  max-width: 24rem;
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  font-family: var(--font-heading);
+  font-style: italic;
+  background-color: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+}
+
+.ask button {
+  margin: var(--space-1);
+}
+
+/* --- Week planner: days scroll inside their own box, never the page --- */
+
+.week {
+  display: grid;
+  gap: var(--space-1);
+  overflow-x: auto;
+  grid-template-columns: repeat(var(--days, 7), minmax(8rem, 1fr));
+}
+
+.week-scroll {
+  max-height: 65vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
+}
+
+.day {
+  position: relative;
+  min-width: 7rem;
+  padding: var(--space-1);
+  border-left: 1px solid var(--rule);
+}
+
+.hours {
+  position: relative;
+}
+
+.hour {
+  height: var(--hour-h);
+  border-top: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+}
+
+.hour span {
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+.placement {
+  padding: var(--space-1);
+  background-color: var(--wash);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+}
+
+.now-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-top: 2px solid var(--now);
+  pointer-events: none;
+}
+
+/* --- Task list --- */
+
+.label-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+}
+
+.label-filters button {
+  min-width: var(--tap);
+}
+
+.label-filters button.active,
+.duration-chips button.active {
+  font-weight: 700;
+  color: var(--accent);
+  background-color: var(--wash);
+  outline: 2px solid var(--accent);
+}
+
+/* One text run: block layout, not flex, so the space in
+   "Finish history paper — 60 min" survives between the inline children. */
+.task-open {
+  display: block;
+  flex: 1 1 auto;
+  padding: var(--space-2) 0;
+  cursor: pointer;
+}
+
+/* The title in the human's own hand (system handwriting stack, no downloads). */
+.task-open > strong {
+  font-family: var(--font-hand);
+  font-weight: 500;
+}
+
+.task-time {
+  color: var(--ink-soft);
+  font-size: var(--text-sm);
+}
+
+.overdue {
+  margin-left: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--danger);
+}
+
+.delete {
+  min-width: var(--tap);
+  min-height: var(--tap);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--danger);
+}
+
+.task-editor {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+/* Fixed and centred (behaviour from #135); here it also fits a phone:
+   never wider than the screen, scrollable inside itself. */
+.task-dialog {
+  box-sizing: border-box;
+  max-width: calc(100vw - 2rem);
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  width: min(32rem, calc(100vw - 2 * var(--gutter)));
+  max-height: calc(100dvh - 2 * var(--gutter));
+  overflow-y: auto;
+  padding: var(--space-4);
+  color: var(--ink);
+  background-color: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+}
+
+.task-dialog::backdrop {
+  background-color: var(--backdrop);
+}
+
+.task-dialog form {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.task-dialog fieldset {
+  display: grid;
+  gap: var(--space-1);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-sm);
+}
+
+/* Radio rows: 44px tall with the control beside its text, so labels such as
+   "Scheduled at" never wrap under a 44px circle. */
+.task-dialog fieldset label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+}
+
+.duration-chips,
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.dialog-task-title {
+  margin: 0;
+  font-family: var(--font-hand);
+  font-style: normal;
+  color: var(--ink-soft);
+}
+
+.calendar-notice {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--ink-faint);
+}
+
+/* --- Settings, account and notices --- */
+
+.settings {
+  margin-bottom: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  background-color: var(--paper-raised);
+}
+
+.settings summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
+  cursor: pointer;
+  font-family: var(--font-heading);
+}
+
+.settings label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  font-size: var(--text-sm);
+}
+
+.settings input,
+.settings select {
+  max-width: 10rem;
+}
+
+.settings a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
+}
+
+.account {
+  margin-top: var(--space-2);
+}
+
+.account-user,
+.account-link {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+
+.account-link {
+  margin-bottom: var(--space-2);
+}
+
+.error {
+  margin: var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  color: var(--danger);
+  background-color: var(--paper-raised);
+  border: 1px solid var(--danger);
+  border-left-width: 4px;
+  border-radius: var(--radius-sm);
+}
+
+.import {
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+
+.version {
+  margin-bottom: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-faint);
+}
+
+/* --- Wide screens: two panes, capture in the masthead --- */
+
+@media (min-width: 701px) {
+  body {
+    padding-bottom: var(--gutter);
+  }
+
+  main {
+    grid-auto-flow: row;
+    grid-auto-columns: none;
+    grid-template-columns: minmax(16rem, 1fr) minmax(24rem, 2fr);
+    overflow: visible;
+    scroll-snap-type: none;
+  }
+
+  main > * {
+    scroll-snap-align: none;
+    scroll-snap-stop: normal;
+  }
+
+  .pane-switch {
+    display: none;
+  }
+
+  .capture {
+    position: static;
+    padding: 0;
+    background-color: transparent;
+    background-image: none;
+    border-top: none;
+    box-shadow: none;
+  }
+
+  .week {
+    grid-template-columns: repeat(var(--days, 7), minmax(9rem, 1fr));
+  }
+
+  .week-scroll {
+    max-height: 70vh;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  main {
+    scroll-behavior: smooth;
+  }
+
+  button,
+  input,
+  select {
+    transition:
+      background-color var(--dur) var(--ease),
+      border-color var(--dur) var(--ease),
+      color var(--dur) var(--ease);
+  }
+
+  .mascot-home {
+    transition: transform var(--dur) var(--ease);
+  }
+
+  .mascot-home:active {
+    transform: translateY(1rem) rotate(8deg);
+  }
+
+  .mascot {
+    animation: mascot-home 0.35s ease-in-out;
+  }
+
+  .mascot.falling {
+    animation: mascot-fall var(--dur-slow) ease-in forwards;
+  }
+
+  .mascot.returning {
+    animation: mascot-return var(--dur-slow) ease-out forwards;
+  }
+
+  .mic.listening {
+    animation: mic-pulse 1.2s ease-in-out infinite;
+  }
+
+  @keyframes mascot-home {
+    from {
+      transform: translateY(2rem);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes mascot-fall {
+    from {
+      transform: translateY(0);
+    }
+    to {
+      transform: translateY(60vh) rotate(12deg);
+    }
+  }
+
+  @keyframes mascot-return {
+    from {
+      transform: translateY(60vh) rotate(12deg);
+    }
+    to {
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes mic-pulse {
+    50% {
+      box-shadow: 0 0 0 4px var(--wash);
+    }
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none;
+    transition: none;
+  }
+
+  .mascot-home,
+  .mascot {
+    animation: none;
+  }
+}
