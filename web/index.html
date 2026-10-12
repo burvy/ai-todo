@@ -35,8 +35,11 @@
       .mascot { animation: none; }
     }
     .week { display: grid; grid-template-columns: repeat(7, 1fr); gap: .25rem; overflow-x: auto; }
+    .week-scroll { max-height: 70vh; overflow-y: auto; }
+    .week { grid-template-columns: repeat(var(--days), minmax(9rem, 1fr)); }
     .day { min-width: 7rem; border-left: 1px solid currentColor; padding: .25rem; }
-    .hour { min-height: 2rem; border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
+    .hour { min-height: 4rem; border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
+    .hour span { font-size: .75rem; opacity: .7; }
     .placement { border: 1px solid currentColor; border-radius: .25rem; padding: .2rem; }
     @media (max-width: 700px) { main { grid-template-columns: 1fr; } }
   </style>
