@@ -527,4 +527,94 @@ mod tests {
         let busy = parse_ics(WEEK).expect("the demo fixture parses");
         assert_eq!(busy.len(), 9);
     }
+
+    // ---- additional ics import tests (oscar/ics-tests branch) --------
+
+    #[test]
+    fn tzid_zone_vs_utc_z_in_same_calendar() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:UTC lab",
+            "DTSTART:20261012T140000Z",
+            "DTEND:20261012T150000Z",
+            "END:VEVENT",
+            "BEGIN:VEVENT",
+            "SUMMARY:NY lecture",
+            "DTSTART;TZID=America/New_York:20261012T100000",
+            "DTEND;TZID=America/New_York:20261012T111500",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("both parse");
+        assert_eq!(busy.len(), 2);
+        assert!(busy.iter().any(|b| b.title == "NY lecture"));
+        assert!(busy.iter().any(|b| b.title == "UTC lab"));
+    }
+
+    #[test]
+    fn all_day_event_spans_two_dates() {
+        let ics = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nSUMMARY:Reading week\nDTSTART;VALUE=DATE:20261013\nDTEND;VALUE=DATE:20261015\nEND:VEVENT\nEND:VCALENDAR\n";
+        let busy = parse_ics(ics).expect("parses");
+        assert_eq!(busy.len(), 1);
+        assert_eq!(busy[0].start.to_rfc3339(), "2026-10-13T00:00:00+00:00");
+        assert_eq!(busy[0].end.to_rfc3339(), "2026-10-15T00:00:00+00:00");
+    }
+
+    #[test]
+    fn event_crossing_midnight_keeps_length() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Overnight shift",
+            "DTSTART;TZID=America/New_York:20261012T220000",
+            "DTEND;TZID=America/New_York:20261013T060000",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("parses");
+        assert_eq!(busy.len(), 1);
+        assert_eq!(busy[0].start.to_rfc3339(), "2026-10-13T02:00:00+00:00");
+        assert_eq!((busy[0].end - busy[0].start).num_hours(), 8);
+    }
+
+    #[test]
+    fn cancelled_event_with_rrule_is_excluded() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Cancelled lecture",
+            "STATUS:CANCELLED",
+            "DTSTART;TZID=America/New_York:20261013T090000",
+            "DTEND;TZID=America/New_York:20261013T101500",
+            "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215T035959Z",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("parses");
+        assert!(busy.is_empty(), "cancelled event must not appear");
+    }
+
+    #[test]
+    fn malformed_text_returns_clear_error_never_panic() {
+        let result = parse_ics("this is not a calendar");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.0.contains("iCalendar") || err.0.contains("not a calendar"),
+            "error message should say it is not an iCalendar file: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn weekly_rrule_appears_once_first_occurrence() {
+        // Current behaviour (recorded): we do NOT expand RRULE recurrences.
+        // The first instance is returned; expansion is planned, not done.
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Weekly class",
+            "DTSTART;TZID=America/New_York:20261013T090000",
+            "DTEND;TZID=America/New_York:20261013T101500",
+            "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215T035959Z",
+            "END:VEVENT",
+        ]);
+        let busy = parse_ics(&text).expect("parses");
+        assert_eq!(busy.len(), 1, "RRULE not expanded: only first instance");
+        assert_eq!(busy[0].start.to_rfc3339(), "2026-10-13T13:00:00+00:00");
+    }
 }

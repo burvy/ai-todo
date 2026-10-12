@@ -2154,13 +2154,29 @@ mod tests {
         store.put(USER, moved).unwrap();
 
         assert_eq!(
-            store.tasks(USER).unwrap().len(),
-            1,
-            "a re-import must update, not duplicate"
-        );
-        assert_eq!(
             store.find_by_uid(USER, "evt-1").unwrap().unwrap().when,
             When::At(at(17))
+        );
+    }
+
+    #[test]
+    fn re_importing_same_uid_updates_not_duplicates() {
+        let store = MemoryStore::new();
+        let mut first = task("first", 0);
+        first.external_uid = Some("re-uid".into());
+        store.put(USER, first).unwrap();
+        let existing = store.find_by_uid(USER, "re-uid").unwrap().expect("found");
+        let mut updated = existing.clone();
+        updated.title = "updated".into();
+        store.put(USER, updated).unwrap();
+        assert_eq!(
+            store.tasks(USER).unwrap().len(),
+            1,
+            "re-import must not duplicate"
+        );
+        assert_eq!(
+            store.find_by_uid(USER, "re-uid").unwrap().unwrap().title,
+            "updated"
         );
     }
 
