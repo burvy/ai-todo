@@ -44,6 +44,7 @@ pub enum When { Anytime, DueBy(DateTime<Utc>), At(DateTime<Utc>) } // At = fixed
 
 pub struct Task { id: TaskId, title: String, duration_min: u16, when: When, done: bool,
                   order: i64, label: Label, priority: Priority, source: Source, created: DateTime<Utc>,
+                  updated_at: DateTime<Utc>, due_tz: Option<String>,
                   external_uid: Option<String> }   // iCalendar UID for imported events
 
 pub struct TaskDraft { title, duration_min, when, label, priority, source }      // no id
@@ -54,6 +55,12 @@ pub struct ApiError { code: ErrorCode, message: String }
 ```
 
 `When::At` always places at that instant; `DueBy` places before it; `Anytime` places in the first free slot. One task has at most one placement in v2 (no splitting).
+
+### 4.1 Task order and time semantics
+
+New tasks receive the highest position in the list, so the list is newest first. The scheduler still fills time in list order; a deadline takes precedence over list position. `When::At` is an absolute instant, like a calendar event. `When::DueBy` stores the user's time zone at capture time as part of the due date, so the intended local deadline is preserved if the user later travels.
+
+An unfinished task past its `DueBy` remains in the list marked **Overdue**. The scheduler places it in the next free slot, and Rambl teases the user about it.
 
 ## 5. Capture pipeline (`crates/capture`)
 
@@ -69,6 +76,8 @@ Without a Jev key, `FakeJudge`'s deterministic rules pick the first candidate. T
 All JSON. Every request carries the header `X-Rambl-TZ: America/New_York` (from `Intl.DateTimeFormat().resolvedOptions().timeZone`). Every mutating call returns the full `Snapshot`. Errors are `{ "error": { "code", "message" } }` with a fitting status.
 
 **Accounts.** Rambl is multi-user. Every request except sign-in carries `Authorization: Bearer <session token>`. The token names a row in `v2_sessions`; the row names the user; **every task read and write is scoped to that user, in the store, not in the handler** — `Store` methods take the user id, so a handler cannot forget it. A missing, unknown or expired token is a 401 before the handler runs. With `GOOGLE_CLIENT_ID` unset the server is in local mode: one fixed local user, no sign-in.
+
+Anonymous users do not sign in. Their account and tasks are deleted after 30 days without a visit; Rambl nudges them to sign in before then to keep their tasks.
 
 | Method and path | Body | Returns |
 |---|---|---|
@@ -88,6 +97,10 @@ All JSON. Every request carries the header `X-Rambl-TZ: America/New_York` (from 
 
 The server is the only planner: the client never computes placements.
 
+### 6.1 Concurrent writes
+
+Task edits use an `updated_at` field and last-write-wins per task. A reorder conflict is handled by re-sending the full order, rather than merging partial positions.
+
 ### Configuration
 
 | Variable | Default | Meaning |
@@ -104,6 +117,10 @@ The server is the only planner: the client never computes placements.
 - `App { store, judge, clock }`: one method per endpoint, each taking the user id. It loads once, mutates and returns the snapshot built from that same list inside one critical section, so a snapshot is never half-updated and a write is never read back twice.
 - Handlers only parse input, build the `LocalContext` from the header and `clock`, call `App`, and map errors.
 - Config from env: `TYPESAFE_API_KEY`, `PORT`, `RAMBL_DATA` (db path), `RAMBL_DEFAULT_TZ` (when the header is missing).
+
+### 7.1 Recurrence (later)
+
+Recurrence is design-only for now. A series stores weekly-on-these-days, an until-date, and exceptions. The scheduler expands occurrences; imported iCalendar `RRULE`s map to the same model.
 
 ## 8. Web (`web/`, Leptos CSR)
 
@@ -142,3 +159,10 @@ The pen character (`art/illustrations/pen.svg`) is named **Rambl**. He lives in 
 | 4 | delete `static/`, old routes and dead code; final docs pass (done: v1 server, `judge::v1`, `core::v1` and the legacy `scheduler::schedule` are gone; the v2 app plans with `scheduler::plan`) | phase 3 |
 
 Other docs: `README.md` (run and deploy), `docs/jev.md` (Jev API notes).
+
+## Later
+
+- Paid tier with a larger Jev allowance (users already have a `plan` field).
+- Ads to cover Jev.
+- Rambl as an installable app.
+- Redesign animations, sounds and textures with a parchment look; the current stripped-down presentation is intermediate, not final.
