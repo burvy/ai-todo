@@ -42,7 +42,7 @@ case "$port" in
     ''|*[!0-9]*) die "--port must be a number, got '$port'" 2 ;;
 esac
 
-# Run from wherever the script lives, so data/ and static/ resolve.
+# Run from wherever the script lives, so data/ resolves.
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # A stale server from an earlier run is the usual reason the next one dies

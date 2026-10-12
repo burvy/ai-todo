@@ -8,11 +8,11 @@ use std::sync::Arc;
 use capture::Revision;
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
 use chrono_tz::Tz;
-use scheduler::{BusyBlock, ScheduledPlacement, WorkingHours};
+use scheduler::WorkingHours;
 use serde::Serialize;
 use todo_core::{
-    ApiError, Clock, ErrorCode, Label, LocalContext, Placement, Plan, Priority, Snapshot, Source,
-    Task, TaskDraft, TaskId, When,
+    ApiError, Clock, ErrorCode, Label, LocalContext, Plan, Priority, Snapshot, Source, Task,
+    TaskDraft, TaskId, When,
 };
 
 use super::store::{Store, StoreError};
@@ -475,82 +475,10 @@ fn check_duration(minutes: u16) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn priority_level(priority: Priority) -> i32 {
-    match priority {
-        Priority::Low => 0,
-        Priority::Medium => 1,
-        Priority::High => 2,
-        Priority::Critical => 3,
-    }
-}
-
-/// Where each open task goes. Pinned (`At`) tasks sit exactly where they are and
-/// block time. Floating tasks are placed by the scheduler in the free time around them.
-/// A floating task that needs more than one block is left unplaced, since v2 keeps one
-/// placement per task.
+/// Where each open task goes: the scheduler fits floating tasks into the working
+/// time around pinned (`At`) tasks, which stay exactly where they are.
 pub fn plan(tasks: &[Task], ctx: &LocalContext) -> Plan {
-    let open: Vec<&Task> = tasks.iter().filter(|task| !task.done).collect();
-    let mut placements = Vec::new();
-    let mut unplaced = Vec::new();
-    let mut busy = Vec::new();
-
-    for task in &open {
-        if let When::At(start) = task.when {
-            let end = start + Duration::minutes(i64::from(task.duration_min));
-            busy.push(BusyBlock { start, end });
-            placements.push(Placement {
-                task: task.id.clone(),
-                start,
-                end,
-            });
-        }
-    }
-
-    let floating: Vec<scheduler::Task> = open
-        .iter()
-        .filter(|task| !matches!(task.when, When::At(_)))
-        .map(|task| scheduler::Task {
-            id: task.id.0.clone(),
-            title: task.title.clone(),
-            duration_minutes: i64::from(task.duration_min),
-            deadline: match task.when {
-                When::DueBy(due) => Some(due),
-                _ => None,
-            },
-            priority: priority_level(task.priority),
-            position: task.order,
-            pinned_start: None,
-        })
-        .collect();
-
-    let mut chunks: HashMap<String, Vec<ScheduledPlacement>> = HashMap::new();
-    for placed in scheduler::schedule(&floating, &busy, &working_hours(ctx.tz), ctx.now) {
-        match placed {
-            scheduler::Placement::Scheduled(chunk) => {
-                chunks.entry(chunk.task_id.clone()).or_default().push(chunk);
-            }
-            scheduler::Placement::Unschedulable { task_id, .. } => {
-                unplaced.push(TaskId(task_id));
-            }
-        }
-    }
-    for (id, parts) in chunks {
-        match parts.as_slice() {
-            [only] => placements.push(Placement {
-                task: TaskId(id),
-                start: only.start,
-                end: only.end,
-            }),
-            _ => unplaced.push(TaskId(id)),
-        }
-    }
-
-    placements.sort_by(|a, b| a.start.cmp(&b.start).then(a.task.0.cmp(&b.task.0)));
-    unplaced.sort_by(|a, b| a.0.cmp(&b.0));
-    Plan {
-        placements,
-        unplaced,
-    }
+    scheduler::plan(tasks, &working_hours(ctx.tz), ctx)
 }
 
 #[cfg(test)]

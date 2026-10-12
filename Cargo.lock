@@ -1363,7 +1363,6 @@ dependencies = [
  "anyhow",
  "chrono",
  "futures",
- "regex",
  "reqwest",
  "serde",
  "serde_json",

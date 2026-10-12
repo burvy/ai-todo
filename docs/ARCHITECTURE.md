@@ -1,6 +1,6 @@
 # Rambl architecture (v2)
 
-The one design document. The hackathon build (v1: `static/` front end, `server/src/main.rs`) grew fast and broke in ways a design should prevent. v2 is a rewrite toward a small, testable base. Where code disagrees with this file, this file wins; change the file first.
+The one design document. The hackathon build (v1: `static/` front end, `server/src/main.rs`, now deleted) grew fast and broke in ways a design should prevent. v2 is a rewrite toward a small, testable base. Where code disagrees with this file, this file wins; change the file first.
 
 ## 1. What Rambl does
 
@@ -139,6 +139,6 @@ The pen character (`art/illustrations/pen.svg`) is named **Rambl**. He lives in 
 | 1 | `web` scaffold rendering a fixture `Snapshot` | core types |
 | 2 | `server` v1: Store, App, handlers, HTTP tests | phase 1 crates |
 | 3 | `web` wired to API v1, mic, reorder; deploy scripts build `web/dist` | phase 2 |
-| 4 | delete `static/`, old routes and dead code; final docs pass | phase 3 |
+| 4 | delete `static/`, old routes and dead code; final docs pass (done: v1 server, `judge::v1`, `core::v1` and the legacy `scheduler::schedule` are gone; the v2 app plans with `scheduler::plan`) | phase 3 |
 
 Other docs: `README.md` (run and deploy), `docs/jev.md` (Jev API notes).
