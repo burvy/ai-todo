@@ -9,7 +9,7 @@ lines = "Right, that's on the list.|Got it.|New one.|Okay, that one's in.|Adding
 lines = "There it is.|One down.|Good.|Nice.|That's better.|Ha, done.|Off the list it goes."
 
 [lines.task_overdue]
-lines = "That's late now, isn't it.|It slipped.|Running behind on that one.|We let that one go."
+lines = "That's late now, isn't it.|It slipped.|Running behind on that one.|We let that one go.|I tried to warn you.|That deadline came and went.|You're ghosting this one.|It's been calling for you.|Right, we'll catch up with it.|Don't worry, it's still on the list."
 
 [lines.list_empty]
 lines = "Nothing left. Enjoy it while it lasts.|All clear.|Empty list.|You've earned a minute."
