@@ -13,7 +13,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use todo_core::{Label, Priority, Source, Task, TaskId, When};
 
@@ -28,14 +28,26 @@ fn parse_plan(value: &str) -> super::auth::Plan {
 /// Where the v2 database lives when `RAMBL_DATA` is not set.
 pub const DEFAULT_DATA_PATH: &str = "data/rambl.db";
 
+/// The database file named by `RAMBL_DATA`, or [`DEFAULT_DATA_PATH`].
+pub fn data_path_from_env() -> std::path::PathBuf {
+    std::env::var("RAMBL_DATA")
+        .map_or_else(|_| std::path::PathBuf::from(DEFAULT_DATA_PATH), Into::into)
+}
+
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 5;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
-const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3];
+const MIGRATIONS: &[&str] = &[
+    MIGRATION_1,
+    MIGRATION_2,
+    MIGRATION_3,
+    MIGRATION_4,
+    MIGRATION_5,
+];
 
 const MIGRATION_1: &str = "
 CREATE TABLE IF NOT EXISTS v2_tasks (
@@ -89,6 +101,38 @@ INSERT OR IGNORE INTO v2_users (id, email, name, picture, created_at)
     VALUES ('local', 'local@localhost', 'Local user', NULL, '1970-01-01T00:00:00Z');
 ";
 const MIGRATION_3: &str = "ALTER TABLE v2_users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free';";
+/// Per-user capture counts per client address per day, for the Jev caps and `usage`.
+/// Old days are pruned on write, so the table holds about a month.
+const MIGRATION_4: &str = "
+CREATE TABLE IF NOT EXISTS v2_capture_counts (
+    user_id TEXT NOT NULL,
+    ip      TEXT NOT NULL,
+    day     TEXT NOT NULL,
+    n       INTEGER NOT NULL,
+    PRIMARY KEY (user_id, ip, day)
+);
+CREATE INDEX IF NOT EXISTS v2_capture_counts_ip_idx ON v2_capture_counts (ip, day);
+CREATE TABLE IF NOT EXISTS v2_anon_issued (
+    ip  TEXT NOT NULL,
+    day TEXT NOT NULL,
+    n   INTEGER NOT NULL,
+    PRIMARY KEY (ip, day)
+);
+CREATE TABLE IF NOT EXISTS v2_blocks (
+    kind  TEXT NOT NULL CHECK (kind IN ('user', 'ip')),
+    value TEXT NOT NULL,
+    PRIMARY KEY (kind, value)
+);
+";
+
+/// Calendar UIDs are unique per person, not across the database: two people can import the
+/// same event from the same export. The old index was global and made the second import a
+/// conflict.
+const MIGRATION_5: &str = "
+DROP INDEX IF EXISTS v2_tasks_uid_idx;
+CREATE UNIQUE INDEX IF NOT EXISTS v2_tasks_uid_idx
+    ON v2_tasks (user_id, external_uid) WHERE external_uid IS NOT NULL;
+";
 
 /// Every column of `v2_tasks`, in one list.
 ///
@@ -189,6 +233,48 @@ pub trait Store: Send + Sync {
     fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError>;
     fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError>;
     fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError>;
+
+    /// Count one capture by this user from this client address on this day.
+    fn record_capture(&self, user: &str, ip: &str, day: NaiveDate) -> Result<(), StoreError>;
+
+    /// Captures from this client address today, across every user.
+    fn ip_captures_today(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError>;
+
+    /// Count one more anonymous id issued to this client address today. Returns the
+    /// count including this one, so the caller can refuse past a limit.
+    fn record_anon_issued(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError>;
+
+    /// Block a user or an address. Blocked traffic still works, but capture falls back
+    /// to `FakeJudge`.
+    fn block(&self, target: &Block) -> Result<(), StoreError>;
+
+    /// Lift a block. Reports whether there was one.
+    fn unblock(&self, target: &Block) -> Result<bool, StoreError>;
+
+    /// Whether this user or this address is blocked.
+    fn is_blocked(&self, user: &str, ip: &str) -> Result<bool, StoreError>;
+
+    fn blocks(&self) -> Result<Vec<Block>, StoreError>;
+
+    /// The busiest users and addresses today, most captures first.
+    fn usage_today(&self, day: NaiveDate, top: usize) -> Result<Usage, StoreError>;
+
+    /// The signed-in user with this email, if there is one.
+    fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError>;
+}
+
+/// Something an administrator can block.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Block {
+    User(String),
+    Ip(String),
+}
+
+/// Today's busiest users and client addresses, with their capture counts.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub users: Vec<(String, u32)>,
+    pub ips: Vec<(String, u32)>,
 }
 
 /// Tasks held in memory, with their owner. The HTTP tests use this so they never
@@ -199,6 +285,9 @@ pub struct MemoryStore {
     tasks: Mutex<Vec<(String, Task)>>,
     users: Mutex<Vec<super::auth::Me>>,
     sessions: Mutex<Vec<(String, String, chrono::DateTime<Utc>)>>,
+    captures: Mutex<Vec<(String, String, NaiveDate)>>,
+    anon_issued: Mutex<Vec<(String, NaiveDate)>>,
+    blocks: Mutex<Vec<Block>>,
 }
 
 impl MemoryStore {
@@ -273,6 +362,33 @@ impl<S: Store + ?Sized> Store for Box<S> {
     }
     fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError> {
         (**self).ensure_anonymous(user)
+    }
+    fn record_capture(&self, user: &str, ip: &str, day: NaiveDate) -> Result<(), StoreError> {
+        (**self).record_capture(user, ip, day)
+    }
+    fn ip_captures_today(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError> {
+        (**self).ip_captures_today(ip, day)
+    }
+    fn record_anon_issued(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError> {
+        (**self).record_anon_issued(ip, day)
+    }
+    fn block(&self, target: &Block) -> Result<(), StoreError> {
+        (**self).block(target)
+    }
+    fn unblock(&self, target: &Block) -> Result<bool, StoreError> {
+        (**self).unblock(target)
+    }
+    fn is_blocked(&self, user: &str, ip: &str) -> Result<bool, StoreError> {
+        (**self).is_blocked(user, ip)
+    }
+    fn blocks(&self) -> Result<Vec<Block>, StoreError> {
+        (**self).blocks()
+    }
+    fn usage_today(&self, day: NaiveDate, top: usize) -> Result<Usage, StoreError> {
+        (**self).usage_today(day, top)
+    }
+    fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {
+        (**self).user_id_for_email(email)
     }
 }
 
@@ -403,7 +519,12 @@ impl Store for MemoryStore {
     ) -> Result<(), StoreError> {
         let mut users = self.users.lock().expect("memory store mutex");
         match users.iter_mut().find(|held| held.id == user.id) {
-            Some(existing) => *existing = user.clone(),
+            // A returning sign-in keeps the plan the database already holds.
+            Some(existing) => {
+                existing.email.clone_from(&user.email);
+                existing.name.clone_from(&user.name);
+                existing.picture.clone_from(&user.picture);
+            }
             None => users.push(user.clone()),
         }
         drop(users);
@@ -463,22 +584,98 @@ impl Store for MemoryStore {
     }
 
     fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
-        // Captures are counted from the tasks they created, which is what the memory
-        // store has to work with. The SQL store counts them properly.
         Ok(self
-            .tasks
+            .captures
             .lock()
             .expect("memory store mutex")
             .iter()
-            .filter(|(owner, task)| {
-                owner == user
-                    && task.source == todo_core::Source::Text
-                    && task.created.with_timezone(&chrono_tz::UTC).date_naive() == day
-            })
+            .filter(|(owner, _, when)| owner == user && *when == day)
             .count() as u32)
     }
 
+    fn record_capture(&self, user: &str, ip: &str, day: NaiveDate) -> Result<(), StoreError> {
+        self.captures.lock().expect("memory store mutex").push((
+            user.to_owned(),
+            ip.to_owned(),
+            day,
+        ));
+        Ok(())
+    }
+
+    fn ip_captures_today(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError> {
+        Ok(self
+            .captures
+            .lock()
+            .expect("memory store mutex")
+            .iter()
+            .filter(|(_, from, when)| from == ip && *when == day)
+            .count() as u32)
+    }
+
+    fn record_anon_issued(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError> {
+        let mut issued = self.anon_issued.lock().expect("memory store mutex");
+        issued.push((ip.to_owned(), day));
+        Ok(issued
+            .iter()
+            .filter(|(from, when)| from == ip && *when == day)
+            .count() as u32)
+    }
+
+    fn block(&self, target: &Block) -> Result<(), StoreError> {
+        let mut blocks = self.blocks.lock().expect("memory store mutex");
+        if !blocks.contains(target) {
+            blocks.push(target.clone());
+        }
+        Ok(())
+    }
+
+    fn unblock(&self, target: &Block) -> Result<bool, StoreError> {
+        let mut blocks = self.blocks.lock().expect("memory store mutex");
+        let before = blocks.len();
+        blocks.retain(|held| held != target);
+        Ok(blocks.len() != before)
+    }
+
+    fn is_blocked(&self, user: &str, ip: &str) -> Result<bool, StoreError> {
+        Ok(self
+            .blocks
+            .lock()
+            .expect("memory store mutex")
+            .iter()
+            .any(|held| *held == Block::User(user.into()) || *held == Block::Ip(ip.into())))
+    }
+
+    fn blocks(&self) -> Result<Vec<Block>, StoreError> {
+        Ok(self.blocks.lock().expect("memory store mutex").clone())
+    }
+
+    fn usage_today(&self, day: NaiveDate, top: usize) -> Result<Usage, StoreError> {
+        let captures = self.captures.lock().expect("memory store mutex");
+        let today = captures.iter().filter(|(_, _, when)| *when == day);
+        Ok(Usage {
+            users: top_counts(today.clone().map(|(user, _, _)| user.as_str()), top),
+            ips: top_counts(today.map(|(_, ip, _)| ip.as_str()), top),
+        })
+    }
+
+    fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {
+        Ok(self
+            .users
+            .lock()
+            .expect("memory store mutex")
+            .iter()
+            .find(|held| held.plan != super::auth::Plan::Anon && held.email == email)
+            .map(|held| held.id.clone()))
+    }
+
     fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError> {
+        if !self.anonymous_exists(anonymous)? {
+            return Ok(());
+        }
+        self.users
+            .lock()
+            .expect("memory store mutex")
+            .retain(|held| held.id != anonymous);
         let mut stored = self.tasks.lock().expect("memory store mutex");
         let existing_uids: std::collections::HashSet<_> = stored
             .iter()
@@ -514,9 +711,7 @@ pub struct SqliteStore {
 impl SqliteStore {
     /// Open the database named by `RAMBL_DATA`, or [`DEFAULT_DATA_PATH`].
     pub fn open_from_env() -> Result<Self, StoreError> {
-        let configured =
-            std::env::var("RAMBL_DATA").unwrap_or_else(|_| DEFAULT_DATA_PATH.to_string());
-        Self::open(Path::new(&configured))
+        Self::open(&data_path_from_env())
     }
 
     /// Open the database at `path`, creating the folder and applying any
@@ -529,10 +724,13 @@ impl SqliteStore {
                 StoreError::Backend(format!("could not create {}: {e}", parent.display()))
             })?;
         }
+        let conn = Connection::open(path).map_err(|e| StoreError::Backend(e.to_string()))?;
+        // The admin console opens a second handle on the same file. Wait for a write
+        // lock rather than failing a request straight away.
+        conn.busy_timeout(std::time::Duration::from_secs(5))
+            .map_err(|e| StoreError::Backend(e.to_string()))?;
         let store = Self {
-            conn: Mutex::new(
-                Connection::open(path).map_err(|e| StoreError::Backend(e.to_string()))?,
-            ),
+            conn: Mutex::new(conn),
         };
         store.migrate()?;
         Ok(store)
@@ -770,27 +968,142 @@ impl Store for SqliteStore {
     }
 
     fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
-        let count: i64 = conn
+        let count: i64 = self
+            .conn
+            .lock()
+            .expect("db mutex")
             .query_row(
-                "SELECT COUNT(*) FROM v2_tasks \
-                 WHERE user_id = ?1 AND created >= ?2 AND created < ?3",
-                params![
-                    user,
-                    format_ts(day.and_time(chrono::NaiveTime::MIN).and_utc()),
-                    format_ts(
-                        day.succ_opt()
-                            .unwrap()
-                            .and_time(chrono::NaiveTime::MIN)
-                            .and_utc()
-                    ),
-                ],
+                "SELECT COALESCE(SUM(n), 0) FROM v2_capture_counts WHERE user_id = ?1 AND day = ?2",
+                params![user, day.to_string()],
                 |row| row.get(0),
             )
             .map_err(backend)?;
         Ok(count as u32)
     }
 
+    fn record_capture(&self, user: &str, ip: &str, day: NaiveDate) -> Result<(), StoreError> {
+        let conn = self.conn.lock().expect("db mutex");
+        conn.execute(
+            "INSERT INTO v2_capture_counts (user_id, ip, day, n) VALUES (?1, ?2, ?3, 1)
+             ON CONFLICT (user_id, ip, day) DO UPDATE SET n = n + 1",
+            params![user, ip, day.to_string()],
+        )
+        .map_err(backend)?;
+        prune_before(&conn, day)
+    }
+
+    fn ip_captures_today(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError> {
+        let count: i64 = self
+            .conn
+            .lock()
+            .expect("db mutex")
+            .query_row(
+                "SELECT COALESCE(SUM(n), 0) FROM v2_capture_counts WHERE ip = ?1 AND day = ?2",
+                params![ip, day.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(backend)?;
+        Ok(count as u32)
+    }
+
+    fn record_anon_issued(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError> {
+        let conn = self.conn.lock().expect("db mutex");
+        let count: i64 = conn
+            .query_row(
+                "INSERT INTO v2_anon_issued (ip, day, n) VALUES (?1, ?2, 1)
+                 ON CONFLICT (ip, day) DO UPDATE SET n = n + 1
+                 RETURNING n",
+                params![ip, day.to_string()],
+                |row| row.get(0),
+            )
+            .map_err(backend)?;
+        prune_before(&conn, day)?;
+        Ok(count as u32)
+    }
+
+    fn block(&self, target: &Block) -> Result<(), StoreError> {
+        let (kind, value) = block_parts(target);
+        self.conn
+            .lock()
+            .expect("db mutex")
+            .execute(
+                "INSERT OR IGNORE INTO v2_blocks (kind, value) VALUES (?1, ?2)",
+                params![kind, value],
+            )
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    fn unblock(&self, target: &Block) -> Result<bool, StoreError> {
+        let (kind, value) = block_parts(target);
+        let changed = self
+            .conn
+            .lock()
+            .expect("db mutex")
+            .execute(
+                "DELETE FROM v2_blocks WHERE kind = ?1 AND value = ?2",
+                params![kind, value],
+            )
+            .map_err(backend)?;
+        Ok(changed > 0)
+    }
+
+    fn is_blocked(&self, user: &str, ip: &str) -> Result<bool, StoreError> {
+        let found: bool = self
+            .conn
+            .lock()
+            .expect("db mutex")
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM v2_blocks
+                 WHERE (kind = 'user' AND value = ?1) OR (kind = 'ip' AND value = ?2))",
+                params![user, ip],
+                |row| row.get(0),
+            )
+            .map_err(backend)?;
+        Ok(found)
+    }
+
+    fn blocks(&self) -> Result<Vec<Block>, StoreError> {
+        let conn = self.conn.lock().expect("db mutex");
+        let mut stmt = conn
+            .prepare("SELECT kind, value FROM v2_blocks ORDER BY kind, value")
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(backend)?;
+        rows.map(|row| {
+            let (kind, value) = row.map_err(backend)?;
+            Ok(if kind == "user" {
+                Block::User(value)
+            } else {
+                Block::Ip(value)
+            })
+        })
+        .collect()
+    }
+
+    fn usage_today(&self, day: NaiveDate, top: usize) -> Result<Usage, StoreError> {
+        let conn = self.conn.lock().expect("db mutex");
+        Ok(Usage {
+            users: top_users_today(&conn, "user_id", day, top)?,
+            ips: top_users_today(&conn, "ip", day, top)?,
+        })
+    }
+
+    fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {
+        self.conn
+            .lock()
+            .expect("db mutex")
+            .query_row(
+                "SELECT id FROM v2_users WHERE email = ?1 AND plan <> 'anon'",
+                params![email],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(backend)
+    }
     fn user_plan(&self, user: &str) -> Result<super::auth::Plan, StoreError> {
         if user == super::auth::LOCAL_USER {
             return Ok(super::auth::Plan::Free);
@@ -827,6 +1140,16 @@ impl Store for SqliteStore {
     fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError> {
         let mut conn = self.conn.lock().expect("db mutex");
         let tx = conn.transaction().map_err(backend)?;
+        let is_anonymous: bool = tx
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM v2_users WHERE id = ?1 AND plan = 'anon')",
+                params![anonymous],
+                |row| row.get(0),
+            )
+            .map_err(backend)?;
+        if !is_anonymous {
+            return Ok(());
+        }
         tx.execute(
             "DELETE FROM v2_tasks WHERE user_id = ?1 AND external_uid IS NOT NULL
              AND external_uid IN (
@@ -841,9 +1164,14 @@ impl Store for SqliteStore {
             params![user, anonymous],
         )
         .map_err(backend)?;
+        // The anonymous id ends here: a copy of it held elsewhere must stop working.
+        tx.execute(
+            "DELETE FROM v2_users WHERE id = ?1 AND plan = 'anon'",
+            params![anonymous],
+        )
+        .map_err(backend)?;
         tx.commit().map_err(backend)
     }
-
     fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
         let found: Option<String> = self
             .conn
@@ -871,6 +1199,67 @@ impl Store for SqliteStore {
             .map_err(backend)?;
         Ok(())
     }
+}
+
+/// Usage counts are kept this many days; older rows are dropped on write.
+const USAGE_RETENTION_DAYS: i64 = 30;
+
+/// Drop per-day counts older than the retention window.
+fn prune_before(conn: &Connection, today: NaiveDate) -> Result<(), StoreError> {
+    let cutoff = (today - chrono::Duration::days(USAGE_RETENTION_DAYS)).to_string();
+    for table in ["v2_capture_counts", "v2_anon_issued"] {
+        conn.execute(
+            &format!("DELETE FROM {table} WHERE day < ?1"),
+            params![cutoff],
+        )
+        .map_err(backend)?;
+    }
+    Ok(())
+}
+
+fn block_parts(target: &Block) -> (&'static str, &str) {
+    match target {
+        Block::User(user) => ("user", user),
+        Block::Ip(ip) => ("ip", ip),
+    }
+}
+
+/// The `top` busiest values of `column` today, most captures first. `column` is one of
+/// two fixed names chosen in code, never user input.
+fn top_users_today(
+    conn: &Connection,
+    column: &str,
+    day: NaiveDate,
+    top: usize,
+) -> Result<Vec<(String, u32)>, StoreError> {
+    let mut stmt = conn
+        .prepare(&format!(
+            "SELECT {column}, SUM(n) AS total FROM v2_capture_counts WHERE day = ?1
+             GROUP BY {column} ORDER BY total DESC, {column} LIMIT ?2"
+        ))
+        .map_err(backend)?;
+    let rows = stmt
+        .query_map(params![day.to_string(), top as i64], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u32))
+        })
+        .map_err(backend)?;
+    rows.map(|row| row.map_err(backend)).collect()
+}
+
+/// The `top` most frequent values, most frequent first, ties by name. The memory
+/// store's version of [`top_users_today`].
+fn top_counts<'a>(values: impl Iterator<Item = &'a str>, top: usize) -> Vec<(String, u32)> {
+    let mut counts = std::collections::BTreeMap::<&str, u32>::new();
+    for value in values {
+        *counts.entry(value).or_default() += 1;
+    }
+    let mut ranked: Vec<(String, u32)> = counts
+        .into_iter()
+        .map(|(value, count)| (value.to_owned(), count))
+        .collect();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    ranked.truncate(top);
+    ranked
 }
 
 /// Read one `TASK_COLUMNS` row into a [`Task`].
@@ -1283,6 +1672,166 @@ mod tests {
                 > 0
         );
         assert!(store.find_by_uid(USER, "no-such-uid").unwrap().is_none());
+    }
+
+    fn anonymous_task(id: &str, uid: Option<&str>) -> Task {
+        Task {
+            external_uid: uid.map(str::to_owned),
+            source: Source::Calendar,
+            ..task(id, 0)
+        }
+    }
+
+    /// Signing in keeps the signed-in copy of a duplicated calendar event, moves the rest,
+    /// and ends the anonymous id.
+    fn adoption_moves_anonymous_tasks_and_ends_the_id(store: &dyn Store) {
+        const ANON: &str = "anon_0123456789abcdef0123456789abcdef";
+        store.ensure_anonymous(ANON).unwrap();
+        store
+            .put(ANON, anonymous_task("a1", Some("uid-1")))
+            .unwrap();
+        store.put(ANON, anonymous_task("a2", None)).unwrap();
+        store
+            .put(USER, anonymous_task("u1", Some("uid-1")))
+            .unwrap();
+
+        store.adopt_anonymous(ANON, USER).unwrap();
+
+        let mine: Vec<_> = store
+            .tasks(USER)
+            .unwrap()
+            .into_iter()
+            .map(|task| task.id.0)
+            .collect();
+        assert!(
+            mine.contains(&"u1".to_owned()),
+            "the signed-in copy is kept"
+        );
+        assert!(
+            mine.contains(&"a2".to_owned()),
+            "the other anonymous task moves"
+        );
+        assert!(
+            !mine.contains(&"a1".to_owned()),
+            "a duplicate of a signed-in event is dropped, not doubled"
+        );
+        assert!(store.tasks(ANON).unwrap().is_empty());
+        assert!(
+            !store.anonymous_exists(ANON).unwrap(),
+            "the anonymous id must stop working once it is adopted"
+        );
+    }
+
+    /// Only a real anonymous id adopts anything. A signed-in user's id, given as the
+    /// anonymous header, moves nothing.
+    fn adoption_ignores_ids_that_are_not_anonymous(store: &dyn Store) {
+        store.put(OTHER, anonymous_task("b1", None)).unwrap();
+
+        store.adopt_anonymous(OTHER, USER).unwrap();
+
+        assert!(store.tasks(USER).unwrap().is_empty(), "bob's tasks moved");
+        assert_eq!(store.tasks(OTHER).unwrap().len(), 1);
+    }
+
+    /// Blocks are per user and per address, and lifting one leaves the other.
+    fn blocks_hold_until_lifted(store: &dyn Store) {
+        let user = Block::User(USER.into());
+        let ip = Block::Ip("203.0.113.9".into());
+        store.block(&user).unwrap();
+        store.block(&ip).unwrap();
+        store.block(&ip).unwrap();
+
+        assert!(store.is_blocked(USER, "198.51.100.1").unwrap());
+        assert!(store.is_blocked(OTHER, "203.0.113.9").unwrap());
+        assert!(!store.is_blocked(OTHER, "198.51.100.1").unwrap());
+        assert_eq!(
+            store.blocks().unwrap().len(),
+            2,
+            "blocking twice keeps one row"
+        );
+
+        assert!(store.unblock(&user).unwrap());
+        assert!(!store.unblock(&user).unwrap(), "lifting nothing says so");
+        assert!(!store.is_blocked(USER, "198.51.100.1").unwrap());
+        assert!(store.is_blocked(OTHER, "203.0.113.9").unwrap());
+    }
+
+    /// Captures count per user and per address, and usage ranks them for the day.
+    fn captures_are_counted_per_user_and_address(store: &dyn Store) {
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let next = chrono::NaiveDate::from_ymd_opt(2026, 10, 13).unwrap();
+        store.record_capture(USER, "203.0.113.1", day).unwrap();
+        store.record_capture(USER, "203.0.113.1", day).unwrap();
+        store.record_capture(USER, "203.0.113.2", day).unwrap();
+        store.record_capture(OTHER, "203.0.113.1", day).unwrap();
+        store.record_capture(USER, "203.0.113.1", next).unwrap();
+
+        assert_eq!(store.captures_today(USER, day).unwrap(), 3);
+        assert_eq!(store.captures_today(USER, next).unwrap(), 1);
+        assert_eq!(store.ip_captures_today("203.0.113.1", day).unwrap(), 3);
+
+        let usage = store.usage_today(day, 10).unwrap();
+        assert_eq!(usage.users, vec![(USER.into(), 3), (OTHER.into(), 1)]);
+        assert_eq!(
+            usage.ips,
+            vec![("203.0.113.1".into(), 3), ("203.0.113.2".into(), 1)]
+        );
+        assert_eq!(store.usage_today(day, 1).unwrap().users.len(), 1);
+    }
+
+    /// Anonymous ids are issued per address per day, and the count is what the caller
+    /// checks against its limit.
+    fn anonymous_ids_are_counted_per_address_per_day(store: &dyn Store) {
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        assert_eq!(store.record_anon_issued("203.0.113.1", day).unwrap(), 1);
+        assert_eq!(store.record_anon_issued("203.0.113.1", day).unwrap(), 2);
+        assert_eq!(store.record_anon_issued("203.0.113.2", day).unwrap(), 1);
+    }
+
+    #[test]
+    fn memory_store_adoption_and_scoping_rules() {
+        adoption_moves_anonymous_tasks_and_ends_the_id(&MemoryStore::default());
+        adoption_ignores_ids_that_are_not_anonymous(&MemoryStore::default());
+    }
+
+    #[test]
+    fn sqlite_store_adoption_and_scoping_rules() {
+        let open = || SqliteStore::open_in_memory().unwrap();
+        adoption_moves_anonymous_tasks_and_ends_the_id(&open());
+        adoption_ignores_ids_that_are_not_anonymous(&open());
+    }
+
+    #[test]
+    fn memory_store_blocks_usage_and_anonymous_counts() {
+        let store = MemoryStore::default();
+        blocks_hold_until_lifted(&store);
+        captures_are_counted_per_user_and_address(&store);
+        anonymous_ids_are_counted_per_address_per_day(&store);
+    }
+
+    #[test]
+    fn sqlite_store_blocks_usage_and_anonymous_counts() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        blocks_hold_until_lifted(&store);
+        captures_are_counted_per_user_and_address(&store);
+        anonymous_ids_are_counted_per_address_per_day(&store);
+    }
+
+    /// An anonymous id is a database row, so a restart keeps it working.
+    #[test]
+    fn an_anonymous_id_survives_a_reopen() {
+        let dir = unique_temp_dir();
+        let path = dir.join("rambl.db");
+        const ANON: &str = "anon_0123456789abcdef0123456789abcdef";
+        {
+            let store = SqliteStore::open(&path).unwrap();
+            store.ensure_anonymous(ANON).unwrap();
+            store.put(ANON, anonymous_task("a1", None)).unwrap();
+        }
+        let reopened = SqliteStore::open(&path).unwrap();
+        assert!(reopened.anonymous_exists(ANON).unwrap());
+        assert_eq!(reopened.tasks(ANON).unwrap().len(), 1);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
