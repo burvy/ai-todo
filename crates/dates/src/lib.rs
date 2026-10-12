@@ -216,6 +216,10 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn bare_3pm_resolves_to_3pm_without_at() {
+        assert_eq!(phrases::time(&["3pm"]), Some(time(15, 0)));
+    }
 
     #[test]
     fn next_tuesday_on_a_tuesday_is_a_week_away() {
