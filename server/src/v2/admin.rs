@@ -45,7 +45,7 @@ pub fn parse_command(input: &str) -> Result<Command, &'static str> {
     Ok(command)
 }
 
-fn parse_plan(value: &str) -> Option<Plan> {
+pub fn parse_plan(value: &str) -> Option<Plan> {
     match value {
         "anon" => Some(Plan::Anon),
         "free" => Some(Plan::Free),
@@ -107,9 +107,9 @@ pub fn run(store: &dyn Store, command: Command) -> Result<String, String> {
 }
 
 /// Rows shown by `usage`.
-const TOP: usize = 10;
+pub const TOP: usize = 10;
 
-fn resolve(store: &dyn Store, target: Target) -> Result<Block, String> {
+pub fn resolve(store: &dyn Store, target: Target) -> Result<Block, String> {
     match target {
         Target::User(who) => Ok(Block::User(user_id(store, &who)?)),
         Target::Ip(ip) => Ok(Block::Ip(ip)),
@@ -117,7 +117,7 @@ fn resolve(store: &dyn Store, target: Target) -> Result<Block, String> {
 }
 
 /// An email if the value has an `@`, else the id as given.
-fn user_id(store: &dyn Store, who: &str) -> Result<String, String> {
+pub fn user_id(store: &dyn Store, who: &str) -> Result<String, String> {
     if !who.contains('@') {
         return Ok(who.to_owned());
     }
@@ -127,7 +127,7 @@ fn user_id(store: &dyn Store, who: &str) -> Result<String, String> {
         .ok_or_else(|| format!("no signed-in user has the email {who}"))
 }
 
-fn describe(block: &Block) -> String {
+pub fn describe(block: &Block) -> String {
     match block {
         Block::User(id) => format!("user {id}"),
         Block::Ip(ip) => format!("ip {ip}"),

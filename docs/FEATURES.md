@@ -264,8 +264,14 @@ c. Code: `server/src/v2/http.rs:assign_anonymous_id, CurrentUser`; `server/src/v
 
 ### 5. Administration
 a. A local console reads commands from the server's terminal: `usage` (today's top users and addresses), `blocked`, `block|unblock user <email|id>`, `block|unblock ip <addr>`, and `plan <email|id> <anon|free|paid>`. A blocked user or address still uses the app, but capture is judged by `FakeJudge`.
-b. Not visible; type a command into the terminal the server runs in.
+b. Type a command into the terminal the server runs in.
 c. Code: `server/src/v2/admin.rs`; blocks and usage are in `server/src/v2/store.rs`.
+
+### 6. Web administration
+a. With `RAMBL_ADMIN_EMAILS` set (a comma-separated list of emails), a signed-in user whose email is in the list can open `/admin` and block or unblock a user or address, move users between plans, and see today's usage (captures by user and address, and totals per plan; one capture is one Jev call). The page is a single static document served by the server, with no build step; it signs in through the same Google session the main page uses. Unset or empty `RAMBL_ADMIN_EMAILS` turns the whole surface off (404).
+b. Open `/admin` in a browser after signing in on the main page.
+c. Code: `server/src/v2/admin_web.rs` (data lives in `server/src/v2/admin.rs` and `server/src/v2/store.rs`); routes in `server/src/v2/http.rs:admin_page, admin_of`.
+d. Block and plan actions reuse the console's resolution: a user may be named by id or email, and the same `block`, `unblock`, `blocked` and `plan` storage calls serve both.
 
 ## VIII. DATES
 

@@ -9,13 +9,14 @@ use axum::{
     extract::{ConnectInfo, FromRequest, Multipart, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header::HeaderName},
     middleware::{self, Next},
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     routing::{get, patch, post, put},
 };
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use todo_core::{ApiError, ErrorCode, Snapshot, TaskDraft};
 
+use super::admin_web;
 use super::app::{App, ImportResult, Patch};
 use super::auth::{self, TokenVerifier};
 use super::ics_export::build_ics;
@@ -41,6 +42,8 @@ pub struct Shared {
     caps: Caps,
     /// The Google client id the page signs in with; `None` when sign-in is off.
     google_client_id: Option<String>,
+    /// Emails (lower-cased) allowed to use `/admin`; `None` turns the page off.
+    admin_emails: Option<Vec<String>>,
 }
 
 /// Daily limits. Past a Jev cap, capture still works but is judged by `FakeJudge`.
@@ -202,6 +205,18 @@ fn zone_from_env(default_tz: Option<String>, tz_name: Option<String>) -> Tz {
         .unwrap_or(chrono_tz::America::New_York)
 }
 
+/// The emails from `RAMBL_ADMIN_EMAILS` (a comma-separated list), lower-cased.
+/// `None` when the variable is unset or empty — an admin page nobody enabled is off.
+fn admin_emails_from_env() -> Option<Vec<String>> {
+    let raw = std::env::var("RAMBL_ADMIN_EMAILS").ok()?;
+    let emails: Vec<String> = raw
+        .split(',')
+        .map(|part| part.trim().to_ascii_lowercase())
+        .filter(|email| !email.is_empty())
+        .collect();
+    (!emails.is_empty()).then_some(emails)
+}
+
 pub fn router(app: App<Box<dyn Store>>, judge: AnyJudge) -> Router {
     let local = std::env::var("GOOGLE_CLIENT_ID").is_err();
     let verifier: Box<dyn TokenVerifier> = if local {
@@ -214,7 +229,14 @@ pub fn router(app: App<Box<dyn Store>>, judge: AnyJudge) -> Router {
             std::env::var("GOOGLE_CLIENT_ID").expect("checked above"),
         ))
     };
-    build_router(app, judge, verifier, local, Caps::from_env())
+    build_router(
+        app,
+        judge,
+        verifier,
+        local,
+        Caps::from_env(),
+        admin_emails_from_env(),
+    )
 }
 
 /// The router with a supplied verifier, so tests can sign in without a Google project
@@ -226,8 +248,9 @@ pub fn router_with_verifier(
     verifier: Box<dyn TokenVerifier>,
     local: bool,
     caps: Caps,
+    admin_emails: Option<Vec<String>>,
 ) -> Router {
-    build_router(app, judge, verifier, local, caps)
+    build_router(app, judge, verifier, local, caps, admin_emails)
 }
 
 /// Captures per user per day before capture stops using Jev, for a signed-in user.
@@ -270,6 +293,7 @@ fn build_router(
     verifier: Box<dyn TokenVerifier>,
     local: bool,
     caps: Caps,
+    admin_emails: Option<Vec<String>>,
 ) -> Router {
     let shared = Arc::new(Shared {
         app: Mutex::new(app),
@@ -280,6 +304,7 @@ fn build_router(
         google_client_id: std::env::var("GOOGLE_CLIENT_ID")
             .ok()
             .filter(|id| !id.is_empty()),
+        admin_emails,
     });
     Router::new()
         .route("/api/v1/config", get(config))
@@ -294,6 +319,12 @@ fn build_router(
         .route("/api/v1/capture", post(capture))
         .route("/api/v1/tasks/{id}/revise", post(revise_task))
         .route("/api/v1/calendar.ics", get(calendar_ics))
+        .route("/admin", get(admin_page))
+        .route("/api/v1/admin/usage", get(admin_usage))
+        .route("/api/v1/admin/blocks", get(admin_blocks))
+        .route("/api/v1/admin/block", post(admin_block))
+        .route("/api/v1/admin/unblock", post(admin_unblock))
+        .route("/api/v1/admin/plan", post(admin_set_plan))
         .with_state(Arc::clone(&shared))
         .layer(middleware::from_fn_with_state(shared, assign_anonymous_id))
 }
@@ -493,6 +524,127 @@ async fn delete_me(
     let app = shared.app.lock().expect("app mutex");
     auth::delete_user(app.store(), &user).map_err(HttpError::from)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// A request is an admin when it carries a live signed-in session whose email is
+/// in `RAMBL_ADMIN_EMAILS`. Anyone else sees 404, so the admin surface does not
+/// announce itself.
+fn admin_of(headers: &HeaderMap, shared: &Shared) -> Result<auth::Me, HttpError> {
+    let token = auth::bearer(headers).ok_or_else(admin_404)?;
+    let app = shared.app.lock().expect("app mutex");
+    let user = auth::session_user(app.store(), &token, Utc::now())
+        .map_err(HttpError::from)?
+        .ok_or_else(admin_404)?;
+    let allowed = shared.admin_emails.as_deref().is_some_and(|emails| {
+        emails
+            .iter()
+            .any(|email| *email == user.email.to_ascii_lowercase())
+    });
+    if !allowed {
+        return Err(admin_404());
+    }
+    Ok(user)
+}
+
+fn admin_404() -> HttpError {
+    HttpError(ApiError {
+        code: ErrorCode::NotFound,
+        message: "no such page".into(),
+    })
+}
+
+/// `GET /admin`: the administration page. Off when no emails are configured. A
+/// signed-in visitor who is not an admin gets 404, so the page stays invisible to
+/// friends; an anonymous visitor gets the shell, which signs in the same way the
+/// main page does — only a listed email ever sees data.
+async fn admin_page(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+) -> Result<Html<&'static str>, HttpError> {
+    if shared.admin_emails.is_none() {
+        return Err(admin_404());
+    }
+    if auth::bearer(&headers).is_some() {
+        admin_of(&headers, &shared)?;
+    }
+    Ok(Html(admin_web::PAGE))
+}
+
+/// `GET /api/v1/admin/usage`: today's captures by user (with plan) and address,
+/// and the totals per plan. One capture is one Jev call.
+async fn admin_usage(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+) -> Result<Json<admin_web::UsageOut>, HttpError> {
+    admin_of(&headers, &shared)?;
+    let app = shared.app.lock().expect("app mutex");
+    Ok(Json(
+        admin_web::usage(app.store(), app.now().date_naive()).map_err(store_failed)?,
+    ))
+}
+
+/// `GET /api/v1/admin/blocks`: everything currently blocked.
+async fn admin_blocks(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<admin_web::BlockOut>>, HttpError> {
+    admin_of(&headers, &shared)?;
+    let app = shared.app.lock().expect("app mutex");
+    Ok(Json(admin_web::blocks(app.store()).map_err(store_failed)?))
+}
+
+#[derive(Deserialize)]
+struct BlockIn {
+    kind: String,
+    value: String,
+}
+
+#[derive(Deserialize)]
+struct PlanIn {
+    who: String,
+    plan: String,
+}
+
+#[derive(Serialize)]
+struct AdminOut {
+    message: String,
+}
+
+/// `POST /api/v1/admin/block` `{kind: "user" | "ip", value}`: block a user (by
+/// id or email) or an address.
+async fn admin_block(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+    Json(body): Json<BlockIn>,
+) -> Result<Json<AdminOut>, HttpError> {
+    admin_of(&headers, &shared)?;
+    let app = shared.app.lock().expect("app mutex");
+    let message = admin_web::block(app.store(), &body.kind, &body.value).map_err(bad_request)?;
+    Ok(Json(AdminOut { message }))
+}
+
+/// `POST /api/v1/admin/unblock` `{kind, value}`: lift a block placed the same way.
+async fn admin_unblock(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+    Json(body): Json<BlockIn>,
+) -> Result<Json<AdminOut>, HttpError> {
+    admin_of(&headers, &shared)?;
+    let app = shared.app.lock().expect("app mutex");
+    let message = admin_web::unblock(app.store(), &body.kind, &body.value).map_err(bad_request)?;
+    Ok(Json(AdminOut { message }))
+}
+
+/// `POST /api/v1/admin/plan` `{who: email|id, plan}`: move a user to another plan.
+async fn admin_set_plan(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+    Json(body): Json<PlanIn>,
+) -> Result<Json<AdminOut>, HttpError> {
+    admin_of(&headers, &shared)?;
+    let app = shared.app.lock().expect("app mutex");
+    let message = admin_web::set_plan(app.store(), &body.who, &body.plan).map_err(bad_request)?;
+    Ok(Json(AdminOut { message }))
 }
 
 /// `GET /api/v1/snapshot?from=YYYY-MM-DD&days=N`: the plan window, today and 7 days
@@ -1770,6 +1922,15 @@ mod tests {
     /// A router with real (non-local) sign-in and a fake verifier, so the tests
     /// exercise the session path without a Google project or a network call.
     fn accounts_router(now: chrono::DateTime<Utc>, sub: &str, email: &str) -> Router {
+        accounts_router_with_admins(now, sub, email, None)
+    }
+
+    fn accounts_router_with_admins(
+        now: chrono::DateTime<Utc>,
+        sub: &str,
+        email: &str,
+        admins: Option<Vec<String>>,
+    ) -> Router {
         let verifier = auth::FakeVerifier {
             answer: Ok(auth::TokenInfo::for_test(sub, email)),
         };
@@ -1782,6 +1943,7 @@ mod tests {
             Box::new(verifier),
             false,
             Caps::default(),
+            admins,
         )
     }
 
@@ -1881,6 +2043,154 @@ mod tests {
         }
     }
 
+    /// No `RAMBL_ADMIN_EMAILS` means the whole admin surface is off: the page is
+    /// 404 even to the person who would have been an admin.
+    #[tokio::test]
+    async fn admin_is_off_when_no_emails_are_configured() {
+        let router = accounts_router(sunday_night(), "google-1", "boss@example.com");
+        let token = sign_in(&router).await;
+        let (status, _) = send_as(&router, "GET", "/admin", None, Some(&token)).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "the page must be 404 without RAMBL_ADMIN_EMAILS"
+        );
+        let (status, _) = send_as(&router, "GET", "/api/v1/admin/blocks", None, Some(&token)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "the API must be 404 too");
+    }
+
+    /// Only a signed-in user whose email is in `RAMBL_ADMIN_EMAILS` sees the admin
+    /// surface. Everyone else gets 404 — friends, anonymous visitors, and signed-in
+    /// users with unlisted emails.
+    #[tokio::test]
+    async fn non_admins_get_404_on_the_page_and_the_api() {
+        let router = accounts_router_with_admins(
+            sunday_night(),
+            "google-1",
+            "sam@example.com",
+            Some(vec!["boss@example.com".into()]),
+        );
+        let token = sign_in(&router).await;
+
+        let (status, _) = send_as(&router, "GET", "/admin", None, Some(&token)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "a non-admin gets no page");
+        for (method, uri, body) in [
+            ("GET", "/api/v1/admin/usage", None),
+            ("GET", "/api/v1/admin/blocks", None),
+            (
+                "POST",
+                "/api/v1/admin/block",
+                Some(r#"{"kind":"ip","value":"203.0.113.9"}"#),
+            ),
+        ] {
+            let (status, _) = send_as(&router, method, uri, body, Some(&token)).await;
+            assert_eq!(
+                status,
+                StatusCode::NOT_FOUND,
+                "{method} {uri} must hide from non-admins"
+            );
+        }
+
+        // Anonymous visitors never see data, but they do get the sign-in shell — the
+        // page signs in the same way the main page does.
+        let (status, _) = send_as(&router, "GET", "/api/v1/admin/blocks", None, None).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "anonymous access is never admin"
+        );
+        let (status, _) = send_as(&router, "GET", "/admin", None, None).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the one place that must load is the shell itself"
+        );
+    }
+
+    /// An admin can read today's usage, block and unblock an address, and move a
+    /// user between plans — everything the console can, over the web.
+    #[tokio::test]
+    async fn an_admin_can_block_unblock_see_usage_and_set_plans() {
+        let router = accounts_router_with_admins(
+            sunday_night(),
+            "google-1",
+            "boss@example.com",
+            Some(vec!["boss@example.com".into()]),
+        );
+        let token = sign_in(&router).await;
+        let bearer = format!("Bearer {token}");
+
+        // A capture today, so usage has a row.
+        let (status, _, _) = call(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            Some(r#"{"text":"buy milk tomorrow"}"#),
+            &[("authorization", &bearer)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, usage) =
+            send_as(&router, "GET", "/api/v1/admin/usage", None, Some(&token)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            usage["per_plan"]["free"], 1,
+            "the free user's capture is one Jev call"
+        );
+        assert_eq!(usage["users"][0]["id"], "google-1");
+        assert_eq!(usage["users"][0]["plan"], "free");
+
+        let (status, body) = send_as(
+            &router,
+            "POST",
+            "/api/v1/admin/block",
+            Some(r#"{"kind":"ip","value":"203.0.113.9"}"#),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["message"], "blocked ip 203.0.113.9");
+
+        let (status, blocks) =
+            send_as(&router, "GET", "/api/v1/admin/blocks", None, Some(&token)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(blocks[0]["kind"], "ip");
+        assert_eq!(blocks[0]["value"], "203.0.113.9");
+
+        let (status, body) = send_as(
+            &router,
+            "POST",
+            "/api/v1/admin/unblock",
+            Some(r#"{"kind":"ip","value":"203.0.113.9"}"#),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["message"], "unblocked ip 203.0.113.9");
+        let (status, blocks) =
+            send_as(&router, "GET", "/api/v1/admin/blocks", None, Some(&token)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(blocks.as_array().unwrap().is_empty());
+
+        let (status, body) = send_as(
+            &router,
+            "POST",
+            "/api/v1/admin/plan",
+            Some(r#"{"who":"google-1","plan":"paid"}"#),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["message"], "google-1 is now on the paid plan");
+
+        // The plan change is visible to the user themselves (`/me` keeps the
+        // enum's serialized name; the admin API speaks `as_str`).
+        let (status, me) = send_as(&router, "GET", "/api/v1/me", None, Some(&token)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(me["plan"], "Paid");
+    }
+
     #[tokio::test]
     async fn invalid_bearer_token_is_401() {
         let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
@@ -1972,6 +2282,7 @@ mod tests {
             }),
             false,
             Caps::default(),
+            None,
         );
         let alex = sign_in(&second).await;
 
@@ -2093,6 +2404,7 @@ mod tests {
                 free: 1,
                 ..Caps::default()
             },
+            None,
         );
         let token = sign_in(&router).await;
 
@@ -2265,6 +2577,7 @@ mod tests {
             }),
             false,
             caps,
+            None,
         )
     }
 
@@ -2402,6 +2715,7 @@ mod tests {
             }),
             true, // local mode
             Caps::default(),
+            None,
         );
         let from = [("cf-connecting-ip", "203.0.113.9")];
         for _ in 0..30 {
@@ -2502,6 +2816,7 @@ mod tests {
             }),
             false,
             Caps::default(),
+            None,
         );
         let token = sign_in(&router).await;
         let bearer = format!("Bearer {token}");

@@ -75,7 +75,7 @@ Without a Jev key, `FakeJudge`'s deterministic rules pick the first candidate. T
 
 All JSON. Every request carries the header `X-Rambl-TZ: America/New_York` (from `Intl.DateTimeFormat().resolvedOptions().timeZone`). Every mutating call returns the full `Snapshot`. Errors are `{ "error": { "code", "message" } }` with a fitting status.
 
-**Accounts.** Rambl is multi-user. Every request carries either `Authorization: Bearer <session token>` for signed-in users, or `X-Rambl-Anon: <anon_id>` for anonymous users. The token or anon_id names the user; **every task read and write is scoped to that user, in the store, not in the handler** — `Store` methods take the user id, so a handler cannot forget it. In local mode (`GOOGLE_CLIENT_ID` unset), the server uses the fixed local user for all requests regardless of headers. Each account has a persisted plan: anonymous, free, or paid. Daily Jev caps are `RAMBL_JEV_DAILY_CAP_ANON` (default 30), `RAMBL_JEV_DAILY_CAP` (default 200), and `RAMBL_JEV_DAILY_CAP_PAID` (default 1000); the admin console changes plans with `plan <email|id> <anon|free|paid>`. When a cap is exceeded, or the user or client address is blocked, capture falls back to `FakeJudge` with `jev_fallback: true`.
+**Accounts.** Rambl is multi-user. Every request carries either `Authorization: Bearer <session token>` for signed-in users, or `X-Rambl-Anon: <anon_id>` for anonymous users. The token or anon_id names the user; **every task read and write is scoped to that user, in the store, not in the handler** — `Store` methods take the user id, so a handler cannot forget it. In local mode (`GOOGLE_CLIENT_ID` unset), the server uses the fixed local user for all requests regardless of headers. Each account has a persisted plan: anonymous, free, or paid. Daily Jev caps are `RAMBL_JEV_DAILY_CAP_ANON` (default 30), `RAMBL_JEV_DAILY_CAP` (default 200), and `RAMBL_JEV_DAILY_CAP_PAID` (default 1000); the admin console changes plans with `plan <email|id> <anon|free|paid>`, and the `/admin` page does the same over `POST /api/v1/admin/plan` for anyone whose email is in `RAMBL_ADMIN_EMAILS`. When a cap is exceeded, or the user or client address is blocked, capture falls back to `FakeJudge` with `jev_fallback: true`.
 
 Anonymous users do not sign in. Their account and tasks are deleted after 30 days without a visit (`last_activity_at`, refreshed by a visit at most once an hour and cleared by the daily backup task, only after that backup succeeded); signed-in accounts are never deleted. *(planned)* Rambo nudges them to sign in before then.
 
@@ -95,6 +95,12 @@ Anonymous users do not sign in. Their account and tasks are deleted after 30 day
 | `DELETE /api/v1/tasks/{id}` | none | `Snapshot` |
 | `POST /api/v1/import` | multipart `file` (.ics) | `{created: [id], updated: [id], snapshot}`. Events become tasks (`At`, `source: Calendar`); same UID updates the existing task. Cancelled and transparent events are skipped. Overlapping `At` tasks are allowed and drawn side by side. |
 | `GET /api/v1/calendar.ics` | none | iCalendar |
+| `GET /admin` | none | The admin page (HTML). 404 when `RAMBL_ADMIN_EMAILS` is unset, and for any signed-in user whose email is not in it. |
+| `GET /api/v1/admin/usage` | none | Today's captures by user (id, plan, captures) and by address, plus totals per `anon`/`free`/`paid` plan. 404 for anyone who is not an admin. |
+| `GET /api/v1/admin/blocks` | none | Everything currently blocked, `[{kind: "user"|"ip", value}]`. 404 for anyone who is not an admin. |
+| `POST /api/v1/admin/block` | `{kind: "user"\|"ip", value}` | Block a user (id or email) or an address. 404 for anyone who is not an admin. |
+| `POST /api/v1/admin/unblock` | `{kind: "user"\|"ip", value}` | Lift a block placed the same way. 404 for anyone who is not an admin. |
+| `POST /api/v1/admin/plan` | `{who: email\|id, plan: anon\|free\|paid}` | Move a user to another plan. 404 for anyone who is not an admin. |
 
 The server is the only planner: the client never computes placements.
 
@@ -115,6 +121,7 @@ Task edits use an `updated_at` field and last-write-wins per task. The server se
 | `RAMBL_JEV_DAILY_CAP_ANON` | `30` | Captures per anonymous user per day before capture falls back to `FakeJudge` with `jev_fallback: true`. |
 | `RAMBL_JEV_DAILY_CAP_PAID` | `1000` | Captures per paid user per day before capture falls back to `FakeJudge`. |
 | `RAMBL_ANON_IDS_PER_IP` | `20` | New anonymous ids one client address may be issued per day. |
+| `RAMBL_ADMIN_EMAILS` | unset | Comma-separated emails allowed to use `/admin` and its API. Unset or empty disables the admin page (404). |
 
 Working hours: 08:00 to 23:59:59 local time, every day.
 
