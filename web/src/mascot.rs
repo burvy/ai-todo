@@ -15,11 +15,6 @@ pub enum Event {
     Choose,
     Talk,
     Return,
-    // Clean design (not messy v1 port): writing pen phases linked to brain pose.
-    // WRITE_MS = 600ms per title; linger ~2s; reduced-motion via prefers_reduced_motion().
-    TypeFollow,
-    WriteTitle { title: String },
-    ReturnHome,
 }
 
 #[cfg(target_arch = "wasm32")]
