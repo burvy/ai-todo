@@ -1,9 +1,11 @@
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Utc};
 use gloo_timers::callback::Interval;
 use leptos::prelude::*;
-use todo_core::{Placement, Snapshot};
+#[cfg(not(target_arch = "wasm32"))]
+use todo_core::{Clock, SystemClock};
+use todo_core::{LocalContext, Placement, Snapshot};
 
-use crate::{api, mascot, settings::Settings};
+use crate::{mascot, settings::Settings};
 
 #[component]
 pub fn WeekGrid(
@@ -21,10 +23,6 @@ pub fn WeekGrid(
             _grid.set_scroll_top((js_sys::Date::new_0().get_hours() as f32 * HOUR_PX) as i32);
         }
     });
-    // The planner's first day is today on this device. Placements are instants, so each
-    // one is bucketed by its date in the browser's zone.
-    let today = NaiveDate::parse_from_str(&api::today_date(), "%Y-%m-%d").ok();
-    let offset = zone_offset_minutes();
     let days = move || (0..settings.get().days).collect::<Vec<_>>();
     let hours = move || (settings.get().start_hour..settings.get().end_hour).collect::<Vec<_>>();
     view! {
@@ -35,9 +33,14 @@ pub fn WeekGrid(
                     <For each=days key=|day| *day let:day>
                         <div class="day">
                             <h3>{format!("Day {}", day + 1)}</h3>
-                            <For each=move || today.map_or_else(Vec::new, |today| {
-                                    placements_on_day(&snapshot.get().plan.placements, i64::from(day), offset, today)
-                                })
+                            <For each=move || {
+                                    // Re-read every minute, so "today" moves on at midnight.
+                                    let _ = now_minutes.get();
+                                    let snapshot = snapshot.get();
+                                    planner_context(&snapshot.tz).map_or_else(Vec::new, |ctx| {
+                                        placements_on_day(&snapshot.plan.placements, i64::from(day), &ctx)
+                                    })
+                                }
                                 key=|placement| placement.task.clone() let:placement>
                                 <PlacementBlock placement snapshot set_mascot_state />
                             </For>
@@ -73,37 +76,41 @@ fn now_line_top(now_minutes: u16, start_hour: u8, hour_px: f32) -> f32 {
     (f32::from(now_minutes) - f32::from(start_hour) * 60.0).max(0.0) / 60.0 * hour_px
 }
 
-/// The day column a placement falls in: its date in the zone `offset_minutes` east of
-/// UTC, counted from `today`. Day 0 is today.
-fn day_index(start: DateTime<Utc>, offset_minutes: i32, today: NaiveDate) -> i64 {
-    let local = start + chrono::Duration::minutes(i64::from(offset_minutes));
-    (local.date_naive() - today).num_days()
+/// The planner's clock and zone: now, and the zone the server planned with. An unknown
+/// zone name falls back to UTC, so the tasks still show.
+fn planner_context(tz_name: &str) -> Option<LocalContext> {
+    Some(LocalContext {
+        now: now_utc(),
+        tz: tz_name.parse().unwrap_or(chrono_tz::UTC),
+    })
 }
 
-/// The placements that fall on planner day `day`, in their original order.
-fn placements_on_day(
-    placements: &[Placement],
-    day: i64,
-    offset_minutes: i32,
-    today: NaiveDate,
-) -> Vec<Placement> {
-    placements
-        .iter()
-        .filter(|placement| day_index(placement.start, offset_minutes, today) == day)
-        .cloned()
-        .collect()
-}
-
-/// The browser's zone offset, in minutes east of UTC.
-fn zone_offset_minutes() -> i32 {
+/// The current instant. On the page it comes from the browser: the platform clock that
+/// chrono and std use is not there on wasm32.
+fn now_utc() -> DateTime<Utc> {
     #[cfg(target_arch = "wasm32")]
     {
-        -(js_sys::Date::new_0().get_timezone_offset() as i32)
+        DateTime::from_timestamp_millis(js_sys::Date::now() as i64).unwrap_or(DateTime::UNIX_EPOCH)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        0
+        SystemClock.now()
     }
+}
+
+/// The day column a placement falls in: its date in the planner's zone, counted from
+/// today. Day 0 is today.
+fn day_index(start: DateTime<Utc>, ctx: &LocalContext) -> i64 {
+    (ctx.local(start).date() - ctx.today()).num_days()
+}
+
+/// The placements that fall on planner day `day`, in their original order.
+fn placements_on_day(placements: &[Placement], day: i64, ctx: &LocalContext) -> Vec<Placement> {
+    placements
+        .iter()
+        .filter(|placement| day_index(placement.start, ctx) == day)
+        .cloned()
+        .collect()
 }
 
 fn current_minutes() -> u16 {
@@ -173,27 +180,39 @@ mod tests {
         );
     }
 
+    fn zone(name: &str, now: DateTime<Utc>) -> LocalContext {
+        LocalContext {
+            now,
+            tz: name.parse().unwrap(),
+        }
+    }
+
+    fn at_utc(month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, month, day, hour, minute, 0)
+            .unwrap()
+    }
+
     #[test]
     fn a_placement_lands_on_its_own_local_day() {
-        let today = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
-        // 23:30 UTC on 12 Oct is 19:30 on 12 Oct in New York (UTC-4): today.
-        let evening = Utc.with_ymd_and_hms(2026, 10, 12, 23, 30, 0).unwrap();
-        assert_eq!(day_index(evening, -240, today), 0);
-        // The same instant is 00:30 on 13 Oct in Berlin (UTC+2 in October): tomorrow.
-        assert_eq!(day_index(evening, 120, today), 1);
+        let ny = zone("America/New_York", at_utc(10, 12, 12, 0));
+        // 23:30 UTC on 12 Oct is 19:30 on 12 Oct in New York: today.
+        assert_eq!(day_index(at_utc(10, 12, 23, 30), &ny), 0);
+        let berlin = zone("Europe/Berlin", at_utc(10, 12, 12, 0));
+        // The same instant is 01:30 on 13 Oct in Berlin: tomorrow.
+        assert_eq!(day_index(at_utc(10, 12, 23, 30), &berlin), 1);
     }
 
     #[test]
     fn each_placement_appears_only_on_its_day() {
-        let today = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let ny = zone("America/New_York", at_utc(10, 12, 12, 0));
         let at = |day: u32, hour: u32| Placement {
             task: todo_core::TaskId(format!("t{day}{hour}")),
-            start: Utc.with_ymd_and_hms(2026, 10, day, hour, 0, 0).unwrap(),
-            end: Utc.with_ymd_and_hms(2026, 10, day, hour + 1, 0, 0).unwrap(),
+            start: at_utc(10, day, hour, 0),
+            end: at_utc(10, day, hour + 1, 0),
         };
         let placements = vec![at(12, 14), at(13, 9), at(14, 16), at(12, 18)];
         let ids = |day| -> Vec<String> {
-            placements_on_day(&placements, day, 0, today)
+            placements_on_day(&placements, day, &ny)
                 .into_iter()
                 .map(|placement| placement.task.0)
                 .collect()
@@ -206,9 +225,25 @@ mod tests {
 
     #[test]
     fn a_day_is_counted_in_the_users_zone_not_utc() {
-        let today = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let ny = zone("America/New_York", at_utc(10, 12, 12, 0));
         // 02:00 UTC on 13 Oct is still 22:00 on 12 Oct in New York.
-        let late = Utc.with_ymd_and_hms(2026, 10, 13, 2, 0, 0).unwrap();
-        assert_eq!(day_index(late, -240, today), 0);
+        assert_eq!(day_index(at_utc(10, 13, 2, 0), &ny), 0);
+    }
+
+    #[test]
+    fn a_placement_either_side_of_the_berlin_clock_change_keeps_its_day() {
+        // Europe/Berlin goes from UTC+2 to UTC+1 at 01:00 UTC on 25 Oct 2026. A single
+        // offset read on 19 Oct would put 22:30 UTC on 25 Oct on 26 Oct.
+        let berlin = zone("Europe/Berlin", at_utc(10, 19, 12, 0));
+        // 22:30 UTC on 25 Oct is 23:30 on 25 Oct in Berlin, after the change.
+        assert_eq!(day_index(at_utc(10, 25, 22, 30), &berlin), 6);
+        // 21:30 UTC on 24 Oct is 23:30 on 24 Oct in Berlin, before it.
+        assert_eq!(day_index(at_utc(10, 24, 21, 30), &berlin), 5);
+    }
+
+    #[test]
+    fn an_unknown_zone_name_falls_back_to_utc() {
+        let context = planner_context("Not/AZone").unwrap();
+        assert_eq!(context.tz, chrono_tz::UTC);
     }
 }

@@ -8,6 +8,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["alloc", "serde"] }
+chrono-tz = "0.10"
 gloo-net = { version = "0.7", features = ["json"] }
 uuid = { version = "1", features = ["v4", "js"] }
 gloo-timers = "0.3"
