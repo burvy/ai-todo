@@ -5,6 +5,7 @@
 
 use gloo_net::http::Request;
 use leptos::prelude::*;
+use leptos::reactive::signal::ArcRwSignal;
 use serde::{Deserialize, Serialize};
 
 /// Where the session token is kept: in this browser only.
@@ -32,22 +33,24 @@ struct Credential<'a> {
     credential: &'a str,
 }
 
+// These live as long as the page. A signal made inside a component belongs to that
+// component and is disposed with it, so these are owner-less.
 thread_local! {
-    static USER: RwSignal<Option<Me>> = RwSignal::new(None);
-    static CLIENT_ID: RwSignal<Option<String>> = RwSignal::new(None);
-    static ERROR: RwSignal<Option<String>> = RwSignal::new(None);
+    static USER: ArcRwSignal<Option<Me>> = ArcRwSignal::new(None);
+    static CLIENT_ID: ArcRwSignal<Option<String>> = ArcRwSignal::new(None);
+    static ERROR: ArcRwSignal<Option<String>> = ArcRwSignal::new(None);
 }
 
-fn user() -> RwSignal<Option<Me>> {
-    USER.with(|signal| *signal)
+fn user() -> ArcRwSignal<Option<Me>> {
+    USER.with(|signal| signal.clone())
 }
 
-fn client_id() -> RwSignal<Option<String>> {
-    CLIENT_ID.with(|signal| *signal)
+fn client_id() -> ArcRwSignal<Option<String>> {
+    CLIENT_ID.with(|signal| signal.clone())
 }
 
-fn error() -> RwSignal<Option<String>> {
-    ERROR.with(|signal| *signal)
+fn error() -> ArcRwSignal<Option<String>> {
+    ERROR.with(|signal| signal.clone())
 }
 
 fn storage() -> Option<web_sys::Storage> {
