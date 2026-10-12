@@ -66,7 +66,7 @@ secret environment, not in the repository.
 
 Hosting (burvy.dev server): the server listens on `PORT` (3160). The router
 forwards TCP 3160 to the server PC, the Windows firewall allows it, and
-Cloudflare has a proxied CNAME `ai-todo-api` with an Origin Rule to port 3160.
+Cloudflare has proxied CNAMEs `rambl` (https://rambl.burvy.dev, the main address) and the old `ai-todo-api`, both sent to port 3160 by one Origin Rule.
 `deploy\install-task.ps1` registers a startup task. Check with
 `curl http://localhost:3160/api/tasks` on the server.
 
