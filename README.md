@@ -59,8 +59,15 @@ overwriting its `data/` directory, then update the running installation:
 Stop the existing server before running the update script. It installs the
 staged server and static files, keeps the server's data, and starts it again.
 Keep `TYPESAFE_API_KEY` in the server's
-secret environment, not in the repository. See [docs/deploy.md](docs/deploy.md)
-for the server layout and startup-task option.
+secret environment, not in the repository.
+
+Hosting (burvy.dev server): the server listens on `PORT` (3160). The router
+forwards TCP 3160 to the server PC, the Windows firewall allows it, and
+Cloudflare has a proxied CNAME `ai-todo-api` with an Origin Rule to port 3160.
+`deploy\install-task.ps1` registers a startup task. Check with
+`curl http://localhost:3160/api/tasks` on the server.
+
+Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Jev notes: [docs/jev.md](docs/jev.md).
 
 ## Project layout
 
