@@ -92,3 +92,28 @@ The pen mascot (`illustrations/pen.svg`) is Rambo. It is the writing pen, not ju
 - [ ] Sounds are under 1.5 s and under 100 KB.
 - [ ] Viewed in the app in **light and dark** mode (settings gear › desk), on a phone width as well as a desktop.
 - [ ] Update this inventory: change "placeholder" to "hand-made by <name>, <date>" for that row.
+
+## Rambo character sheet (placeholder poses)
+
+Rambo is a friendly, boy-ish fountain pen who wears his cap like a ballcap. The eight poses are in `web/assets/rambo/`; `web/assets/rambo/sheet.html` shows them on light and dark paper at 96 px and 48 px. Every file starts with `<!-- PLACEHOLDER: replace me, see art/GUIDE.md -->`, uses viewBox `0 0 64 112`, and keeps the class names `pen-barrel`, `pen-cap`, `pen-nib`, `pen-lead`, `pen-gloss`, `eye-white`, `eye-black`, `brow` (extra parts: `mouth`, `mouth-fill`, `tongue`, `lid`, `blush`, `ink-drop`, `fx`, `fx-fill`). Colours are CSS variables with fallbacks (`--rambo-barrel`, `--rambo-cap`, `--rambo-nib`, `--rambo-lead`, `--rambo-ink`, `--rambo-eye`, `--rambo-pupil`, `--rambo-brow`, `--rambo-blush`, `--rambo-fx`), so the theme can restyle them and the built-in dark-mode block works.
+
+| Pose (file) | When shown | Brain pose / state (`crates/rambl-brain`) |
+|---|---|---|
+| `idle.svg` | Resting at home | `home`, `State::Home` |
+| `writing.svg` | You are typing, or he is working out your ramble | `State::Listening`, `State::Thinking` (`think`) |
+| `flying.svg` | Moving to a task or the window | `State::Wandering` (`wander`), `Spot` moves |
+| `happy.svg` | A task is added or done, the list is empty | `cheer`, `smile` (`task_added`, `task_done`, `list_empty`) |
+| `sleepy.svg` | Nobody around for a while, or late at night | `sleep`, `State::Dozing` |
+| `teasing.svg` | Playing, poked, dragged | `play`, `dangle` (`State::Playing`, `dragged`) |
+| `worried.svg` | A task is overdue | `worried` (`task_overdue`) |
+| `lobotomized.svg` | Lobotomized mode: no brain, vacant | `lobotomized`, `Mode::Lobotomized` |
+
+Replace a pose with your own drawing:
+
+1. Draw him about 6 x 10 cm on plain white paper, one drawing per pose, with the cap, brows and eyes clear of the barrel lines.
+2. Scan at 600 dpi greyscale, crop, and clean up in an image editor.
+3. In Inkscape: Path > Trace Bitmap (Brightness cutoff for line art, Multiple scans for colour), then Path > Simplify.
+4. Set the document to viewBox `0 0 64 112`, put each part into its class, and fill with the `var(--rambo-...)` colours instead of fixed hex.
+5. Save as Plain SVG with the same file name, and keep the placeholder comment until the art is final, then delete it.
+6. Open `sheet.html` and check every pose in light and dark mode at 48 px; then change the inventory row to "hand-made by <name>, <date>".
+

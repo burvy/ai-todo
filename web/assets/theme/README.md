@@ -1,5 +1,7 @@
 # Theme Assets (Placeholder)
 
+Rambo's poses live in `web/assets/rambo/` (see `art/GUIDE.md`), not here.
+
 All files in this directory are AI-generated placeholder graphics. Replace them with real art before shipping.
 
 | File | Purpose | Size | Format | Used in |
@@ -8,10 +10,6 @@ All files in this directory are AI-generated placeholder graphics. Replace them 
 | paper-dark.svg | Tileable dark-mode parchment | 512x512 | SVG (tileable) | Dark theme backgrounds |
 | edge.svg | Deckled paper edge strip | 512x24 | SVG (repeat-x) | Page borders |
 | stain.svg | Faint ink stain overlay | 256x256 | SVG (transparent) | Background texture |
-| rambo-idle.svg | Mascot neutral pose | 256x256 | SVG (transparent) | Home screen mascot |
-| rambo-happy.svg | Mascot happy pose | 256x256 | SVG (transparent) | Success / positive feedback |
-| rambo-sleepy.svg | Mascot sleepy pose | 256x256 | SVG (transparent) | Idle / rest state |
-| rambo-teasing.svg | Mascot playful pose | 256x256 | SVG (transparent) | Teasing / playful feedback |
 | icon-mic.svg | Microphone icon | 24x24 | SVG (currentColor) | Speech / voice actions |
 | icon-settings.svg | Settings gear icon | 24x24 | SVG (currentColor) | Settings / preferences |
 | icon-list.svg | List icon | 24x24 | SVG (currentColor) | List / task list views |
