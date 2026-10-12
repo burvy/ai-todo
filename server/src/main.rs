@@ -28,6 +28,7 @@ use chrono::{DateTime, Datelike, NaiveDateTime, NaiveTime, TimeZone, Timelike, U
 use chrono_tz::Tz;
 use db::{BusyRow, Db};
 use futures::future::join_all;
+use include_dir::{Dir, include_dir};
 use judge::v1::{choose, classify_intent, find_date_candidates, split_sentences, understand};
 use scheduler::{BusyBlock, Placement, UnschedulableReason, WorkingHours};
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,8 @@ use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
+
+static WEB_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
 
 #[derive(Default)]
 struct Store {
@@ -1710,6 +1713,40 @@ fn app(state: AppState) -> Router {
             ))
             .service(ServeDir::new("static"));
         router = router.fallback_service(static_files);
+    } else {
+        router = router.fallback(embedded_web);
+    }
+
+    async fn embedded_web(request: HttpRequest) -> Response {
+        let path = request.uri().path();
+        if path.starts_with("/api/") {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+        let relative = path.trim_start_matches('/');
+        let file = if relative.is_empty() {
+            WEB_DIST.get_file("index.html")
+        } else {
+            WEB_DIST
+                .get_file(relative)
+                .or_else(|| WEB_DIST.get_file("index.html"))
+        };
+        match file {
+            Some(file) => {
+                let content_type = match Path::new(file.path())
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                {
+                    Some("js") => "text/javascript; charset=utf-8",
+                    Some("css") => "text/css; charset=utf-8",
+                    Some("svg") => "image/svg+xml",
+                    Some("wasm") => "application/wasm",
+                    Some("json") => "application/json",
+                    _ => "text/html; charset=utf-8",
+                };
+                ([(header::CONTENT_TYPE, content_type)], file.contents()).into_response()
+            }
+            None => StatusCode::NOT_FOUND.into_response(),
+        }
     }
     router
 }
