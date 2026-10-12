@@ -38,7 +38,7 @@ pub fn data_path_from_env() -> std::path::PathBuf {
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
@@ -49,6 +49,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_4,
     MIGRATION_5,
     MIGRATION_6,
+    MIGRATION_7,
 ];
 
 const MIGRATION_1: &str = "
@@ -149,13 +150,15 @@ ALTER TABLE v2_users ADD COLUMN last_activity_at TEXT NOT NULL DEFAULT '1970-01-
 UPDATE v2_users SET last_activity_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now');
 ";
 
+const MIGRATION_7: &str = "ALTER TABLE v2_tasks ADD COLUMN due_tz TEXT;";
+
 /// Every column of `v2_tasks`, in one list.
 ///
 /// Reads and writes are built from this string, so a field added here cannot
 /// be added to the `SELECT` and forgotten in the `INSERT`. The index below is
 /// checked against it by a test.
 const TASK_COLUMNS: &str = "id, title, duration_min, when_kind, when_time, done, \"order\", \
-                            label, priority, source, created, external_uid, updated_at";
+                            label, priority, source, created, external_uid, updated_at, due_tz";
 
 /// A store that could not answer.
 ///
@@ -896,7 +899,7 @@ impl Store for SqliteStore {
             .execute(
                 &format!(
                     "INSERT INTO v2_tasks ({TASK_COLUMNS}, user_id) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15) \
                  ON CONFLICT(id) DO UPDATE SET \
                      title = excluded.title, \
                      duration_min = excluded.duration_min, \
@@ -909,7 +912,8 @@ impl Store for SqliteStore {
                      source = excluded.source, \
                      created = excluded.created, \
                      external_uid = excluded.external_uid, \
-                     updated_at = excluded.updated_at \
+                     updated_at = excluded.updated_at, \
+                     due_tz = excluded.due_tz \
                  WHERE v2_tasks.user_id = excluded.user_id"
                 ),
                 params![
@@ -926,6 +930,7 @@ impl Store for SqliteStore {
                     format_ts(task.created),
                     task.external_uid,
                     format_ts(task.updated_at),
+                    task.due_tz,
                     user,
                 ],
             )
@@ -1410,6 +1415,7 @@ fn read_task(row: &rusqlite::Row<'_>) -> Result<Task, rusqlite::Error> {
     let source: String = row.get(9)?;
     let created: String = row.get(10)?;
     let updated_at: String = row.get(12)?;
+    let due_tz: Option<String> = row.get(13)?;
 
     Ok(Task {
         id: TaskId(row.get(0)?),
@@ -1423,6 +1429,7 @@ fn read_task(row: &rusqlite::Row<'_>) -> Result<Task, rusqlite::Error> {
         source: source_from_stored(&source),
         created: parse_ts(&created).unwrap_or_else(Utc::now),
         updated_at: parse_ts(&updated_at).unwrap_or_else(Utc::now),
+        due_tz,
         external_uid: row.get(11)?,
     })
 }
@@ -1589,6 +1596,7 @@ mod tests {
             source: Source::Text,
             created: at(9),
             updated_at: at(9),
+            due_tz: None,
             external_uid: None,
         }
     }
@@ -1602,6 +1610,24 @@ mod tests {
             .into_iter()
             .find(|task| &task.id == id)
             .unwrap_or_else(|| panic!("no stored task {id:?}"))
+    }
+
+    /// The deadline zone (docs/ARCHITECTURE.md 4.1) rides with the task through
+    /// whichever store.
+    fn due_tz_round_trips(store: &dyn Store) {
+        let mut task = task("due", 0);
+        task.when = When::DueBy(at(21));
+        task.due_tz = Some("America/New_York".into());
+        store.put(USER, task.clone()).unwrap();
+
+        let stored = store.tasks(USER).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].when, When::DueBy(at(21)));
+        assert_eq!(
+            stored[0].due_tz.as_deref(),
+            Some("America/New_York"),
+            "a deadline's zone must survive a round trip"
+        );
     }
 
     /// Two people must never see each other's tasks. This is the promise the whole
@@ -1987,12 +2013,14 @@ mod tests {
     fn memory_store_passes_the_contract() {
         users_are_isolated(&MemoryStore::new());
         store_contract(&MemoryStore::new());
+        due_tz_round_trips(&MemoryStore::new());
     }
 
     #[test]
     fn sqlite_store_passes_the_contract() {
         users_are_isolated(&SqliteStore::open_in_memory().unwrap());
         store_contract(&SqliteStore::open_in_memory().unwrap());
+        due_tz_round_trips(&SqliteStore::open_in_memory().unwrap());
     }
 
     // -- SQLite specifics the contract cannot cover through the trait.
@@ -2369,6 +2397,49 @@ mod tests {
         assert_eq!(store.expire_anonymous(before - DAY * 30).unwrap(), 0);
         assert!(store.anonymous_exists("anon_old").unwrap());
         assert_eq!(store.expire_anonymous(Utc::now() + DAY).unwrap(), 1);
+        let version: i64 = store
+            .conn
+            .lock()
+            .expect("db mutex")
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_version_6_database_migrates_its_tasks_without_a_due_zone() {
+        let path = unique_temp_dir().join("rambl.db");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        {
+            let conn = database_at(&path, 6);
+            // A v6 row has no due_tz column at all: this is the shape an install
+            // running before the feature wrote.
+            conn.execute_batch(
+                "INSERT INTO v2_users (id, email, name, picture, created_at, plan) VALUES
+                     ('carol', 'c@example.com', 'Carol', NULL, '2026-01-01T00:00:00+00:00', 'free');
+                 INSERT INTO v2_tasks (id, title, duration_min, when_kind, when_time, done,
+                     \"order\", label, priority, source, created, external_uid, updated_at,
+                     user_id) VALUES
+                     ('c1', 'Carol task', 30, 'due_by', '2026-11-03T04:59:59+00:00', 0, 0,
+                      'work', 'medium', 'text', '2026-02-03T04:05:06+00:00', NULL,
+                      '2026-02-03T04:05:06+00:00', 'carol');",
+            )
+            .unwrap();
+        }
+
+        let store = SqliteStore::open(&path).expect("a v6 database must open and migrate");
+        let carol = store.tasks("carol").unwrap();
+        assert_eq!(carol.len(), 1, "the pre-feature task survives");
+        assert_eq!(
+            carol[0].when,
+            When::DueBy(Utc.with_ymd_and_hms(2026, 11, 3, 4, 59, 59).unwrap())
+        );
+        assert_eq!(
+            carol[0].due_tz, None,
+            "a task written before due_tz existed has no zone"
+        );
         let version: i64 = store
             .conn
             .lock()

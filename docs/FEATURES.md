@@ -90,6 +90,12 @@ b. Restart the server and reload the page.
 c. Code: `server/src/v2/store.rs:SqliteStore, Store`;
 `server/src/v2/mod.rs:app_from_env`.
 
+### 7. Due dates keep their zone
+a. A `DueBy` deadline remembers the zone it was set in (`due_tz`), so a deadline set as Friday 17:00 in New York reads Friday 17:00 New York even after the user travels or changes zone; the instant itself never moves. Day-only captures become the end of that day in the capture zone (the same end of day either side of a DST change). Editing a task's date re-anchors the deadline to the zone the edit is made in; a task that stops being a deadline has no zone.
+b. Open a task whose due date was set in another zone: the edit box still shows the original zone's time, and saving keeps the same instant.
+c. Code: `crates/core/src/lib.rs:Task::due_tz, When::DueBy`;
+`server/src/v2/app.rs:due_zone, apply_revision`; `web/src/lib.rs:due_display, parse_edited_due`.
+
 ## III. WEEK PLANNER
 
 ### 1. Scrollable week view

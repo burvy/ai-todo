@@ -29,6 +29,15 @@ fn working_hours(tz: Tz) -> WorkingHours {
     )
 }
 
+/// The zone a `DueBy` deadline was set in, and `None` for anything that is not a
+/// deadline (docs/ARCHITECTURE.md 4.1): `Anytime` and `At` have no zone of their own.
+fn due_zone(when: When, tz: Tz) -> Option<String> {
+    match when {
+        When::DueBy(_) => Some(tz.name().to_owned()),
+        When::Anytime | When::At(_) => None,
+    }
+}
+
 /// The fields a client may change with PATCH. Absent fields stay as they are.
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
 pub struct Patch {
@@ -167,6 +176,7 @@ impl<S: Store> App<S> {
             source: draft.source,
             created: ctx.now,
             updated_at: ctx.now,
+            due_tz: due_zone(draft.when, tz),
             external_uid: None,
         };
         self.store
@@ -196,7 +206,11 @@ impl<S: Store> App<S> {
             task.duration_min = minutes;
         }
         if let Some(when) = patch.when {
+            // A deadline remembers the zone it was set in (docs/ARCHITECTURE.md 4.1):
+            // editing a task's when re-anchors it to the current zone, and anything
+            // that is no longer a deadline has no zone to remember.
             task.when = when;
+            task.due_tz = due_zone(when, tz);
         }
         if let Some(done) = patch.done {
             task.done = done;
@@ -257,6 +271,7 @@ impl<S: Store> App<S> {
                 source: Source::Calendar,
                 created: ctx.now,
                 updated_at: ctx.now,
+                due_tz: None,
                 external_uid: event.uid.clone(),
             };
             created.push(task.id.clone());
@@ -318,6 +333,7 @@ impl<S: Store> App<S> {
                 source: draft.source,
                 created: ctx.now,
                 updated_at: ctx.now,
+                due_tz: due_zone(draft.when, tz),
                 external_uid: None,
             };
             ids.push(task.id.clone());
@@ -343,10 +359,14 @@ impl<S: Store> App<S> {
         let task = Self::held(&mut tasks, id)?;
         check_fresh(task, seen)?;
         match (revision.day, revision.time) {
-            (Some(day), Some(time)) => task.when = When::At(ctx.at(day, time)),
+            (Some(day), Some(time)) => {
+                task.when = When::At(ctx.at(day, time));
+                task.due_tz = None;
+            }
             (Some(day), None) => {
                 let end_of_day = NaiveTime::from_hms_opt(17, 0, 0).expect("17:00 is valid");
                 task.when = When::DueBy(ctx.at(day, end_of_day));
+                task.due_tz = Some(tz.name().to_owned());
             }
             _ => {}
         }
@@ -732,6 +752,165 @@ mod tests {
         );
         let unique: HashSet<_> = ids.iter().map(|id| &id.0).collect();
         assert_eq!(unique.len(), 10, "ids minted in one batch must be unique");
+    }
+
+    /// docs/ARCHITECTURE.md 4.1: a `DueBy` deadline keeps the zone it was set in.
+    /// `Anytime` and `At` tasks have no zone of their own.
+    #[test]
+    fn due_tasks_remember_the_zone_they_were_set_in() {
+        let clock = Arc::new(FixedClock(
+            Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+        ));
+        let mut app = App::new(MemoryStore::new(), clock);
+        let due = Utc.with_ymd_and_hms(2026, 10, 16, 21, 0, 0).unwrap();
+
+        let mut deadline = draft("Deadline");
+        deadline.when = When::DueBy(due);
+        let created = app.create(deadline, USER, NEW_YORK).expect("create");
+        assert_eq!(
+            created.tasks[0].due_tz.as_deref(),
+            Some("America/New_York"),
+            "a deadline remembers the zone it was set in"
+        );
+
+        let mut floating = draft("Floating");
+        floating.when = When::Anytime;
+        assert_eq!(
+            app.create(floating, USER, NEW_YORK).expect("create").tasks[0].due_tz,
+            None
+        );
+
+        let mut pinned = draft("Pinned");
+        pinned.when = When::At(due);
+        assert_eq!(
+            app.create(pinned, USER, NEW_YORK).expect("create").tasks[0].due_tz,
+            None
+        );
+    }
+
+    /// A capture's "day only" deadline is the end of that day in the capture zone:
+    /// the instant is fixed with that zone's offset, and the zone name rides with
+    /// it. The days either side of the 2026-11-01 DST change still convert to
+    /// exactly the end of their local days.
+    #[test]
+    fn a_deadline_near_the_dst_change_keeps_the_capture_zones_offset() {
+        let now = Utc.with_ymd_and_hms(2026, 10, 30, 12, 0, 0).unwrap();
+        let clock = Arc::new(FixedClock(now));
+        let mut app = App::new(MemoryStore::new(), clock);
+        let ctx = LocalContext { now, tz: NEW_YORK };
+        let end = NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59");
+        let halloween_eve = NaiveDate::from_ymd_opt(2026, 10, 30).unwrap();
+        let after_the_change = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+
+        let mut before = draft("Before");
+        before.when = When::DueBy(ctx.at(halloween_eve, end));
+        let mut after = draft("After");
+        after.when = When::DueBy(ctx.at(after_the_change, end));
+
+        let (_, snapshot) = app
+            .add_drafts(vec![before, after], USER, NEW_YORK)
+            .expect("capture");
+        let before = snapshot.tasks.iter().find(|t| t.title == "Before").unwrap();
+        let after = snapshot.tasks.iter().find(|t| t.title == "After").unwrap();
+
+        let When::DueBy(before_due) = before.when else {
+            panic!("expected a deadline")
+        };
+        let When::DueBy(after_due) = after.when else {
+            panic!("expected a deadline")
+        };
+        // 23:59:59 EDT is 03:59:59Z; 23:59:59 EST is 04:59:59Z.
+        assert_eq!(
+            before_due,
+            Utc.with_ymd_and_hms(2026, 10, 31, 3, 59, 59).unwrap()
+        );
+        assert_eq!(
+            after_due,
+            Utc.with_ymd_and_hms(2026, 11, 3, 4, 59, 59).unwrap()
+        );
+        assert_eq!(
+            before_due.with_timezone(&NEW_YORK).time(),
+            end,
+            "still the end of the local day it was set for"
+        );
+        assert_eq!(
+            after_due.with_timezone(&NEW_YORK).time(),
+            end,
+            "still the end of the local day it was set for"
+        );
+        assert_eq!(before.due_tz.as_deref(), Some("America/New_York"));
+        assert_eq!(after.due_tz.as_deref(), Some("America/New_York"));
+    }
+
+    /// A task keeps its stored zone whatever zone later asks for it: a snapshot from
+    /// Los Angeles never rewrites a New York deadline, and the instant never moves.
+    #[test]
+    fn a_task_keeps_its_due_zone_whatever_zone_asks() {
+        let clock = Arc::new(FixedClock(
+            Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+        ));
+        let mut app = App::new(MemoryStore::new(), clock);
+        let due = Utc.with_ymd_and_hms(2026, 10, 16, 21, 0, 0).unwrap();
+        let mut draft = draft("Call home");
+        draft.when = When::DueBy(due);
+        app.create(draft, USER, NEW_YORK).expect("create");
+
+        let from_la = app
+            .snapshot(USER, chrono_tz::America::Los_Angeles)
+            .expect("snapshot");
+        assert_eq!(
+            from_la.tasks[0].due_tz.as_deref(),
+            Some("America/New_York"),
+            "reading from another zone must not re-anchor the deadline"
+        );
+        assert_eq!(from_la.tasks[0].when, When::DueBy(due));
+    }
+
+    /// Editing `when` re-anchors a `DueBy` to the zone the edit was made in, and
+    /// clears the zone for a task that stops being a deadline.
+    #[test]
+    fn editing_when_reanchors_or_clears_the_due_zone() {
+        let clock = Arc::new(FixedClock(
+            Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+        ));
+        let mut app = App::new(MemoryStore::new(), clock);
+        let due = Utc.with_ymd_and_hms(2026, 10, 16, 21, 0, 0).unwrap();
+        let mut draft = draft("Deadline");
+        draft.when = When::DueBy(due);
+        let created = app.create(draft, USER, NEW_YORK).expect("create");
+        let id = created.tasks[0].id.0.clone();
+
+        // Pinning it from another zone: no deadline, no zone.
+        app.patch(
+            &id,
+            Patch {
+                when: Some(When::At(due)),
+                ..Patch::default()
+            },
+            USER,
+            chrono_tz::America::Los_Angeles,
+        )
+        .expect("patched");
+        assert_eq!(app.find(USER, &id).unwrap().due_tz, None);
+
+        // A deadline edited from Los Angeles is anchored there from then on.
+        app.patch(
+            &id,
+            Patch {
+                when: Some(When::DueBy(due)),
+                ..Patch::default()
+            },
+            USER,
+            chrono_tz::America::Los_Angeles,
+        )
+        .expect("patched");
+        let task = app.find(USER, &id).unwrap();
+        assert_eq!(task.due_tz.as_deref(), Some("America/Los_Angeles"));
+        assert_eq!(
+            task.when,
+            When::DueBy(due),
+            "the instant itself did not move"
+        );
     }
 
     /// Newest first (docs/ARCHITECTURE.md 4.1): each new task takes a smaller

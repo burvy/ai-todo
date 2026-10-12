@@ -106,6 +106,11 @@ pub struct Task {
     /// When the server last accepted a change to this task. Clients send back the value
     /// they last saw; an edit made against an older one is refused (`StaleUpdate`).
     pub updated_at: DateTime<Utc>,
+    /// The IANA zone a `DueBy` deadline was set in, so it keeps its local time if the
+    /// user later travels or changes zone. `None` for `Anytime`, `At` and pre-null
+    /// tasks. `#[serde(default)]` keeps snapshots written before this field parse.
+    #[serde(default)]
+    pub due_tz: Option<String>,
     /// iCalendar UID for imported events. Re-importing the same UID updates this task.
     pub external_uid: Option<String>,
 }
@@ -238,6 +243,7 @@ mod tests {
             source: Source::Text,
             created: at,
             updated_at: at,
+            due_tz: None,
             external_uid: None,
         };
         let snapshot = Snapshot {

@@ -67,6 +67,7 @@ mod tests {
             source: Source::Text,
             created: start,
             updated_at: start,
+            due_tz: None,
             external_uid: None,
         };
         Snapshot {
