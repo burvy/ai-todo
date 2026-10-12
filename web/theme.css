@@ -818,11 +818,15 @@ button {
 }
 
 .pen-title {
-  max-width: 0;
+  max-width: 100%;
   overflow: hidden;
   transition: max-width 0.6s linear;
   display: inline-block;
   white-space: nowrap;
+}
+
+.pen-pending .pen-title {
+  max-width: 0;
 }
 
 .pen-writing .pen-title {

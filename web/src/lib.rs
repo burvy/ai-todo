@@ -876,6 +876,7 @@ fn TaskList(
                             .ok()
                             .flatten()
                         {
+                            row.set_class_name("pen-pending");
                             let rect = row.get_bounding_client_rect();
                             let center = pen::writing_pen_center(
                                 rect.left() + 40.0,
