@@ -187,8 +187,58 @@ pub fn is_policy_line(clause: &str) -> bool {
 
 /// Clauses of a capture, in order. Blank clauses are dropped.
 pub fn split_clauses(text: &str) -> Vec<String> {
-    split_sentences(text)
+    split_sentences(&join_wrapped_lines(text))
         .into_iter()
         .filter(|clause| !clause.trim().is_empty())
         .collect()
+}
+
+/// Joins hard line wraps so a sentence broken across lines stays whole. A newline
+/// stays a break only after sentence punctuation or at a blank line.
+pub fn join_wrapped_lines(text: &str) -> String {
+    let text = text.replace("\r\n", "\n");
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\n' {
+            out.push(ch);
+        } else if chars.peek() == Some(&'\n')
+            || out.trim_end().ends_with(['.', '!', '?'])
+            || chars.peek().is_none()
+        {
+            out.push('\n');
+        } else {
+            out.push(' ');
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_hard_wrap_mid_sentence_is_joined() {
+        assert_eq!(
+            split_clauses(
+                "Maybe an
+hour on the lab report."
+            ),
+            ["Maybe an hour on the lab report"]
+        );
+    }
+
+    #[test]
+    fn a_newline_after_punctuation_or_a_blank_line_still_breaks() {
+        assert_eq!(
+            split_clauses(
+                "Call mom.
+Buy milk
+
+Write the essay"
+            ),
+            ["Call mom", "Buy milk", "Write the essay"]
+        );
+    }
 }

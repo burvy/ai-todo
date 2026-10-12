@@ -24,7 +24,11 @@ fn answer(question: &ClauseQuestion) -> ClauseAnswer {
     let first = |items: &[String]| (!items.is_empty()).then_some(0);
     let lower = question.clause.to_ascii_lowercase();
     ClauseAnswer {
-        is_task: if question.titles.is_empty() { 0.0 } else { 1.0 },
+        is_task: if is_task(&question.clause, &question.titles) {
+            1.0
+        } else {
+            0.0
+        },
         title: first(&question.titles),
         day: first(&question.days),
         time: first(&question.times),
@@ -40,6 +44,43 @@ fn answer(question: &ClauseQuestion) -> ClauseAnswer {
         },
         confidence: 1.0,
     }
+}
+
+/// Stands in for Jev's is-a-task question. Rejects what v1's judge rejected: empty
+/// clauses, one-word fragments, hedges, feelings, wishes, observations and past events.
+pub fn is_task(clause: &str, titles: &[String]) -> bool {
+    let lower = clause.trim().to_ascii_lowercase();
+    if titles.is_empty() || lower.split_whitespace().count() < 2 {
+        return false;
+    }
+    const STARTS: [&str; 12] = [
+        "which ",
+        "would be ",
+        "it would be ",
+        "although ",
+        "maybe ",
+        "probably ",
+        "i guess",
+        "i think",
+        "i feel ",
+        "i wish ",
+        "i keep ",
+        "not that",
+    ];
+    const CONTAINS: [&str; 10] = [
+        "is boring",
+        "would be nice",
+        "so tired",
+        "exhausted",
+        "not really a school",
+        "not homework",
+        "i already",
+        "yesterday",
+        "last week",
+        "lol",
+    ];
+    !(STARTS.iter().any(|start| lower.starts_with(start))
+        || CONTAINS.iter().any(|needle| lower.contains(needle)))
 }
 
 fn label_for(lower: &str) -> Label {
@@ -96,5 +137,15 @@ mod tests {
         let questions = [question("", &[], &[])];
         let answers = FakeJudge.judge(&questions).await.unwrap();
         assert_eq!(answers[0].is_task, 0.0);
+    }
+
+    #[test]
+    fn chit_chat_feelings_and_wishes_are_not_tasks() {
+        let titles = vec!["Clause".to_string()];
+        assert!(!is_task("I am so tired", &titles));
+        assert!(!is_task("Which is boring", &titles));
+        assert!(!is_task("Would be nice", &titles));
+        assert!(!is_task("Maybe an", &titles));
+        assert!(is_task("Submit the financial aid form", &titles));
     }
 }

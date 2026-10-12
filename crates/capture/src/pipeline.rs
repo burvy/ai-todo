@@ -94,9 +94,18 @@ fn title_spans(clause: &str, found: &[Candidate]) -> Vec<String> {
     spans
 }
 
+/// Words that cannot end a title. Left at the end, they come from a removed date or time phrase.
+const DANGLING: [&str; 12] = [
+    "on", "by", "the", "a", "an", "and", "to", "of", "before", "at", "for", "in",
+];
+
 /// Drop filler and edge punctuation, collapse spaces, capitalise the first letter.
 pub fn clean_title(text: &str) -> String {
-    const FILLER: [&str; 16] = [
+    const FILLER: [&str; 20] = [
+        "oh, and ",
+        "oh, ",
+        "and ",
+        "please ",
         "i need to ",
         "i have to ",
         "i should ",
@@ -127,7 +136,17 @@ pub fn clean_title(text: &str) -> String {
             None => break,
         }
     }
-    let words = words.trim_matches(|c: char| !c.is_alphanumeric());
+    let mut words = words
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_owned();
+    // A date or time phrase can leave a dangling word behind ("the exam on").
+    while let Some((head, last)) = words.rsplit_once(' ') {
+        if DANGLING.contains(&last.to_ascii_lowercase().as_str()) {
+            words = head.to_owned();
+        } else {
+            break;
+        }
+    }
     let mut chars = words.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
