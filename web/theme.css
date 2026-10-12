@@ -9,7 +9,8 @@
 
   /* Palette, light: parchment and iron-gall ink. */
   --paper: #f2e6cd;
-  --paper-raised: #f8efdb;
+  /* The sheet must read as a sheet: lighter than the page it lies on. */
+  --paper-raised: #fdf7ea;
   --paper-sunken: #eadcc0;
   --ink: #2b2318;
   --ink-soft: #5f5138;
@@ -20,8 +21,12 @@
   --danger: #a5342a;
   --now: #b03a2a;
   --wash: rgba(138, 75, 31, 0.12);
-  --shadow: 0 1px 2px rgba(43, 35, 24, 0.18);
+  --shadow: 0 1px 2px rgba(43, 35, 24, 0.12), 0 14px 28px -22px rgba(43, 35, 24, 0.7);
   --backdrop: rgba(43, 35, 24, 0.35);
+
+  /* A lamp over the page: light falls from the top of the sheet. */
+  --glow: radial-gradient(120% 80% at 50% -10%, rgba(255, 255, 255, 0.55), transparent 60%),
+    radial-gradient(90% 60% at 100% 100%, rgba(138, 75, 31, 0.07), transparent 65%);
 
   /* Type: system stacks only. */
   --font-heading: Georgia, "Iowan Old Style", "Times New Roman", serif;
@@ -62,7 +67,9 @@
   --dur-slow: 450ms;
   --ease: ease;
 
-  /* Paper texture (web/assets/theme/; the flat colours carry the page if one is missing). */
+  /* Paper texture (web/assets/theme/; the flat colours carry the page if one is missing).
+     edge.svg and stain.svg are alpha shapes: they are painted, not shown, so the
+     same file reads correctly on a light sheet and a dark one. */
   --texture-paper: url("assets/theme/paper.svg");
   --texture-edge: url("assets/theme/edge.svg");
   --texture-stain: url("assets/theme/stain.svg");
@@ -72,27 +79,25 @@
   :root {
     color-scheme: dark;
 
-    /* Palette, dark: the same paper, aged and lamp-lit. */
-    --paper: #1e1811;
-    --paper-raised: #272016;
-    --paper-sunken: #171209;
-    --ink: #e9dcc0;
-    --ink-soft: #c3b294;
-    --ink-faint: #9a8a6d;
-    --rule: #453a2a;
-    --accent: #d9a45c;
-    --danger: #e0705f;
-    --now: #d96a4f;
-    --wash: rgba(217, 164, 92, 0.16);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
-    --backdrop: rgba(10, 8, 5, 0.55);
+    /* Palette, dark: the same paper, lamp-lit. The steps are wide on purpose —
+       page, sheet and sunken circle must be told apart at a glance. */
+    --paper: #191410;
+    --paper-raised: #2b241b;
+    --paper-sunken: #110e0a;
+    --ink: #f2e6cb;
+    --ink-soft: #cdbe9f;
+    /* 4.7:1 on --paper-raised, so 12px meta text still passes WCAG AA. */
+    --ink-faint: #9c8c6c;
+    --rule: #574733;
+    --accent: #e2ab61;
+    --danger: #e88b7c;
+    --now: #e4705a;
+    --wash: rgba(226, 171, 97, 0.16);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 14px 28px -22px rgba(0, 0, 0, 0.9);
+    --backdrop: rgba(10, 8, 5, 0.6);
+    --glow: radial-gradient(120% 80% at 50% -10%, rgba(226, 171, 97, 0.09), transparent 60%),
+      radial-gradient(90% 60% at 100% 100%, rgba(0, 0, 0, 0.4), transparent 65%);
     --texture-paper: url("assets/theme/paper-dark.svg");
-  }
-
-  /* The placeholder edge is drawn pale for light paper; darken it here so it
-     reads as a torn edge on a dark sheet instead of a bright strip. */
-  header::before {
-    filter: brightness(0.42) saturate(0.7);
   }
 }
 
@@ -113,8 +118,9 @@ body {
   color: var(--ink);
   font: var(--text-base) / 1.5 var(--font-body);
   background-color: var(--paper);
-  background-image: var(--texture-paper);
+  background-image: var(--glow), var(--texture-paper);
   background-repeat: repeat;
+  background-attachment: fixed, scroll;
 }
 
 h1,
@@ -156,8 +162,10 @@ header {
   background-color: var(--paper-raised);
 }
 
-/* The torn edge: a strip along the bottom of the masthead, on its own layer so
-   the dark mode can tint it without touching the text. */
+/* The torn edge: the sheet ends in a ragged line, and the page colour shows
+   through it. edge.svg is an alpha deckle, so it is used as a mask and painted
+   with the page colour here — no grey band, and dark mode needs no override.
+   The darker head of the gradient is the sheet's shadow on the page. */
 header::before {
   content: "";
   position: absolute;
@@ -165,20 +173,30 @@ header::before {
   right: 0;
   bottom: 0;
   height: var(--edge-h);
-  background: var(--texture-edge) repeat-x left bottom / auto var(--edge-h);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--rule) 70%, var(--paper)) 0 46%,
+    var(--paper) 100%
+  );
+  -webkit-mask: var(--texture-edge) repeat-x left bottom / auto 100%;
+  mask: var(--texture-edge) repeat-x left bottom / auto 100%;
   pointer-events: none;
 }
 
-/* A faint stain in the corner of the masthead, clipped to the header. */
+/* A faint cup ring in the corner of the masthead, painted in walnut ink and
+   clipped by the header. Same trick: stain.svg is an alpha shape, so the ring
+   takes the accent colour instead of fighting it. */
 header::after {
   content: "";
   position: absolute;
-  top: -140px;
-  right: -70px;
+  top: -150px;
+  right: -80px;
   width: 256px;
   height: 256px;
-  background: var(--texture-stain) center / contain no-repeat;
-  opacity: 0.45;
+  background-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  -webkit-mask: var(--texture-stain) center / contain no-repeat;
+  mask: var(--texture-stain) center / contain no-repeat;
+  opacity: 0.5;
   pointer-events: none;
 }
 

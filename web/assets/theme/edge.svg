@@ -1,7 +1,16 @@
-<!-- PLACEHOLDER: replace me, see web/assets/theme/README.md -->
+<!-- Alpha deckle: the sheet edge, painted through a CSS mask (docs/THEME.md). -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 24" width="512" height="24" preserveAspectRatio="none">
-  <rect width="512" height="24" fill="#d6c6a6"/>
-  <path d="M0 12 q32 -6 64 0 t128 0 t128 0 t128 0 t64 0" stroke="#bfa57a" stroke-width="2" fill="none" opacity="0.6"/>
-  <path d="M0 18 q32 -4 64 0 t128 0 t128 0 t128 0 t64 0" stroke="#a6895a" stroke-width="1.5" fill="none" opacity="0.5"/>
-  <rect x="0" y="22" width="512" height="2" fill="#8f7852" opacity="0.3"/>
+  <path d="M0.0 11.0 L16.0 14.4 L32.0 8.1 L48.0 9.4 L64.0 13.4 L80.0 13.7 L96.0 11.4 L112.0 11.7 L128.0 13.3 L144.0 14.2 L160.0 13.6 L176.0 13.1 L192.0 11.1 L208.0 9.7 L224.0 12.1 L240.0 13.7 L256.0 12.8 L272.0 13.3 L288.0 13.1 L304.0 10.5 L320.0 12.1 L336.0 11.5 L352.0 12.1 L368.0 9.3 L384.0 9.1 L400.0 10.0 L416.0 13.3 L432.0 9.6 L448.0 10.0 L464.0 14.3 L480.0 10.4 L496.0 12.1 L512.0 11.0 L512 24 L0 24 Z" fill="#000"/>
+  <circle cx="319.7" cy="2.4" r="1.2" fill="#000" opacity="0.50"/>
+  <circle cx="329.9" cy="4.0" r="1.2" fill="#000" opacity="0.36"/>
+  <circle cx="435.0" cy="2.5" r="1.2" fill="#000" opacity="0.56"/>
+  <circle cx="280.8" cy="6.8" r="0.8" fill="#000" opacity="0.55"/>
+  <circle cx="237.7" cy="3.8" r="1.1" fill="#000" opacity="0.62"/>
+  <circle cx="50.4" cy="3.9" r="1.1" fill="#000" opacity="0.38"/>
+  <circle cx="430.6" cy="5.2" r="0.9" fill="#000" opacity="0.48"/>
+  <circle cx="365.7" cy="2.2" r="1.0" fill="#000" opacity="0.51"/>
+  <circle cx="395.6" cy="2.2" r="0.7" fill="#000" opacity="0.45"/>
+  <circle cx="310.0" cy="5.9" r="1.0" fill="#000" opacity="0.60"/>
+  <circle cx="129.1" cy="3.4" r="0.8" fill="#000" opacity="0.47"/>
+  <circle cx="274.0" cy="2.9" r="1.1" fill="#000" opacity="0.51"/>
 </svg>
