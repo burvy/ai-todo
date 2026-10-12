@@ -13,7 +13,7 @@ The spec for how Rambl looks. Code lives in `web/theme.css` (linked from `web/in
 | `--paper-sunken` | `#eadcc0` | the mascot's circle (deeper paper) |
 | `--ink` | `#2b2318` | body text |
 | `--ink-soft` | `#5f5138` | secondary text |
-| `--ink-faint` | `#8a7a5c` | muted text, hour labels |
+| `--ink-faint` | `#6f6248` | muted text, hour labels, version (5.3:1 on `--paper-raised`, so 12px passes WCAG AA) |
 | `--rule` | `#c9b58c` | borders and hairlines |
 | `--accent` | `#8a4b1f` | walnut ink: focus, active chips, placement bar |
 | `--danger` | `#a5342a` | red ink: errors, Overdue, Delete |
@@ -38,7 +38,7 @@ The spec for how Rambl looks. Code lives in `web/theme.css` (linked from `web/in
 | `--wash` | `rgba(217, 164, 92, 0.16)` |
 | `--backdrop` | `rgba(10, 8, 5, 0.55)` |
 
-`color-scheme` is `light` or `dark` to match, so checkboxes, scrollbars and the dialog follow the paper. Contrast of `--ink` on `--paper` is about 13:1 in light and 12:1 in dark; both clear the 7:1 bar for body text.
+`color-scheme` is `light` or `dark` to match, so checkboxes, scrollbars and the dialog follow the paper. Contrast of `--ink` on `--paper` is about 13:1 in light and 12:1 in dark; both clear the 7:1 bar for body text. Every text token clears 4.5:1 for small text: `--ink-faint` is the weakest at 5.3:1 on `--paper-raised` (it was 3.7:1 before review).
 
 ## Type
 
@@ -48,6 +48,8 @@ System stacks only, no downloads.
 - Body (`--font-body`): `system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif`. Inputs, buttons and list text stay plainly readable.
 
 Scale (rem, base 16px): `--text-xs` 0.75, `--text-sm` 0.85, `--text-base` 1, `--text-lg` 1.15, `--text-xl` 1.4, `--text-2xl` 1.75. Line height 1.5 for body, 1.2 for headings. Overdue tags are `--text-xs`, uppercase, 0.06em tracking.
+
+- **Handwriting** (`--font-hand`): task titles only — the title in the list (`.task-open > strong`) and the title at the top of the edit dialog (`.dialog-task-title`). A system handwriting stack (`Segoe Print`, `Bradley Hand`, `Comic Sans MS`, `Chalkboard SE`, `Marker Felt`, `cursive`), never a download; a reader without those fonts gets `cursive`, then the browser's default. Everything else stays in the body or heading stack.
 
 ## Spacing, borders, radii
 
@@ -66,8 +68,9 @@ Four graphics, shared with the mascot art, live in `web/assets/theme/` and are c
 |---|---|---|
 | `paper.svg` | 512x512, tileable | page background, light mode (`--texture-paper`) |
 | `paper-dark.svg` | 512x512, tileable | page background, dark mode (`--texture-paper` under the dark media query) |
-| `edge.svg` | 512x24, repeat-x | torn bottom edge of the masthead |
+| `edge.svg` | 512x24, repeat-x | torn strip along the bottom of the masthead (`header::before`, `--edge-h` = 24px). The masthead's top and bottom padding are at least that tall, so the strip never crosses the title. In dark mode the strip is tinted down with `filter: brightness(0.42)` instead of being redrawn. |
 | `stain.svg` | 256x256, transparent | faint stain in the masthead corner, 45% opacity, clipped by the header |
+| `paper.svg` / `paper-dark.svg` | 512x512 | full-bleed colour + stitched grain, no frame, so the tile repeats without seams (the framed placeholder showed a grid of panels) |
 
 Graphics are drawn by Oscar under the names above (`web/assets/theme/README.md` is the replacement guide).
 
@@ -77,8 +80,8 @@ Every texture sits on top of a `--paper*` colour, so a missing file degrades to 
 
 Check 360px and 390px before a wide window. The layout behaviour comes from `web/src/lib.rs` and `web/src/week.rs` (PR #135) and is left as it is; the theme owns colours, fonts, spacing, paper and ruled lines.
 
-- **Panes:** on a phone (`max-width: 700px`) `main` is a horizontal scroll-snap row — the To do pane and the Planner pane sit side by side, swiped or tapped via `.pane-switch`. Those declarations (scroll-snap, `grid-auto-columns: 100%`, `position: relative`, hidden scrollbar) are behaviour and are not restyled; the theme only colours `.pane-switch button.active` (walnut accent, `--wash` fill, 2px accent outline) and gives the tab buttons a 44x44 target. The buttons carry `aria-current` and `aria-pressed`; tapping one scrolls the pane row to that pane's own `offset_left` (`show_pane` in `web/src/lib.rs`), not a multiple of the pane width, because the grid gap sits between panes.
-- **Tap targets:** every control is at least `--tap` (2.75rem / 44px) tall, including checkboxes, radios and the Mic/Add buttons.
+- **Panes:** the base rules are the phone: `main` is a horizontal scroll-snap row — the To do pane and the Planner pane sit side by side, swiped or tapped via `.pane-switch`. Those declarations (scroll-snap, `grid-auto-columns: 100%`, `position: relative`, hidden scrollbar) are behaviour and are not restyled; the theme only colours `.pane-switch button.active` (walnut accent, `--wash` fill, 2px accent outline) and gives the tab buttons a 44x44 target. The buttons carry `aria-pressed` (toggle state; an earlier `aria-current` never rendered and was dropped); tapping one scrolls the pane row to that pane's own `offset_left` (`show_pane` in `web/src/lib.rs`), not a multiple of the pane width, because the grid gap sits between panes. From `min-width: 701px` the panes become a two-column grid and the switcher hides.
+- **Tap targets:** every control is at least `--tap` (2.75rem / 44px) tall or wide — tabs, chips, Mic, Add, Delete, the settings summary and the download link. Checkboxes and radios stay 1.25rem so they do not become grey boxes; their 44px hit area comes from the row (`.task-list li`) or the `<label>` they sit in.
 - **Type:** body text never below 1rem (16px), so iOS does not zoom the inputs. Only meta text (`--text-xs`: hour labels, version, the Overdue tag) is smaller.
 - **Capture box:** on a phone it is a fixed bar at the bottom edge with the safe-area inset, so Mic, Rambo and Add sit under the thumb; the body reserves matching bottom padding. On desktop it stays in the masthead.
 - **No sideways page scroll:** the page itself never scrolls horizontally — only the pane row and the week grid scroll, each inside its own box (`--days` columns, 8rem minimum per day on a phone, 9rem on desktop).

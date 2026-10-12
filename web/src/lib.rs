@@ -178,14 +178,12 @@ pub fn App() -> impl IntoView {
             <button
                 type="button"
                 class:active=move || pane.get() == 0
-                attr:aria-current=move || if pane.get() == 0 { "true" } else { "false" }
                 aria-pressed=move || (pane.get() == 0).to_string()
                 on:click=move |_| show_pane(main_ref, 0, set_pane)
             >"To do"</button>
             <button
                 type="button"
                 class:active=move || pane.get() == 1
-                attr:aria-current=move || if pane.get() == 1 { "true" } else { "false" }
                 aria-pressed=move || (pane.get() == 1).to_string()
                 on:click=move |_| show_pane(main_ref, 1, set_pane)
             >"Planner"</button>
@@ -687,7 +685,7 @@ fn TaskList(
                     >{label_name(label)}</button>
                 </For>
             </div>
-            <ul>
+            <ul class="task-list">
                 <For each=visible_tasks key=|task| task.id.clone() let:task>
                     {
                         let task_id = task.id.clone();
@@ -830,12 +828,12 @@ fn TaskList(
                             }
                         >
                             <strong>{render_task_title.clone()}</strong> " — " {task.duration_min} " min"
+                            {move || {
+                                let time = task_time(&snapshot.get(), &render_task_id);
+                                (!time.is_empty()).then(|| view! { <span class="task-time">" · " {time}</span> })
+                            }}
                             {is_overdue(&task).then(|| view! { <span class="overdue">"Overdue"</span> })}
                         </span>
-                        {move || {
-                            let time = task_time(&snapshot.get(), &render_task_id);
-                            (!time.is_empty()).then(|| view! { <span class="task-time">" · " {time}</span> })
-                        }}
                         <button
                             class="delete"
                             type="button"

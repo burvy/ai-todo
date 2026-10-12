@@ -1,7 +1,8 @@
 /* Rambl's parchment theme: aged paper, ink, calm and readable.
-   Layout behaviour (the panes, the swipe, scroll-snap, hour height) comes from
-   Ryan's PR #135 and is kept as it is; colours, fonts, spacing, paper and ruled
-   lines are decided here. Design spec: docs/THEME.md. */
+   MOBILE FIRST: the base rules are written for a 360px phone; the wide layout starts
+   at @media (min-width: 701px). Layout behaviour (panes, scroll-snap, 64px hour rows)
+   comes from Ryan's PR #135 and is kept as it is; colours, fonts, spacing, paper and
+   ruled lines are decided here. Design spec: docs/THEME.md. */
 
 :root {
   color-scheme: light;
@@ -12,7 +13,8 @@
   --paper-sunken: #eadcc0;
   --ink: #2b2318;
   --ink-soft: #5f5138;
-  --ink-faint: #8a7a5c;
+  /* 5.3:1 on --paper-raised, so 12px meta text passes WCAG AA. */
+  --ink-faint: #6f6248;
   --rule: #c9b58c;
   --accent: #8a4b1f;
   --danger: #a5342a;
@@ -24,6 +26,9 @@
   /* Type: system stacks only. */
   --font-heading: Georgia, "Iowan Old Style", "Times New Roman", serif;
   --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  /* Task titles, in the human's hand. System handwriting fonts only, no downloads. */
+  --font-hand: "Segoe Print", "Bradley Hand", "Comic Sans MS", "Chalkboard SE",
+    "Marker Felt", cursive;
   --text-xs: 0.75rem;
   --text-sm: 0.85rem;
   --text-base: 1rem;
@@ -47,6 +52,9 @@
   /* One hour of the week planner, in CSS pixels. week.rs places the now-line
      with the same number, so change both together. */
   --hour-h: 64px;
+
+  /* The torn edge strip under the masthead (assets/theme/edge.svg). */
+  --edge-h: 24px;
 
   /* Motion. */
   --dur-fast: 120ms;
@@ -80,6 +88,12 @@
     --backdrop: rgba(10, 8, 5, 0.55);
     --texture-paper: url("assets/theme/paper-dark.svg");
   }
+
+  /* The placeholder edge is drawn pale for light paper; darken it here so it
+     reads as a torn edge on a dark sheet instead of a bright strip. */
+  header::before {
+    filter: brightness(0.42) saturate(0.7);
+  }
 }
 
 * {
@@ -94,6 +108,8 @@ body {
   max-width: 1100px;
   margin: 0 auto;
   padding: var(--gutter);
+  /* Room for the fixed capture bar, plus the phone's home-indicator inset. */
+  padding-bottom: calc(var(--tap) + var(--space-4) + var(--space-2) + env(safe-area-inset-bottom, 0px));
   color: var(--ink);
   font: var(--text-base) / 1.5 var(--font-body);
   background-color: var(--paper);
@@ -124,19 +140,33 @@ h3 {
   font-size: var(--text-lg);
 }
 
+/* --- Masthead --- */
+
 header {
   position: relative;
   overflow: hidden;
   display: grid;
   gap: var(--space-2);
   margin-bottom: var(--space-4);
-  padding-bottom: var(--space-3);
+  /* The torn edge is as tall as --edge-h: keep the text clear of it (top and
+     bottom padding >= the edge, so the strip never runs through the h1). */
+  padding-top: var(--space-3);
+  padding-bottom: calc(var(--edge-h) + var(--space-2));
   border-bottom: 1px solid var(--rule);
   background-color: var(--paper-raised);
-  background-image: var(--texture-edge);
-  background-repeat: repeat-x;
-  background-position: left bottom;
-  background-size: auto 24px;
+}
+
+/* The torn edge: a strip along the bottom of the masthead, on its own layer so
+   the dark mode can tint it without touching the text. */
+header::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--edge-h);
+  background: var(--texture-edge) repeat-x left bottom / auto var(--edge-h);
+  pointer-events: none;
 }
 
 /* A faint stain in the corner of the masthead, clipped to the header. */
@@ -152,13 +182,31 @@ header::after {
   pointer-events: none;
 }
 
-/* --- Layout (Ryan's declarations, kept as they are) --- */
+/* --- Layout: the two panes sit side by side in a scroll-snap row on a phone --- */
 
 main {
+  position: relative;
   display: grid;
   gap: var(--space-4);
-  grid-template-columns: minmax(16rem, 1fr) minmax(24rem, 2fr);
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
   align-items: start;
+}
+
+main::-webkit-scrollbar {
+  display: none;
+}
+
+main > * {
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  min-width: 0;
 }
 
 .tasks-pane {
@@ -168,12 +216,12 @@ main {
 }
 
 .pane-switch {
-  display: none;
+  display: flex;
   gap: var(--space-2);
   margin: var(--space-2) 0;
 }
 
-/* Pam: the tabs are targets in their own right, 44x44. */
+/* The tabs are targets in their own right, 44x44. */
 .pane-switch button {
   min-width: var(--tap);
   min-height: var(--tap);
@@ -195,9 +243,8 @@ section {
   box-shadow: var(--shadow);
 }
 
-/* --- Controls --- */
+/* --- Controls: 44px targets, 16px text (inputs never zoom) --- */
 
-/* Touch controls: 44px minimum, and 16px text everywhere (inputs never zoom). */
 button,
 input,
 select {
@@ -210,10 +257,16 @@ select {
   border-radius: var(--radius-sm);
 }
 
-/* Checkbox and radio get a full 44px hit area and the ink accent. */
+/* Checkboxes and radios stay small (1.25rem): their 44px hit area comes from
+   the row or the label they sit in, not from the control itself. */
 input[type="checkbox"],
 input[type="radio"] {
-  min-width: var(--tap);
+  width: 1.25rem;
+  height: 1.25rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  background-color: var(--paper);
   accent-color: var(--accent);
 }
 
@@ -226,29 +279,43 @@ button {
   outline-offset: 2px;
 }
 
-ul {
+/* Task rows only: scoped so it never styles some other list. */
+.task-list {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-li {
+.task-list li {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
   align-items: center;
-  padding: var(--space-2) 0;
+  min-height: var(--tap);
+  padding: var(--space-1) 0;
   border-bottom: 1px dashed var(--rule);
 }
 
-li:last-child {
+.task-list li:last-child {
   border-bottom: none;
 }
 
-/* Capture box: in the masthead on a desk, pinned to the thumb on a phone. */
+/* --- Capture box: a fixed bar at the bottom edge, under the thumb --- */
+
 .capture {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
   display: flex;
   gap: var(--space-2);
+  padding: var(--space-2) var(--gutter);
+  padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+  background-color: var(--paper-raised);
+  background-image: var(--texture-paper);
+  border-top: 1px solid var(--rule);
+  box-shadow: var(--shadow);
 }
 
 .capture input {
@@ -257,6 +324,7 @@ li:last-child {
 }
 
 .mic {
+  min-width: var(--tap);
   white-space: nowrap;
 }
 
@@ -267,7 +335,6 @@ li:last-child {
 }
 
 /* Rambo */
-/* Rambo: `flex: none` so the capture input cannot squash him. */
 .mascot-home {
   flex: none;
   width: var(--tap);
@@ -336,16 +403,17 @@ li:last-child {
   margin: var(--space-1);
 }
 
-/* Week planner: the days scroll inside their own box, never the page. */
+/* --- Week planner: days scroll inside their own box, never the page --- */
+
 .week {
   display: grid;
   gap: var(--space-1);
   overflow-x: auto;
-  grid-template-columns: repeat(var(--days, 7), minmax(9rem, 1fr));
+  grid-template-columns: repeat(var(--days, 7), minmax(8rem, 1fr));
 }
 
 .week-scroll {
-  max-height: 70vh;
+  max-height: 65vh;
   overflow-y: auto;
   overscroll-behavior: contain;
   overscroll-behavior-x: contain;
@@ -388,12 +456,17 @@ li:last-child {
   pointer-events: none;
 }
 
-/* Task list */
+/* --- Task list --- */
+
 .label-filters {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
   margin-bottom: var(--space-3);
+}
+
+.label-filters button {
+  min-width: var(--tap);
 }
 
 .label-filters button.active,
@@ -404,12 +477,19 @@ li:last-child {
   outline: 2px solid var(--accent);
 }
 
+/* One text run: block layout, not flex, so the space in
+   "Finish history paper — 60 min" survives between the inline children. */
 .task-open {
+  display: block;
   flex: 1 1 auto;
-  min-height: var(--tap);
-  display: flex;
-  align-items: center;
+  padding: var(--space-2) 0;
   cursor: pointer;
+}
+
+/* The title in the human's own hand (system handwriting stack, no downloads). */
+.task-open > strong {
+  font-family: var(--font-hand);
+  font-weight: 500;
 }
 
 .task-time {
@@ -441,9 +521,8 @@ li:last-child {
   align-items: center;
 }
 
-/* The dialog is fixed and centred (behaviour from #135); here it also fits a
-   phone: never wider than the screen, scrollable inside itself. */
-/* Pam: never wider than the screen, and the box includes its own padding. */
+/* Fixed and centred (behaviour from #135); here it also fits a phone:
+   never wider than the screen, scrollable inside itself. */
 .task-dialog {
   box-sizing: border-box;
   max-width: calc(100vw - 2rem);
@@ -479,6 +558,15 @@ li:last-child {
   border-radius: var(--radius-sm);
 }
 
+/* Radio rows: 44px tall with the control beside its text, so labels such as
+   "Scheduled at" never wrap under a 44px circle. */
+.task-dialog fieldset label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+}
+
 .duration-chips,
 .dialog-actions {
   display: flex;
@@ -488,8 +576,8 @@ li:last-child {
 
 .dialog-task-title {
   margin: 0;
-  font-family: var(--font-heading);
-  font-style: italic;
+  font-family: var(--font-hand);
+  font-style: normal;
   color: var(--ink-soft);
 }
 
@@ -500,7 +588,8 @@ li:last-child {
   color: var(--ink-faint);
 }
 
-/* Settings, account and notices */
+/* --- Settings, account and notices --- */
+
 .settings {
   margin-bottom: var(--space-4);
   padding: var(--space-2) var(--space-3);
@@ -510,6 +599,9 @@ li:last-child {
 }
 
 .settings summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--tap);
   cursor: pointer;
   font-family: var(--font-heading);
 }
@@ -526,6 +618,12 @@ li:last-child {
 .settings input,
 .settings select {
   max-width: 10rem;
+}
+
+.settings a {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--tap);
 }
 
 .account {
@@ -564,60 +662,45 @@ li:last-child {
   color: var(--ink-faint);
 }
 
-/* Phone: the two panes sit side by side in a scroll-snap row, the capture bar
-   drops to the bottom edge under the thumb, and the tab switcher appears. */
-@media (max-width: 700px) {
-  body {
-    /* Room for the fixed capture bar, plus the phone's home-indicator inset. */
-    padding-bottom: calc(var(--tap) + var(--space-4) + var(--space-2) + env(safe-area-inset-bottom, 0px));
-  }
+/* --- Wide screens: two panes, capture in the masthead --- */
 
-  .pane-switch {
-    display: flex;
+@media (min-width: 701px) {
+  body {
+    padding-bottom: var(--gutter);
   }
 
   main {
-    position: relative;
-    grid-template-columns: none;
-    grid-auto-flow: column;
-    grid-auto-columns: 100%;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scroll-snap-type: x mandatory;
-    overscroll-behavior-x: contain;
-    scrollbar-width: none;
-  }
-
-  main::-webkit-scrollbar {
-    display: none;
+    grid-auto-flow: row;
+    grid-auto-columns: none;
+    grid-template-columns: minmax(16rem, 1fr) minmax(24rem, 2fr);
+    overflow: visible;
+    scroll-snap-type: none;
   }
 
   main > * {
-    scroll-snap-align: start;
-    scroll-snap-stop: always;
-    min-width: 0;
+    scroll-snap-align: none;
+    scroll-snap-stop: normal;
+  }
+
+  .pane-switch {
+    display: none;
   }
 
   .capture {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 3;
-    padding: var(--space-2) var(--gutter);
-    padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
-    background-color: var(--paper-raised);
-    background-image: var(--texture-paper);
-    border-top: 1px solid var(--rule);
-    box-shadow: var(--shadow);
+    position: static;
+    padding: 0;
+    background-color: transparent;
+    background-image: none;
+    border-top: none;
+    box-shadow: none;
   }
 
   .week {
-    grid-template-columns: repeat(var(--days, 7), minmax(8rem, 1fr));
+    grid-template-columns: repeat(var(--days, 7), minmax(9rem, 1fr));
   }
 
   .week-scroll {
-    max-height: 65vh;
+    max-height: 70vh;
   }
 }
 
