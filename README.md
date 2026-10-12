@@ -68,6 +68,7 @@ for the server layout and startup-task option.
 - `crates/scheduler/`: deterministic calendar placement
 - `server/`: HTTP API and SQLite persistence
 - `static/`: web interface
+- `art/`: icons, illustrations, brand card, sound and font specs (placeholders; redo guide in [art/GUIDE.md](art/GUIDE.md))
 - `deploy/`: Windows build and update scripts
 
 Run checks with:
