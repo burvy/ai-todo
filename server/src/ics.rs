@@ -42,11 +42,19 @@ impl IntoResponse for ImportError {
 /// block is easy to spot in the planner, a wrongly-timed one silently ruins
 /// the schedule.
 pub fn parse_ics(text: &str) -> Result<Vec<BusyRow>, ImportError> {
+    Ok(parse_events(text)?
+        .into_iter()
+        .map(|(_, row)| row)
+        .collect())
+}
+
+/// Each kept event with its iCalendar UID, when it has one. v2 imports key on the UID.
+pub fn parse_events(text: &str) -> Result<Vec<(Option<String>, BusyRow)>, ImportError> {
     let calendar: icalendar::Calendar = text
         .parse()
         .map_err(|error| ImportError(format!("that is not an iCalendar file: {error}")))?;
 
-    let mut busy: Vec<BusyRow> = calendar
+    let mut busy: Vec<(Option<String>, BusyRow)> = calendar
         .events()
         .filter_map(|event| {
             if event
@@ -70,15 +78,23 @@ pub fn parse_ics(text: &str) -> Result<Vec<BusyRow>, ImportError> {
             if end < start {
                 return None;
             }
-            Some(BusyRow {
-                start,
-                end,
-                title: summary_of(event),
-            })
+            let uid = event
+                .properties()
+                .get("UID")
+                .map(|property| property.value().trim().to_string())
+                .filter(|uid| !uid.is_empty());
+            Some((
+                uid,
+                BusyRow {
+                    start,
+                    end,
+                    title: summary_of(event),
+                },
+            ))
         })
         .collect();
 
-    busy.sort_by_key(|block| block.start);
+    busy.sort_by_key(|(_, block)| block.start);
     Ok(busy)
 }
 
