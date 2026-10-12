@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rambo Poses — Preview</title>
+  <style>
+    :root {
+      --paper: #FCFAF4;
+      --paper-dark: #1E2229;
+      --text: #2B2A28;
+      --text-dark: #E0DDD5;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; }
+    h1 { text-align: center; padding: 1.5rem; font-size: 1.2rem; color: var(--text); }
+    .section { padding: 2rem; }
+    .section h2 { text-align: center; margin-bottom: 1rem; font-size: 1rem; color: var(--text); }
+    .section.dark { background: var(--paper-dark); }
+    .section.dark h2 { color: var(--text-dark); }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 2rem;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 0 1rem;
+    }
+    .pose {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .pose svg {
+      width: 48px;
+      height: auto;
+    }
+    .pose .label {
+      font-size: 0.8rem;
+      color: var(--text);
+      opacity: .7;
+    }
+    .section.dark .label { color: var(--text-dark); }
+  </style>
+</head>
+<body>
+  <h1>Rambo — Placeholder Poses</h1>
+
+  <!-- Light paper -->
+  <div class="section" style="background: var(--paper);">
+    <h2>Light paper</h2>
+    <div class="grid">
+      <div class="pose">
+        <object data="idle.svg" type="image/svg+xml"></object>
+        <span class="label">idle</span>
+      </div>
+      <div class="pose">
+        <object data="writing.svg" type="image/svg+xml"></object>
+        <span class="label">writing</span>
+      </div>
+      <div class="pose">
+        <object data="flying.svg" type="image/svg+xml"></object>
+        <span class="label">flying</span>
+      </div>
+      <div class="pose">
+        <object data="happy.svg" type="image/svg+xml"></object>
+        <span class="label">happy</span>
+      </div>
+      <div class="pose">
+        <object data="sleepy.svg" type="image/svg+xml"></object>
+        <span class="label">sleepy</span>
+      </div>
+      <div class="pose">
+        <object data="teasing.svg" type="image/svg+xml"></object>
+        <span class="label">teasing</span>
+      </div>
+      <div class="pose">
+        <object data="worried.svg" type="image/svg+xml"></object>
+        <span class="label">worried</span>
+      </div>
+      <div class="pose">
+        <object data="lobotomized.svg" type="image/svg+xml"></object>
+        <span class="label">lobotomized</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dark paper -->
+  <div class="section dark">
+    <h2>Dark paper</h2>
+    <div class="grid">
+      <div class="pose">
+        <object data="idle.svg" type="image/svg+xml"></object>
+        <span class="label">idle</span>
+      </div>
+      <div class="pose">
+        <object data="writing.svg" type="image/svg+xml"></object>
+        <span class="label">writing</span>
+      </div>
+      <div class="pose">
+        <object data="flying.svg" type="image/svg+xml"></object>
+        <span class="label">flying</span>
+      </div>
+      <div class="pose">
+        <object data="happy.svg" type="image/svg+xml"></object>
+        <span class="label">happy</span>
+      </div>
+      <div class="pose">
+        <object data="sleepy.svg" type="image/svg+xml"></object>
+        <span class="label">sleepy</span>
+      </div>
+      <div class="pose">
+        <object data="teasing.svg" type="image/svg+xml"></object>
+        <span class="label">teasing</span>
+      </div>
+      <div class="pose">
+        <object data="worried.svg" type="image/svg+xml"></object>
+        <span class="label">worried</span>
+      </div>
+      <div class="pose">
+        <object data="lobotomized.svg" type="image/svg+xml"></object>
+        <span class="label">lobotomized</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

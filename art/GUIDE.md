@@ -28,6 +28,35 @@ Notes:
 - **Microphone**: there is no separate mic icon. The pen mascot is the talk button.
 - **Torn edge**: no torn-edge artwork exists in v1. If v2 wants one, draw it as `illustrations/torn-edge.svg` (a wide, short strip, e.g. viewBox 0 0 400 12).
 
+## Rambo poses
+
+Rambo is the pen mascot. His poses live in `web/assets/rambo/` as hand-written SVGs (viewBox 0 0 64 112). Each keeps the class names from `illustrations/pen.svg` (`pen-barrel`, `pen-cap`, `pen-nib`, `pen-lead`, `pen-gloss`, `eye-white`, `eye-black`, `brow`) so CSS can animate any of them. Colours are set via classes/CSS variables so dark mode works. A static preview is at `web/assets/rambo/sheet.html`.
+
+| Pose file | When shown | Brain mood / trigger |
+|---|---|---|
+| `idle.svg` | Default — standing by | `State::Home`, neutral moods |
+| `writing.svg` | After a task is added, while thinking | `State::Thinking` on `Event::TaskAdded` |
+| `flying.svg` | Playing, wandering with energy | `State::Wandering` / `State::Playing`, high energy + boredom |
+| `happy.svg` | Task completed, list cleared | `State::Reacting` on `Event::TaskDone` / `Event::ListEmpty`, high cheer |
+| `sleepy.svg` | Night hours, dozing | `State::Dozing`, low energy |
+| `teasing.svg` | Playful sass, idle quips | `State::Reacting` on `Event::TaskOverdue` (teasing about being late), idle sass |
+| `worried.svg` | Overdue task detected | `State::Reacting` on `Event::TaskOverdue`, low cheer |
+| `lobotomized.svg` | Lobotomized mode — no brain, no cost | `Mode::Lobotomized`, blank stare |
+
+Each SVG starts with `<!-- PLACEHOLDER: replace me, see art/GUIDE.md -->`. The human redraws them following the steps below, then drops the new file in place — same name, same viewBox, same class names.
+
+### How the human redraws Rambo poses
+
+1. **Draw.** Use a pen or fine liner on plain white paper. Draw Rambo at about 6×10 cm for each pose. Keep the 64:112 proportions. Give him character: the cap worn like a cap, expressive brows, ink-drop details. Make each pose readable at 48px.
+2. **Scan** at 600 dpi, greyscale, PNG.
+3. **Clean up** in any image editor. Crop, raise contrast, erase specks.
+4. **Vectorize** in Inkscape: File › Import, Path › Trace Bitmap (Multiple scans for colours). Delete the bitmap.
+5. **Simplify**: Path › Simplify (Ctrl+L), once or twice.
+6. **Size it**: Document Properties › viewBox `0 0 64 112`, scale to fit with ~1 unit margin.
+7. **Class names**: put each part into the class from the original `pen.svg` (`pen-barrel`, `pen-cap`, `pen-nib`, `pen-lead`, `pen-gloss`, `eye-white`, `eye-black`, `brow`). Leave colours to CSS.
+8. **Export**: File › Save As › **Plain SVG**. Check it opens in a browser, has a viewBox, no embedded bitmaps.
+9. **Test**: open `web/assets/rambo/sheet.html` in a browser and check every pose on light and dark paper.
+
 ## Redo: icons and illustrations (drawing on paper)
 
 1. **Draw.** Use a pen or fine liner on plain white paper. Draw each icon large, about 5 cm square, and the pen mascot about 6×10 cm. Keep the proportions of the current viewBox: icons are square, the pen is 64:112.
