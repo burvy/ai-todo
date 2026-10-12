@@ -305,13 +305,17 @@ fn duration_after(event: &Event, start: DateTime<Utc>) -> Option<DateTime<Utc>> 
 mod tests {
     use super::*;
 
-    const WEEK: &str = include_str!("../../demo/outlook/week.ics");
+    const WEEK: &str = include_str!("../tests/fixtures/week.ics");
 
     #[test]
     fn the_demo_week_has_nine_events_spanning_the_work_week() {
         let busy = parse_ics(WEEK).expect("the Outlook fixture parses");
 
-        assert_eq!(busy.len(), 9, "expected 9 events in demo/outlook/week.ics");
+        assert_eq!(
+            busy.len(),
+            9,
+            "expected 9 events in server/tests/fixtures/week.ics"
+        );
 
         let first = busy.first().expect("at least one event").start;
         let last = busy.last().expect("at least one event").start;
@@ -441,7 +445,7 @@ mod tests {
 
     // ---- realistic Outlook / Google exports --------------------------------
     //
-    // demo/outlook/week.ics is sanitised: LF only, and no VTIMEZONE, folded
+    // server/tests/fixtures/week.ics is sanitised: LF only, and no VTIMEZONE, folded
     // lines, RRULE or STATUS. Real exports carry all of them, so the parser is
     // checked against that shape here too.
 
