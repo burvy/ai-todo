@@ -6,7 +6,7 @@ The single source of truth for the look and the interactions. One website (`stat
 - **No masthead.** No "ai-todo" title or tagline at the top of the page.
 - **Two sheets of paper side by side on PC:** left = **To do** (with the pen text box under the list), right = **Planner**. On a phone they are two pages: swipe left/right, with a small "To do · Planner" tab strip.
 - **Settings:** one small gear (or ink-blot) button **to the right of the "To do" heading**. It opens a little paper popover with: Voice on/off, Night desk on/off, Add to my calendar. Nothing else sits in the To do header, and nothing overlaps the heading or the red margin line.
-- **Planner header:** title, ‹ week ›, **Schedule it**. Import lives on the planner sheet as a quiet footer row: **Import calendar (.ics)** and **Import email / PDF** (paperclip). These are infrequent; keep them small.
+- **Planner header:** title and ‹ week ›. Import lives on the planner sheet as a quiet footer row: **Import calendar (.ics)** and **Import email / PDF** (paperclip). These are infrequent; keep them small.
 
 ## Paper, authentic
 - Warm off-white sheet with subtle paper grain (an inline SVG `feTurbulence` noise at low opacity is enough), a faint shadow, slightly uneven edge (optional). Ruled blue lines and one red margin line on the To do sheet. Ink near-black; one blue ink accent; red pencil for overdue.
