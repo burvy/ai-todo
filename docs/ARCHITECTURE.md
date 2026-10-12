@@ -31,7 +31,7 @@ server/       axum: Store trait (Sqlite, Memory), App service, thin handlers
 web/          Leptos CSR app (trunk), talks only through web/src/api.rs
 ```
 
-Removed in v2: `static/` (after `web/` reaches parity), the pen, sounds, paper textures and every animation, `/api/message`, `/api/schedule`, spoken replies, `demo/` (its rambles move to `crates/capture/tests/fixtures/`), root `src/`, `Makefile` (one `run-local.ps1` + `run-local.sh` stay).
+Removed in v2: `static/` (after `web/` reaches parity), sounds, paper textures and every animation except the mascot's (section 8.1), `/api/message`, `/api/schedule`, spoken replies, `demo/` (its rambles move to `crates/capture/tests/fixtures/`), root `src/`, `Makefile` (one `run-local.ps1` + `run-local.sh` stay).
 
 ## 4. Core types (`crates/core`)
 
@@ -91,7 +91,18 @@ The server is the only planner: the client never computes placements.
 
 ## 8. Web (`web/`, Leptos CSR)
 
-Plain and fast: a text box with a mic button (Web Speech API via `web-sys`), the task list, and a 7-day week grid. Light and dark follow the OS. No animations, sounds or textures. One `api.rs` module makes every request and stores the returned `Snapshot` in one signal; the list and the week are derived from that signal only. Reorder by drag sends `PUT /tasks/order`. Built by `trunk build --release` into `web/dist`, which the server serves.
+Plain and fast: a text box with a mic button (Web Speech API via `web-sys`), the task list, and a 7-day week grid. Light and dark follow the OS. No animations, sounds or textures, except the mascot below. One `api.rs` module makes every request and stores the returned `Snapshot` in one signal; the list and the week are derived from that signal only. Reorder by drag sends `PUT /tasks/order`. Built by `trunk build --release` into `web/dist`, which the server serves.
+
+### 8.1 Rambl, the mascot
+
+The pen character (`art/illustrations/pen.svg`) is named **Rambl**. He lives in a small circle next to the text box and is the talk button: tap to send, hold to talk.
+
+- **Drag:** he can be picked up and dragged anywhere.
+- **Fall:** dropped on empty space, he falls to the bottom of the window (short gravity animation, a small bounce), then skitters back to his circle.
+- **Dropped on a task or event** (list row or week block): he stays there and asks, a bit annoyed, what you want, in a small speech bubble ("Okay, what about *Lab report*?") with the task's actions: Edit, Move, Done, Delete, and Never mind. Picking one, or Never mind, sends him home.
+- **Talking always works:** wherever he is, hold on him to talk. His empty circle stays a working talk button while he is away, and holding Space (focus outside a text field) talks too. Dragging him off his circle never disables voice.
+- **Testable:** his behaviour is a small state machine (`Home`, `Dragging`, `Falling`, `Returning`, `Asking(task)`) in `web/src/mascot.rs`, unit-tested without the DOM; the view only animates between states.
+- `prefers-reduced-motion`: no fall or skitter; he reappears in his circle.
 
 ## 9. Testing (the definition of done for every change)
 
