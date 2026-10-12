@@ -1,17 +1,12 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RamblMode {
+    #[default]
     Interactive,
     Instant,
     Lobotomized,
-}
-
-impl Default for RamblMode {
-    fn default() -> Self {
-        Self::Interactive
-    }
 }
 
 const DEFAULTS: Settings = Settings {
