@@ -1,6 +1,7 @@
 /* Rambl's parchment theme: aged paper, ink, calm and readable.
-   Mobile first: the base rules are written for a 360px phone; desktop rules start
-   at min-width 701px. Design spec: docs/THEME.md. */
+   Layout behaviour (the panes, the swipe, scroll-snap, hour height) comes from
+   Ryan's PR #135 and is kept as it is; colours, fonts, spacing, paper and ruled
+   lines are decided here. Design spec: docs/THEME.md. */
 
 :root {
   color-scheme: light;
@@ -43,13 +44,17 @@
   /* Touch: every tappable control is at least this tall. */
   --tap: 2.75rem;
 
+  /* One hour of the week planner, in CSS pixels. week.rs places the now-line
+     with the same number, so change both together. */
+  --hour-h: 64px;
+
   /* Motion. */
   --dur-fast: 120ms;
   --dur: 200ms;
   --dur-slow: 450ms;
   --ease: ease;
 
-  /* Paper texture (web/assets/theme/, drawn separately; colors carry the page if absent). */
+  /* Paper texture (web/assets/theme/; the flat colours carry the page if one is missing). */
   --texture-paper: url("assets/theme/paper.svg");
   --texture-edge: url("assets/theme/edge.svg");
   --texture-stain: url("assets/theme/stain.svg");
@@ -89,8 +94,6 @@ body {
   max-width: 1100px;
   margin: 0 auto;
   padding: var(--gutter);
-  /* Room for the fixed capture bar, plus the phone's home-indicator inset. */
-  padding-bottom: calc(var(--tap) + var(--space-4) + env(safe-area-inset-bottom, 0px));
   color: var(--ink);
   font: var(--text-base) / 1.5 var(--font-body);
   background-color: var(--paper);
@@ -149,14 +152,32 @@ header::after {
   pointer-events: none;
 }
 
+/* --- Layout (Ryan's declarations, kept as they are) --- */
+
 main {
   display: grid;
   gap: var(--space-4);
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(16rem, 1fr) minmax(24rem, 2fr);
+  align-items: start;
 }
 
-main > * {
+.tasks-pane {
+  display: grid;
+  gap: var(--space-4);
   min-width: 0;
+}
+
+.pane-switch {
+  display: none;
+  gap: var(--space-2);
+  margin: var(--space-2) 0;
+}
+
+.pane-switch button.active {
+  font-weight: 700;
+  color: var(--accent);
+  background-color: var(--wash);
+  outline: 2px solid var(--accent);
 }
 
 section {
@@ -167,6 +188,8 @@ section {
   background-color: var(--paper-raised);
   box-shadow: var(--shadow);
 }
+
+/* --- Controls --- */
 
 /* Touch controls: 44px minimum, and 16px text everywhere (inputs never zoom). */
 button,
@@ -216,21 +239,10 @@ li:last-child {
   border-bottom: none;
 }
 
-/* The capture box sits at the bottom of the phone screen, under the thumb. */
+/* Capture box: in the masthead on a desk, pinned to the thumb on a phone. */
 .capture {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 3;
   display: flex;
   gap: var(--space-2);
-  padding: var(--space-2) var(--gutter);
-  padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
-  background-color: var(--paper-raised);
-  background-image: var(--texture-paper);
-  border-top: 1px solid var(--rule);
-  box-shadow: var(--shadow);
 }
 
 .capture input {
@@ -317,17 +329,16 @@ li:last-child {
   margin: var(--space-1);
 }
 
-/* Week grid: one phone-wide column of days that scrolls inside its own box,
-   so the page itself never scrolls sideways. */
+/* Week planner: the days scroll inside their own box, never the page. */
 .week {
   display: grid;
   gap: var(--space-1);
   overflow-x: auto;
-  grid-template-columns: repeat(var(--days, 7), minmax(8rem, 1fr));
+  grid-template-columns: repeat(var(--days, 7), minmax(9rem, 1fr));
 }
 
 .week-scroll {
-  max-height: 65vh;
+  max-height: 70vh;
   overflow-y: auto;
   overscroll-behavior: contain;
 }
@@ -339,8 +350,12 @@ li:last-child {
   border-left: 1px solid var(--rule);
 }
 
+.hours {
+  position: relative;
+}
+
 .hour {
-  min-height: 4rem;
+  height: var(--hour-h);
   border-top: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
 }
 
@@ -389,6 +404,11 @@ li:last-child {
   cursor: pointer;
 }
 
+.task-time {
+  color: var(--ink-soft);
+  font-size: var(--text-sm);
+}
+
 .overdue {
   margin-left: var(--space-1);
   font-size: var(--text-xs);
@@ -412,10 +432,15 @@ li:last-child {
   align-items: center;
 }
 
-/* The dialog fits the phone: full width minus the gutter, scrollable inside. */
+/* The dialog is fixed and centred (behaviour from #135); here it also fits a
+   phone: never wider than the screen, scrollable inside itself. */
 .task-dialog {
-  width: calc(100vw - 2 * var(--gutter));
-  max-width: 32rem;
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  width: min(32rem, calc(100vw - 2 * var(--gutter)));
   max-height: calc(100dvh - 2 * var(--gutter));
   overflow-y: auto;
   padding: var(--space-4);
@@ -527,35 +552,67 @@ li:last-child {
   color: var(--ink-faint);
 }
 
-/* Desktop: two panes, the capture box joins the masthead. */
-@media (min-width: 701px) {
+/* Phone: the two panes sit side by side in a scroll-snap row, the capture bar
+   drops to the bottom edge under the thumb, and the tab switcher appears. */
+@media (max-width: 700px) {
   body {
-    padding-bottom: var(--gutter);
+    /* Room for the fixed capture bar, plus the phone's home-indicator inset. */
+    padding-bottom: calc(var(--tap) + var(--space-4) + var(--space-2) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .pane-switch {
+    display: flex;
   }
 
   main {
-    grid-template-columns: minmax(16rem, 1fr) minmax(24rem, 2fr);
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+  }
+
+  main::-webkit-scrollbar {
+    display: none;
+  }
+
+  main > * {
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+    min-width: 0;
   }
 
   .capture {
-    position: static;
-    padding: 0;
-    background-color: transparent;
-    background-image: none;
-    border-top: none;
-    box-shadow: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 3;
+    padding: var(--space-2) var(--gutter);
+    padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+    background-color: var(--paper-raised);
+    background-image: var(--texture-paper);
+    border-top: 1px solid var(--rule);
+    box-shadow: var(--shadow);
   }
 
   .week {
-    grid-template-columns: repeat(var(--days, 7), minmax(9rem, 1fr));
+    grid-template-columns: repeat(var(--days, 7), minmax(8rem, 1fr));
   }
 
   .week-scroll {
-    max-height: 70vh;
+    max-height: 65vh;
   }
 }
 
 @media (prefers-reduced-motion: no-preference) {
+  main {
+    scroll-behavior: smooth;
+  }
+
   button,
   input,
   select {

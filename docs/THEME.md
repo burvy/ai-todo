@@ -53,6 +53,7 @@ Scale (rem, base 16px): `--text-xs` 0.75, `--text-sm` 0.85, `--text-base` 1, `--
 
 - Gutter: `--gutter` 1rem (16px) on every side; page max width 1100px. The page must not scroll sideways at 360px.
 - Steps: `--space-1` 0.25rem, `--space-2` 0.5rem, `--space-3` 0.75rem, `--space-4` 1rem. Grid gaps are 1rem.
+- Week rows: `--hour-h` 64px, the same number `web/src/week.rs` uses to place the now-line — change both together.
 - Borders: 1px `--rule` everywhere; 2px `--now` for the current-time line; the active chip uses a 2px `--accent` outline; the accent bar on a scheduled placement is 3px `--accent`.
 - Radii: `--radius-sm` 0.25rem (inputs, chips), `--radius-md` 0.5rem (cards, dialog, ask bubble), `--radius-round` for Rambo's circles.
 - Task rows are separated by a dashed `--rule` line, like entries in a ledger.
@@ -74,13 +75,14 @@ Every texture sits on top of a `--paper*` colour, so a missing file degrades to 
 
 ## Mobile first
 
-The base rules in `web/theme.css` are written for a 360px phone; desktop starts at `@media (min-width: 701px)`. Check 360px and 390px before a wide window.
+Check 360px and 390px before a wide window. The layout behaviour comes from `web/src/lib.rs` and `web/src/week.rs` (PR #135) and is left as it is; the theme owns colours, fonts, spacing, paper and ruled lines.
 
+- **Panes:** on a phone (`max-width: 700px`) `main` is a horizontal scroll-snap row — the To do pane and the Planner pane sit side by side, swiped or tapped via `.pane-switch`. Those declarations (scroll-snap, `grid-auto-columns: 100%`, hidden scrollbar) are behaviour and are not restyled; the theme only colours `.pane-switch button.active` (walnut accent, `--wash` fill, 2px accent outline) and the buttons carry `aria-current`.
 - **Tap targets:** every control is at least `--tap` (2.75rem / 44px) tall, including checkboxes, radios and the Mic/Add buttons.
 - **Type:** body text never below 1rem (16px), so iOS does not zoom the inputs. Only meta text (`--text-xs`: hour labels, version, the Overdue tag) is smaller.
-- **Capture box:** on a phone it is a fixed bar at the bottom edge with the safe-area inset, so Mic, Rambo and Add sit under the thumb; the page reserves matching bottom padding. From 701px it returns to the masthead.
-- **No sideways page scroll:** the page is one column; the week grid scrolls inside its own box (`--days` columns, 8rem minimum per day on a phone, 9rem on desktop).
-- **Dialog:** `width: calc(100vw - 2 * gutter)`, `max-width: 32rem`, `max-height: calc(100dvh - 2 * gutter)`, scrolls inside itself.
+- **Capture box:** on a phone it is a fixed bar at the bottom edge with the safe-area inset, so Mic, Rambo and Add sit under the thumb; the body reserves matching bottom padding. On desktop it stays in the masthead.
+- **No sideways page scroll:** the page itself never scrolls horizontally — only the pane row and the week grid scroll, each inside its own box (`--days` columns, 8rem minimum per day on a phone, 9rem on desktop).
+- **Dialog:** fixed and centred (behaviour from #135), `width: min(32rem, 100vw - 2 * gutter)`, `max-height: calc(100dvh - 2 * gutter)`, scrolls inside itself.
 
 ## Light and dark
 
