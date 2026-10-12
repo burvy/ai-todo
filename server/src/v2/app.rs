@@ -148,7 +148,7 @@ impl<S: Store> App<S> {
         let mut tasks = self.load(user)?;
         let order = tasks.iter().map(|task| task.order).max().unwrap_or(-1) + 1;
         let task = Task {
-            id: Self::fresh_id(&tasks, ctx.now.timestamp_nanos_opt().unwrap_or_default()),
+            id: Self::fresh_id(),
             title: draft.title.trim().to_owned(),
             duration_min: draft.duration_min,
             when: draft.when,
@@ -239,7 +239,7 @@ impl<S: Store> App<S> {
                 continue;
             }
             let task = Task {
-                id: Self::fresh_id(&tasks, ctx.now.timestamp_nanos_opt().unwrap_or_default()),
+                id: Self::fresh_id(),
                 title: event.title,
                 duration_min,
                 when: When::At(event.start),
@@ -284,7 +284,7 @@ impl<S: Store> App<S> {
             // Each new task goes onto `tasks` before the next id is minted, so ids
             // stay unique inside one capture without re-reading the store.
             let task = Task {
-                id: Self::fresh_id(&tasks, ctx.now.timestamp_nanos_opt().unwrap_or_default()),
+                id: Self::fresh_id(),
                 title: draft.title.trim().to_owned(),
                 duration_min: draft.duration_min,
                 when: draft.when,
@@ -423,17 +423,10 @@ impl<S: Store> App<S> {
             })
     }
 
-    /// An id that is not used yet. The first candidate is the clock in nanoseconds.
-    ///
-    /// `tasks` is the list the caller already holds, so minting an id costs no store
-    /// read. It must include anything minted earlier in the same call, which is why
-    /// callers push each new task as they go.
-    fn fresh_id(tasks: &[Task], seed: i64) -> TaskId {
-        let taken: HashSet<&str> = tasks.iter().map(|task| task.id.0.as_str()).collect();
-        (0..)
-            .map(|attempt| TaskId(format!("t{}", seed + attempt)))
-            .find(|candidate| !taken.contains(candidate.0.as_str()))
-            .expect("an unused id exists")
+    /// A new task id: 128 random bits, so two users (or two requests) can never be
+    /// handed the same one. Ids are one namespace across every user in the database.
+    fn fresh_id() -> TaskId {
+        TaskId(format!("t{}", uuid::Uuid::new_v4().simple()))
     }
 }
 
@@ -675,6 +668,20 @@ mod tests {
 
     /// The real win: minting an id used to load every task, so a capture that produced
     /// ten tasks read the store ten times on top of the read to answer the request.
+    /// Two users creating in the same clock tick used to be handed the same id, because
+    /// an id was only checked against its own user's tasks.
+    #[test]
+    fn two_users_creating_at_the_same_instant_get_different_ids() {
+        let clock = Arc::new(FixedClock(
+            Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+        ));
+        let mut app = App::new(MemoryStore::new(), clock);
+        let first = app.create(draft("One"), "alice", chrono_tz::UTC).unwrap();
+        let second = app.create(draft("Two"), "bob", chrono_tz::UTC).unwrap();
+        assert_ne!(first.tasks[0].id, second.tasks[0].id);
+        assert_eq!(first.tasks[0].title, "One", "alice's task is untouched");
+    }
+
     #[test]
     fn minting_ids_does_not_read_the_store() {
         let (mut app, reads) = app();

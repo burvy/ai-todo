@@ -120,7 +120,7 @@ Working hours: 08:00 to 23:59:59 local time, every day.
 
 ## 7. Server (`server/`)
 
-- `Store` trait: `tasks(user)`, `put(user, Task)`, `delete(user, id)`, `set_order(user, ids)`, `find_by_uid(user, uid)`, plus the account calls, `captures_today`, `record_capture`, `block`/`is_blocked` and `usage_today`. The user id is a parameter rather than a filter applied afterwards, so scoping cannot be forgotten. `SqliteStore` for real, `MemoryStore` for tests; the same suite runs against both.
+- `Store` trait: `tasks(user)`, `put(user, Task)`, `delete(user, id)`, `set_order(user, ids)`, `find_by_uid(user, uid)`, plus the account calls, `captures_today`, `record_capture`, `block`/`is_blocked` and `usage_today`. The user id is a parameter rather than a filter applied afterwards, so scoping cannot be forgotten. Task ids are random (128 bits) and unique across all users; `put` refuses an id another user already holds rather than taking it over. `SqliteStore` for real, `MemoryStore` for tests; the same suite runs against both.
 - `auth` module: Google sign-in, sessions and the `TokenVerifier` trait. Sign-in is verified **before** the store lock is taken — a handler holding a `MutexGuard` across an `await` has a non-`Send` future, which axum rejects.
 - `App { store, judge, clock }`: one method per endpoint, each taking the user id. It loads once, mutates and returns the snapshot built from that same list inside one critical section, so a snapshot is never half-updated and a write is never read back twice.
 - Handlers only parse input, build the `LocalContext` from the header and `clock`, call `App`, and map errors.
