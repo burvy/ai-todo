@@ -103,7 +103,8 @@ fn run_backup_sync(db_path: &Path, now: DateTime<Local>) -> Result<(), String> {
 
     let conn = Connection::open(db_path).map_err(|e| format!("opening db for backup: {e}"))?;
 
-    conn.execute(&format!("VACUUM INTO '{}'", backup_file.display()), [])
+    let target = backup_file.to_string_lossy().replace('\'', "''");
+    conn.execute(&format!("VACUUM INTO '{target}'"), [])
         .map_err(|e| format!("VACUUM INTO failed: {e}"))?;
 
     delete_old_backups(&backup_dir, today)?;
@@ -130,9 +131,8 @@ fn delete_old_backups(backup_dir: &Path, today: chrono::NaiveDate) -> Result<(),
             if let Ok(backup_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
                 && backup_date < cutoff
             {
-                std::fs::remove_file(&path).map_err(|e| {
-                    format!("removing old backup {}: {}", path.display(), e)
-                })?;
+                std::fs::remove_file(&path)
+                    .map_err(|e| format!("removing old backup {}: {}", path.display(), e))?;
             }
         }
     }
