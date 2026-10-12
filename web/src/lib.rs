@@ -14,8 +14,8 @@ pub mod speech;
 pub mod week;
 
 /// Load snapshot from API and return it, falling back to fixture on error
-async fn load_snapshot_from_api() -> Snapshot {
-    match api::fetch_snapshot(&api::today_date(), 7).await {
+async fn load_snapshot_from_api(days: u8) -> Snapshot {
+    match api::fetch_snapshot(&api::today_date(), days).await {
         Ok(s) => s,
         Err(_) => api::fixture_snapshot(),
     }
@@ -56,24 +56,52 @@ fn next_priority_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBod
     )
 }
 
+/// What the page tells the user when an edit did not apply.
+fn refused_note(error: &api::ApiError, reloaded: bool) -> &'static str {
+    match (error, reloaded) {
+        (
+            api::ApiError::Server(todo_core::ApiError {
+                code: todo_core::ErrorCode::StaleUpdate,
+                ..
+            }),
+            true,
+        ) => "That task changed elsewhere, so it was reloaded. Try again.",
+        (_, true) => "That change was not saved. The list was reloaded.",
+        (_, false) => "Could not reach the server, so that change was not saved.",
+    }
+}
+
+/// Where an edit's result goes: the list it replaces, the note that explains a refusal,
+/// and the view settings that say how many days the list covers.
+#[derive(Clone, Copy)]
+struct EditSink {
+    set_snapshot: WriteSignal<Snapshot>,
+    set_error: WriteSignal<Option<String>>,
+    view_settings: ReadSignal<settings::Settings>,
+}
+
 /// Sends an edit and shows what the server now holds. Returns whether the edit applied.
 ///
-/// A refused edit (the task changed on another device) is not an error to hide: the
-/// list is reloaded so the next click starts from the server's copy.
-async fn patch_and_show(
-    id: &todo_core::TaskId,
-    body: api::PatchTaskBody,
-    set_snapshot: WriteSignal<Snapshot>,
-) -> bool {
+/// A refused edit (the task changed on another device, or the network failed) is not an
+/// error to hide: the list is reloaded so the next click starts from the server's copy,
+/// and a short note says why nothing happened.
+async fn patch_and_show(id: &todo_core::TaskId, body: api::PatchTaskBody, sink: EditSink) -> bool {
     match api::patch_task(id, body).await {
         Ok(snapshot) => {
-            set_snapshot.set(snapshot);
+            sink.set_snapshot.set(snapshot);
             true
         }
-        Err(_) => {
-            if let Ok(snapshot) = api::fetch_snapshot(&api::today_date(), 7).await {
-                set_snapshot.set(snapshot);
-            }
+        Err(error) => {
+            let days = sink.view_settings.get_untracked().days;
+            let reloaded = match api::fetch_snapshot(&api::today_date(), days).await {
+                Ok(snapshot) => {
+                    sink.set_snapshot.set(snapshot);
+                    true
+                }
+                Err(_) => false,
+            };
+            sink.set_error
+                .set(Some(refused_note(&error, reloaded).to_owned()));
             false
         }
     }
@@ -91,7 +119,8 @@ pub fn App() -> impl IntoView {
     // Load snapshot from API on mount
     Effect::new(move |_| {
         wasm_bindgen_futures::spawn_local(async move {
-            let new_snapshot = load_snapshot_from_api().await;
+            let days = view_settings.get_untracked().days;
+            let new_snapshot = load_snapshot_from_api(days).await;
             set_snapshot.set(new_snapshot);
         });
     });
@@ -136,7 +165,7 @@ pub fn App() -> impl IntoView {
         <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
             <div class="tasks-pane">
                 <ImportIcs set_snapshot set_error />
-                <TaskList snapshot set_snapshot set_mascot_state />
+                <TaskList snapshot set_snapshot set_error view_settings set_mascot_state />
             </div>
             <week::WeekGrid snapshot=snapshot settings=view_settings set_mascot_state=set_mascot_state />
         </main>
@@ -147,6 +176,8 @@ pub fn App() -> impl IntoView {
             set_talking
             snapshot
             set_snapshot
+            set_error
+            view_settings
             brain_speech
             brain_pose
             set_brain_event
@@ -298,6 +329,8 @@ fn Mascot(
     set_talking: WriteSignal<bool>,
     snapshot: ReadSignal<Snapshot>,
     set_snapshot: WriteSignal<Snapshot>,
+    set_error: WriteSignal<Option<String>>,
+    view_settings: ReadSignal<settings::Settings>,
     brain_speech: ReadSignal<Option<String>>,
     brain_pose: ReadSignal<String>,
     set_brain_event: WriteSignal<Option<rambl_brain::Event>>,
@@ -358,11 +391,11 @@ fn Mascot(
                             if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
                                 let task_id_str = task_id.clone();
                                 let body = snapshot.with_untracked(|s| next_priority_body(s, &task_id_str));
-                                let set_snapshot_clone = set_snapshot;
+                                let sink = EditSink { set_snapshot, set_error, view_settings };
                                 let set_state_clone = set_state;
                                 wasm_bindgen_futures::spawn_local(async move {
                                     if let Some(body) = body {
-                                        patch_and_show(&todo_core::TaskId(task_id_str), body, set_snapshot_clone).await;
+                                        patch_and_show(&todo_core::TaskId(task_id_str), body, sink).await;
                                     }
                                     set_state_clone.set(mascot::State::Home);
                                 });
@@ -377,11 +410,11 @@ fn Mascot(
                             if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
                                 let task_id = task_id.clone();
                                 let body = snapshot.with_untracked(|s| toggle_done_body(s, &task_id));
-                                let set_snapshot_clone = set_snapshot;
+                                let sink = EditSink { set_snapshot, set_error, view_settings };
                                 let set_state_clone = set_state;
                                 wasm_bindgen_futures::spawn_local(async move {
                                     if let Some(body) = body {
-                                        patch_and_show(&todo_core::TaskId(task_id), body, set_snapshot_clone).await;
+                                        patch_and_show(&todo_core::TaskId(task_id), body, sink).await;
                                     }
                                     set_state_clone.set(mascot::State::Home);
                                 });
@@ -564,6 +597,8 @@ fn is_overdue(task: &todo_core::Task) -> bool {
 fn TaskList(
     snapshot: ReadSignal<Snapshot>,
     set_snapshot: WriteSignal<Snapshot>,
+    set_error: WriteSignal<Option<String>>,
+    view_settings: ReadSignal<settings::Settings>,
     set_mascot_state: WriteSignal<mascot::State>,
 ) -> impl IntoView {
     let (dragged_task, set_dragged_task) = signal::<Option<TaskId>>(None);
@@ -633,12 +668,12 @@ fn TaskList(
                             let task_id_clone = task_id.clone();
                             move |_| {
                                 let task_id_clone = task_id_clone.clone();
-                                let set_snapshot_clone = set_snapshot;
+                                let sink = EditSink { set_snapshot, set_error, view_settings };
                                 let Some(body) = snapshot.with_untracked(|s| toggle_done_body(s, &task_id_clone.0)) else {
                                     return;
                                 };
                                 wasm_bindgen_futures::spawn_local(async move {
-                                    patch_and_show(&task_id_clone, body, set_snapshot_clone).await;
+                                    patch_and_show(&task_id_clone, body, sink).await;
                                 });
                             }
                         };
@@ -846,8 +881,9 @@ fn TaskList(
                                             let Some(body) = snapshot.with_untracked(|s| toggle_done_body(s, &task_id.0)) else {
                                                 return;
                                             };
+                                            let sink = EditSink { set_snapshot, set_error, view_settings };
                                             wasm_bindgen_futures::spawn_local(async move {
-                                                if patch_and_show(&task_id, body, set_snapshot).await {
+                                                if patch_and_show(&task_id, body, sink).await {
                                                     set_editing_task.set(None);
                                                 }
                                             });
@@ -889,13 +925,14 @@ fn TaskList(
                                             let Some(seen) = snapshot.with_untracked(|s| held(s, &task_id.0).map(|task| task.updated_at)) else {
                                                 return;
                                             };
+                                            let sink = EditSink { set_snapshot, set_error, view_settings };
                                             let body = api::PatchTaskBody::new()
                                                 .title(title)
                                                 .duration_min(duration.unwrap_or(1))
                                                 .when(when.unwrap_or(When::Anytime))
                                                 .updated_at(seen);
                                             wasm_bindgen_futures::spawn_local(async move {
-                                                if patch_and_show(&task_id, body, set_snapshot).await {
+                                                if patch_and_show(&task_id, body, sink).await {
                                                     set_editing_task.set(None);
                                                 }
                                             });
@@ -964,6 +1001,18 @@ mod tests {
 
         let bump = next_priority_body(&snapshot, &id).expect("task is listed");
         assert_eq!(bump.updated_at, Some(snapshot.tasks[0].updated_at));
+    }
+
+    #[test]
+    fn a_refused_edit_says_why() {
+        let stale = api::ApiError::Server(todo_core::ApiError {
+            code: todo_core::ErrorCode::StaleUpdate,
+            message: String::new(),
+        });
+        assert!(refused_note(&stale, true).contains("changed elsewhere"));
+        let offline = api::ApiError::Network("offline".into());
+        assert!(refused_note(&offline, false).contains("Could not reach the server"));
+        assert!(refused_note(&offline, true).contains("not saved"));
     }
 
     #[test]
