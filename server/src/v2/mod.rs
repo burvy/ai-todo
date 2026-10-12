@@ -16,19 +16,19 @@ use todo_core::SystemClock;
 use app::App;
 use store::{SqliteStore, Store};
 
-/// The production app: SQLite at `RAMBL_DATA`, or `data/rambl.db` when that is
-/// unset. v2 is on disk by default, so a restart never loses tasks; [`MemoryStore`]
-/// is for tests only.
-///
-/// A database that will not open is a startup failure, not something to recover
-/// from at runtime: serving reads against a store that quietly dropped every
-/// write would be worse than refusing to start.
 /// Starts the daily database backup. Call once from the server's `main`, never
 /// from code that tests run.
 pub fn start_backups() {
     backup::BackupService::start(backup::db_path_from_env(), Arc::new(SystemClock));
 }
 
+/// The production app: SQLite at `RAMBL_DATA`, or `data/rambl.db` when that is unset.
+/// v2 is on disk by default, so a restart never loses tasks; `MemoryStore` is for tests
+/// only.
+///
+/// A database that will not open is a startup failure, not something to recover from at
+/// runtime: serving reads against a store that quietly dropped every write would be worse
+/// than refusing to start.
 pub fn app_from_env() -> Result<App<Box<dyn Store>>, String> {
     let store = SqliteStore::open_from_env().map_err(|error| {
         let path =
