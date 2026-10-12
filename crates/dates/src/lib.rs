@@ -207,10 +207,12 @@ mod tests {
                 let found = phrases::day(&[name], &ctx).expect(name);
                 assert_eq!(found.weekday(), target, "{name} from {base}");
                 let ahead = (found - ctx.today()).num_days();
+                // Before 17:00 a same-day name is today; otherwise it is 1 to 7 days ahead.
                 assert!(
-                    (1..=7).contains(&ahead),
+                    (0..=7).contains(&ahead),
                     "{name} from {base} was {ahead} days"
                 );
+                assert!(ahead != 0 || found == ctx.today(), "{name} from {base}");
             }
         }
     }
@@ -223,7 +225,31 @@ mod tests {
             phrases::day(&["next", "tuesday"], &ctx),
             Some(date(2026, 10, 20))
         );
+    }
+
+    #[test]
+    fn bare_weekday_on_its_own_day_is_today_before_five_pm() {
+        // 12:00 local on Tuesday.
+        let ctx = ny(utc(2026, 10, 13, 16, 0));
+        assert_eq!(phrases::day(&["tuesday"], &ctx), Some(date(2026, 10, 13)));
+    }
+
+    #[test]
+    fn bare_weekday_on_its_own_day_is_a_week_away_after_five_pm() {
+        // 17:00 local on Tuesday exactly.
+        let ctx = ny(utc(2026, 10, 13, 21, 0));
         assert_eq!(phrases::day(&["tuesday"], &ctx), Some(date(2026, 10, 20)));
+    }
+
+    #[test]
+    fn weekend_is_today_on_saturday_before_five_pm_only() {
+        let before = ny(utc(2026, 10, 17, 16, 0));
+        assert_eq!(
+            phrases::day(&["weekend"], &before),
+            Some(date(2026, 10, 17))
+        );
+        let after = ny(utc(2026, 10, 17, 21, 30));
+        assert_eq!(phrases::day(&["weekend"], &after), Some(date(2026, 10, 24)));
     }
 
     #[test]

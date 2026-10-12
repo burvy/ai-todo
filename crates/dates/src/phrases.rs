@@ -37,6 +37,18 @@ fn weekday_of(word: &str) -> Option<Weekday> {
         .map(|(_, day)| *day)
 }
 
+/// The coming `target`: today when it is that weekday and the local time is before 17:00,
+/// otherwise the next one, a week away when it is the same weekday after 17:00.
+fn upcoming(target: Weekday, ctx: &LocalContext) -> NaiveDate {
+    let today = ctx.today();
+    let before_five = ctx.local(ctx.now).time() < NaiveTime::from_hms_opt(17, 0, 0).unwrap();
+    if today.weekday() == target && before_five {
+        today
+    } else {
+        today + Duration::days(days_ahead(today.weekday(), target))
+    }
+}
+
 /// Days from `from` to the next `target`, never zero: a match on the same weekday is a week away.
 fn days_ahead(from: Weekday, target: Weekday) -> i64 {
     let diff = (target.num_days_from_monday() as i64 - from.num_days_from_monday() as i64 + 7) % 7;
@@ -63,17 +75,12 @@ pub fn day(words: &[&str], ctx: &LocalContext) -> Option<NaiveDate> {
         ["next", "week"] => {
             Some(today + Duration::days(8 - today.weekday().number_from_monday() as i64))
         }
-        ["this", "weekend"] | ["weekend"] => {
-            Some(today + Duration::days(days_ahead(today.weekday(), Weekday::Sat)))
-        }
+        ["this", "weekend"] | ["weekend"] => Some(upcoming(Weekday::Sat, ctx)),
         [first, name] if matches!(*first, "by" | "next") => {
             let target = weekday_of(name)?;
             Some(today + Duration::days(days_ahead(today.weekday(), target)))
         }
-        [name] if weekday_of(name).is_some() => {
-            let target = weekday_of(name)?;
-            Some(today + Duration::days(days_ahead(today.weekday(), target)))
-        }
+        [name] if weekday_of(name).is_some() => Some(upcoming(weekday_of(name)?, ctx)),
         [numeric] => NaiveDate::parse_from_str(numeric, "%Y-%m-%d")
             .or_else(|_| NaiveDate::parse_from_str(numeric, "%m/%d/%Y"))
             .ok(),
