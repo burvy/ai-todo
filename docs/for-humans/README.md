@@ -6,13 +6,13 @@ to do and the exact path or link. Paths were checked against origin/main
 
 ## Art
 
-- [ ] Redraw Rambl's poses by hand following `art/GUIDE.md`, replacing the placeholder SVGs in `art/illustrations/` and `web/assets/`.
+- [ ] Redraw Rambo's poses by hand following `art/GUIDE.md`, replacing the placeholder SVGs in `art/illustrations/` and `web/assets/`.
 - [ ] Add a "lobotomized" pose alongside the others in `art/illustrations/` (planned — no such file yet).
 - [ ] Later, build the Rive animation file from the redrawn poses (planned — no `.rive` file exists yet).
 
-## Rambl's voice
+## Rambo's voice
 
-- [ ] Edit what Rambl says in `crates/rambl-brain/content/lines.toml` and how he behaves in `crates/rambl-brain/content/personality.toml`; `crates/rambl-brain/README.md` explains both. Preview a simulated day with `cargo run -p rambl-brain --example sim`.
+- [ ] Edit what Rambo says in `crates/rambl-brain/content/lines.toml` and how he behaves in `crates/rambl-brain/content/personality.toml`; `crates/rambl-brain/README.md` explains both. Preview a simulated day with `cargo run -p rambl-brain --example sim`.
 
 ## Accounts and services
 

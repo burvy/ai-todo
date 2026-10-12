@@ -171,13 +171,13 @@ fn CaptureBox(
             <button
                 class="mascot-home"
                 type="button"
-                aria-label="Talk with Rambl"
+                aria-label="Talk with Rambo"
                 on:pointerdown=move |_| {
                     set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Talk));
                     set_talking.set(true);
                 }
             >
-                <img src="assets/pen.svg" alt="Rambl" />
+                <img src="assets/pen.svg" alt="Rambo" />
             </button>
             <button type="submit">"Add"</button>
         </form>
@@ -240,7 +240,7 @@ fn Mascot(
                 set_talking.set(true);
             }
         >
-            <img src="assets/pen.svg" alt="Rambl" />
+            <img src="assets/pen.svg" alt="Rambo" />
         </span>
         <span class="mascot-status" aria-live="polite">
             {move || brain_speech.get().map(|line| view! { <span class="brain-line">{line}</span> })}
