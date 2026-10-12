@@ -9,8 +9,8 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 #[cfg(test)]
-use judge::find_date_candidates;
-use judge::{Judgment, understand};
+use judge::v1::find_date_candidates;
+use judge::v1::{Judgment, understand};
 use serde::Deserialize;
 use todo_core::v1::Task;
 
