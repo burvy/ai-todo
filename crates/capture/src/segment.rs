@@ -4,9 +4,55 @@
 //! policy lines are dropped, time fragments and pronoun clauses merge into the
 //! clause before them, and compound sentences split on the first coordinating
 //! marker where both sides have at least two words.
+//!
+//! Captures arrive as hard-wrapped text (a transcript or a PDF), so the lines are
+//! joined back into sentences first: a newline only ends a clause after sentence
+//! punctuation or a blank line. List items always start their own clause.
+
+fn join_wrapped_lines(text: &str) -> String {
+    let mut logical: Vec<String> = Vec::new();
+    let mut starts_clause = true;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            starts_clause = true;
+            continue;
+        }
+        if starts_clause || starts_list_item(line) {
+            logical.push(line.to_owned());
+            starts_clause = false;
+        } else {
+            let previous = logical.last_mut().expect("a clause is open");
+            previous.push(' ');
+            previous.push_str(line);
+        }
+        if ends_sentence(line) {
+            starts_clause = true;
+        }
+    }
+    logical.join("\n")
+}
+
+fn ends_sentence(line: &str) -> bool {
+    line.trim_end()
+        .chars()
+        .next_back()
+        .is_some_and(|last| matches!(last, '.' | '!' | '?' | '…'))
+}
+
+/// A list item (`- `, `* `, `+ `, `1. `, `2) `) always begins a new clause.
+fn starts_list_item(line: &str) -> bool {
+    if ["- ", "* ", "+ "].contains(&&line[..line.len().min(2)]) {
+        return true;
+    }
+    let digits = line.chars().take_while(char::is_ascii_digit).count();
+    digits > 0
+        && matches!(line[digits..].chars().next(), Some('.' | ')'))
+        && line[digits + 1..].starts_with(' ')
+}
 
 fn split_sentences(text: &str) -> Vec<String> {
-    let raw: Vec<String> = text
+    let raw: Vec<String> = join_wrapped_lines(text)
         .split(['.', '!', '?', '\n'])
         .flat_map(split_compound)
         .collect();
@@ -91,6 +137,10 @@ fn is_time_fragment(clause: &str) -> bool {
             "weekend",
             "just ",
             "only ",
+            // "maybe an hour", "maybe Friday afternoon": a hedged time or duration
+            // belongs to the obligation in front of it, not to a task of its own.
+            "maybe ",
+            "probably ",
         ]
         .iter()
         .any(|prefix| lower.starts_with(prefix))
@@ -191,4 +241,49 @@ pub fn split_clauses(text: &str) -> Vec<String> {
         .into_iter()
         .filter(|clause| !clause.trim().is_empty())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_hard_wrap_is_joined_into_one_clause() {
+        let joined = join_wrapped_lines("review chapters six and seven, maybe an\nhour");
+        assert_eq!(joined, "review chapters six and seven, maybe an hour");
+    }
+
+    #[test]
+    fn a_blank_line_starts_a_new_clause() {
+        let joined = join_wrapped_lines("first thing\nwrapped\n\nsecond thing");
+        assert_eq!(joined, "first thing wrapped\nsecond thing");
+    }
+
+    #[test]
+    fn sentence_punctuation_ends_a_clause() {
+        let joined = join_wrapped_lines("one thing done.\ntwo things left");
+        assert_eq!(joined, "one thing done.\ntwo things left");
+    }
+
+    #[test]
+    fn list_items_start_their_own_clause() {
+        let joined = join_wrapped_lines("shopping:\n- printer ink\n- paper\n2. staples");
+        assert_eq!(joined, "shopping:\n- printer ink\n- paper\n2. staples");
+    }
+
+    #[test]
+    fn wrapping_no_longer_splits_a_sentence_in_two() {
+        let clauses =
+            split_clauses("please make a task to review chapters six and seven, maybe an\nhour");
+        assert!(
+            clauses
+                .iter()
+                .any(|clause| clause.contains("maybe an hour")),
+            "wrapped tail stayed attached: {clauses:?}"
+        );
+        assert!(
+            !clauses.iter().any(|clause| clause.trim() == "Hour"),
+            "the wrap did not leave a bare fragment: {clauses:?}"
+        );
+    }
 }

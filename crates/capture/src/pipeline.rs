@@ -95,6 +95,10 @@ fn title_spans(clause: &str, found: &[Candidate]) -> Vec<String> {
 }
 
 /// Drop filler and edge punctuation, collapse spaces, capitalise the first letter.
+///
+/// Removing the date, time and duration phrases leaves the words that introduced
+/// them stranded at the end ("...by the", "...before the exam on"), so trailing
+/// function words and hedges are dropped too.
 pub fn clean_title(text: &str) -> String {
     const FILLER: [&str; 16] = [
         "i need to ",
@@ -114,6 +118,13 @@ pub fn clean_title(text: &str) -> String {
         "so ",
         "right, ",
     ];
+    /// Words that only make sense in front of the phrase they introduce.
+    const TRAILING: [&str; 15] = [
+        "a", "an", "the", "on", "by", "at", "for", "to", "of", "in", "with", "before", "after",
+        "from", "or",
+    ];
+    const TRAILING_HEDGES: [&str; 4] = ["maybe", "probably", "just", "only"];
+
     let mut words = text
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -126,6 +137,26 @@ pub fn clean_title(text: &str) -> String {
             Some(filler) => words = words[filler.len()..].to_owned(),
             None => break,
         }
+    }
+    let mut words = words
+        .trim_matches(|c: char| !c.is_alphanumeric())
+        .to_owned();
+    loop {
+        let trimmed = words.trim_end_matches(|c: char| !c.is_alphanumeric());
+        let last = trimmed.rsplit(' ').next().unwrap_or_default();
+        let lower = last.to_ascii_lowercase();
+        if lower.is_empty() {
+            break;
+        }
+        if TRAILING_HEDGES.contains(&lower.as_str()) {
+            words = trimmed[..trimmed.len() - last.len()].trim_end().to_owned();
+            continue;
+        }
+        if TRAILING.contains(&lower.as_str()) {
+            words = trimmed[..trimmed.len() - last.len()].trim_end().to_owned();
+            continue;
+        }
+        break;
     }
     let words = words.trim_matches(|c: char| !c.is_alphanumeric());
     let mut chars = words.chars();
@@ -255,6 +286,33 @@ mod tests {
             "Get my life together"
         );
         assert_eq!(clean_title("  um, buy milk.  "), "Buy milk");
+    }
+
+    #[test]
+    fn clean_title_drops_the_words_left_stranded_by_a_date() {
+        // Stripping "Friday" out of "upload it by Friday" must not leave "by".
+        assert_eq!(clean_title("upload it by"), "Upload it");
+        assert_eq!(clean_title("buy groceries by the"), "Buy groceries");
+        // Only the words left dangling at the end go; "before the exam" still reads.
+        assert_eq!(
+            clean_title("make flashcards before the exam on"),
+            "Make flashcards before the exam"
+        );
+        // A hedge that trailed a hedged duration goes too.
+        assert_eq!(
+            clean_title("review chapters six and seven maybe"),
+            "Review chapters six and seven"
+        );
+    }
+
+    #[test]
+    fn clean_title_keeps_the_words_that_carry_the_meaning() {
+        assert_eq!(
+            clean_title("email professor chen about"),
+            "Email professor chen about"
+        );
+        // A title may legitimately end in one of these when nothing was stripped.
+        assert_eq!(clean_title("finish the paper"), "Finish the paper");
     }
 
     #[tokio::test]
