@@ -10,6 +10,7 @@ mod message_tests;
 mod reset;
 mod revise;
 mod upload;
+mod v2;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
