@@ -1,8 +1,8 @@
 //! Thin HTTP handlers for `/api/v1`. They read the time zone header, lock the `App`
 //! for the whole call, and map errors. No business rules live here.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use axum::{
     Json, Router,
@@ -28,12 +28,6 @@ use todo_core::{LocalContext, Source, TaskId};
 
 const TZ_HEADER: HeaderName = HeaderName::from_static("x-rambl-tz");
 const ANON_HEADER: HeaderName = HeaderName::from_static("x-rambl-anon");
-static ISSUED_ANON_IDS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-
-fn issued_anon_ids() -> &'static Mutex<HashSet<String>> {
-    ISSUED_ANON_IDS.get_or_init(|| Mutex::new(HashSet::new()))
-}
-
 /// The state every handler shares: the app (locked for each call), the judge, and how
 /// a request is turned into a user.
 pub struct Shared {
@@ -67,10 +61,18 @@ impl CurrentUser {
         }
         if let Some(anon_id) = headers.get(&ANON_HEADER).and_then(|v| v.to_str().ok())
             && valid_anon_id(anon_id)
-            && issued_anon_ids()
+            && shared
+                .app
                 .lock()
-                .expect("anonymous id mutex")
-                .contains(anon_id)
+                .expect("app mutex")
+                .store()
+                .anonymous_exists(anon_id)
+                .map_err(|error| {
+                    HttpError(ApiError {
+                        code: ErrorCode::Internal,
+                        message: error.to_string(),
+                    })
+                })?
         {
             return Ok(anon_id.to_owned());
         }
@@ -232,7 +234,11 @@ fn new_anon_id() -> String {
     format!("anon_{}", uuid::Uuid::new_v4().simple())
 }
 
-async fn assign_anonymous_id(mut request: axum::extract::Request, next: Next) -> Response {
+async fn assign_anonymous_id(
+    State(shared): State<Arc<Shared>>,
+    mut request: axum::extract::Request,
+    next: Next,
+) -> Response {
     if !request
         .headers()
         .contains_key(axum::http::header::AUTHORIZATION)
@@ -243,17 +249,22 @@ async fn assign_anonymous_id(mut request: axum::extract::Request, next: Next) ->
             .and_then(|value| value.to_str().ok())
             .filter(|value| {
                 valid_anon_id(value)
-                    && issued_anon_ids()
+                    && shared
+                        .app
                         .lock()
-                        .expect("anonymous id mutex")
-                        .contains(*value)
+                        .expect("app mutex")
+                        .store()
+                        .anonymous_exists(value)
+                        .unwrap_or(false)
             })
             .map(str::to_owned)
             .unwrap_or_else(new_anon_id);
-        issued_anon_ids()
+        let _ = shared
+            .app
             .lock()
-            .expect("anonymous id mutex")
-            .insert(id.clone());
+            .expect("app mutex")
+            .store()
+            .ensure_anonymous(&id);
         if let Ok(value) = id.parse() {
             request.headers_mut().insert(ANON_HEADER, value);
         }
@@ -274,6 +285,15 @@ fn build_router(
     jev_daily_cap: u32,
 ) -> Router {
     let anon_jev_daily_cap = anon_jev_daily_cap_from_env();
+    let shared = Arc::new(Shared {
+        app: Mutex::new(app),
+        judge,
+        verifier,
+        local,
+        jev_daily_cap,
+        anon_jev_daily_cap,
+        jev_ip_counts: Mutex::new(HashMap::new()),
+    });
     Router::new()
         .route("/api/v1/auth/google", post(sign_in_google))
         .route("/api/v1/auth/signout", post(sign_out))
@@ -286,16 +306,8 @@ fn build_router(
         .route("/api/v1/capture", post(capture))
         .route("/api/v1/tasks/{id}/revise", post(revise_task))
         .route("/api/v1/calendar.ics", get(calendar_ics))
-        .with_state(Arc::new(Shared {
-            app: Mutex::new(app),
-            judge,
-            verifier,
-            local,
-            jev_daily_cap,
-            anon_jev_daily_cap,
-            jev_ip_counts: Mutex::new(HashMap::new()),
-        }))
-        .layer(middleware::from_fn(assign_anonymous_id))
+        .with_state(Arc::clone(&shared))
+        .layer(middleware::from_fn_with_state(shared, assign_anonymous_id))
 }
 
 /// `GET /api/v1/snapshot?from=YYYY-MM-DD&days=N`: the plan window, today and 7 days

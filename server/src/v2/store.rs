@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
-use rusqlite::{Connection, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use todo_core::{Label, Priority, Source, Task, TaskId, When};
 
 fn parse_plan(value: &str) -> super::auth::Plan {
@@ -187,6 +187,8 @@ pub trait Store: Send + Sync {
     fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError>;
     fn user_plan(&self, user: &str) -> Result<super::auth::Plan, StoreError>;
     fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError>;
+    fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError>;
+    fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError>;
 }
 
 /// Tasks held in memory, with their owner. The HTTP tests use this so they never
@@ -266,6 +268,12 @@ impl<S: Store + ?Sized> Store for Box<S> {
     fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError> {
         (**self).set_user_plan(user, plan)
     }
+    fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
+        (**self).anonymous_exists(user)
+    }
+    fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError> {
+        (**self).ensure_anonymous(user)
+    }
 }
 
 impl Store for MemoryStore {
@@ -331,6 +339,29 @@ impl Store for MemoryStore {
             return Err(StoreError::NotFound);
         };
         found.plan = plan;
+        Ok(())
+    }
+
+    fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
+        Ok(self
+            .users
+            .lock()
+            .expect("memory store mutex")
+            .iter()
+            .any(|held| held.id == user && held.plan == super::auth::Plan::Anon))
+    }
+
+    fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError> {
+        let mut users = self.users.lock().expect("memory store mutex");
+        if !users.iter().any(|held| held.id == user) {
+            users.push(super::auth::Me {
+                id: user.to_owned(),
+                email: String::new(),
+                name: String::new(),
+                picture: None,
+                plan: super::auth::Plan::Anon,
+            });
+        }
         Ok(())
     }
 
@@ -811,6 +842,34 @@ impl Store for SqliteStore {
         )
         .map_err(backend)?;
         tx.commit().map_err(backend)
+    }
+
+    fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
+        let found: Option<String> = self
+            .conn
+            .lock()
+            .expect("db mutex")
+            .query_row(
+                "SELECT id FROM v2_users WHERE id = ?1 AND plan = 'anon'",
+                params![user],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(backend)?;
+        Ok(found.is_some())
+    }
+
+    fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError> {
+        self.conn
+            .lock()
+            .expect("db mutex")
+            .execute(
+                "INSERT OR IGNORE INTO v2_users (id,email,name,picture,created_at,plan) \
+                 VALUES (?1,'','',NULL,?2,'anon')",
+                params![user, format_ts(Utc::now())],
+            )
+            .map_err(backend)?;
+        Ok(())
     }
 }
 

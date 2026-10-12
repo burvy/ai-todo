@@ -574,6 +574,14 @@ mod tests {
         fn set_user_plan(&self, user: &str, plan: crate::v2::auth::Plan) -> Result<(), StoreError> {
             self.inner.set_user_plan(user, plan)
         }
+
+        fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
+            self.inner.anonymous_exists(user)
+        }
+
+        fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError> {
+            self.inner.ensure_anonymous(user)
+        }
     }
 
     fn app() -> (App<CountingStore>, Arc<AtomicUsize>) {
