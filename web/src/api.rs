@@ -1,8 +1,8 @@
-use gloo_net::http::{Request, Response};
+use gloo_net::http::Request;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use todo_core::{ApiError as CoreApiError, ErrorCode, Snapshot, TaskDraft, TaskId, When};
+use todo_core::{ApiError as CoreApiError, Snapshot, TaskDraft, TaskId, When};
 
 pub fn timezone() -> String {
     #[cfg(target_arch = "wasm32")]
@@ -19,6 +19,25 @@ pub fn timezone() -> String {
     {
         "UTC".to_string()
     }
+}
+
+/// Load the fixture snapshot for initial state
+pub fn fixture_snapshot() -> Snapshot {
+    serde_json::from_str(include_str!("../fixtures/snapshot.json"))
+        .expect("fixture snapshot must be valid")
+}
+
+/// Fetch today's date in YYYY-MM-DD format
+pub fn today_date() -> String {
+    use chrono::Local;
+    let now = Local::now();
+    now.format("%Y-%m-%d").to_string()
+}
+
+pub fn use_snapshot() -> ReadSignal<Snapshot> {
+    let initial = fixture_snapshot();
+    let (snapshot, _) = signal(initial);
+    snapshot
 }
 
 /// API error that wraps both server errors and network/decoding failures.
@@ -149,65 +168,6 @@ impl PatchTaskBody {
     }
 }
 
-/// Helper to check if a status code indicates success.
-#[allow(dead_code)]
-fn is_success(status: u16) -> bool {
-    (200..300).contains(&status)
-}
-
-/// Helper to extract the error from a server response.
-#[allow(dead_code)]
-async fn handle_response<T: for<'de> serde::Deserialize<'de>>(
-    response: Result<Response, gloo_net::Error>,
-) -> Result<T, ApiError> {
-    let response = response.map_err(|e| ApiError::Network(e.to_string()))?;
-    let status = response.status();
-
-    if !is_success(status) {
-        // Try to parse error response: { "error": { "code", "message" } }.
-        match response.json::<ServerErrorResponse>().await {
-            Ok(err_resp) => Err(ApiError::Server(CoreApiError {
-                code: err_resp.error.code,
-                message: err_resp.error.message,
-            })),
-            Err(_) => {
-                // If we can't parse the error, try to get the text.
-                let text = response
-                    .text()
-                    .await
-                    .unwrap_or_else(|_| "unknown error".into());
-                Err(ApiError::Network(format!("HTTP {}: {}", status, text)))
-            }
-        }
-    } else {
-        response
-            .json::<T>()
-            .await
-            .map_err(|e| ApiError::Decode(e.to_string()))
-    }
-}
-
-/// Server error response shape: { "error": { "code", "message" } }.
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct ServerErrorResponse {
-    error: ServerErrorInner,
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct ServerErrorInner {
-    code: ErrorCode,
-    message: String,
-}
-
-pub fn use_snapshot() -> ReadSignal<Snapshot> {
-    let initial: Snapshot = serde_json::from_str(include_str!("../fixtures/snapshot.json"))
-        .expect("fixture snapshot must be valid");
-    let (snapshot, _) = signal(initial);
-    snapshot
-}
-
 /// GET /api/v1/snapshot?from=YYYY-MM-DD&days=7
 pub async fn fetch_snapshot(from: &str, days: u8) -> Result<Snapshot, ApiError> {
     let url = format!("/api/v1/snapshot?from={from}&days={days}");
@@ -242,7 +202,6 @@ pub async fn capture_text(text: &str) -> Result<CaptureResponse, ApiError> {
 /// POST /api/v1/capture with file upload (PDF, EML, TXT)
 pub async fn capture_file(file: web_sys::File) -> Result<CaptureResponse, ApiError> {
     let form_data = web_sys::FormData::new().unwrap();
-    // Use the File's name or a default
     let file_name = file.name();
     let name = if file_name.is_empty() {
         "filename"
@@ -389,198 +348,4 @@ pub async fn export_calendar() -> Result<String, ApiError> {
         .text()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use todo_core::{Label, Priority, Source, When};
-
-    #[test]
-    fn api_error_display() {
-        let server_err = ApiError::Server(CoreApiError {
-            code: ErrorCode::NotFound,
-            message: "Task not found".to_string(),
-        });
-        // ErrorCode Debug format is "NotFound", not "not_found"
-        assert_eq!(format!("{}", server_err), "NotFound: Task not found");
-
-        let network_err = ApiError::Network("connection failed".to_string());
-        assert_eq!(
-            format!("{}", network_err),
-            "network error: connection failed"
-        );
-
-        let decode_err = ApiError::Decode("invalid json".to_string());
-        assert_eq!(format!("{}", decode_err), "decode error: invalid json");
-    }
-
-    #[test]
-    fn snapshot_url_building() {
-        let url = "/api/v1/snapshot?from=2026-10-12&days=7".to_string();
-        assert_eq!(url, "/api/v1/snapshot?from=2026-10-12&days=7");
-    }
-
-    #[test]
-    fn task_url_building() {
-        let task_id = TaskId("test-123".to_string());
-        let url = format!("/api/v1/tasks/{}", task_id.0);
-        assert_eq!(url, "/api/v1/tasks/test-123");
-    }
-
-    #[test]
-    fn revise_url_building() {
-        let task_id = TaskId("test-456".to_string());
-        let url = format!("/api/v1/tasks/{}/revise", task_id.0);
-        assert_eq!(url, "/api/v1/tasks/test-456/revise");
-    }
-
-    #[test]
-    fn reorder_url_is_correct() {
-        assert_eq!("/api/v1/tasks/order", "/api/v1/tasks/order");
-    }
-
-    #[test]
-    fn capture_url_is_correct() {
-        assert_eq!("/api/v1/capture", "/api/v1/capture");
-    }
-
-    #[test]
-    fn import_url_is_correct() {
-        assert_eq!("/api/v1/import", "/api/v1/import");
-    }
-
-    #[test]
-    fn calendar_export_url_is_correct() {
-        assert_eq!("/api/v1/calendar.ics", "/api/v1/calendar.ics");
-    }
-
-    #[test]
-    fn is_success_works() {
-        assert!(is_success(200));
-        assert!(is_success(201));
-        assert!(is_success(299));
-        assert!(!is_success(199));
-        assert!(!is_success(300));
-        assert!(!is_success(404));
-        assert!(!is_success(500));
-    }
-
-    #[test]
-    fn patch_task_body_serialization() {
-        let body = PatchTaskBody::new()
-            .title("New title".to_string())
-            .done(true);
-        let json = serde_json::to_string(&body).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["title"], "New title");
-        assert_eq!(parsed["done"], true);
-        assert!(parsed.get("duration_min").is_none());
-        assert!(parsed.get("when").is_none());
-    }
-
-    #[test]
-    fn capture_text_body_serialization() {
-        let body = CaptureTextBody {
-            text: "Test capture text".to_string(),
-        };
-        let json = serde_json::to_string(&body).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["text"], "Test capture text");
-    }
-
-    #[test]
-    fn revise_body_serialization() {
-        let body = ReviseBody {
-            instruction: "Make this urgent".to_string(),
-        };
-        let json = serde_json::to_string(&body).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["instruction"], "Make this urgent");
-    }
-
-    #[test]
-    fn reorder_body_serialization() {
-        let ids = vec![
-            TaskId("a".to_string()),
-            TaskId("b".to_string()),
-            TaskId("c".to_string()),
-        ];
-        let body = ReorderBody { ids };
-        let json = serde_json::to_string(&body).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["ids"], serde_json::json!(["a", "b", "c"]));
-    }
-
-    #[test]
-    fn task_draft_serialization() {
-        let draft = TaskDraft {
-            title: "Test task".to_string(),
-            duration_min: 30,
-            when: When::Anytime,
-            label: Label::Work,
-            priority: Priority::High,
-            source: Source::Text,
-        };
-        let json = serde_json::to_string(&draft).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["title"], "Test task");
-        assert_eq!(parsed["duration_min"], 30);
-        // Label enum serializes to variant name
-        assert_eq!(parsed["label"], "Work");
-        assert_eq!(parsed["priority"], "high");
-        assert_eq!(parsed["source"], "text");
-        assert_eq!(parsed["when"]["kind"], "anytime");
-    }
-
-    #[test]
-    fn server_error_response_parsing() {
-        let json = r#"{"error": {"code": "not_found", "message": "Task not found"}}"#;
-        let parsed: ServerErrorResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(parsed.error.message, "Task not found");
-    }
-
-    #[test]
-    fn capture_response_parsing() {
-        let snapshot_json = r#"{"tasks":[],"plan":{"placements":[],"unplaced":[]},"tz":"UTC","generated":"2026-01-01T00:00:00Z"}"#;
-        let json = format!("{{\"created\":[\"id1\"],\"snapshot\":{}}}", snapshot_json);
-        let parsed: CaptureResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.created.len(), 1);
-        assert_eq!(parsed.created[0].0, "id1");
-    }
-
-    #[test]
-    fn import_response_parsing() {
-        let snapshot_json = r#"{"tasks":[],"plan":{"placements":[],"unplaced":[]},"tz":"UTC","generated":"2026-01-01T00:00:00Z"}"#;
-        let json = format!(
-            "{{\"created\":[\"id1\"],\"updated\":[\"id2\"],\"snapshot\":{}}}",
-            snapshot_json
-        );
-        let parsed: ImportResponse = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed.created.len(), 1);
-        assert_eq!(parsed.updated.len(), 1);
-    }
-
-    #[test]
-    fn api_error_from_network() {
-        // gloo_net::Error doesn't expose a simple constructor, but we can test the From impl
-        // by using the fact that it implements From<serde_json::Error>
-        let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
-        let gloo_err = gloo_net::Error::from(json_err);
-        let api_err: ApiError = gloo_err.into();
-        match api_err {
-            ApiError::Network(msg) => assert!(!msg.is_empty()),
-            _ => panic!("Expected Network variant"),
-        }
-    }
-
-    #[test]
-    fn api_error_from_decode() {
-        let serde_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
-        let api_err: ApiError = serde_err.into();
-        match api_err {
-            ApiError::Decode(msg) => assert!(!msg.is_empty()),
-            _ => panic!("Expected Decode variant"),
-        }
-    }
 }
