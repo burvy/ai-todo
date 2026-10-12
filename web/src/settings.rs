@@ -171,7 +171,8 @@ mod tests {
             Settings {
                 start_hour: 23,
                 end_hour: 24,
-                days: 1
+                days: 1,
+                mode: RamblMode::Interactive
             }
         );
     }

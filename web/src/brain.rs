@@ -54,7 +54,7 @@ fn step(
 #[component]
 pub fn Controller(
     snapshot: ReadSignal<Snapshot>,
-    mode: ReadSignal<crate::settings::RamblMode>,
+    mode: Signal<crate::settings::RamblMode>,
     event: ReadSignal<Option<Event>>,
     set_event: WriteSignal<Option<Event>>,
     set_speech: WriteSignal<Option<String>>,
