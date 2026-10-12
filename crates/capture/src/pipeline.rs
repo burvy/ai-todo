@@ -469,8 +469,12 @@ mod tests {
 
     #[tokio::test]
     async fn whitespace_only_input_produces_no_drafts() {
-        let out = drafts("   
-	  ", answer()).await;
+        let out = drafts(
+            "   
+	  ",
+            answer(),
+        )
+        .await;
         assert!(out.is_empty());
     }
 
@@ -496,5 +500,4 @@ mod tests {
         assert!(!out.is_empty());
         assert!(out[0].title.contains("comprar"));
     }
-
 }
