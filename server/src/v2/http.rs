@@ -302,6 +302,9 @@ fn build_router(
 /// server issued is reused; anything else gets a fresh one, so a forged or stale id
 /// never reaches another person's tasks. The id comes back in `X-Rambl-Anon`.
 ///
+/// Local mode is exempt: every request already resolves to the fixed local user, so
+/// nobody needs an id — and issuing one would burn the per-address allowance.
+///
 /// Sign-in is exempt: it reads the presented id itself, and adopts its tasks only if it
 /// really is an anonymous id.
 async fn assign_anonymous_id(
@@ -309,6 +312,9 @@ async fn assign_anonymous_id(
     mut request: axum::extract::Request,
     next: Next,
 ) -> Response {
+    if shared.local {
+        return next.run(request).await;
+    }
     if request
         .headers()
         .contains_key(axum::http::header::AUTHORIZATION)
@@ -816,6 +822,7 @@ mod tests {
     use axum::http::Request;
     use chrono::{TimeZone, Utc};
     use http_body_util::BodyExt;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use todo_core::{FixedClock, Label, Priority, Source, SystemClock, When};
     use tower::ServiceExt;
 
@@ -2259,6 +2266,166 @@ mod tests {
             false,
             caps,
         )
+    }
+
+    /// Watches whether the anonymous-id machinery ever reached the store.
+    struct CountingAnonStore {
+        inner: MemoryStore,
+        /// Calls to `ensure_anonymous`, i.e. anonymous user rows created.
+        issued: Arc<AtomicUsize>,
+        /// Calls to `record_anon_issued`, i.e. per-address allowance use.
+        counted: Arc<AtomicUsize>,
+    }
+
+    impl Store for CountingAnonStore {
+        fn tasks(&self, user: &str) -> Result<Vec<todo_core::Task>, StoreError> {
+            self.inner.tasks(user)
+        }
+        fn put(&self, user: &str, task: todo_core::Task) -> Result<(), StoreError> {
+            self.inner.put(user, task)
+        }
+        fn delete(&self, user: &str, id: &TaskId) -> Result<bool, StoreError> {
+            self.inner.delete(user, id)
+        }
+        fn set_order(&self, user: &str, ids: &[TaskId]) -> Result<(), StoreError> {
+            self.inner.set_order(user, ids)
+        }
+        fn find_by_uid(
+            &self,
+            user: &str,
+            uid: &str,
+        ) -> Result<Option<todo_core::Task>, StoreError> {
+            self.inner.find_by_uid(user, uid)
+        }
+        fn upsert_user_and_session(
+            &self,
+            user: &crate::v2::auth::Me,
+            token: &str,
+            expires_at: chrono::DateTime<Utc>,
+        ) -> Result<(), StoreError> {
+            self.inner.upsert_user_and_session(user, token, expires_at)
+        }
+        fn delete_session(&self, token: &str) -> Result<(), StoreError> {
+            self.inner.delete_session(token)
+        }
+        fn session_user(
+            &self,
+            token: &str,
+            now: chrono::DateTime<Utc>,
+        ) -> Result<Option<crate::v2::auth::Me>, StoreError> {
+            self.inner.session_user(token, now)
+        }
+        fn delete_user(&self, user: &str) -> Result<(), StoreError> {
+            self.inner.delete_user(user)
+        }
+        fn captures_today(&self, user: &str, day: NaiveDate) -> Result<u32, StoreError> {
+            self.inner.captures_today(user, day)
+        }
+        fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError> {
+            self.inner.adopt_anonymous(anonymous, user)
+        }
+        fn user_plan(&self, user: &str) -> Result<crate::v2::auth::Plan, StoreError> {
+            self.inner.user_plan(user)
+        }
+        fn set_user_plan(&self, user: &str, plan: crate::v2::auth::Plan) -> Result<(), StoreError> {
+            self.inner.set_user_plan(user, plan)
+        }
+        fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
+            self.inner.anonymous_exists(user)
+        }
+        fn ensure_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
+            self.issued.fetch_add(1, Ordering::SeqCst);
+            self.inner.ensure_anonymous(user, now)
+        }
+        fn touch_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
+            self.inner.touch_anonymous(user, now)
+        }
+        fn expire_anonymous(&self, cutoff: DateTime<Utc>) -> Result<usize, StoreError> {
+            self.inner.expire_anonymous(cutoff)
+        }
+        fn record_capture(&self, user: &str, ip: &str, day: NaiveDate) -> Result<(), StoreError> {
+            self.inner.record_capture(user, ip, day)
+        }
+        fn ip_captures_today(&self, user: &str, day: NaiveDate) -> Result<u32, StoreError> {
+            self.inner.ip_captures_today(user, day)
+        }
+        fn record_anon_issued(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError> {
+            self.counted.fetch_add(1, Ordering::SeqCst);
+            self.inner.record_anon_issued(ip, day)
+        }
+        fn block(&self, target: &crate::v2::store::Block) -> Result<(), StoreError> {
+            self.inner.block(target)
+        }
+        fn unblock(&self, target: &crate::v2::store::Block) -> Result<bool, StoreError> {
+            self.inner.unblock(target)
+        }
+        fn is_blocked(&self, user: &str, ip: &str) -> Result<bool, StoreError> {
+            self.inner.is_blocked(user, ip)
+        }
+        fn blocks(&self) -> Result<Vec<crate::v2::store::Block>, StoreError> {
+            self.inner.blocks()
+        }
+        fn usage_today(
+            &self,
+            day: NaiveDate,
+            top: usize,
+        ) -> Result<crate::v2::store::Usage, StoreError> {
+            self.inner.usage_today(day, top)
+        }
+        fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {
+            self.inner.user_id_for_email(email)
+        }
+    }
+
+    /// Local mode (`GOOGLE_CLIENT_ID` unset) answers as the fixed local user, so
+    /// the anonymous-id middleware must not issue ids — or spend the per-address
+    /// allowance on ids nobody uses. A fresh browser profile is a request with no
+    /// `X-Rambl-Anon`; 30 of them is past the default 20-a-day allowance, and
+    /// Dwight found the install locked itself out there.
+    #[tokio::test]
+    async fn local_mode_issues_no_anonymous_ids() {
+        let issued = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::new(AtomicUsize::new(0));
+        let store = CountingAnonStore {
+            inner: MemoryStore::default(),
+            issued: Arc::clone(&issued),
+            counted: Arc::clone(&counted),
+        };
+        let router = super::router_with_verifier(
+            App::new(
+                Box::new(store) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(auth::FakeVerifier {
+                answer: Err("unused".into()),
+            }),
+            true, // local mode
+            Caps::default(),
+        );
+        let from = [("cf-connecting-ip", "203.0.113.9")];
+        for _ in 0..30 {
+            let (status, headers, _) = call(&router, "GET", "/api/v1/snapshot", None, &from).await;
+            assert_eq!(
+                status,
+                StatusCode::OK,
+                "local mode must never refuse a fresh profile"
+            );
+            assert!(
+                !headers.contains_key(ANON_HEADER),
+                "local mode must not hand out anonymous ids"
+            );
+        }
+        assert_eq!(
+            issued.load(Ordering::SeqCst),
+            0,
+            "no anonymous user row may be created in local mode"
+        );
+        assert_eq!(
+            counted.load(Ordering::SeqCst),
+            0,
+            "no per-address issuance may be counted in local mode"
+        );
     }
 
     /// Past the per-address allowance, a client gets no new anonymous id.
