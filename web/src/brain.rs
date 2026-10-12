@@ -218,6 +218,7 @@ mod overdue_tests {
             source: todo_core::Source::Text,
             created: at,
             updated_at: at,
+            due_tz: None,
             external_uid: None,
         }
     }

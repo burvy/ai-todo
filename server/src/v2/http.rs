@@ -2405,6 +2405,7 @@ mod tests {
                     source: Source::Text,
                     created: Utc::now(),
                     updated_at: Utc::now(),
+                    due_tz: None,
                     external_uid: None,
                 },
             )

@@ -596,6 +596,13 @@ button {
   gap: var(--space-1);
 }
 
+/* The zone a deadline's wall clock means, next to the edit dialog's date field. */
+.due-zone {
+  color: var(--ink-faint);
+  font-size: var(--text-sm);
+  margin-left: var(--space-1);
+}
+
 .dialog-task-title {
   margin: 0;
   font-family: var(--font-hand);

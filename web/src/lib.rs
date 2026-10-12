@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use gloo_timers::callback::Timeout;
 #[cfg(target_arch = "wasm32")]
 use js_sys::Array;
@@ -790,6 +790,53 @@ fn parse_local_input(value: &str) -> Option<DateTime<Utc>> {
     }
 }
 
+/// A deadline's clock time as it reads in its own zone, for the edit dialog. Unlike
+/// `local_input_value` this does not depend on the browser's zone, which is exactly
+/// the point of `due_tz` (docs/ARCHITECTURE.md 4.1): a deadline set as Friday 17:00
+/// New York reads Friday 17:00 no matter where the browser is.
+fn due_input_value(time: DateTime<Utc>, tz: chrono_tz::Tz) -> String {
+    let local = time.with_timezone(&tz);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}",
+        local.year(),
+        local.month(),
+        local.day(),
+        local.hour(),
+        local.minute()
+    )
+}
+
+/// How the edit dialog shows a deadline: in the zone it was set in when the task
+/// has one, else in the browser's zone (tasks created before `due_tz` existed).
+fn due_display(task: &todo_core::Task, time: DateTime<Utc>) -> String {
+    match task.due_tz.as_deref().and_then(|name| name.parse().ok()) {
+        Some(tz) => due_input_value(time, tz),
+        None => local_input_value(time),
+    }
+}
+
+/// Parse a deadline typed into the edit dialog as a time in `tz`, so a deadline
+/// shown in its original zone saves as the same local time even after a move.
+/// Fall-back makes a wall clock ambiguous (the hour repeats); `.earliest()` picks
+/// the first of the two, where `.single()` used to give up silently. A time in a
+/// spring-forward gap genuinely does not exist and still fails.
+fn parse_due_input(value: &str, tz: chrono_tz::Tz) -> Option<DateTime<Utc>> {
+    let naive = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M").ok()?;
+    tz.from_local_datetime(&naive)
+        .earliest()
+        .map(|local| local.with_timezone(&Utc))
+}
+
+/// The deadline the edited task already has, parsed in the zone that set it (so the
+/// shown value round-trips), or in the browser's zone for a task without `due_tz`.
+fn parse_edited_due(value: &str, task: &todo_core::Task) -> Option<When> {
+    let due = match task.due_tz.as_deref().and_then(|name| name.parse().ok()) {
+        Some(tz) => parse_due_input(value, tz),
+        None => parse_local_input(value),
+    };
+    due.map(When::DueBy)
+}
+
 fn is_overdue_at(task: &todo_core::Task, now: DateTime<Utc>) -> bool {
     !task.done && matches!(task.when, When::DueBy(deadline) if deadline < now)
 }
@@ -1084,7 +1131,7 @@ fn TaskList(
                                         }
                                         When::DueBy(time) => {
                                             set_edit_when.set(EditWhen::DueBy);
-                                            set_edit_datetime.set(local_input_value(time));
+                                            set_edit_datetime.set(due_display(&task, time));
                                         }
                                         When::At(time) => {
                                             set_edit_when.set(EditWhen::At);
@@ -1129,6 +1176,10 @@ fn TaskList(
                     snapshot.get().tasks.into_iter().find(|task| task.id == id).map(|task| {
                         let imported = task.source == Source::Calendar;
                         let task_id = task.id.clone();
+                        // The zone a deadline in this dialog is shown and parsed in,
+                        // rendered next to the date field so the user knows the wall
+                        // clock means that zone (docs/ARCHITECTURE.md 4.1).
+                        let due_zone = task.due_tz.clone();
                         view! {
                             <p class="dialog-task-title">{task.title.clone()}</p>
                             {imported.then(|| view! {
@@ -1172,6 +1223,12 @@ fn TaskList(
                                     prop:value=edit_datetime
                                     on:input=move |event| set_edit_datetime.set(event_target_value(&event))
                                 />
+                                {move || match due_zone.as_deref() {
+                                    Some(zone) if edit_when.get() == EditWhen::DueBy => Some(view! {
+                                        <span class="due-zone">"(" {zone.to_owned()} ")"</span>
+                                    }),
+                                    _ => None,
+                                }}
                             </fieldset>
                             <div class="dialog-actions">
                                 <button
@@ -1217,8 +1274,19 @@ fn TaskList(
                                             let duration = edit_duration.get_untracked().parse::<u16>().ok();
                                             let when = match edit_when.get_untracked() {
                                                 EditWhen::Anytime => Some(When::Anytime),
-                                                EditWhen::DueBy => parse_local_input(&edit_datetime.get_untracked()).map(When::DueBy),
-                                                EditWhen::At => parse_local_input(&edit_datetime.get_untracked()).map(When::At),
+                                                EditWhen::DueBy => snapshot
+                                                    .with_untracked(|s| {
+                                                        held(s, &task_id.0).and_then(|held| {
+                                                            parse_edited_due(
+                                                                &edit_datetime.get_untracked(),
+                                                                held,
+                                                            )
+                                                        })
+                                                    }),
+                                                EditWhen::At => parse_local_input(
+                                                    &edit_datetime.get_untracked(),
+                                                )
+                                                .map(When::At),
                                             };
                                             if title.is_empty() || duration.is_none() || when.is_none() {
                                                 return;
@@ -1364,6 +1432,73 @@ mod tests {
                 .unwrap_or_default();
             assert_eq!(list_time, week_time);
         }
+    }
+
+    /// docs/ARCHITECTURE.md 4.1: a deadline is edited in the zone it was set in.
+    /// The value shown and the value parsed on save must round-trip in that zone,
+    /// on both sides of the November DST change.
+    #[test]
+    fn a_due_deadline_round_trips_in_its_own_zone_across_dst() {
+        let ny = chrono_tz::America::New_York;
+        // Friday 2026-10-30 23:59 New York is still EDT (UTC-4).
+        let before = Utc.with_ymd_and_hms(2026, 10, 31, 3, 59, 0).unwrap();
+        assert_eq!(due_input_value(before, ny), "2026-10-30T23:59");
+        assert_eq!(parse_due_input("2026-10-30T23:59", ny), Some(before));
+
+        // Monday 2026-11-02 23:59 New York is EST (UTC-5): a wall clock set after
+        // the fall-back is 04:59:00Z, not 03:59:00Z.
+        let after = Utc.with_ymd_and_hms(2026, 11, 3, 4, 59, 0).unwrap();
+        assert_eq!(due_input_value(after, ny), "2026-11-02T23:59");
+        assert_eq!(parse_due_input("2026-11-02T23:59", ny), Some(after));
+
+        // The fall-back itself: 01:30 New York on 2026-11-01 happens twice — 01:30
+        // EDT and again 01:30 EST after the clocks fall back. `.earliest()` picks
+        // the first one; `.single()` used to reject the whole time silently.
+        let fold_earliest = Utc.with_ymd_and_hms(2026, 11, 1, 5, 30, 0).unwrap();
+        assert_eq!(parse_due_input("2026-11-01T01:30", ny), Some(fold_earliest));
+
+        // A spring-forward gap is not a time at all: 02:30 on 2026-03-08 New York
+        // (the clocks jump 02:00 to 03:00) must not invent an instant.
+        assert_eq!(parse_due_input("2026-03-08T02:30", ny), None);
+    }
+
+    /// A deadline set as 17:00 New York reads 17:00 New York even when the browser
+    /// lives somewhere else — that is the whole point of `due_tz`.
+    #[test]
+    fn a_due_task_is_shown_in_the_zone_it_was_set_in() {
+        let deadline = Utc.with_ymd_and_hms(2026, 10, 16, 21, 0, 0).unwrap();
+        let mut task = api::fixture_snapshot().tasks[0].clone();
+        task.when = When::DueBy(deadline);
+        task.due_tz = Some("America/New_York".into());
+
+        assert_eq!(due_display(&task, deadline), "2026-10-16T17:00");
+        // Saving without touching the field keeps the same instant: 17:00 in New
+        // York is not 17:00 in Los Angeles.
+        assert_eq!(
+            parse_edited_due("2026-10-16T17:00", &task),
+            Some(When::DueBy(deadline))
+        );
+        // ... and the same deadline reads 14:00 only when shown in Los Angeles.
+        assert_eq!(
+            due_input_value(deadline, chrono_tz::America::Los_Angeles),
+            "2026-10-16T14:00"
+        );
+    }
+
+    /// A task from before `due_tz` existed has no zone: the edit dialog falls back
+    /// to the browser's own reading (UTC on the host test target), so old behaviour
+    /// is untouched.
+    #[test]
+    fn a_task_without_due_tz_falls_back_to_the_browser_zone() {
+        let deadline = Utc.with_ymd_and_hms(2026, 10, 16, 21, 0, 0).unwrap();
+        let mut task = api::fixture_snapshot().tasks[0].clone();
+        task.when = When::DueBy(deadline);
+        task.due_tz = None;
+        assert_eq!(due_display(&task, deadline), "2026-10-16T21:00");
+        assert_eq!(
+            parse_edited_due("2026-10-16T21:00", &task),
+            Some(When::DueBy(deadline))
+        );
     }
 }
 
