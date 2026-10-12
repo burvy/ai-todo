@@ -6,6 +6,9 @@ Ramble (voice or text) and Rambl writes your task list: Jev (TypeSafe's System O
 
 ## Run it
 
+Runs here:
+https://ai-todo-api.burvy.dev/
+
 1. Put the Jev key in `.env` in the repo root (git-ignored):
    ```text
    TYPESAFE_API_KEY=your-key-here
