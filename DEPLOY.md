@@ -18,6 +18,14 @@ and `rambl.env.example` there. Copy `rambl.env.example` to `rambl.env` and fill 
 - `RAMBL_ADMIN_EMAILS=you@example.com,someone@example.com`, optional. Comma-separated
   list of the emails allowed to open the `/admin` page (it shows today's usage and can
   block users or addresses and change plans). Leave it empty to turn the page off.
+- `RAMBL_TRUSTED_PROXIES`, optional, and normally unset. Cloudflare's
+  `CF-Connecting-IP` header is only believed when the connection itself came from a
+  trusted proxy: loopback always is, because the Cloudflare tunnel runs on this
+  machine, and this variable adds any other proxy as a comma-separated list of
+  addresses or networks (`10.0.0.1, 10.0.0.0/8`). From any other peer the server uses
+  the socket address and ignores the header, so someone reaching the server directly
+  cannot name their own address and walk past the per-address limits and blocks. An
+  entry that is not a real address or network is ignored.
 
 `rambl.env` is read only from the exe's own folder, and real environment
 variables override it. Tasks are stored in `data\rambl.db` next to the exe;

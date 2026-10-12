@@ -77,6 +77,8 @@ All JSON. Every request carries the header `X-Rambl-TZ: America/New_York` (from 
 
 **Accounts.** Rambl is multi-user. Every request carries either `Authorization: Bearer <session token>` for signed-in users, or `X-Rambl-Anon: <anon_id>` for anonymous users. The token or anon_id names the user; **every task read and write is scoped to that user, in the store, not in the handler** — `Store` methods take the user id, so a handler cannot forget it. In local mode (`GOOGLE_CLIENT_ID` unset), the server uses the fixed local user for all requests regardless of headers. Each account has a persisted plan: anonymous, free, or paid. Daily Jev caps are `RAMBL_JEV_DAILY_CAP_ANON` (default 30), `RAMBL_JEV_DAILY_CAP` (default 200), and `RAMBL_JEV_DAILY_CAP_PAID` (default 1000); the admin console changes plans with `plan <email|id> <anon|free|paid>`, and the `/admin` page does the same over `POST /api/v1/admin/plan` for anyone whose email is in `RAMBL_ADMIN_EMAILS`. When a cap is exceeded, or the user or client address is blocked, capture falls back to `FakeJudge` with `jev_fallback: true`.
 
+**Client address.** The address a request came from is the socket peer, unless the peer is a trusted proxy — loopback, plus whatever `RAMBL_TRUSTED_PROXIES` lists — and then it is the `CF-Connecting-IP` header, and only if that parses as an address. Anything reaching the server directly therefore cannot name its own address and so cannot step past the per-address limits and blocks.
+
 Anonymous users do not sign in. Their account and tasks are deleted after 30 days without a visit (`last_activity_at`, refreshed by a visit at most once an hour and cleared by the daily backup task, only after that backup succeeded); signed-in accounts are never deleted. *(planned)* Rambo nudges them to sign in before then.
 
 | Method and path | Body | Returns |
@@ -122,6 +124,7 @@ Task edits use an `updated_at` field and last-write-wins per task. The server se
 | `RAMBL_JEV_DAILY_CAP_PAID` | `1000` | Captures per paid user per day before capture falls back to `FakeJudge`. |
 | `RAMBL_ANON_IDS_PER_IP` | `20` | New anonymous ids one client address may be issued per day. |
 | `RAMBL_ADMIN_EMAILS` | unset | Comma-separated emails allowed to use `/admin` and its API. Unset or empty disables the admin page (404). |
+| `RAMBL_TRUSTED_PROXIES` | unset | Comma-separated proxy addresses or networks (for example `10.0.0.1, 10.0.0.0/8`) whose `CF-Connecting-IP` names the real client. Loopback is always trusted, which covers a tunnel on the same machine. From any other peer the header is ignored and the socket address is used, so a client reaching the server directly cannot name its own address. |
 
 Working hours: 08:00 to 23:59:59 local time, every day.
 

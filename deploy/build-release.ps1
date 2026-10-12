@@ -25,6 +25,10 @@ TYPESAFE_API_KEY=
 RAMBL_PORT=3160
 RAMBL_DEFAULT_TZ=America/New_York
 RAMBL_ADMIN_EMAILS=boss@example.com
+# Proxies whose CF-Connecting-IP names the real client. Leave empty when the tunnel
+# is on this machine: loopback is trusted already. A comma list of addresses or
+# networks, e.g. 10.0.0.1, 10.0.0.0/8
+RAMBL_TRUSTED_PROXIES=
 GOOGLE_CLIENT_ID=138340425604-qagdhrfblj66i5s9i9icq07lb32sd2g2.apps.googleusercontent.com
 '@ | Set-Content -Encoding utf8 (Join-Path $stage 'rambl.env.example')
 
