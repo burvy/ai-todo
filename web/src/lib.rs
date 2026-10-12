@@ -174,6 +174,7 @@ pub fn App() -> impl IntoView {
                 state=mascot_state
                 set_state=set_mascot_state
                 set_talking
+                view_settings
                 pen_flight
                 pen_pos
                 pen_queue
@@ -272,6 +273,7 @@ fn CaptureBox(
     state: ReadSignal<mascot::State>,
     set_state: WriteSignal<mascot::State>,
     set_talking: WriteSignal<bool>,
+    view_settings: ReadSignal<settings::Settings>,
     pen_flight: RwSignal<mascot::PenFlight>,
     pen_pos: RwSignal<(f64, f64)>,
     pen_queue: RwSignal<Vec<TaskId>>,
@@ -328,6 +330,9 @@ fn CaptureBox(
             return;
         }
         if matches!(state.get_untracked(), mascot::State::Dragging) {
+            return;
+        }
+        if view_settings.get_untracked().mode == settings::RamblMode::Lobotomized {
             return;
         }
         pen_flight.set(mascot::PenFlight::WritingCaret);
@@ -410,6 +415,7 @@ fn CaptureBox(
     let start_speech_down = start_speech.clone();
     let start_speech_key = start_speech.clone();
     let stop_speech_up = stop_speech.clone();
+    let stop_speech_cancel = stop_speech.clone();
     let stop_speech_key = stop_speech.clone();
 
     view! {
@@ -431,12 +437,20 @@ fn CaptureBox(
                 aria-label="Grab Rambo to listen"
                 on:pointerdown=move |ev| {
                     ev.prevent_default();
+                    if let Some(el) = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+                        let _ = el.set_pointer_capture(ev.pointer_id());
+                    }
                     set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Grab));
                     start_speech_down();
                 }
                 on:pointerup=move |_| {
                     if listening.get_untracked() {
                         stop_speech_up();
+                    }
+                }
+                on:pointercancel=move |_| {
+                    if listening.get_untracked() {
+                        stop_speech_cancel();
                     }
                 }
                 on:keydown=move |ev| {
@@ -540,9 +554,25 @@ fn Mascot(
                 pen_pos.set((client_x, client_y));
 
                 // Check if dropped on a task row
-                let doc = web_sys::window().unwrap().document().unwrap();
-                if let Some(el) = doc.element_from_point(client_x as f32, client_y as f32)
-                    && let Some(li) = el.closest("li[data-id]").ok().flatten()
+                let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
+                    set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::DropEmpty));
+                    set_talking.set(false);
+                    start_return();
+                    return;
+                };
+                let Some(el) = doc.element_from_point(client_x as f32, client_y as f32) else {
+                    set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::DropEmpty));
+                    set_talking.set(false);
+                    start_return();
+                    return;
+                };
+                let Some(li) = el.closest("li[data-id]").ok().flatten() else {
+                    // Dropped on empty space (not on a task row)
+                    set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::DropEmpty));
+                    set_talking.set(false);
+                    start_return();
+                    return;
+                };
                 {
                     let task_id = li.get_attribute("data-id").unwrap_or_default();
                     let task_title = li.get_attribute("data-title").unwrap_or_default();
@@ -551,12 +581,14 @@ fn Mascot(
                         mascot::Event::DropTask { task_id, title: task_title },
                     ));
                     set_talking.set(false);
-                    return;
                 }
-                // Dropped on empty space
-                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::DropEmpty));
-                set_talking.set(false);
-                start_return();
+            }
+            on:pointercancel=move |_| {
+                if matches!(state.get_untracked(), mascot::State::Dragging) {
+                    set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::DropEmpty));
+                    set_talking.set(false);
+                    start_return();
+                }
             }
         >
             <img src="assets/pen.svg" alt="Rambo" />
@@ -819,7 +851,11 @@ fn TaskList(
     // Pen queue choreography: process new tasks, animate pen writing each row
     Effect::new(move |_| {
         let queue = pen_queue.get();
-        if queue.is_empty() || mascot::prefers_reduced_motion() {
+        let mode = view_settings.get().mode;
+        if queue.is_empty()
+            || mascot::prefers_reduced_motion()
+            || mode == settings::RamblMode::Lobotomized
+        {
             return;
         }
         let total = queue.len();
@@ -834,18 +870,19 @@ fn TaskList(
                 });
                 #[cfg(target_arch = "wasm32")]
                 {
-                    let doc = web_sys::window().unwrap().document().unwrap();
-                    if let Some(row) = doc
-                        .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
-                        .ok()
-                        .flatten()
-                    {
-                        let rect = row.get_bounding_client_rect();
-                        let center = pen::writing_pen_center(
-                            rect.left() + 40.0,
-                            rect.top() + rect.height() / 2.0,
-                        );
-                        pen_pos.set(center);
+                    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                        if let Some(row) = doc
+                            .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
+                            .ok()
+                            .flatten()
+                        {
+                            let rect = row.get_bounding_client_rect();
+                            let center = pen::writing_pen_center(
+                                rect.left() + 40.0,
+                                rect.top() + rect.height() / 2.0,
+                            );
+                            pen_pos.set(center);
+                        }
                     }
                 }
                 gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
@@ -855,13 +892,14 @@ fn TaskList(
                 });
                 #[cfg(target_arch = "wasm32")]
                 {
-                    let doc = web_sys::window().unwrap().document().unwrap();
-                    if let Some(row) = doc
-                        .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
-                        .ok()
-                        .flatten()
-                    {
-                        row.set_class_name("pen-writing");
+                    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                        if let Some(row) = doc
+                            .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
+                            .ok()
+                            .flatten()
+                        {
+                            row.set_class_name("pen-writing");
+                        }
                     }
                 }
                 written.update(|h| {
