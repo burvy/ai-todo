@@ -7,6 +7,7 @@ use wasm_bindgen::JsCast;
 pub mod api;
 pub mod mascot;
 pub mod settings;
+pub mod speech;
 pub mod week;
 
 /// Load snapshot from API and return it, falling back to fixture on error
@@ -49,6 +50,7 @@ pub fn App() -> impl IntoView {
             <h1>"Rambl"</h1>
             <CaptureBox
                 set_snapshot=set_snapshot
+                set_error=set_error
                 state=mascot_state
                 set_state=set_mascot_state
                 set_talking
@@ -77,25 +79,15 @@ pub fn App() -> impl IntoView {
 #[component]
 fn CaptureBox(
     set_snapshot: WriteSignal<Snapshot>,
+    set_error: WriteSignal<Option<String>>,
     state: ReadSignal<mascot::State>,
     set_state: WriteSignal<mascot::State>,
     set_talking: WriteSignal<bool>,
 ) -> impl IntoView {
     let (text, set_text) = signal(String::new());
-    let (speech_supported, set_speech_supported) = signal(false);
     let (listening, set_listening) = signal(false);
-
-    // Check if SpeechRecognition is supported
-    Effect::new(move |_| {
-        set_speech_supported.set(
-            web_sys::window()
-                .map(|w| {
-                    w.get("SpeechRecognition").is_some()
-                        || w.get("webkitSpeechRecognition").is_some()
-                })
-                .unwrap_or(false),
-        );
-    });
+    let speech_session = std::rc::Rc::new(std::cell::RefCell::new(None::<speech::Session>));
+    let speech_session_for_mic = speech_session.clone();
 
     let handle_submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -126,25 +118,47 @@ fn CaptureBox(
                 placeholder="Say what you need to do…"
                 aria-label="Ramble"
             />
-            {move || {
-                if speech_supported.get() {
+            {if speech::supported() {
+                    let speech_session_for_mic = speech_session_for_mic.clone();
                     view! {
                         <button
                             type="button"
                             aria-label="Speak to capture"
                             class=move || if listening.get() { "mic listening" } else { "mic" }
                             on:click=move |_| {
-                                set_listening.set(true);
-                                set_talking.set(true);
-                                // Speech recognition would be implemented here
-                                // For now, just toggle the state
+                                if listening.get_untracked() {
+                                    if let Some(session) = speech_session_for_mic.borrow().as_ref() {
+                                        session.stop();
+                                    }
+                                    return;
+                                }
+                                set_error.set(None);
+                                let text_for_speech = std::rc::Rc::new(std::cell::RefCell::new(
+                                    text.get_untracked(),
+                                ));
+                                let result = speech::Session::start(
+                                    text_for_speech,
+                                    move |value| set_text.set(value),
+                                    move |value| {
+                                        set_listening.set(value);
+                                        set_talking.set(value);
+                                    },
+                                    move |value| set_error.set(value),
+                                );
+                                match result {
+                                    Ok(session) => {
+                                        *speech_session_for_mic.borrow_mut() = Some(session);
+                                        set_listening.set(true);
+                                        set_talking.set(true);
+                                    }
+                                    Err(message) => set_error.set(Some(message)),
+                                }
                             }
                         >"Mic"</button>
                     }.into_any()
                 } else {
                     view! { <span></span> }.into_any()
-                }
-            }}
+                }}
             <button
                 class="mascot-home"
                 type="button"
