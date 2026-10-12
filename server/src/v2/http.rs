@@ -1101,9 +1101,17 @@ mod tests {
         let reversed = format!(r#"{{"ids":["{}","{}"]}}"#, ids[1], ids[0]);
         let (status, body) = send(&router, "PUT", "/api/v1/tasks/order", Some(&reversed)).await;
         assert_eq!(status, StatusCode::OK);
+        // Newest-first made the snapshot list Second above First, so the
+        // "reversed" request asks for First back on top; the response must show
+        // that order, not the creation order.
         assert_eq!(
-            serde_json::from_value::<Snapshot>(body).unwrap().tasks[0].title,
-            "Second"
+            serde_json::from_value::<Snapshot>(body)
+                .unwrap()
+                .tasks
+                .iter()
+                .map(|t| t.title.as_str())
+                .collect::<Vec<_>>(),
+            ["First", "Second"]
         );
 
         let (status, body) = send(

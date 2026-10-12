@@ -90,7 +90,12 @@ impl<S: Store> App<S> {
     /// Every mutating method loads the store once, changes its copy and returns a
     /// snapshot built from that copy. Loading again to return the result doubled the
     /// reads on every write and could show a value the caller never wrote.
-    fn snapshot_of(tasks: Vec<Task>, ctx: &LocalContext, tz: Tz) -> Snapshot {
+    fn snapshot_of(mut tasks: Vec<Task>, ctx: &LocalContext, tz: Tz) -> Snapshot {
+        // Every mutation appends its new tasks after the list it loaded, so the
+        // next sort_tasks key (order, created) decides where they appear — that
+        // must be true in the answer too, or a freshly created task would look
+        // like it landed at the bottom of the list.
+        Self::sort_tasks(&mut tasks);
         Snapshot {
             plan: plan(&tasks, ctx),
             tasks,
@@ -146,7 +151,10 @@ impl<S: Store> App<S> {
         check_duration(draft.duration_min)?;
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
-        let order = tasks.iter().map(|task| task.order).max().unwrap_or(-1) + 1;
+        // Newest first (docs/ARCHITECTURE.md 4.1): a fresh task takes the
+        // smallest order so sort_tasks puts it at the top of the list. After a
+        // reorder orders are 0..n again, so this stays safe indefinitely.
+        let order = tasks.iter().map(|task| task.order).min().unwrap_or(0) - 1;
         let task = Task {
             id: Self::fresh_id(),
             title: draft.title.trim().to_owned(),
@@ -212,7 +220,6 @@ impl<S: Store> App<S> {
     ) -> Result<ImportResult, ApiError> {
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
-        let mut order = tasks.iter().map(|task| task.order).max().unwrap_or(-1) + 1;
         let mut created = Vec::new();
         let mut updated = Vec::new();
         for event in events {
@@ -244,7 +251,7 @@ impl<S: Store> App<S> {
                 duration_min,
                 when: When::At(event.start),
                 done: false,
-                order,
+                order: 0,
                 label: Label::Other,
                 priority: Priority::Low,
                 source: Source::Calendar,
@@ -252,12 +259,23 @@ impl<S: Store> App<S> {
                 updated_at: ctx.now,
                 external_uid: event.uid.clone(),
             };
-            order += 1;
             created.push(task.id.clone());
+            tasks.push(task);
+        }
+        // The imported batch lands on top in import order: its orders run from
+        // one below the smallest held order down to min - created.len().
+        let held = tasks.len() - created.len();
+        let min = tasks[..held]
+            .iter()
+            .map(|task| task.order)
+            .min()
+            .unwrap_or(0);
+        let base = min - created.len() as i64;
+        for (offset, task) in tasks[held..].iter_mut().enumerate() {
+            task.order = base + offset as i64;
             self.store
                 .put(user, task.clone())
                 .map_err(Self::storage_error)?;
-            tasks.push(task);
         }
         Ok(ImportResult {
             created,
@@ -275,7 +293,12 @@ impl<S: Store> App<S> {
     ) -> Result<(Vec<TaskId>, Snapshot), ApiError> {
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
-        let first_order = tasks.iter().map(|task| task.order).max().unwrap_or(-1) + 1;
+        // The whole capture lands on top (newest first), still in capture order:
+        // orders run from min - drafts.len() up to min - 1, so they never collide
+        // with orders already held (a capture of several drafts would otherwise
+        // walk straight into them).
+        let min_order = tasks.iter().map(|task| task.order).min().unwrap_or(0);
+        let first_order = min_order - drafts.len() as i64;
         let mut ids = Vec::new();
         for (offset, draft) in drafts.into_iter().enumerate() {
             let order = first_order + offset as i64;
@@ -399,6 +422,12 @@ impl<S: Store> App<S> {
             .into_iter()
             .filter_map(|id| by_id.remove(&id))
             .collect();
+        // The local copies still carry their old orders; the store renumbered by
+        // position. Mirror it so the snapshot we hand back sorts like the next
+        // load would (snapshot_of sorts by order).
+        for (position, task) in tasks.iter_mut().enumerate() {
+            task.order = position as i64;
+        }
         Ok(Self::snapshot_of(tasks, &ctx, tz))
     }
 
@@ -703,6 +732,97 @@ mod tests {
         );
         let unique: HashSet<_> = ids.iter().map(|id| &id.0).collect();
         assert_eq!(unique.len(), 10, "ids minted in one batch must be unique");
+    }
+
+    /// Newest first (docs/ARCHITECTURE.md 4.1): each new task takes a smaller
+    /// order than every held task, so the snapshot lists it on top.
+    #[test]
+    fn newest_task_sorts_first() {
+        let (mut app, _) = app();
+        let tz = chrono_tz::America::New_York;
+        app.create(draft("First"), crate::v2::auth::LOCAL_USER, tz)
+            .expect("create first");
+        let second = app
+            .create(draft("Second"), crate::v2::auth::LOCAL_USER, tz)
+            .expect("create second");
+        let titles: Vec<&str> = second
+            .tasks
+            .iter()
+            .map(|task| task.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            ["Second", "First"],
+            "the newer task is listed first"
+        );
+
+        // The capture path (add_drafts) lands its whole batch on top too.
+        let drafts = vec![draft("Capture one"), draft("Capture two")];
+        let (_, capture) = app
+            .add_drafts(drafts, crate::v2::auth::LOCAL_USER, tz)
+            .expect("capture drafts");
+        let titles: Vec<&str> = capture
+            .tasks
+            .iter()
+            .map(|task| task.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            ["Capture one", "Capture two", "Second", "First"],
+            "a capture sits on top, in capture order"
+        );
+    }
+
+    /// Manual reorder renumbers every task by position, so it must keep working
+    /// when creation gives tasks negative orders, and a task created after a
+    /// reorder still appears first.
+    #[test]
+    fn reorder_keeps_working_with_newest_first() {
+        let (mut app, _) = app();
+        let tz = chrono_tz::America::New_York;
+        app.create(draft("A"), crate::v2::auth::LOCAL_USER, tz)
+            .expect("create A");
+        let created = app
+            .create(draft("B"), crate::v2::auth::LOCAL_USER, tz)
+            .expect("create B");
+        assert_eq!(
+            created
+                .tasks
+                .iter()
+                .map(|t| t.title.as_str())
+                .collect::<Vec<_>>(),
+            ["B", "A"],
+            "newest first before any reorder"
+        );
+
+        // Put A back on top by hand.
+        let ids: Vec<String> = created.tasks.iter().rev().map(|t| t.id.0.clone()).collect();
+        let reordered = app
+            .reorder(&ids, crate::v2::auth::LOCAL_USER, tz)
+            .expect("reorder");
+        assert_eq!(
+            reordered
+                .tasks
+                .iter()
+                .map(|t| t.title.as_str())
+                .collect::<Vec<_>>(),
+            ["A", "B"],
+            "manual reorder still wins"
+        );
+
+        // A fresh task goes above the manually ordered pair.
+        let newest = app
+            .create(draft("C"), crate::v2::auth::LOCAL_USER, tz)
+            .expect("create C");
+        assert_eq!(
+            newest
+                .tasks
+                .iter()
+                .map(|t| t.title.as_str())
+                .collect::<Vec<_>>(),
+            ["C", "A", "B"],
+            "after a reorder, the newest task still appears first"
+        );
     }
 
     #[test]
