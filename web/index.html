@@ -9,7 +9,10 @@
   <style>
     :root { color-scheme: light dark; font: 16px system-ui, sans-serif; }
     body { max-width: 1100px; margin: 0 auto; padding: 1rem; }
-    main { display: grid; gap: 1rem; grid-template-columns: minmax(16rem, 1fr) minmax(24rem, 2fr); }
+    main { display: grid; gap: 1rem; grid-template-columns: minmax(16rem, 1fr) minmax(24rem, 2fr); align-items: start; }
+    .tasks-pane { display: grid; gap: 1rem; min-width: 0; }
+    .pane-switch { display: none; gap: .5rem; margin: .5rem 0; }
+    .pane-switch button.active { font-weight: 700; outline: 2px solid currentColor; }
     section { border: 1px solid currentColor; border-radius: .5rem; padding: 1rem; }
     input, button { font: inherit; padding: .5rem; }
     .capture { display: flex; gap: .5rem; }
@@ -39,7 +42,8 @@
     .week-scroll { max-height: 70vh; overflow-y: auto; }
     .week { grid-template-columns: repeat(var(--days), minmax(9rem, 1fr)); }
     .day { position: relative; min-width: 7rem; border-left: 1px solid currentColor; padding: .25rem; }
-    .hour { min-height: 4rem; border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
+    .hours { position: relative; }
+    .hour { height: 64px; box-sizing: border-box; border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
     .hour span { font-size: .75rem; opacity: .7; }
     .placement { border: 1px solid currentColor; border-radius: .25rem; padding: .2rem; }
     .label-filters { display: flex; flex-wrap: wrap; gap: .25rem; margin-bottom: .75rem; }
@@ -48,7 +52,7 @@
     .calendar-notice { flex-basis: 100%; margin: 0; font-size: .85rem; }
     .task-open { cursor: pointer; }
     .overdue { color: #c22; font-size: .8rem; font-weight: 700; margin-left: .4rem; }
-    .task-dialog { min-width: min(32rem, 90vw); border: 1px solid currentColor; border-radius: .5rem; padding: 1rem; }
+    .task-dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10; min-width: min(32rem, 90vw); background: Canvas; border: 1px solid currentColor; border-radius: .5rem; padding: 1rem; }
     .task-dialog form { display: grid; gap: .75rem; }
     .task-dialog fieldset { display: grid; gap: .4rem; }
     .duration-chips, .dialog-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
@@ -56,7 +60,11 @@
     .dialog-task-title { margin: 0; opacity: .7; }
     .version { font-size: .8rem; opacity: .7; }
     .now-line { position: absolute; left: 0; right: 0; border-top: 2px solid #d33; pointer-events: none; }
-    @media (max-width: 700px) { main { grid-template-columns: 1fr; } }
+    @media (max-width: 700px) {
+      .pane-switch { display: flex; }
+      main { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 100%; overflow-x: auto; scroll-snap-type: x mandatory; }
+      main > * { scroll-snap-align: start; min-width: 0; }
+    }
   </style>
 </head>
 <body></body>

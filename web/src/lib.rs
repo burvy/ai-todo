@@ -39,6 +39,8 @@ pub fn App() -> impl IntoView {
     });
 
     account::start();
+    let main_ref = NodeRef::<leptos::html::Main>::new();
+    let (pane, set_pane) = signal(0_u8);
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
 
@@ -69,9 +71,15 @@ pub fn App() -> impl IntoView {
         })}
         <settings::SettingsPanel settings=view_settings set_settings=set_view_settings />
         <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event set_speech=set_brain_speech set_pose=set_brain_pose />
-        <main>
-            <ImportIcs set_snapshot set_error />
-            <TaskList snapshot set_snapshot set_mascot_state />
+        <nav class="pane-switch" aria-label="Show">
+            <button type="button" class:active=move || pane.get() == 0 on:click=move |_| show_pane(main_ref, 0, set_pane)>"Tasks"</button>
+            <button type="button" class:active=move || pane.get() == 1 on:click=move |_| show_pane(main_ref, 1, set_pane)>"Week"</button>
+        </nav>
+        <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
+            <div class="tasks-pane">
+                <ImportIcs set_snapshot set_error />
+                <TaskList snapshot set_snapshot set_mascot_state />
+            </div>
             <week::WeekGrid snapshot=snapshot settings=view_settings set_mascot_state=set_mascot_state />
         </main>
         <Mascot
@@ -87,6 +95,43 @@ pub fn App() -> impl IntoView {
         />
     }
 }
+
+/// The pane in view on a phone: 0 for tasks, 1 for the week. The two panes sit side by
+/// side in a scroll-snap row, so the pane is the scroll offset in whole pane widths.
+#[cfg(any(target_arch = "wasm32", test))]
+fn pane_at(scroll_left: f64, pane_width: f64) -> u8 {
+    if pane_width <= 0.0 {
+        return 0;
+    }
+    (scroll_left / pane_width).round().clamp(0.0, 1.0) as u8
+}
+
+#[cfg(target_arch = "wasm32")]
+fn show_pane(main: NodeRef<leptos::html::Main>, index: u8, set_pane: WriteSignal<u8>) {
+    if let Some(element) = main.get() {
+        element.set_scroll_left(i32::from(index) * element.client_width());
+    }
+    set_pane.set(index);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn show_pane(_main: NodeRef<leptos::html::Main>, index: u8, set_pane: WriteSignal<u8>) {
+    set_pane.set(index);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn track_pane(main: NodeRef<leptos::html::Main>, set_pane: WriteSignal<u8>) {
+    if let Some(element) = main.get() {
+        let index = pane_at(
+            f64::from(element.scroll_left()),
+            f64::from(element.client_width()),
+        );
+        set_pane.set(index);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn track_pane(_main: NodeRef<leptos::html::Main>, _set_pane: WriteSignal<u8>) {}
 
 #[component]
 fn CaptureBox(
@@ -673,7 +718,10 @@ fn TaskList(
                             <strong>{render_task_title.clone()}</strong> " — " {task.duration_min} " min"
                             {is_overdue(&task).then(|| view! { <span class="overdue">"Overdue"</span> })}
                         </span>
-                        {move || task_time(&snapshot.get(), &render_task_id)}
+                        {move || {
+                            let time = task_time(&snapshot.get(), &render_task_id);
+                            (!time.is_empty()).then(|| view! { <span class="task-time">" · " {time}</span> })
+                        }}
                         <button
                             class="delete"
                             type="button"
@@ -827,6 +875,8 @@ fn task_time(snapshot: &Snapshot, id: &str) -> String {
 
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn start() {
+    #[cfg(target_arch = "wasm32")]
+    console_error_panic_hook::set_once();
     leptos::mount::mount_to_body(App);
 }
 
@@ -876,5 +926,20 @@ mod tests {
                 .unwrap_or_default();
             assert_eq!(list_time, week_time);
         }
+    }
+}
+
+#[cfg(test)]
+mod pane_tests {
+    use super::pane_at;
+
+    #[test]
+    fn a_phone_swipe_maps_to_the_nearest_pane() {
+        assert_eq!(pane_at(0.0, 400.0), 0);
+        assert_eq!(pane_at(180.0, 400.0), 0);
+        assert_eq!(pane_at(220.0, 400.0), 1);
+        assert_eq!(pane_at(400.0, 400.0), 1);
+        assert_eq!(pane_at(900.0, 400.0), 1, "never past the last pane");
+        assert_eq!(pane_at(100.0, 0.0), 0, "no width yet, so the first pane");
     }
 }
