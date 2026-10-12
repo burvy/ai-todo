@@ -403,14 +403,17 @@ fn issue_anonymous_id(shared: &Shared, ip: &str) -> Result<String, HttpError> {
 
 /// The address a request came from. Cloudflare's `CF-Connecting-IP` when the site sits
 /// behind it, else the socket peer. Only the header is trusted without a check, so
-/// behind anything else a client could name its own address.
+/// behind anything else a client could name its own address; the header must also be
+/// a real IP — the value lands on the admin page, so a string that is not an address
+/// is never stored.
 fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
     headers
         .get("cf-connecting-ip")
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+        .and_then(|value| value.parse::<IpAddr>().ok())
+        .map(|ip| ip.to_string())
         .or_else(|| peer.map(|ip| ip.to_string()))
         .unwrap_or_else(|| "unknown".to_owned())
 }
@@ -554,9 +557,9 @@ fn admin_404() -> HttpError {
 }
 
 /// `GET /admin`: the administration page. Off when no emails are configured. A
-/// signed-in visitor who is not an admin gets 404, so the page stays invisible to
-/// friends; an anonymous visitor gets the shell, which signs in the same way the
-/// main page does — only a listed email ever sees data.
+/// signed-in request (a Bearer token) that is not an admin gets 404; a plain
+/// navigation carries no token, so it gets the shell, which signs in the same way
+/// the main page does — only a listed email ever sees data.
 async fn admin_page(
     State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
@@ -2191,6 +2194,45 @@ mod tests {
         assert_eq!(me["plan"], "Paid");
     }
 
+    /// A non-IP `CF-Connecting-IP` is never stored, so it cannot be echoed on the
+    /// admin page (the stored-XSS issue Pam raised on #161).
+    #[tokio::test]
+    async fn a_non_ip_proxy_header_is_never_stored_or_echoed() {
+        let router = accounts_router_with_admins(
+            sunday_night(),
+            "google-1",
+            "boss@example.com",
+            Some(vec!["boss@example.com".into()]),
+        );
+        let token = sign_in(&router).await;
+        let bearer = format!("Bearer {token}");
+
+        let payload = "<img src=x onerror=alert(1)>";
+        let (status, _, _) = call(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            Some(r#"{"text":"buy milk tomorrow"}"#),
+            &[("authorization", &bearer), ("cf-connecting-ip", payload)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the capture itself must not fail");
+
+        let (status, usage) =
+            send_as(&router, "GET", "/api/v1/admin/usage", None, Some(&token)).await;
+        assert_eq!(status, StatusCode::OK);
+        let ips: Vec<String> = usage["ips"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["ip"].as_str().unwrap().to_owned())
+            .collect();
+        assert!(
+            ips.iter().all(|ip| !ip.contains('<') && !ip.contains('>')),
+            "a header string must never reach the admin page: {ips:?}"
+        );
+    }
+
     #[tokio::test]
     async fn invalid_bearer_token_is_401() {
         let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
@@ -2874,6 +2916,16 @@ mod tests {
         assert_eq!(client_ip(&headers, peer), "203.0.113.5");
 
         headers.insert("cf-connecting-ip", HeaderValue::from_static("  "));
+        assert_eq!(client_ip(&headers, peer), "198.51.100.4");
+
+        // A non-IP value is not stored: it would be echoed on the admin page, so a
+        // client must not be able to smuggle an HTML string in there.
+        headers.insert(
+            "cf-connecting-ip",
+            HeaderValue::from_static("<img src=x onerror=alert(1)>"),
+        );
+        assert_eq!(client_ip(&headers, peer), "198.51.100.4");
+        headers.insert("cf-connecting-ip", HeaderValue::from_static("not-an-ip"));
         assert_eq!(client_ip(&headers, peer), "198.51.100.4");
 
         assert_eq!(client_ip(&HeaderMap::new(), None), "unknown");

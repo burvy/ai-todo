@@ -201,20 +201,48 @@ async function api(path, init) {
 }
 async function refresh() {
   const [usage, blocks] = await Promise.all([api("/api/v1/admin/usage"), api("/api/v1/admin/blocks")]);
-  const rows = usage.users.map((u) => "<tr><td>" + u.id + "</td><td>" + u.plan + "</td><td>" + u.captures + "</td></tr>").join("");
-  document.getElementById("usage").innerHTML = "<tr><th>user</th><th>plan</th><th>captures</th></tr>" + rows
-    + "<tr><th>address</th><th></th><th></th></tr>"
-    + usage.ips.map((i) => "<tr><td>" + i.ip + "</td><td></td><td>" + i.captures + "</td></tr>").join("");
+  const table = document.getElementById("usage");
+  table.innerHTML = "";
+  const cell = (tag, text) => { const td = document.createElement(tag); td.textContent = text; return td; };
+  const headers = table.createTHead();
+  const headerRow = headers.insertRow();
+  for (const title of ["user", "plan", "captures"]) headerRow.appendChild(cell("th", title));
+  const bodyEl = table.createTBody();
+  for (const u of usage.users) {
+    const row = bodyEl.insertRow();
+    row.appendChild(cell("td", u.id));
+    row.appendChild(cell("td", u.plan));
+    row.appendChild(cell("td", String(u.captures)));
+  }
+  const ipRow = bodyEl.insertRow();
+  ipRow.appendChild(cell("th", "address"));
+  ipRow.appendChild(cell("td", ""));
+  ipRow.appendChild(cell("td", ""));
+  for (const ip of usage.ips) {
+    const row = bodyEl.insertRow();
+    row.appendChild(cell("td", ip.ip));
+    row.appendChild(cell("td", ""));
+    row.appendChild(cell("td", String(ip.captures)));
+  }
   const p = usage.per_plan;
   document.getElementById("perplan").textContent = "Jev calls today: anon " + p.anon + ", free " + p.free + ", paid " + p.paid;
-  const list = blocks.map((b) => {
-    const esc = b.value.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-    return "<li>" + b.kind + " " + esc + " <button data-kind='" + b.kind + "' data-value='" + esc
-      + "'>unblock</button></li>";
-  }).join("");
-  document.getElementById("blocks").innerHTML = list || "<li>nothing is blocked</li>";
-  for (const btn of document.querySelectorAll("#blocks button")) {
+  const list = document.getElementById("blocks");
+  list.textContent = "";
+  if (blocks.length === 0) {
+    const empty = document.createElement("li");
+    empty.textContent = "nothing is blocked";
+    list.appendChild(empty);
+  }
+  for (const b of blocks) {
+    const item = document.createElement("li");
+    item.appendChild(cell("span", b.kind + " " + b.value));
+    const btn = document.createElement("button");
+    btn.textContent = "unblock";
+    btn.dataset.kind = b.kind;
+    btn.dataset.value = b.value;
     btn.onclick = () => run("unblock", { kind: btn.dataset.kind, value: btn.dataset.value }, btn);
+    item.appendChild(btn);
+    list.appendChild(item);
   }
 }
 async function run(action, body, btn) {
