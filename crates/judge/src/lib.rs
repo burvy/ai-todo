@@ -6,6 +6,7 @@
 //!
 //! The v1 client and its date heuristics live in [`v1`] until the v1 server is retired.
 
+pub mod any;
 pub mod fake;
 pub mod jev;
 pub mod v1;
@@ -14,6 +15,7 @@ use std::future::Future;
 
 use todo_core::{Label, Priority};
 
+pub use any::AnyJudge;
 pub use fake::FakeJudge;
 pub use jev::JevJudge;
 
