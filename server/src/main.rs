@@ -30,7 +30,7 @@ use futures::future::join_all;
 use judge::{choose, classify_intent, find_date_candidates, split_sentences, understand};
 use scheduler::{BusyBlock, Placement, UnschedulableReason, WorkingHours};
 use serde::{Deserialize, Serialize};
-use todo_core::{Source, Task};
+use todo_core::v1::{Source, Task};
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
@@ -517,10 +517,8 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
         let current = now.weekday().number_from_monday() as i64;
         let target = index as i64 + 1;
         let mut days = (target - current + 7) % 7;
-        if days == 0 {
-            if now.time() >= NaiveTime::from_hms_opt(17, 0, 0).unwrap() {
-                days = 7;
-            }
+        if days == 0 && now.time() >= NaiveTime::from_hms_opt(17, 0, 0).unwrap() {
+            days = 7;
         }
         now.date_naive() + chrono::Duration::days(days)
     } else if let Ok(value) = chrono::NaiveDate::parse_from_str(candidate, "%Y-%m-%d") {

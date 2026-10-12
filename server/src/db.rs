@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Mutex;
-use todo_core::{Source, Task};
+use todo_core::v1::{Source, Task};
 
 /// Default location, overridable with the `DATA_PATH` env var.
 pub const DEFAULT_DATA_PATH: &str = "data/ai-todo.db";
