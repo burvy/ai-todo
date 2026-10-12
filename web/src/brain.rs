@@ -217,6 +217,7 @@ mod overdue_tests {
             priority: todo_core::Priority::Medium,
             source: todo_core::Source::Text,
             created: at,
+            updated_at: at,
             external_uid: None,
         }
     }
