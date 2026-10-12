@@ -12,7 +12,9 @@ and `rambl.env.example` there. Copy `rambl.env.example` to `rambl.env` and fill 
 - `TYPESAFE_API_KEY`, the Jev key.
 - `RAMBL_PORT=3160`, unless another port is wanted.
 - `RAMBL_DEFAULT_TZ=America/New_York`.
-- `GOOGLE_CLIENT_ID`, left empty until Google sign-in is set up.
+- `GOOGLE_CLIENT_ID=138340425604-qagdhrfblj66i5s9i9icq07lb32sd2g2.apps.googleusercontent.com`,
+  the public Google OAuth web client (its authorized origins are https://rambl.burvy.dev
+  and http://localhost:3160). Leave it empty to turn sign-in off.
 
 `rambl.env` is read only from the exe's own folder, and real environment
 variables override it. Tasks are stored in `data\rambl.db` next to the exe;
