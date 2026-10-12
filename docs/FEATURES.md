@@ -94,6 +94,8 @@ c. Code: `server/src/v2/store.rs:SqliteStore, Store`;
 
 ### 1. Scrollable week view
 a. The planner shows a configurable number of days and a scrollable 24-hour range.
+Each placement block shows the task's title in the handwriting font and its start time,
+truncated with an ellipsis when the block is too narrow.
 b. Open the **Week** panel and scroll through the grid.
 c. Code: `web/src/week.rs:WeekGrid`; `web/src/settings.rs:SettingsPanel, Settings`.
 

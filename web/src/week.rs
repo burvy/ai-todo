@@ -3,7 +3,7 @@ use gloo_timers::callback::Interval;
 use leptos::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use todo_core::{Clock, SystemClock};
-use todo_core::{LocalContext, Placement, Snapshot};
+use todo_core::{LocalContext, Placement, Snapshot, TaskId};
 
 use crate::{mascot, settings::Settings};
 
@@ -158,7 +158,7 @@ fn PlacementBlock(
     set_mascot_state: WriteSignal<mascot::State>,
 ) -> impl IntoView {
     let task_id = placement.task.clone();
-    let render_task_id = task_id.clone();
+    let label_task_id = task_id.clone();
     let render_time = local_time_label(&planner_context(&snapshot.get().tz), placement.start);
     view! {
         <div class="placement" style=move || {
@@ -185,14 +185,46 @@ fn PlacementBlock(
                 }
             })
             on:dragover=|event| event.prevent_default()
-        >{render_task_id.0} " " {render_time}</div>
+        >
+            {move || view! { <strong>{placement_label(&snapshot.get(), &label_task_id)}</strong> }}
+            " · " {render_time}
+        </div>
     }
+}
+
+/// What a placement block shows: the task's title, looked up in the snapshot. A
+/// placement always ships with its task, but a snapshot mid-swap may not, so an
+/// unknown id falls back to the id itself rather than an empty block.
+fn placement_label(snapshot: &Snapshot, task_id: &TaskId) -> String {
+    snapshot
+        .tasks
+        .iter()
+        .find(|task| task.id == *task_id)
+        .map(|task| task.title.clone())
+        .unwrap_or_else(|| task_id.0.clone())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn a_placement_block_shows_the_task_title_not_the_raw_id() {
+        let snapshot = crate::api::fixture_snapshot();
+        let placement = &snapshot.plan.placements[0];
+        assert_eq!(placement.task.0, "history");
+        assert_eq!(
+            placement_label(&snapshot, &placement.task),
+            "Finish history paper"
+        );
+    }
+
+    #[test]
+    fn an_unknown_task_shows_the_id_rather_than_an_empty_block() {
+        let snapshot = crate::api::fixture_snapshot();
+        assert_eq!(placement_label(&snapshot, &TaskId("gone".into())), "gone");
+    }
 
     #[test]
     fn the_line_sits_where_the_clock_is_in_its_hour() {

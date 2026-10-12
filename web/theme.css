@@ -450,6 +450,17 @@ button {
   border: 1px solid var(--rule);
   border-left: 3px solid var(--accent);
   border-radius: var(--radius-sm);
+  /* A 30-minute block is 32px tall: one small line, truncated, never spilled. */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: var(--text-sm);
+}
+
+/* The task's title in the human's own hand, as the list shows it. */
+.placement strong {
+  font-family: var(--font-hand);
+  font-weight: 500;
 }
 
 .now-line {
