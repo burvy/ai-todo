@@ -23,3 +23,7 @@ web-sys = { version = "0.3.106", features = ["Document", "Element", "File", "Htm
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
+
+# A panic in the page otherwise reaches the console as "unreachable", with no message.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
