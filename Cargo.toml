@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [workspace]
-members = ["crates/capture", "crates/core", "crates/judge", "crates/scheduler", "server"]
+members = ["crates/capture", "crates/core", "crates/dates", "crates/judge", "crates/scheduler", "server"]
 resolver = "2"
 
 [dependencies]
