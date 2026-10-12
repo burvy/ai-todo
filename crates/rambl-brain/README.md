@@ -1,6 +1,6 @@
 # rambl-brain
 
-What Rambl, the mascot, **feels and does**.
+What Rambo, the mascot, **feels and does**.
 
 It is a pure crate: no web, no Leptos, no server, no network. You hand it what happened
 and what time it is, and it hands back a new brain and a list of things for the view to

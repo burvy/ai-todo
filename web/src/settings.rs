@@ -91,7 +91,7 @@ pub fn SettingsPanel(
                     } />
             </label>
             <label>
-                "Rambl mode "
+                "Rambo mode "
                 <select on:change=move |event| {
                     let mode = match event_target_value(&event).as_str() {
                         "instant" => RamblMode::Instant,

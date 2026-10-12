@@ -1,4 +1,4 @@
-# Rambl art: inventory and redo guide
+# Rambo art: inventory and redo guide
 
 > **Every asset in this folder is a placeholder made by AI or by code.** None of it was drawn, photographed or recorded by hand. Each one is meant to be redone by a person and dropped in, following the steps below.
 
