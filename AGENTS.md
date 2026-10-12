@@ -2,7 +2,7 @@
 
 Instructions for any AI coding agent working in this repository. Read this before your first edit.
 
-Rambl is a speed-focused to-do list: you ramble, Jev (TypeSafe's model) helps turn it into tasks, a scheduler plans your week, and Rambl the pen mascot lives beside the capture box. Simple, fast and well tested beats clever.
+Rambl is a speed-focused to-do list: you ramble, Jev (TypeSafe's model) helps turn it into tasks, a scheduler plans your week, and Rambl the pen mascot lives beside the capture box. Fast, readable and well tested is the bar.
 
 ## Read first
 
@@ -28,7 +28,7 @@ Rambl is a speed-focused to-do list: you ramble, Jev (TypeSafe's model) helps tu
 
 1. **Own branch, own worktree.** `git worktree add <path> origin/main -b <you>/<topic>`. Never edit the main checkout or commit to `main`.
 2. **Stay in scope.** Touch only the files your task names. If the fix needs another area, stop and ask.
-3. **Simple first.** Prefer deleting code to adding it. No new dependency without a reason in the PR.
+3. **Idiomatic Rust.** Prefer expressive, idiomatic code: iterators and combinators over index loops, enums and `match` over flags, types that make bad states unrepresentable, small pure functions. Clever is welcome when it makes the code shorter, clearer or easier to extend; it is not when only its author can follow it. Prefer deleting code to adding it, and add no dependency without a reason in the PR.
 4. **Time.** Never read the wall clock or assume UTC outside `core`'s `Clock` and `LocalContext`.
 5. **Secrets.** Never commit `.env`, keys or `data/`. Never print a key.
 
