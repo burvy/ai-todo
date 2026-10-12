@@ -6,3 +6,7 @@ edition = "2024"
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 chrono-tz = "0.10"
+todo-core = { path = "../core" }
+
+[dev-dependencies]
+proptest = "1"
