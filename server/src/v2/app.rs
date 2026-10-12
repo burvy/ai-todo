@@ -24,8 +24,8 @@ pub const MAX_DURATION_MIN: u16 = 480;
 fn working_hours(tz: Tz) -> WorkingHours {
     WorkingHours::every_day(
         tz,
-        NaiveTime::from_hms_opt(9, 0, 0).expect("09:00 is valid"),
-        NaiveTime::from_hms_opt(17, 0, 0).expect("17:00 is valid"),
+        NaiveTime::from_hms_opt(8, 0, 0).expect("08:00 is valid"),
+        NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59 is valid"),
     )
 }
 
@@ -341,13 +341,6 @@ impl<S: Store> App<S> {
         self.clock.now()
     }
 
-    /// How many captures this user has run on `day`, for the daily Jev cap.
-    pub fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, ApiError> {
-        self.store
-            .captures_today(user, day)
-            .map_err(Self::storage_error)
-    }
-
     /// The store itself, for the account calls in [`super::auth`], which work on
     /// users and sessions rather than on tasks.
     pub fn store(&self) -> &S {
@@ -561,6 +554,62 @@ mod tests {
 
         fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
             self.inner.captures_today(user, day)
+        }
+
+        fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError> {
+            self.inner.adopt_anonymous(anonymous, user)
+        }
+
+        fn user_plan(&self, user: &str) -> Result<crate::v2::auth::Plan, StoreError> {
+            self.inner.user_plan(user)
+        }
+
+        fn set_user_plan(&self, user: &str, plan: crate::v2::auth::Plan) -> Result<(), StoreError> {
+            self.inner.set_user_plan(user, plan)
+        }
+
+        fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
+            self.inner.anonymous_exists(user)
+        }
+
+        fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError> {
+            self.inner.ensure_anonymous(user)
+        }
+        fn record_capture(
+            &self,
+            user: &str,
+            ip: &str,
+            day: chrono::NaiveDate,
+        ) -> Result<(), StoreError> {
+            self.inner.record_capture(user, ip, day)
+        }
+        fn ip_captures_today(&self, ip: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
+            self.inner.ip_captures_today(ip, day)
+        }
+        fn record_anon_issued(&self, ip: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
+            self.inner.record_anon_issued(ip, day)
+        }
+        fn block(&self, target: &crate::v2::store::Block) -> Result<(), StoreError> {
+            self.inner.block(target)
+        }
+        fn unblock(&self, target: &crate::v2::store::Block) -> Result<bool, StoreError> {
+            self.inner.unblock(target)
+        }
+        fn is_blocked(&self, user: &str, ip: &str) -> Result<bool, StoreError> {
+            self.inner.is_blocked(user, ip)
+        }
+        fn blocks(&self) -> Result<Vec<crate::v2::store::Block>, StoreError> {
+            self.inner.blocks()
+        }
+        fn usage_today(
+            &self,
+            day: chrono::NaiveDate,
+            top: usize,
+        ) -> Result<crate::v2::store::Usage, StoreError> {
+            self.inner.usage_today(day, top)
+        }
+        fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {
+            self.inner.user_id_for_email(email)
         }
     }
 

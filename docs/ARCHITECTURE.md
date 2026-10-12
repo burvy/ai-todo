@@ -67,7 +67,7 @@ An unfinished task past its `DueBy` remains in the list marked **Overdue**. The 
 1. **Segment** (code): split text into clauses.
 2. **Candidates** (code, `dates`): per clause, title spans, date phrases ("tomorrow", "Wednesday", "Oct 30"), time phrases ("at 3", "10am"), duration phrases. Each candidate already carries its resolved value from `LocalContext`.
 3. **Judge** (one Jev request per capture, all questions in parallel): per clause `is_task` (Noul), `title` (Choice of spans), `day` (Choice of date candidates + none), `time` (Choice of time candidates + none), `duration` (Choice), `label` (Choice), `priority` (Score). Jev gets the local time as text for context only.
-4. **Resolve** (code): build `TaskDraft`. Day + time -> `When::At`; day only -> `DueBy(day 17:00 local)`; neither -> `Anytime`.
+4. **Resolve** (code): build `TaskDraft`. Day + time -> `When::At`; day only -> `DueBy(day 23:59:59 local)`; neither -> `Anytime`.
 
 Without a Jev key, `FakeJudge`'s deterministic rules pick the first candidate. Tests use it, so the pipeline is tested end to end without the network.
 
@@ -75,9 +75,9 @@ Without a Jev key, `FakeJudge`'s deterministic rules pick the first candidate. T
 
 All JSON. Every request carries the header `X-Rambl-TZ: America/New_York` (from `Intl.DateTimeFormat().resolvedOptions().timeZone`). Every mutating call returns the full `Snapshot`. Errors are `{ "error": { "code", "message" } }` with a fitting status.
 
-**Accounts.** Rambl is multi-user. Every request except sign-in carries `Authorization: Bearer <session token>`. The token names a row in `v2_sessions`; the row names the user; **every task read and write is scoped to that user, in the store, not in the handler** — `Store` methods take the user id, so a handler cannot forget it. A missing, unknown or expired token is a 401 before the handler runs. With `GOOGLE_CLIENT_ID` unset the server is in local mode: one fixed local user, no sign-in.
+**Accounts.** Rambl is multi-user. Every request carries either `Authorization: Bearer <session token>` for signed-in users, or `X-Rambl-Anon: <anon_id>` for anonymous users. The token or anon_id names the user; **every task read and write is scoped to that user, in the store, not in the handler** — `Store` methods take the user id, so a handler cannot forget it. In local mode (`GOOGLE_CLIENT_ID` unset), the server uses the fixed local user for all requests regardless of headers. Each account has a persisted plan: anonymous, free, or paid. Daily Jev caps are `RAMBL_JEV_DAILY_CAP_ANON` (default 30), `RAMBL_JEV_DAILY_CAP` (default 200), and `RAMBL_JEV_DAILY_CAP_PAID` (default 1000); the admin console changes plans with `plan <email|id> <anon|free|paid>`. When a cap is exceeded, or the user or client address is blocked, capture falls back to `FakeJudge` with `jev_fallback: true`.
 
-Anonymous users do not sign in. Their account and tasks are deleted after 30 days without a visit; Rambl nudges them to sign in before then to keep their tasks.
+Anonymous users do not sign in. *(planned)* Their account and tasks are deleted after 30 days without a visit, and Rambl nudges them to sign in before then. Until then they are kept.
 
 | Method and path | Body | Returns |
 |---|---|---|
@@ -109,10 +109,15 @@ Task edits use an `updated_at` field and last-write-wins per task. A reorder con
 | `RAMBL_DEFAULT_TZ` | `America/New_York` | Zone for requests with no `X-Rambl-TZ`. `TZ_NAME` is read behind it so `.env` files written for v1 keep working. |
 | `GOOGLE_CLIENT_ID` | unset | The OAuth client ID tokens must be minted for. Unset means local mode: one user, no sign-in. |
 | `RAMBL_JEV_DAILY_CAP` | `200` | Captures per user per day before capture falls back to `FakeJudge`. |
+| `RAMBL_JEV_DAILY_CAP_ANON` | `30` | Captures per anonymous user per day before capture falls back to `FakeJudge` with `jev_fallback: true`. |
+| `RAMBL_JEV_DAILY_CAP_PAID` | `1000` | Captures per paid user per day before capture falls back to `FakeJudge`. |
+| `RAMBL_ANON_IDS_PER_IP` | `20` | New anonymous ids one client address may be issued per day. |
+
+Working hours: 08:00 to 23:59:59 local time, every day.
 
 ## 7. Server (`server/`)
 
-- `Store` trait: `tasks(user)`, `put(user, Task)`, `delete(user, id)`, `set_order(user, ids)`, `find_by_uid(user, uid)`, plus `upsert_user_and_session`, `delete_session`, `session_user`, `delete_user` and `captures_today`. The user id is a parameter rather than a filter applied afterwards, so scoping cannot be forgotten. `SqliteStore` for real, `MemoryStore` for tests; the same suite runs against both.
+- `Store` trait: `tasks(user)`, `put(user, Task)`, `delete(user, id)`, `set_order(user, ids)`, `find_by_uid(user, uid)`, plus the account calls, `captures_today`, `record_capture`, `block`/`is_blocked` and `usage_today`. The user id is a parameter rather than a filter applied afterwards, so scoping cannot be forgotten. `SqliteStore` for real, `MemoryStore` for tests; the same suite runs against both.
 - `auth` module: Google sign-in, sessions and the `TokenVerifier` trait. Sign-in is verified **before** the store lock is taken — a handler holding a `MutexGuard` across an `await` has a non-`Send` future, which axum rejects.
 - `App { store, judge, clock }`: one method per endpoint, each taking the user id. It loads once, mutates and returns the snapshot built from that same list inside one critical section, so a snapshot is never half-updated and a write is never read back twice.
 - Handlers only parse input, build the `LocalContext` from the header and `clock`, call `App`, and map errors.

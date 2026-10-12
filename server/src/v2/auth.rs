@@ -28,6 +28,23 @@ pub const SESSION_LENGTH: Duration = Duration::from_secs(60 * 60 * 24 * 90);
 /// tasks instead of appearing to lose them.
 pub const LOCAL_USER: &str = "local";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Plan {
+    Anon,
+    Free,
+    Paid,
+}
+
+impl Plan {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Anon => "anon",
+            Self::Free => "free",
+            Self::Paid => "paid",
+        }
+    }
+}
+
 /// What Google's `tokeninfo` endpoint reports about an ID token.
 ///
 /// Every field is a string, including the booleans and the audience: that is what the
@@ -52,6 +69,7 @@ pub struct Me {
     pub email: String,
     pub name: String,
     pub picture: Option<String>,
+    pub plan: Plan,
 }
 
 impl Me {
@@ -62,6 +80,7 @@ impl Me {
             email: email.clone(),
             name: info.name.clone().unwrap_or_else(|| email.clone()),
             picture: info.picture.clone(),
+            plan: Plan::Free,
         }
     }
 }
@@ -202,6 +221,7 @@ pub fn open_session<S: Store + ?Sized>(
     store: &S,
     info: &TokenInfo,
     now: DateTime<Utc>,
+    anonymous: Option<&str>,
 ) -> Result<Session, AuthError> {
     let user = Me::from_token(info);
     let token = new_token();
@@ -209,6 +229,11 @@ pub fn open_session<S: Store + ?Sized>(
     store
         .upsert_user_and_session(&user, &token, expires_at)
         .map_err(store_auth_error)?;
+    if let Some(anonymous) = anonymous {
+        store
+            .adopt_anonymous(anonymous, &user.id)
+            .map_err(store_auth_error)?;
+    }
     Ok(Session { token, user })
 }
 

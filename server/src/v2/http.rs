@@ -1,12 +1,14 @@
 //! Thin HTTP handlers for `/api/v1`. They read the time zone header, lock the `App`
 //! for the whole call, and map errors. No business rules live here.
 
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
 use axum::{
     Json, Router,
-    extract::{FromRequest, Multipart, Query, State},
-    http::{HeaderMap, StatusCode, header::HeaderName},
+    extract::{ConnectInfo, FromRequest, Multipart, Query, State},
+    http::{HeaderMap, HeaderValue, StatusCode, header::HeaderName},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, patch, post, put},
 };
@@ -18,14 +20,14 @@ use super::app::{App, ImportResult, Patch};
 use super::auth::{self, TokenVerifier};
 use super::ics_export::build_ics;
 use super::ics_import;
-use super::store::Store;
+use super::store::{Store, StoreError};
 use capture::{Revision, capture_text};
 use chrono::{DateTime, NaiveDate, Utc};
 use judge::AnyJudge;
 use todo_core::{LocalContext, Source, TaskId};
 
 const TZ_HEADER: HeaderName = HeaderName::from_static("x-rambl-tz");
-
+const ANON_HEADER: HeaderName = HeaderName::from_static("x-rambl-anon");
 /// The state every handler shares: the app (locked for each call), the judge, and how
 /// a request is turned into a user.
 pub struct Shared {
@@ -36,16 +38,53 @@ pub struct Shared {
     /// `None` when `GOOGLE_CLIENT_ID` is unset: local mode, one fixed user, no
     /// sign-in.
     local: bool,
-    /// Captures per user per day before capture falls back to [`judge::FakeJudge`].
-    jev_daily_cap: u32,
+    caps: Caps,
+}
+
+/// Daily limits. Past a Jev cap, capture still works but is judged by `FakeJudge`.
+/// Past the anonymous-id limit, a client address gets no new anonymous id.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Caps {
+    pub anon: u32,
+    pub free: u32,
+    pub paid: u32,
+    /// New anonymous ids one client address may be issued per day.
+    pub anon_ids_per_ip: u32,
+}
+
+impl Caps {
+    /// The defaults, each overridable by its `RAMBL_...` variable.
+    fn from_env() -> Self {
+        Self {
+            anon: env_number("RAMBL_JEV_DAILY_CAP_ANON", DEFAULT_ANON_JEV_DAILY_CAP),
+            free: env_number("RAMBL_JEV_DAILY_CAP", DEFAULT_JEV_DAILY_CAP),
+            paid: env_number("RAMBL_JEV_DAILY_CAP_PAID", DEFAULT_PAID_JEV_DAILY_CAP),
+            anon_ids_per_ip: env_number("RAMBL_ANON_IDS_PER_IP", DEFAULT_ANON_IDS_PER_IP),
+        }
+    }
+
+    fn for_plan(&self, plan: auth::Plan) -> u32 {
+        match plan {
+            auth::Plan::Anon => self.anon,
+            auth::Plan::Free => self.free,
+            auth::Plan::Paid => self.paid,
+        }
+    }
+}
+
+fn env_number(name: &str, default: u32) -> u32 {
+    std::env::var(name)
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(default)
 }
 
 /// The signed-in user.
 ///
 /// In local mode (`GOOGLE_CLIENT_ID` unset) every request runs as the fixed local user
-/// so `run-local.sh` and the tests need no sign-in. In a real deployment [`resolve`] is
-/// the only way a handler learns who is asking: a missing, unknown or expired token is a
-/// 401 before the handler does any work.
+/// so `run-local.sh` and the tests need no sign-in. Otherwise a request with an
+/// `Authorization` header must carry a live session, and one without must carry an
+/// anonymous id that the server issued (see [`assign_anonymous_id`]).
 pub struct CurrentUser;
 
 impl CurrentUser {
@@ -53,13 +92,28 @@ impl CurrentUser {
         if shared.local {
             return Ok(auth::LOCAL_USER.to_owned());
         }
-        let token = auth::bearer(headers)
-            .ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
+        // A bearer token is the only identity a signed-in client can present. A bad one
+        // is refused outright, never quietly replaced by the anonymous id.
+        if headers.contains_key(axum::http::header::AUTHORIZATION) {
+            let token = auth::bearer(headers)
+                .ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
+            let app = shared.app.lock().expect("app mutex");
+            return auth::session_user(app.store(), &token, Utc::now())
+                .map_err(HttpError::from)?
+                .map(|user| user.id)
+                .ok_or_else(|| unauthorized("that session has expired"));
+        }
+        let anonymous = headers
+            .get(&ANON_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| valid_anon_id(value));
         let app = shared.app.lock().expect("app mutex");
-        auth::session_user(app.store(), &token, Utc::now())
-            .map_err(HttpError::from)?
-            .map(|user| user.id)
-            .ok_or_else(|| unauthorized("that session has expired"))
+        match anonymous {
+            Some(id) if app.store().anonymous_exists(id).map_err(store_failed)? => {
+                Ok(id.to_owned())
+            }
+            _ => Err(unauthorized("send Authorization: Bearer <token>")),
+        }
     }
 }
 
@@ -144,7 +198,6 @@ fn zone_from_env(default_tz: Option<String>, tz_name: Option<String>) -> Tz {
 
 pub fn router(app: App<Box<dyn Store>>, judge: AnyJudge) -> Router {
     let local = std::env::var("GOOGLE_CLIENT_ID").is_err();
-    let cap = jev_daily_cap_from_env();
     let verifier: Box<dyn TokenVerifier> = if local {
         // Never reached: in local mode every request is the local user.
         Box::new(auth::FakeVerifier {
@@ -155,45 +208,70 @@ pub fn router(app: App<Box<dyn Store>>, judge: AnyJudge) -> Router {
             std::env::var("GOOGLE_CLIENT_ID").expect("checked above"),
         ))
     };
-    build_router(app, judge, verifier, local, cap)
+    build_router(app, judge, verifier, local, Caps::from_env())
 }
 
-/// The router with the account settings a real server uses.
-///
-/// `local` (no `GOOGLE_CLIENT_ID`) means single-user with no sign-in.
-/// [`router_with_verifier`] takes the verifier directly so tests can supply a fake and
-/// never reach the network.
-/// The router with a supplied verifier, so tests can sign in without a Google
-/// project and without touching the network.
+/// The router with a supplied verifier, so tests can sign in without a Google project
+/// and without touching the network.
 #[cfg(test)]
 pub fn router_with_verifier(
     app: App<Box<dyn Store>>,
     judge: AnyJudge,
     verifier: Box<dyn TokenVerifier>,
     local: bool,
-    jev_daily_cap: u32,
+    caps: Caps,
 ) -> Router {
-    build_router(app, judge, verifier, local, jev_daily_cap)
+    build_router(app, judge, verifier, local, caps)
 }
 
-/// `RAMBL_JEV_DAILY_CAP` captures per user per day, 200 unless it says otherwise.
-fn jev_daily_cap_from_env() -> u32 {
-    std::env::var("RAMBL_JEV_DAILY_CAP")
-        .ok()
-        .and_then(|raw| raw.trim().parse().ok())
-        .unwrap_or(DEFAULT_JEV_DAILY_CAP)
-}
-
-/// Captures per user per day before capture stops using Jev.
+/// Captures per user per day before capture stops using Jev, for a signed-in user.
 pub const DEFAULT_JEV_DAILY_CAP: u32 = 200;
+/// The same for a user on the paid plan.
+pub const DEFAULT_PAID_JEV_DAILY_CAP: u32 = 1000;
+/// The same for an anonymous user.
+pub const DEFAULT_ANON_JEV_DAILY_CAP: u32 = 30;
+/// Anonymous ids one client address may be issued per day.
+pub const DEFAULT_ANON_IDS_PER_IP: u32 = 20;
+
+impl Default for Caps {
+    fn default() -> Self {
+        Self {
+            anon: DEFAULT_ANON_JEV_DAILY_CAP,
+            free: DEFAULT_JEV_DAILY_CAP,
+            paid: DEFAULT_PAID_JEV_DAILY_CAP,
+            anon_ids_per_ip: DEFAULT_ANON_IDS_PER_IP,
+        }
+    }
+}
+
+fn valid_anon_id(value: &str) -> bool {
+    let Some(suffix) = value.strip_prefix("anon_") else {
+        return false;
+    };
+    suffix.len() == 32
+        && suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn new_anon_id() -> String {
+    format!("anon_{}", uuid::Uuid::new_v4().simple())
+}
 
 fn build_router(
     app: App<Box<dyn Store>>,
     judge: AnyJudge,
     verifier: Box<dyn TokenVerifier>,
     local: bool,
-    jev_daily_cap: u32,
+    caps: Caps,
 ) -> Router {
+    let shared = Arc::new(Shared {
+        app: Mutex::new(app),
+        judge,
+        verifier,
+        local,
+        caps,
+    });
     Router::new()
         .route("/api/v1/auth/google", post(sign_in_google))
         .route("/api/v1/auth/signout", post(sign_out))
@@ -206,22 +284,114 @@ fn build_router(
         .route("/api/v1/capture", post(capture))
         .route("/api/v1/tasks/{id}/revise", post(revise_task))
         .route("/api/v1/calendar.ics", get(calendar_ics))
-        .with_state(Arc::new(Shared {
-            app: Mutex::new(app),
-            judge,
-            verifier,
-            local,
-            jev_daily_cap,
-        }))
+        .with_state(Arc::clone(&shared))
+        .layer(middleware::from_fn_with_state(shared, assign_anonymous_id))
 }
 
-/// `GET /api/v1/snapshot?from=YYYY-MM-DD&days=N`: the plan window, today and 7 days
-/// by default. The task list is always the whole list.
+/// Gives a request without a bearer token an anonymous id. A presented id that the
+/// server issued is reused; anything else gets a fresh one, so a forged or stale id
+/// never reaches another person's tasks. The id comes back in `X-Rambl-Anon`.
+///
+/// Sign-in is exempt: it reads the presented id itself, and adopts its tasks only if it
+/// really is an anonymous id.
+async fn assign_anonymous_id(
+    State(shared): State<Arc<Shared>>,
+    mut request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    if request
+        .headers()
+        .contains_key(axum::http::header::AUTHORIZATION)
+        || request.uri().path() == "/api/v1/auth/google"
+    {
+        return next.run(request).await;
+    }
+    let presented = request
+        .headers()
+        .get(&ANON_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| valid_anon_id(value))
+        .map(str::to_owned);
+    let id = match presented {
+        Some(id) if issued_anonymous_id(&shared, &id) => id,
+        _ => {
+            let ip = client_ip(request.headers(), peer_ip(&request));
+            match issue_anonymous_id(&shared, &ip) {
+                Ok(id) => id,
+                Err(refusal) => return refusal.into_response(),
+            }
+        }
+    };
+    let header = HeaderValue::from_str(&id).expect("anonymous ids are ASCII");
+    request.headers_mut().insert(ANON_HEADER, header.clone());
+    let mut response = next.run(request).await;
+    response.headers_mut().insert(ANON_HEADER, header);
+    response
+}
+
+fn issued_anonymous_id(shared: &Shared, id: &str) -> bool {
+    let app = shared.app.lock().expect("app mutex");
+    app.store().anonymous_exists(id).unwrap_or(false)
+}
+
+/// A new anonymous id, unless this client address has used up its allowance today.
+fn issue_anonymous_id(shared: &Shared, ip: &str) -> Result<String, HttpError> {
+    let app = shared.app.lock().expect("app mutex");
+    let today = app.now().date_naive();
+    let issued = app
+        .store()
+        .record_anon_issued(ip, today)
+        .map_err(store_failed)?;
+    if issued > shared.caps.anon_ids_per_ip {
+        return Err(unauthorized(
+            "too many new anonymous sessions from this address today; sign in to keep going",
+        ));
+    }
+    let id = new_anon_id();
+    app.store().ensure_anonymous(&id).map_err(store_failed)?;
+    Ok(id)
+}
+
+/// The address a request came from. Cloudflare's `CF-Connecting-IP` when the site sits
+/// behind it, else the socket peer. Only the header is trusted without a check, so
+/// behind anything else a client could name its own address.
+fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
+    headers
+        .get("cf-connecting-ip")
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .or_else(|| peer.map(|ip| ip.to_string()))
+        .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn peer_ip(request: &axum::extract::Request) -> Option<IpAddr> {
+    request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|connect| connect.0.ip())
+}
+
+/// A store that could not answer is our failure, not the caller's.
+fn store_failed(error: StoreError) -> HttpError {
+    HttpError(ApiError {
+        code: ErrorCode::Internal,
+        message: error.to_string(),
+    })
+}
+
 /// `POST /api/v1/auth/google`: trade an ID token for a session.
 async fn sign_in_google(
     State(shared): State<Arc<Shared>>,
     request: axum::extract::Request,
 ) -> Result<Json<auth::Session>, HttpError> {
+    let anonymous = request
+        .headers()
+        .get(&ANON_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| valid_anon_id(value))
+        .map(str::to_owned);
     let Json(body): Json<SignInIn> = Json::from_request(request, &())
         .await
         .map_err(bad_request)?;
@@ -233,7 +403,8 @@ async fn sign_in_google(
         .await
         .map_err(HttpError::from)?;
     let app = shared.app.lock().expect("app mutex");
-    let session = auth::open_session(app.store(), &info, app.now()).map_err(HttpError::from)?;
+    let session = auth::open_session(app.store(), &info, app.now(), anonymous.as_deref())
+        .map_err(HttpError::from)?;
     Ok(Json(session))
 }
 
@@ -270,6 +441,7 @@ async fn me(
             email: "local@localhost".into(),
             name: "Local user".into(),
             picture: None,
+            plan: auth::Plan::Free,
         }));
     }
     let token =
@@ -292,6 +464,8 @@ async fn delete_me(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// `GET /api/v1/snapshot?from=YYYY-MM-DD&days=N`: the plan window, today and 7 days
+/// by default. The task list is always the whole list.
 async fn snapshot(
     State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
@@ -418,21 +592,41 @@ struct CaptureOut {
 
 /// `POST /api/v1/capture`: JSON `{text}`, or multipart `file` (.pdf, .eml or text).
 ///
-/// Past the user's daily Jev cap the capture is still accepted, but judged by
-/// [`judge::FakeJudge`] instead of Jev, and `jev_fallback` says so. Failing the request
-/// would lose the capture; spending the owner's Jev allowance on one account would
-/// take it from everyone.
+/// Past the user's daily cap, or from a blocked user or address, the capture is still
+/// accepted but judged by [`judge::FakeJudge`] instead of Jev, and `jev_fallback` says
+/// so. Failing the request would lose the capture; spending the owner's Jev allowance on
+/// one account would take it from everyone.
 async fn capture(
     State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
     request: axum::extract::Request,
 ) -> Result<Json<CaptureOut>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
+    let ip = client_ip(request.headers(), peer_ip(&request));
     let tz = zone(request.headers())?;
     let (text, source, anchor) = read_capture(request).await?;
     let now = anchor.unwrap_or_else(|| shared.app.lock().unwrap().now());
     let ctx = LocalContext { now, tz };
-    let jev_fallback = over_jev_cap(&shared, &user, now);
+    let plan = if headers.contains_key(axum::http::header::AUTHORIZATION) {
+        let app = shared.app.lock().expect("app mutex");
+        app.store().user_plan(&user).map_err(store_failed)?
+    } else {
+        auth::Plan::Anon
+    };
+    let jev_fallback = {
+        let app = shared.app.lock().expect("app mutex");
+        let store = app.store();
+        let day = now.date_naive();
+        let blocked = store.is_blocked(&user, &ip).map_err(store_failed)?;
+        let used = store.captures_today(&user, day).map_err(store_failed)?;
+        let ip_used = store.ip_captures_today(&ip, day).map_err(store_failed)?;
+        let cap = shared.caps.for_plan(plan);
+        let fallback = blocked || used >= cap || ip_used >= cap;
+        store
+            .record_capture(&user, &ip, day)
+            .map_err(store_failed)?;
+        fallback
+    };
     let drafts = if jev_fallback {
         capture_text(&judge::FakeJudge, &text, source, &ctx)
             .await
@@ -449,18 +643,6 @@ async fn capture(
         snapshot,
         jev_fallback,
     }))
-}
-
-/// Has this user already spent their daily Jev allowance today?
-fn over_jev_cap(shared: &Shared, user: &str, now: DateTime<Utc>) -> bool {
-    let today = now.with_timezone(&chrono_tz::UTC).date_naive();
-    let used = shared
-        .app
-        .lock()
-        .expect("app mutex")
-        .captures_today(user, today)
-        .unwrap_or(0);
-    used >= shared.jev_daily_cap
 }
 
 /// The capture text, its source, and an anchor time when the source has a send date.
@@ -1516,7 +1698,7 @@ mod tests {
             AnyJudge::Fake(judge::FakeJudge),
             Box::new(verifier),
             false,
-            super::DEFAULT_JEV_DAILY_CAP,
+            Caps::default(),
         )
     }
 
@@ -1599,7 +1781,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn without_a_token_every_task_endpoint_is_401() {
+    async fn without_credentials_uses_anonymous_access() {
         let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
         // A well-formed body, so the request reaches the handler rather than being
         // rejected by an extractor. Otherwise `Json` answers 415 for a missing
@@ -1612,12 +1794,22 @@ mod tests {
             ("GET", "/api/v1/calendar.ics", None),
         ] {
             let (status, _, _) = send_raw_status(&router, method, uri, body).await;
-            assert_eq!(
-                status,
-                StatusCode::UNAUTHORIZED,
-                "{method} {uri} was not guarded"
-            );
+            assert_eq!(status, StatusCode::OK, "{method} {uri} was rejected");
         }
+    }
+
+    #[tokio::test]
+    async fn invalid_bearer_token_is_401() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let (status, _, _) = send_raw_status_with_headers(
+            &router,
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            &[("authorization", "Bearer expired")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     async fn send_raw_status(
@@ -1651,6 +1843,32 @@ mod tests {
         )
     }
 
+    async fn send_raw_status_with_headers(
+        router: &Router,
+        method: &str,
+        uri: &str,
+        json: Option<&str>,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, String, String) {
+        let mut builder = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let body = json.map_or_else(Body::empty, |text| Body::from(text.to_owned()));
+        let response = router
+            .clone()
+            .oneshot(builder.body(body).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (
+            status,
+            String::new(),
+            String::from_utf8_lossy(&bytes).to_string(),
+        )
+    }
+
     /// The promise the whole feature rests on.
     #[tokio::test]
     async fn two_users_never_see_each_others_tasks() {
@@ -1670,7 +1888,7 @@ mod tests {
                 answer: Ok(auth::TokenInfo::for_test("google-2", "alex@example.com")),
             }),
             false,
-            super::DEFAULT_JEV_DAILY_CAP,
+            Caps::default(),
         );
         let alex = sign_in(&second).await;
 
@@ -1692,7 +1910,7 @@ mod tests {
         );
 
         // And Sam's token is useless on Alex's server.
-        let (status, _, _) = send_raw_status(&second, "GET", "/api/v1/snapshot", None).await;
+        let (status, _) = send_as(&second, "GET", "/api/v1/snapshot", None, Some(&sam)).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         let _ = sam;
     }
@@ -1708,6 +1926,7 @@ mod tests {
             email: "sam@example.com".into(),
             name: "Sam".into(),
             picture: None,
+            plan: auth::Plan::Free,
         };
         // A session that ended a minute ago.
         let past = Utc::now() - chrono::Duration::minutes(1);
@@ -1786,7 +2005,10 @@ mod tests {
                 answer: Ok(auth::TokenInfo::for_test("google-1", "sam@example.com")),
             }),
             false,
-            1,
+            Caps {
+                free: 1,
+                ..Caps::default()
+            },
         );
         let token = sign_in(&router).await;
 
@@ -1825,5 +2047,275 @@ mod tests {
             second["created"].as_array().is_some_and(|c| !c.is_empty()),
             "the fallback still creates the task"
         );
+    }
+
+    // ---- anonymous use ----
+
+    /// One request with arbitrary headers, returning its status, headers and JSON body.
+    async fn call(
+        router: &Router,
+        method: &str,
+        uri: &str,
+        body: Option<&str>,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, axum::http::HeaderMap, serde_json::Value) {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("x-rambl-tz", "America/New_York");
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let body = match body {
+            Some(text) => {
+                builder = builder.header("content-type", "application/json");
+                Body::from(text.to_owned())
+            }
+            None => Body::empty(),
+        };
+        let response = router
+            .clone()
+            .oneshot(builder.body(body).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (
+            status,
+            headers,
+            serde_json::from_slice(&bytes).unwrap_or_default(),
+        )
+    }
+
+    /// The anonymous id the server attached to a response.
+    fn anonymous_id_of(headers: &axum::http::HeaderMap) -> String {
+        headers
+            .get("x-rambl-anon")
+            .expect("the response names the anonymous id")
+            .to_str()
+            .expect("ASCII")
+            .to_owned()
+    }
+
+    const FOREIGN_ID: &str = "anon_00000000000000000000000000000000";
+
+    /// A forged id must never reach someone else's tasks. Each forgery is a value a
+    /// client could plausibly send: another account's id, junk, or a well-formed id the
+    /// server never issued.
+    #[tokio::test]
+    async fn forged_anonymous_ids_never_reach_someone_elses_tasks() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let sam = sign_in(&router).await;
+        let bearer = format!("Bearer {sam}");
+        let (status, _, _) = call(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(DRAFT),
+            &[("authorization", &bearer)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        for forged in ["google-1", "anon_zz", "anon_ABCDEF", FOREIGN_ID] {
+            let (status, headers, body) = call(
+                &router,
+                "GET",
+                "/api/v1/snapshot",
+                None,
+                &[("x-rambl-anon", forged)],
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{forged}: {body}");
+            assert!(
+                body["tasks"].as_array().unwrap().is_empty(),
+                "a forged id ({forged}) reached someone's tasks: {body}"
+            );
+            assert_ne!(
+                anonymous_id_of(&headers),
+                forged,
+                "the server must issue its own id, not echo a forged one"
+            );
+        }
+    }
+
+    /// An anonymous id the server issued keeps its own tasks from one request to the
+    /// next.
+    #[tokio::test]
+    async fn an_issued_anonymous_id_keeps_its_tasks() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let (_, headers, _) = call(&router, "GET", "/api/v1/snapshot", None, &[]).await;
+        let id = anonymous_id_of(&headers);
+
+        let (status, _, _) = call(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(DRAFT),
+            &[("x-rambl-anon", &id)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (_, _, body) = call(
+            &router,
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            &[("x-rambl-anon", &id)],
+        )
+        .await;
+        assert_eq!(body["tasks"].as_array().unwrap().len(), 1, "{body}");
+    }
+
+    fn router_with_caps(store: MemoryStore, caps: Caps) -> Router {
+        super::router_with_verifier(
+            App::new(
+                Box::new(store) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(auth::FakeVerifier {
+                answer: Err("unused".into()),
+            }),
+            false,
+            caps,
+        )
+    }
+
+    /// Past the per-address allowance, a client gets no new anonymous id.
+    #[tokio::test]
+    async fn new_anonymous_ids_are_limited_per_address() {
+        let router = router_with_caps(
+            MemoryStore::default(),
+            Caps {
+                anon_ids_per_ip: 2,
+                ..Caps::default()
+            },
+        );
+        let from = [("cf-connecting-ip", "203.0.113.7")];
+        for _ in 0..2 {
+            let (status, _, _) = call(&router, "GET", "/api/v1/snapshot", None, &from).await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        let (status, _, _) = call(&router, "GET", "/api/v1/snapshot", None, &from).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let other = [("cf-connecting-ip", "203.0.113.8")];
+        let (status, _, _) = call(&router, "GET", "/api/v1/snapshot", None, &other).await;
+        assert_eq!(status, StatusCode::OK, "another address is not affected");
+    }
+
+    /// Past the anonymous cap, capture still works but is judged by `FakeJudge`.
+    #[tokio::test]
+    async fn anonymous_capture_falls_back_past_the_anonymous_cap() {
+        let router = router_with_caps(
+            MemoryStore::default(),
+            Caps {
+                anon: 1,
+                ..Caps::default()
+            },
+        );
+        let (_, headers, first) = call(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            Some(r#"{"text":"buy milk tomorrow"}"#),
+            &[],
+        )
+        .await;
+        assert_eq!(first["jev_fallback"], false, "{first}");
+        let id = anonymous_id_of(&headers);
+
+        let (status, _, second) = call(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            Some(r#"{"text":"call the dentist"}"#),
+            &[("x-rambl-anon", &id)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{second}");
+        assert_eq!(second["jev_fallback"], true, "{second}");
+    }
+
+    /// A blocked user still uses the app, but capture is judged by `FakeJudge`.
+    #[tokio::test]
+    async fn a_blocked_user_captures_with_fakejudge() {
+        let store = MemoryStore::default();
+        store
+            .block(&crate::v2::store::Block::User("google-1".into()))
+            .unwrap();
+        let router = super::router_with_verifier(
+            App::new(
+                Box::new(store) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(auth::FakeVerifier {
+                answer: Ok(auth::TokenInfo::for_test("google-1", "sam@example.com")),
+            }),
+            false,
+            Caps::default(),
+        );
+        let token = sign_in(&router).await;
+        let bearer = format!("Bearer {token}");
+        let (status, _, body) = call(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            Some(r#"{"text":"buy milk tomorrow"}"#),
+            &[("authorization", &bearer)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["jev_fallback"], true,
+            "a blocked user is not judged by Jev"
+        );
+    }
+
+    /// A blocked address is judged by `FakeJudge` whoever sends from it.
+    #[tokio::test]
+    async fn a_blocked_address_captures_with_fakejudge() {
+        let store = MemoryStore::default();
+        store
+            .block(&crate::v2::store::Block::Ip("203.0.113.9".into()))
+            .unwrap();
+        let router = router_with_caps(store, Caps::default());
+        let (status, _, body) = call(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            Some(r#"{"text":"buy milk tomorrow"}"#),
+            &[("cf-connecting-ip", "203.0.113.9")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["jev_fallback"], true, "{body}");
+    }
+
+    #[test]
+    fn the_client_address_is_the_proxy_header_then_the_socket() {
+        let mut headers = HeaderMap::new();
+        let peer = Some("198.51.100.4".parse::<IpAddr>().unwrap());
+        assert_eq!(client_ip(&headers, peer), "198.51.100.4");
+
+        headers.insert("cf-connecting-ip", HeaderValue::from_static("203.0.113.5"));
+        assert_eq!(client_ip(&headers, peer), "203.0.113.5");
+
+        headers.insert("cf-connecting-ip", HeaderValue::from_static("  "));
+        assert_eq!(client_ip(&headers, peer), "198.51.100.4");
+
+        assert_eq!(client_ip(&HeaderMap::new(), None), "unknown");
+    }
+
+    #[test]
+    fn anonymous_ids_require_prefix_and_32_lowercase_hex_digits() {
+        assert!(valid_anon_id("anon_0123456789abcdef0123456789abcdef"));
+        assert!(!valid_anon_id("0123456789abcdef0123456789abcdef"));
+        assert!(!valid_anon_id("anon_0123456789ABCDEF0123456789abcdef"));
+        assert!(!valid_anon_id("anon_0123"));
     }
 }

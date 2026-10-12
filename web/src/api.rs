@@ -1,8 +1,48 @@
 use gloo_net::http::Request;
+#[cfg(target_arch = "wasm32")]
+use js_sys;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use todo_core::{ApiError as CoreApiError, Snapshot, TaskDraft, TaskId, When};
+use uuid::Uuid;
+
+fn remember_anon(_response: &gloo_net::http::Response) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(id) = _response.headers().get("x-rambl-anon") {
+            if let Some(window) = web_sys::window()
+                && let Ok(Some(storage)) = window.local_storage()
+            {
+                let _ = storage.set_item("rambl_anon_id", &id);
+            }
+        }
+    }
+}
+
+/// Get the anonymous user ID from localStorage, or generate a new one if not present.
+pub fn anon_id() -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let window = web_sys::window().expect("window should be available");
+        let storage = window
+            .local_storage()
+            .expect("localStorage should be available")
+            .unwrap();
+        let key = "rambl_anon_id";
+        if let Ok(Some(id)) = storage.get_item(key) {
+            id
+        } else {
+            let id = format!("anon_{}", Uuid::new_v4().simple());
+            let _ = storage.set_item(key, &id);
+            id
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        format!("anon_{}", Uuid::new_v4().simple())
+    }
+}
 
 pub fn timezone() -> String {
     #[cfg(target_arch = "wasm32")]
@@ -171,11 +211,14 @@ impl PatchTaskBody {
 /// GET /api/v1/snapshot?from=YYYY-MM-DD&days=7
 pub async fn fetch_snapshot(from: &str, days: u8) -> Result<Snapshot, ApiError> {
     let url = format!("/api/v1/snapshot?from={from}&days={days}");
-    Request::get(&url)
+    let response = Request::get(&url)
         .header("X-Rambl-TZ", &timezone())
+        .header("X-Rambl-Anon", &anon_id())
         .send()
         .await
-        .map_err(|e| ApiError::Network(e.to_string()))?
+        .map_err(|e| ApiError::Network(e.to_string()))?;
+    remember_anon(&response);
+    response
         .json::<Snapshot>()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
@@ -186,14 +229,17 @@ pub async fn capture_text(text: &str) -> Result<CaptureResponse, ApiError> {
     let body = CaptureTextBody {
         text: text.to_string(),
     };
-    Request::post("/api/v1/capture")
+    let response = Request::post("/api/v1/capture")
         .header("X-Rambl-TZ", &timezone())
+        .header("X-Rambl-Anon", &anon_id())
         .header("Content-Type", "application/json")
         .json(&body)
         .map_err(|e| ApiError::Network(e.to_string()))?
         .send()
         .await
-        .map_err(|e| ApiError::Network(e.to_string()))?
+        .map_err(|e| ApiError::Network(e.to_string()))?;
+    remember_anon(&response);
+    response
         .json::<CaptureResponse>()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
@@ -217,13 +263,16 @@ pub async fn capture_file(file: web_sys::File) -> Result<CaptureResponse, ApiErr
             )
         })?;
 
-    Request::post("/api/v1/capture")
+    let response = Request::post("/api/v1/capture")
         .header("X-Rambl-TZ", &timezone())
+        .header("X-Rambl-Anon", &anon_id())
         .body(form_data)
         .map_err(|e| ApiError::Network(e.to_string()))?
         .send()
         .await
-        .map_err(|e| ApiError::Network(e.to_string()))?
+        .map_err(|e| ApiError::Network(e.to_string()))?;
+    remember_anon(&response);
+    response
         .json::<CaptureResponse>()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
@@ -233,6 +282,7 @@ pub async fn capture_file(file: web_sys::File) -> Result<CaptureResponse, ApiErr
 pub async fn create_task(draft: TaskDraft) -> Result<Snapshot, ApiError> {
     Request::post("/api/v1/tasks")
         .header("X-Rambl-TZ", &timezone())
+        .header("X-Rambl-Anon", &anon_id())
         .header("Content-Type", "application/json")
         .json(&draft)
         .map_err(|e| ApiError::Network(e.to_string()))?
@@ -249,6 +299,7 @@ pub async fn patch_task(id: &TaskId, body: PatchTaskBody) -> Result<Snapshot, Ap
     let url = format!("/api/v1/tasks/{}", id.0);
     Request::patch(&url)
         .header("X-Rambl-TZ", &timezone())
+        .header("X-Rambl-Anon", &anon_id())
         .header("Content-Type", "application/json")
         .json(&body)
         .map_err(|e| ApiError::Network(e.to_string()))?
@@ -268,6 +319,7 @@ pub async fn revise_task(id: &TaskId, instruction: &str) -> Result<Snapshot, Api
     };
     Request::post(&url)
         .header("X-Rambl-TZ", &timezone())
+        .header("X-Rambl-Anon", &anon_id())
         .header("Content-Type", "application/json")
         .json(&body)
         .map_err(|e| ApiError::Network(e.to_string()))?
@@ -284,6 +336,7 @@ pub async fn reorder_tasks(ids: Vec<TaskId>) -> Result<Snapshot, ApiError> {
     let body = ReorderBody { ids };
     Request::put("/api/v1/tasks/order")
         .header("X-Rambl-TZ", &timezone())
+        .header("X-Rambl-Anon", &anon_id())
         .header("Content-Type", "application/json")
         .json(&body)
         .map_err(|e| ApiError::Network(e.to_string()))?
@@ -300,6 +353,7 @@ pub async fn delete_task(id: &TaskId) -> Result<Snapshot, ApiError> {
     let url = format!("/api/v1/tasks/{}", id.0);
     Request::delete(&url)
         .header("X-Rambl-TZ", &timezone())
+        .header("X-Rambl-Anon", &anon_id())
         .send()
         .await
         .map_err(|e| ApiError::Network(e.to_string()))?
@@ -328,6 +382,7 @@ pub async fn import_ics(file: web_sys::File) -> Result<ImportResponse, ApiError>
 
     Request::post("/api/v1/import")
         .header("X-Rambl-TZ", &timezone())
+        .header("X-Rambl-Anon", &anon_id())
         .body(form_data)
         .map_err(|e| ApiError::Network(e.to_string()))?
         .send()
@@ -342,6 +397,7 @@ pub async fn import_ics(file: web_sys::File) -> Result<ImportResponse, ApiError>
 pub async fn export_calendar() -> Result<String, ApiError> {
     Request::get("/api/v1/calendar.ics")
         .header("X-Rambl-TZ", &timezone())
+        .header("X-Rambl-Anon", &anon_id())
         .send()
         .await
         .map_err(|e| ApiError::Network(e.to_string()))?

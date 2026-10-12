@@ -53,6 +53,7 @@ async fn embedded_web(uri: axum::http::Uri) -> Response {
 #[tokio::main]
 async fn main() {
     v2::start_backups();
+    v2::admin::start_console(v2::store::data_path_from_env());
     run_from_exe_folder();
     dotenvy::dotenv().ok();
     let port: u16 = std::env::var("PORT")
@@ -69,7 +70,8 @@ async fn main() {
     }
     let store = v2::app_from_env().unwrap_or_else(|problem| fatal(&problem));
     println!("Rambl is running on http://localhost:{port} (close this window to stop it)");
-    if let Err(e) = axum::serve(listener, app(store)).await {
+    let service = app(store).into_make_service_with_connect_info::<SocketAddr>();
+    if let Err(e) = axum::serve(listener, service).await {
         fatal(&format!("server stopped: {e}"));
     }
 }

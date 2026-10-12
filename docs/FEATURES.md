@@ -244,14 +244,14 @@ c. Code: `server/src/v2/auth.rs:LOCAL_USER`;
 `server/src/v2/http.rs:router, build_router`.
 
 ### 4. Anonymous use
-a. Use without an account while retaining a later sign-in is *(planned)*.
-b. Not visible; no anonymous-account adoption flow exists yet.
-c. Code: account enforcement is in `server/src/v2/http.rs:CurrentUser`.
+a. Use without an account. A request with no bearer token gets an `X-Rambl-Anon` id the server issued; sending that id back keeps the same tasks. Signing in adopts the anonymous tasks (a calendar event the account already has keeps the signed-in copy) and ends the anonymous id. Forged, unknown or malformed ids get a fresh id, and each client address may be issued `RAMBL_ANON_IDS_PER_IP` (default 20) new ids a day.
+b. Not visible: the anonymous id is kept in the page and sent on every request. The 30-day cleanup of idle anonymous accounts and the sign-in reminder are *(planned)*.
+c. Code: `server/src/v2/http.rs:assign_anonymous_id, CurrentUser`; `server/src/v2/store.rs:adopt_anonymous`.
 
 ### 5. Administration
-a. An admin console and administrative controls are *(planned)*.
-b. Not visible; no admin route exists yet.
-c. Code: no implementation; current account routes are in `server/src/v2/http.rs`.
+a. A local console reads commands from the server's terminal: `usage` (today's top users and addresses), `blocked`, `block|unblock user <email|id>`, `block|unblock ip <addr>`, and `plan <email|id> <anon|free|paid>`. A blocked user or address still uses the app, but capture is judged by `FakeJudge`.
+b. Not visible; type a command into the terminal the server runs in.
+c. Code: `server/src/v2/admin.rs`; blocks and usage are in `server/src/v2/store.rs`.
 
 ## VIII. DATES
 
