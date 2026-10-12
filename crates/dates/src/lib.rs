@@ -399,4 +399,112 @@ mod tests {
         assert_eq!(due_by("tomorrow", &ctx), Some(utc(2026, 10, 12, 21, 0)));
         assert_eq!(due_by("at 3", &ctx), None);
     }
+
+    #[test]
+    fn tomorrow_at_23_59_and_00_01() {
+        // Sunday 2026-10-11 21:00 NY -> Monday 2026-10-12 01:00 UTC
+        let ctx = ny(utc(2026, 10, 12, 1, 0));
+        assert_eq!(phrases::day(&["tomorrow"], &ctx), Some(date(2026, 10, 12)));
+        // At 23:59 local => Mon 23:59 NY = Tue 03:59 UTC (next day)
+        assert_eq!(
+            pinned_start("tomorrow at 23:59", &ctx),
+            Some(utc(2026, 10, 13, 3, 59))
+        );
+        // At 00:01 local => Mon 00:01 NY = Mon 04:01 UTC (same day, early)
+        let ctx_early = ny(utc(2026, 10, 12, 5, 0)); // Mon 01:00 NY
+        assert_eq!(
+            pinned_start("tomorrow at 0:01", &ctx_early),
+            Some(utc(2026, 10, 13, 4, 1))
+        );
+    }
+
+    #[test]
+    fn next_monday_on_monday_is_next_week() {
+        // Monday 2026-10-12 16:00 NY
+        let ctx = ny(utc(2026, 10, 12, 16, 0));
+        assert_eq!(ctx.today().weekday(), Weekday::Mon);
+        assert_eq!(
+            phrases::day(&["next", "monday"], &ctx),
+            Some(date(2026, 10, 19))
+        );
+    }
+
+    #[test]
+    fn next_monday_on_sunday_is_tomorrow() {
+        // Sunday 2026-10-11 21:00 NY -> Mon 01:00 UTC
+        let ctx = ny(utc(2026, 10, 12, 1, 0));
+        assert_eq!(
+            phrases::day(&["next", "monday"], &ctx),
+            Some(date(2026, 10, 12))
+        );
+    }
+
+    #[test]
+    fn this_weekend_before_five_pm_is_today() {
+        let before = ny(utc(2026, 10, 17, 16, 0));
+        assert_eq!(
+            phrases::day(&["this", "weekend"], &before),
+            Some(date(2026, 10, 17))
+        );
+    }
+
+    #[test]
+    fn this_weekend_after_five_pm_is_next() {
+        let after = ny(utc(2026, 10, 17, 21, 30));
+        assert_eq!(
+            phrases::day(&["this", "weekend"], &after),
+            Some(date(2026, 10, 24))
+        );
+    }
+
+    #[test]
+    fn month_rollover_31_dec_to_jan_5() {
+        let ctx = ny(utc(2026, 12, 30, 17, 0));
+        assert_eq!(phrases::day(&["jan", "5"], &ctx), Some(date(2027, 1, 5)));
+        assert_eq!(phrases::day(&["dec", "31"], &ctx), Some(date(2026, 12, 31)));
+    }
+
+    #[test]
+    fn year_rollover_feb_2028_29_days() {
+        // 2028 is a leap year; Feb 29 exists.
+        let ctx = ny(utc(2028, 2, 28, 16, 0));
+        assert_eq!(phrases::day(&["feb", "29"], &ctx), Some(date(2028, 2, 29)));
+    }
+
+    #[test]
+    fn year_rollover_feb_2027_28_days() {
+        // 2027 is not leap year; Feb 28 exists, Feb 29 invalid -> None
+        let ctx = ny(utc(2027, 2, 27, 16, 0));
+        assert_eq!(phrases::day(&["feb", "28"], &ctx), Some(date(2027, 2, 28)));
+        assert_eq!(phrases::day(&["feb", "29"], &ctx), None);
+    }
+
+    #[test]
+    fn dst_berlin_2026_10_25_fall_back() {
+        // Europe/Berlin: DST ends 25 Oct 2026 03:00 -> 02:00 (fall back).
+        // Test that 2:30 resolves correctly to earlier instant.
+        let berlin = chrono_tz::Europe::Berlin;
+        let ctx = LocalContext {
+            now: utc(2026, 10, 25, 2, 30),
+            tz: berlin,
+        };
+        // 2:30 after fall-back is unambiguous (second occurrence; earlier wins per spec)
+        let pinned = pinned_start("2026-10-25 at 2:30", &ctx);
+        assert!(
+            pinned.is_some(),
+            "DST fall-back should resolve 2:30 to earlier instant"
+        );
+    }
+
+    #[test]
+    fn dst_ny_2026_11_01_fall_back() {
+        // America/New_York: DST ends 1 Nov 2026 02:00 -> 01:00.
+        let ny_tz = chrono_tz::America::New_York;
+        let ctx = LocalContext {
+            now: utc(2026, 11, 1, 6, 30),
+            tz: ny_tz,
+        };
+        let pinned = pinned_start("2026-11-01 at 1:30", &ctx);
+        assert_eq!(pinned, Some(utc(2026, 11, 1, 5, 30)));
+    }
 }
