@@ -45,6 +45,14 @@
     .label-filters button.active { font-weight: 700; outline: 2px solid currentColor; }
     .task-editor { display: inline-flex; flex-wrap: wrap; gap: .25rem; align-items: center; }
     .calendar-notice { flex-basis: 100%; margin: 0; font-size: .85rem; }
+    .task-open { cursor: pointer; }
+    .overdue { color: #c22; font-size: .8rem; font-weight: 700; margin-left: .4rem; }
+    .task-dialog { min-width: min(32rem, 90vw); border: 1px solid currentColor; border-radius: .5rem; padding: 1rem; }
+    .task-dialog form { display: grid; gap: .75rem; }
+    .task-dialog fieldset { display: grid; gap: .4rem; }
+    .duration-chips, .dialog-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+    .duration-chips button.active { font-weight: 700; outline: 2px solid currentColor; }
+    .dialog-task-title { margin: 0; opacity: .7; }
     .version { font-size: .8rem; opacity: .7; }
     .now-line { position: absolute; left: 0; right: 0; border-top: 2px solid #d33; pointer-events: none; }
     @media (max-width: 700px) { main { grid-template-columns: 1fr; } }

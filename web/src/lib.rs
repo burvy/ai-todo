@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
 use todo_core::Snapshot;
@@ -392,6 +393,63 @@ fn save_label_filter(label: Option<Label>) {
     let _ = label;
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EditWhen {
+    Anytime,
+    DueBy,
+    At,
+}
+
+fn local_input_value(time: DateTime<Utc>) -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let date = js_sys::Date::new(&(time.timestamp_millis() as f64).into());
+        return format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}",
+            date.get_full_year(),
+            date.get_month() + 1,
+            date.get_date(),
+            date.get_hours(),
+            date.get_minutes()
+        );
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        time.format("%Y-%m-%dT%H:%M").to_string()
+    }
+}
+
+fn parse_local_input(value: &str) -> Option<DateTime<Utc>> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let millis = js_sys::Date::parse(&format!("{value}:00"));
+        return DateTime::from_timestamp_millis(millis as i64);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M")
+            .ok()
+            .map(|time| DateTime::<Utc>::from_naive_utc_and_offset(time, Utc))
+    }
+}
+
+fn is_overdue_at(task: &todo_core::Task, now: DateTime<Utc>) -> bool {
+    !task.done && matches!(task.when, When::DueBy(deadline) if deadline < now)
+}
+
+fn is_overdue(task: &todo_core::Task) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return DateTime::from_timestamp_millis(js_sys::Date::now() as i64)
+            .is_some_and(|now| is_overdue_at(task, now));
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = is_overdue_at(task, task.created);
+        false
+    }
+}
+
 #[component]
 fn TaskList(
     snapshot: ReadSignal<Snapshot>,
@@ -402,6 +460,9 @@ fn TaskList(
     let (selected_label, set_selected_label) = signal(load_label_filter());
     let (editing_task, set_editing_task) = signal::<Option<TaskId>>(None);
     let (edit_title, set_edit_title) = signal(String::new());
+    let (edit_duration, set_edit_duration) = signal(String::new());
+    let (edit_when, set_edit_when) = signal(EditWhen::Anytime);
+    let (edit_datetime, set_edit_datetime) = signal(String::new());
     let labels = move || {
         let tasks = snapshot.get().tasks;
         [
@@ -551,11 +612,6 @@ fn TaskList(
                         let handle_drag_over = |ev: leptos::ev::DragEvent| {
                             ev.prevent_default();
                         };
-                        let editing_task_id = task_id.clone();
-                        let is_editing =
-                            move || editing_task.get().as_ref() == Some(&editing_task_id);
-                        let calendar_notice = task.source == Source::Calendar;
-
                         view! {
                     <li
                         on:drop=handle_drop
@@ -570,72 +626,34 @@ fn TaskList(
                             on:change=toggle_done
                             aria-label=format!("Mark {} as done", task_title)
                         />
-                        {move || if is_editing() {
-                            view! {
-                                <div class="task-editor">
-                                    {if calendar_notice {
-                                        view! {
-                                            <p class="calendar-notice">
-                                                "This came from your calendar. Changes here won't sync back."
-                                            </p>
+                        <span
+                            class="task-open"
+                            on:click={
+                                let task = task.clone();
+                                move |_| {
+                                    set_edit_title.set(task.title.clone());
+                                    set_edit_duration.set(task.duration_min.to_string());
+                                    match task.when {
+                                        When::Anytime => {
+                                            set_edit_when.set(EditWhen::Anytime);
+                                            set_edit_datetime.set(String::new());
                                         }
-                                        .into_any()
-                                    } else {
-                                        ().into_any()
-                                    }}
-                                    <input
-                                        prop:value=edit_title
-                                        on:input=move |event| set_edit_title.set(event_target_value(&event))
-                                        aria-label="Edit task title"
-                                    />
-                                    <button
-                                        type="button"
-                                        on:click={
-                                            let task_id = task_id.clone();
-                                            move |_| {
-                                                let task_id = task_id.clone();
-                                                let title = edit_title.get_untracked().trim().to_string();
-                                                if title.is_empty() {
-                                                    return;
-                                                }
-                                                wasm_bindgen_futures::spawn_local(async move {
-                                                    if let Ok(new_snap) = api::patch_task(
-                                                        &task_id,
-                                                        api::PatchTaskBody::new().title(title),
-                                                    )
-                                                    .await
-                                                    {
-                                                        set_snapshot.set(new_snap);
-                                                        set_editing_task.set(None);
-                                                    }
-                                                });
-                                            }
+                                        When::DueBy(time) => {
+                                            set_edit_when.set(EditWhen::DueBy);
+                                            set_edit_datetime.set(local_input_value(time));
                                         }
-                                    >"Save"</button>
-                                    <button
-                                        type="button"
-                                        on:click=move |_| set_editing_task.set(None)
-                                    >"Cancel"</button>
-                                </div>
-                            }.into_any()
-                        } else {
-                            view! {
-                                <span>
-                                    <strong>{render_task_title.clone()}</strong> " — " {task.duration_min} " min"
-                                    <button
-                                        type="button"
-                                        on:click={
-                                            let task_id = task_id.clone();
-                                            let title = task.title.clone();
-                                            move |_| {
-                                                set_editing_task.set(Some(task_id.clone()));
-                                                set_edit_title.set(title.clone());
-                                            }
+                                        When::At(time) => {
+                                            set_edit_when.set(EditWhen::At);
+                                            set_edit_datetime.set(local_input_value(time));
                                         }
-                                    >"Edit"</button>
-                                </span>
-                            }.into_any()
-                        }}
+                                    }
+                                    set_editing_task.set(Some(task.id.clone()));
+                                }
+                            }
+                        >
+                            <strong>{render_task_title.clone()}</strong> " — " {task.duration_min} " min"
+                            {is_overdue(&task).then(|| view! { <span class="overdue">"Overdue"</span> })}
+                        </span>
                         {move || task_time(&snapshot.get(), &render_task_id)}
                         <button
                             class="delete"
@@ -650,6 +668,131 @@ fn TaskList(
                 </For>
             </ul>
         </section>
+        <dialog
+            class="task-dialog"
+            open=move || editing_task.get().is_some()
+            on:cancel=move |_: leptos::ev::Event| set_editing_task.set(None)
+        >
+            <form method="dialog">
+                <h3>"Edit task"</h3>
+                {move || editing_task.get().and_then(|id| {
+                    snapshot.get().tasks.into_iter().find(|task| task.id == id).map(|task| {
+                        let imported = task.source == Source::Calendar;
+                        let task_id = task.id.clone();
+                        view! {
+                            <p class="dialog-task-title">{task.title.clone()}</p>
+                            {imported.then(|| view! {
+                                <p class="calendar-notice">
+                                    "This came from your calendar. Changes here won't sync back."
+                                </p>
+                            })}
+                            <label>
+                                "Title "
+                                <input
+                                    prop:value=edit_title
+                                    on:input=move |event| set_edit_title.set(event_target_value(&event))
+                                />
+                            </label>
+                            <fieldset>
+                                <legend>"Length (minutes)"</legend>
+                                <div class="duration-chips">
+                                    {[15_u16, 30, 60, 120].into_iter().map(|minutes| view! {
+                                        <button
+                                            type="button"
+                                            class:active=move || edit_duration.get() == minutes.to_string()
+                                            on:click=move |_| set_edit_duration.set(minutes.to_string())
+                                        >{minutes}</button>
+                                    }).collect_view()}
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        prop:value=edit_duration
+                                        on:input=move |event| set_edit_duration.set(event_target_value(&event))
+                                        aria-label="Custom length in minutes"
+                                    />
+                                </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend>"When"</legend>
+                                <label><input type="radio" name="when" checked=move || edit_when.get() == EditWhen::Anytime on:change=move |_| set_edit_when.set(EditWhen::Anytime) /> "Anytime"</label>
+                                <label><input type="radio" name="when" checked=move || edit_when.get() == EditWhen::DueBy on:change=move |_| set_edit_when.set(EditWhen::DueBy) /> "Due by"</label>
+                                <label><input type="radio" name="when" checked=move || edit_when.get() == EditWhen::At on:change=move |_| set_edit_when.set(EditWhen::At) /> "Scheduled at"</label>
+                                <input
+                                    type="datetime-local"
+                                    prop:value=edit_datetime
+                                    on:input=move |event| set_edit_datetime.set(event_target_value(&event))
+                                />
+                            </fieldset>
+                            <div class="dialog-actions">
+                                <button
+                                    type="button"
+                                    on:click={
+                                        let task_id = task_id.clone();
+                                        move |_| {
+                                            let task_id = task_id.clone();
+                                            wasm_bindgen_futures::spawn_local(async move {
+                                                if let Ok(new_snap) = api::patch_task(
+                                                    &task_id,
+                                                    api::PatchTaskBody::new().done(!task.done),
+                                                ).await {
+                                                    set_snapshot.set(new_snap);
+                                                    set_editing_task.set(None);
+                                                }
+                                            });
+                                        }
+                                    }
+                                >{if task.done { "Undone" } else { "Done" }}</button>
+                                <button
+                                    type="button"
+                                    on:click={
+                                        let task_id = task_id.clone();
+                                        move |_| {
+                                            let task_id = task_id.clone();
+                                            wasm_bindgen_futures::spawn_local(async move {
+                                                if let Ok(new_snap) = api::delete_task(&task_id).await {
+                                                    set_snapshot.set(new_snap);
+                                                    set_editing_task.set(None);
+                                                }
+                                            });
+                                        }
+                                    }
+                                >"Delete"</button>
+                                <button type="button" on:click=move |_| set_editing_task.set(None)>"Cancel"</button>
+                                <button
+                                    type="button"
+                                    on:click={
+                                        let task_id = task_id.clone();
+                                        move |_| {
+                                            let title = edit_title.get_untracked().trim().to_string();
+                                            let duration = edit_duration.get_untracked().parse::<u16>().ok();
+                                            let when = match edit_when.get_untracked() {
+                                                EditWhen::Anytime => Some(When::Anytime),
+                                                EditWhen::DueBy => parse_local_input(&edit_datetime.get_untracked()).map(When::DueBy),
+                                                EditWhen::At => parse_local_input(&edit_datetime.get_untracked()).map(When::At),
+                                            };
+                                            if title.is_empty() || duration.is_none() || when.is_none() {
+                                                return;
+                                            }
+                                            let task_id = task_id.clone();
+                                            let body = api::PatchTaskBody::new()
+                                                .title(title)
+                                                .duration_min(duration.unwrap_or(1))
+                                                .when(when.unwrap_or(When::Anytime));
+                                            wasm_bindgen_futures::spawn_local(async move {
+                                                if let Ok(new_snap) = api::patch_task(&task_id, body).await {
+                                                    set_snapshot.set(new_snap);
+                                                    set_editing_task.set(None);
+                                                }
+                                            });
+                                        }
+                                    }
+                                >"Save"</button>
+                            </div>
+                        }
+                    })
+                })}
+            </form>
+        </dialog>
     }
 }
 
@@ -671,6 +814,30 @@ pub fn start() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overdue_only_applies_to_incomplete_due_tasks() {
+        let mut task = api::fixture_snapshot().tasks[0].clone();
+        let now = task.created + chrono::Duration::hours(1);
+        task.when = When::DueBy(now - chrono::Duration::minutes(1));
+        assert!(is_overdue_at(&task, now));
+        task.done = true;
+        assert!(!is_overdue_at(&task, now));
+        task.done = false;
+        task.when = When::At(now - chrono::Duration::minutes(1));
+        assert!(!is_overdue_at(&task, now));
+    }
+
+    #[test]
+    fn parses_local_datetime_input() {
+        assert_eq!(
+            parse_local_input("2026-10-12T14:30")
+                .expect("valid datetime")
+                .format("%Y-%m-%dT%H:%M")
+                .to_string(),
+            "2026-10-12T14:30"
+        );
+    }
     use wasm_bindgen_test::*;
 
     wasm_bindgen_test_configure!(run_in_browser);
