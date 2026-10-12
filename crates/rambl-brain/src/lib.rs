@@ -20,6 +20,9 @@ pub enum Mode {
     Interactive,
     /// He answers you and little else: no wandering, and far fewer lines.
     Instant,
+    /// No brain at all. He stands there looking vacant, says nothing, feels nothing,
+    /// and the page can skip ticking him entirely, so it costs nothing to run.
+    Lobotomized,
 }
 
 /// What Rambl is doing. The view has one picture for each.
@@ -192,6 +195,12 @@ pub fn step_with(
     // `now` is the server's stamp on the step. The local hour arrives as an event,
     // because the brain never works out dates itself.
     let _ = now;
+    // A lobotomized Rambl has no brain: the only thing he ever does is stand there
+    // looking vacant. Nothing is updated, no line is chosen and the clever hook is
+    // never consulted, so the page can stop ticking him and this costs nothing.
+    if brain.mode == Mode::Lobotomized {
+        return (brain.clone(), vec![Action::Pose("lobotomized")]);
+    }
     let p = data::personality();
     let mut next = brain.clone();
     let event = event.unwrap_or(Event::Tick);
@@ -701,5 +710,75 @@ mod tests {
         );
         assert_eq!(plain, hooked);
         assert_eq!(plain_actions, hooked_actions);
+    }
+
+    /// A hook that counts how often it was asked.
+    struct CountingClever(u32);
+    impl CleverMove for CountingClever {
+        fn consider(&mut self, _brain: &Brain, _event: &Event) -> Option<State> {
+            self.0 += 1;
+            Some(State::Playing)
+        }
+    }
+
+    #[test]
+    fn a_lobotomized_brain_says_nothing_and_goes_nowhere() {
+        let events = [
+            Some(Event::TaskDone),
+            Some(Event::Poked),
+            Some(Event::Tick),
+            Some(Event::LocalHour(3)),
+            Some(Event::Dropped {
+                on_task: "Lab report".into(),
+            }),
+            None,
+        ];
+        let brain = Brain::new(Mode::Lobotomized);
+        for event in events {
+            let (_, actions) = step(&brain, event, at(12), &mut Seeded::new(1));
+            assert_eq!(actions, vec![Action::Pose("lobotomized")]);
+            assert!(!actions.iter().any(|a| matches!(a, Action::Say(_))));
+            assert!(!actions.iter().any(|a| matches!(a, Action::MoveTo(_))));
+            assert!(!actions.iter().any(|a| matches!(a, Action::Animate(_))));
+        }
+    }
+
+    #[test]
+    fn lobotomized_freezes_him_and_asks_nobody() {
+        let brain = Brain::new(Mode::Lobotomized);
+        let mut clever = CountingClever(0);
+        let (after, _) = step_with(
+            &brain,
+            Some(Event::TaskDone),
+            at(12),
+            &mut Seeded::new(1),
+            &mut clever,
+        );
+        assert_eq!(clever.0, 0, "the clever hook should never be consulted");
+        assert_eq!(after, brain, "nothing about him should have changed");
+    }
+
+    #[test]
+    fn switching_back_brings_the_moods_with_him() {
+        let mut brain = Brain::new(Mode::Interactive);
+        let mut rng = Seeded::new(4);
+        for _ in 0..5 {
+            let (next, _) = step(&brain, Some(Event::Tick), at(12), &mut rng);
+            brain = next;
+        }
+        let before = brain.moods;
+
+        let mut blank = brain.clone();
+        blank.mode = Mode::Lobotomized;
+        for _ in 0..20 {
+            let (next, _) = step(&blank, Some(Event::Tick), at(12), &mut rng);
+            blank = next;
+        }
+        assert_eq!(blank.moods, before, "moods should be frozen, not flattened");
+
+        blank.mode = Mode::Interactive;
+        assert_eq!(blank.moods, before, "his moods should come back with him");
+        let (after, _) = step(&blank, Some(Event::Tick), at(12), &mut rng);
+        assert_ne!(after.moods, before, "he should start drifting again");
     }
 }

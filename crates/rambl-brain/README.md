@@ -56,6 +56,11 @@ is.
 - **`Interactive`** — he wanders, plays, complains and chats.
 - **`Instant`** — he answers you and little else: never wanders, and stays silent when
   there is nothing to react to.
+- **`Lobotomized`** — the settings switch that takes his brain away. He emits one fixed
+  `Pose("lobotomized")` and nothing else: no lines, no movement, no mood changes, and
+  the `CleverMove` hook is never consulted. The step is inert and cheap, so the page can
+  stop ticking him entirely. His moods are **kept, not cleared**, so switching back
+  hands him back exactly as he was.
 
 ## Editing the lines and his personality
 
