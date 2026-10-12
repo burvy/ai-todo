@@ -13,6 +13,9 @@
     input, button { font: inherit; padding: .5rem; }
     .capture { display: flex; gap: .5rem; }
     .capture input { flex: 1; }
+    .mascot-circle { display: inline-flex; width: 2rem; height: 2rem; align-items: center; justify-content: center; border: 1px solid currentColor; border-radius: 50%; }
+    .mascot-circle img { width: 1.5rem; height: 1.5rem; }
+    @media (prefers-reduced-motion: reduce) { .mascot-circle, .mascot-circle img { transition: none; animation: none; } }
     .week { display: grid; grid-template-columns: repeat(7, 1fr); gap: .25rem; overflow-x: auto; }
     .day { min-width: 7rem; border-left: 1px solid currentColor; padding: .25rem; }
     .hour { min-height: 2rem; border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent); }

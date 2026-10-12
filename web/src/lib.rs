@@ -3,6 +3,7 @@ use todo_core::Placement;
 use todo_core::Snapshot;
 
 pub mod api;
+pub mod mascot;
 
 #[component]
 pub fn App() -> impl IntoView {
@@ -18,11 +19,19 @@ pub fn App() -> impl IntoView {
 
 #[component]
 fn CaptureBox() -> impl IntoView {
+    let (state, set_state) = signal(mascot::State::Home);
     view! {
         <form class="capture" on:submit=|ev| ev.prevent_default()>
             <input placeholder="Say what you need to do…" aria-label="Ramble" />
-            <button type="button" aria-label="Use microphone">"Mic"</button>
+            <button type="button" aria-label="Use microphone"
+                on:pointerdown=move |_| set_state.set(mascot::transition(&state.get(), mascot::Action::Grab))
+                on:pointerup=move |_| set_state.set(mascot::transition(&state.get(), mascot::Action::Talk))>
+                <span class="mascot-circle" aria-hidden="true">
+                    <img src="assets/pen.svg" alt="" />
+                </span>
+            </button>
             <button type="submit">"Add"</button>
+            <span class="mascot-status" aria-live="polite">{move || format!("{:?}", state.get())}</span>
         </form>
     }
 }
