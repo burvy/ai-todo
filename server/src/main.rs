@@ -14,7 +14,7 @@ mod v2;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use axum::{
@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 use todo_core::v1::{Source, Task};
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use tower_http::set_header::SetResponseHeaderLayer;
 
 #[derive(Default)]
@@ -1699,16 +1699,46 @@ fn app(state: AppState) -> Router {
         v2::app_from_env(),
         judge::AnyJudge::from_env(),
     ));
-    if Path::new("static").is_dir() {
+    if let Some(root) = site_root() {
         let static_files = ServiceBuilder::new()
             .layer(SetResponseHeaderLayer::overriding(
                 header::CACHE_CONTROL,
                 HeaderValue::from_static("no-cache, must-revalidate"),
             ))
-            .service(ServeDir::new("static"));
+            .service(
+                ServeDir::new(&root)
+                    // The web app is a single page: an unknown path is a route
+                    // the client handles, not a missing file, so it gets the
+                    // same index.html the browser would navigate to. API routes
+                    // are registered above and never reach this.
+                    .fallback(ServeFile::new(Path::new(&root).join("index.html"))),
+            );
+        println!("serving the site from {}", root.display());
         router = router.fallback_service(static_files);
+    } else {
+        println!("note: no web/dist and no static/ beside the server; serving the API only");
     }
     router
+}
+
+/// Where a staged release may keep the built site, best first.
+///
+/// `build-release.ps1` stages it as `dist\` beside `server.exe`; a dev build
+/// leaves it at `web/dist`. `static/` is v1's folder and goes in phase 4.
+const SITE_ROOT_CANDIDATES: [&str; 3] = ["dist", "web/dist", "static"];
+
+/// The folder the web app is served from, or `None` when there is none.
+///
+/// The candidates are checked in order, so a staged `dist\` wins over a stale
+/// `static/` that happens to sit in the same folder.
+///
+/// Only relative names are checked: `run_from_exe_folder()` has already made a
+/// staged release's own folder the working directory by the time this runs.
+fn site_root() -> Option<PathBuf> {
+    SITE_ROOT_CANDIDATES
+        .iter()
+        .map(PathBuf::from)
+        .find(|candidate| candidate.join("index.html").is_file())
 }
 
 fn new_state() -> AppState {
@@ -1785,10 +1815,19 @@ async fn main() {
 /// folder when it holds the release layout, so `static/`, `data/` and `.env`
 /// next to it are found. `cargo run` (no `static/` beside the exe) is unaffected.
 fn run_from_exe_folder() {
-    if let Some(dir) = std::env::current_exe()
+    let Some(dir) = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        && dir.join("static").is_dir()
+    else {
+        return;
+    };
+    // Only move when this really is a staged release: a folder holding one of
+    // the site roots. Checking the same candidates as `site_root()` keeps the
+    // two from disagreeing, which would look to the user like the server found
+    // the site and then served nothing.
+    if SITE_ROOT_CANDIDATES
+        .iter()
+        .any(|candidate| dir.join(candidate).is_dir())
     {
         let _ = std::env::set_current_dir(dir);
     }
@@ -1810,6 +1849,110 @@ mod tests {
     use axum::http::Request;
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+
+    /// The candidates are searched in this order, and `dist` has to beat
+    /// `static`: a staged release can hold both, and serving v1's folder would
+    /// look like the web build silently failed.
+    #[test]
+    fn the_web_app_is_preferred_over_the_old_static_folder() {
+        assert_eq!(SITE_ROOT_CANDIDATES[0], "dist");
+        assert!(
+            SITE_ROOT_CANDIDATES.contains(&"web/dist"),
+            "a dev build has no staged dist"
+        );
+        assert_eq!(
+            SITE_ROOT_CANDIDATES.last(),
+            Some(&"static"),
+            "static/ stays the last-resort fallback until phase 4"
+        );
+    }
+
+    /// A candidate counts only when it actually holds an `index.html`, so an
+    /// empty or half-copied `dist\` falls through to the next candidate instead
+    /// of serving 404s for every route.
+    ///
+    /// Runs in its own directory: `site_root()` reads relative paths, so the
+    /// test has to control what is around it.
+    #[test]
+    fn an_empty_dist_folder_is_not_mistaken_for_a_site() {
+        let dir = std::env::temp_dir().join(format!(
+            "rambl-site-root-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("create");
+        // Changing the working directory is process-wide, so this test must be
+        // the only one that does it; the guard puts it back either way.
+        let _guard = CwdGuard::set(&dir);
+
+        assert!(site_root().is_none(), "an empty folder is not a site");
+
+        std::fs::create_dir_all(dir.join("dist")).expect("create dist");
+        assert!(
+            site_root().is_none(),
+            "a dist with no index.html must not be chosen"
+        );
+
+        std::fs::write(dir.join("dist/index.html"), "<!doctype html>").expect("write");
+        assert_eq!(
+            site_root(),
+            Some(PathBuf::from("dist")),
+            "dist wins as soon as it holds an index"
+        );
+
+        // A stale static/ beside it must not win.
+        std::fs::create_dir_all(dir.join("static")).expect("create static");
+        std::fs::write(dir.join("static/index.html"), "<!doctype html>").expect("write");
+        assert_eq!(site_root(), Some(PathBuf::from("dist")));
+
+        // Step out of the folder before removing it, or Windows will not.
+        drop(_guard);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Puts the working directory back when dropped, so a failing assert cannot
+    /// leave the rest of the suite looking in a temp folder.
+    struct CwdGuard(PathBuf);
+
+    impl CwdGuard {
+        fn set(dir: &std::path::Path) -> Self {
+            let previous = std::env::current_dir().expect("cwd");
+            std::env::set_current_dir(dir).expect("enter temp dir");
+            Self(previous)
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.0);
+        }
+    }
+
+    /// `run_from_exe_folder` moves into a folder next to the exe, and
+    /// `site_root` then looks for a relative name inside it. They have to be
+    /// looking for the same thing or a staged release finds nothing: the two
+    /// functions read the same list, which is what this pins.
+    #[test]
+    fn run_from_exe_folder_looks_for_the_same_folders_the_site_comes_from() {
+        // Every name `run_from_exe_folder` accepts must be one `site_root` can
+        // actually resolve, and vice versa, so a staged release cannot find the
+        // folder and then not find the site inside it.
+        for name in SITE_ROOT_CANDIDATES {
+            assert!(
+                Path::new(name).join("index.html").to_string_lossy().contains("index.html"),
+                "{name} must be a relative folder that can hold an index.html"
+            );
+            assert!(
+                !Path::new(name).is_absolute(),
+                "{name} must be relative: run_from_exe_folder has already moved"
+            );
+        }
+        // And the whole list is exactly what the staged layout stages.
+        assert_eq!(SITE_ROOT_CANDIDATES, ["dist", "web/dist", "static"]);
+    }
 
     #[test]
     fn capture_makes_one_task_per_non_empty_line() {
