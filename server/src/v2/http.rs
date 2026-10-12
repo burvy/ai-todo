@@ -39,7 +39,11 @@ impl IntoResponse for HttpError {
             ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::Conflict => StatusCode::CONFLICT,
-            ErrorCode::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            // A store failure is this server's fault, not the caller's, so it is a 500
+            // rather than the 503 the variant name suggests. `Unavailable` is part
+            // of the frozen wire enum in `todo_core`, so the name stays and only
+            // the status is what we mean here.
+            ErrorCode::Unavailable => StatusCode::INTERNAL_SERVER_ERROR,
             ErrorCode::Upstream => StatusCode::BAD_GATEWAY,
         };
         #[derive(Serialize)]

@@ -16,7 +16,9 @@ use store::{MemoryStore, SqliteStore, Store};
 /// The production app: SQLite at `RAMBL_DATA` when set, otherwise in memory.
 pub fn app_from_env() -> App<Box<dyn Store>> {
     let store: Box<dyn Store> = match std::env::var("RAMBL_DATA") {
-        Ok(path) => Box::new(SqliteStore::open(&path).expect("open RAMBL_DATA database")),
+        Ok(path) => Box::new(
+            SqliteStore::open(std::path::Path::new(&path)).expect("open RAMBL_DATA database"),
+        ),
         Err(_) => Box::new(MemoryStore::default()),
     };
     App::new(store, Arc::new(SystemClock))
