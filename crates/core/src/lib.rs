@@ -89,6 +89,7 @@ pub enum Source {
     Pdf,
     Email,
     Text,
+    Calendar,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -103,6 +104,8 @@ pub struct Task {
     pub priority: Priority,
     pub source: Source,
     pub created: DateTime<Utc>,
+    /// iCalendar UID for imported events. Re-importing the same UID updates this task.
+    pub external_uid: Option<String>,
 }
 
 /// A task before the server gives it an id.
@@ -114,13 +117,6 @@ pub struct TaskDraft {
     pub label: Label,
     pub priority: Priority,
     pub source: Source,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Busy {
-    pub start: DateTime<Utc>,
-    pub end: DateTime<Utc>,
-    pub title: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,7 +137,6 @@ pub struct Plan {
 pub struct Snapshot {
     pub tasks: Vec<Task>,
     pub plan: Plan,
-    pub busy: Vec<Busy>,
     pub tz: String,
     pub generated: DateTime<Utc>,
 }
@@ -232,11 +227,11 @@ mod tests {
             priority: Priority::High,
             source: Source::Text,
             created: at,
+            external_uid: None,
         };
         let snapshot = Snapshot {
             tasks: vec![task],
             plan: Plan::default(),
-            busy: vec![],
             tz: "America/New_York".into(),
             generated: at,
         };
