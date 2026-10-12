@@ -202,7 +202,7 @@ async function api(path, init) {
 async function refresh() {
   const [usage, blocks] = await Promise.all([api("/api/v1/admin/usage"), api("/api/v1/admin/blocks")]);
   const table = document.getElementById("usage");
-  table.innerHTML = "";
+  table.replaceChildren();
   const cell = (tag, text) => { const td = document.createElement(tag); td.textContent = text; return td; };
   const headers = table.createTHead();
   const headerRow = headers.insertRow();
@@ -294,6 +294,20 @@ mod tests {
                 SystemClock.now() + chrono::Duration::days(1),
             )
             .unwrap();
+    }
+
+    /// The #161 stored-XSS rule: the page never builds DOM from strings. Every cell
+    /// is `createElement` + `textContent` and the tables are cleared with
+    /// `replaceChildren`, so a value from the API can never become markup.
+    #[test]
+    fn the_admin_page_builds_every_row_without_inner_html() {
+        assert!(
+            !PAGE.contains("innerHTML"),
+            "no innerHTML anywhere on the admin page"
+        );
+        assert!(PAGE.contains("createElement(tag)"));
+        assert!(PAGE.contains("td.textContent = text"));
+        assert!(PAGE.contains("replaceChildren"));
     }
 
     #[test]
