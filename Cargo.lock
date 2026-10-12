@@ -1947,6 +1947,7 @@ dependencies = [
  "leptos",
  "serde",
  "serde_json",
+ "todo-core",
  "wasm-bindgen",
  "wasm-bindgen-test",
 ]

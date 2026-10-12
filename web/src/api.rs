@@ -1,6 +1,6 @@
-use crate::Snapshot;
 use gloo_net::http::Request;
 use leptos::prelude::*;
+use todo_core::Snapshot;
 
 pub fn timezone() -> String {
     #[cfg(target_arch = "wasm32")]
