@@ -173,6 +173,12 @@ main {
   margin: var(--space-2) 0;
 }
 
+/* Pam: the tabs are targets in their own right, 44x44. */
+.pane-switch button {
+  min-width: var(--tap);
+  min-height: var(--tap);
+}
+
 .pane-switch button.active {
   font-weight: 700;
   color: var(--accent);
@@ -261,8 +267,9 @@ li:last-child {
 }
 
 /* Rambo */
+/* Rambo: `flex: none` so the capture input cannot squash him. */
 .mascot-home {
-  flex: 0 0 auto;
+  flex: none;
   width: var(--tap);
   height: var(--tap);
   padding: var(--space-1);
@@ -341,6 +348,7 @@ li:last-child {
   max-height: 70vh;
   overflow-y: auto;
   overscroll-behavior: contain;
+  overscroll-behavior-x: contain;
 }
 
 .day {
@@ -419,6 +427,7 @@ li:last-child {
 }
 
 .delete {
+  min-width: var(--tap);
   min-height: var(--tap);
   padding: var(--space-1) var(--space-3);
   font-size: var(--text-sm);
@@ -434,7 +443,10 @@ li:last-child {
 
 /* The dialog is fixed and centred (behaviour from #135); here it also fits a
    phone: never wider than the screen, scrollable inside itself. */
+/* Pam: never wider than the screen, and the box includes its own padding. */
 .task-dialog {
+  box-sizing: border-box;
+  max-width: calc(100vw - 2rem);
   position: fixed;
   top: 50%;
   left: 50%;
@@ -565,6 +577,7 @@ li:last-child {
   }
 
   main {
+    position: relative;
     grid-template-columns: none;
     grid-auto-flow: column;
     grid-auto-columns: 100%;

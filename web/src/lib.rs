@@ -179,12 +179,14 @@ pub fn App() -> impl IntoView {
                 type="button"
                 class:active=move || pane.get() == 0
                 attr:aria-current=move || if pane.get() == 0 { "true" } else { "false" }
+                aria-pressed=move || (pane.get() == 0).to_string()
                 on:click=move |_| show_pane(main_ref, 0, set_pane)
             >"To do"</button>
             <button
                 type="button"
                 class:active=move || pane.get() == 1
                 attr:aria-current=move || if pane.get() == 1 { "true" } else { "false" }
+                aria-pressed=move || (pane.get() == 1).to_string()
                 on:click=move |_| show_pane(main_ref, 1, set_pane)
             >"Planner"</button>
         </nav>
@@ -224,7 +226,12 @@ fn pane_at(scroll_left: f64, pane_width: f64) -> u8 {
 #[cfg(target_arch = "wasm32")]
 fn show_pane(main: NodeRef<leptos::html::Main>, index: u8, set_pane: WriteSignal<u8>) {
     if let Some(element) = main.get() {
-        element.set_scroll_left(i32::from(index) * element.client_width());
+        // Scroll to the pane's own offset, not a multiple of the width: the grid gap
+        // sits between panes, so index * client_width lands short of the planner.
+        if let Some(pane) = element.children().item(u32::from(index)) {
+            let left = pane.unchecked_into::<web_sys::HtmlElement>().offset_left();
+            element.set_scroll_left(left);
+        }
     }
     set_pane.set(index);
 }
