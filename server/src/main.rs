@@ -53,6 +53,7 @@ async fn embedded_web(uri: axum::http::Uri) -> Response {
 #[tokio::main]
 async fn main() {
     v2::start_backups();
+    v2::admin::start_console();
     run_from_exe_folder();
     dotenvy::dotenv().ok();
     let port: u16 = std::env::var("PORT")
