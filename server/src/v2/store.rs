@@ -8,8 +8,6 @@
 //! deliberately share no table with v1's `tasks` / `busy_blocks`, so pointing
 //! both at one file cannot corrupt the old data.
 
-#![allow(dead_code)] // not wired into the router yet: App and handlers are next
-
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -281,6 +279,7 @@ pub struct Usage {
 /// touch a disk, and it has to model ownership exactly as the SQL store does or the
 /// tests would not be testing the scoping that matters.
 #[derive(Default)]
+#[cfg(test)]
 pub struct MemoryStore {
     tasks: Mutex<Vec<(String, Task)>>,
     users: Mutex<Vec<super::auth::Me>>,
@@ -290,6 +289,7 @@ pub struct MemoryStore {
     blocks: Mutex<Vec<Block>>,
 }
 
+#[cfg(test)]
 impl MemoryStore {
     pub fn new() -> Self {
         Self::default()
@@ -392,6 +392,7 @@ impl<S: Store + ?Sized> Store for Box<S> {
     }
 }
 
+#[cfg(test)]
 impl Store for MemoryStore {
     fn tasks(&self, user: &str) -> Result<Vec<Task>, StoreError> {
         let mut stored: Vec<Task> = self
@@ -737,6 +738,7 @@ impl SqliteStore {
     }
 
     /// A migrated database that lives only as long as this handle, for tests.
+    #[cfg(test)]
     pub fn open_in_memory() -> Result<Self, StoreError> {
         let store = Self {
             conn: Mutex::new(
@@ -1248,6 +1250,7 @@ fn top_users_today(
 
 /// The `top` most frequent values, most frequent first, ties by name. The memory
 /// store's version of [`top_users_today`].
+#[cfg(test)]
 fn top_counts<'a>(values: impl Iterator<Item = &'a str>, top: usize) -> Vec<(String, u32)> {
     let mut counts = std::collections::BTreeMap::<&str, u32>::new();
     for value in values {
@@ -1404,30 +1407,30 @@ fn source_from_stored(text: &str) -> Source {
 }
 
 /// Every spelling each enum can be stored as, for the round-trip test.
-const LABELS: [Label; 6] = [
-    Label::School,
-    Label::Work,
-    Label::Errands,
-    Label::Health,
-    Label::Personal,
-    Label::Other,
-];
-const PRIORITIES: [Priority; 4] = [
-    Priority::Low,
-    Priority::Medium,
-    Priority::High,
-    Priority::Critical,
-];
-const SOURCES: [Source; 5] = [
-    Source::Voice,
-    Source::Pdf,
-    Source::Email,
-    Source::Text,
-    Source::Calendar,
-];
-
 #[cfg(test)]
 mod tests {
+    const LABELS: [Label; 6] = [
+        Label::School,
+        Label::Work,
+        Label::Errands,
+        Label::Health,
+        Label::Personal,
+        Label::Other,
+    ];
+    const PRIORITIES: [Priority; 4] = [
+        Priority::Low,
+        Priority::Medium,
+        Priority::High,
+        Priority::Critical,
+    ];
+    const SOURCES: [Source; 5] = [
+        Source::Voice,
+        Source::Pdf,
+        Source::Email,
+        Source::Text,
+        Source::Calendar,
+    ];
+
     use super::*;
     use chrono::TimeZone;
 

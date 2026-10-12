@@ -24,19 +24,21 @@ fn remember_anon(_response: &gloo_net::http::Response) {
 pub fn anon_id() -> String {
     #[cfg(target_arch = "wasm32")]
     {
-        let window = web_sys::window().expect("window should be available");
-        let storage = window
-            .local_storage()
-            .expect("localStorage should be available")
-            .unwrap();
-        let key = "rambl_anon_id";
-        if let Ok(Some(id)) = storage.get_item(key) {
-            id
-        } else {
-            let id = format!("anon_{}", Uuid::new_v4().simple());
-            let _ = storage.set_item(key, &id);
-            id
+        // Storage can be blocked (private windows, some embedded browsers). The page
+        // still works then, but each request gets a new id, so tasks do not persist.
+        const KEY: &str = "rambl_anon_id";
+        let storage = web_sys::window().and_then(|window| window.local_storage().ok().flatten());
+        if let Some(id) = storage
+            .as_ref()
+            .and_then(|storage| storage.get_item(KEY).ok().flatten())
+        {
+            return id;
         }
+        let id = format!("anon_{}", Uuid::new_v4().simple());
+        if let Some(storage) = storage {
+            let _ = storage.set_item(KEY, &id);
+        }
+        id
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
