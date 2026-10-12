@@ -94,6 +94,10 @@ fn title_spans(clause: &str, found: &[Candidate]) -> Vec<String> {
     vec![clause.trim().to_owned()]
 }
 
+fn is_edge_noise(c: char) -> bool {
+    c.is_whitespace() || c.is_ascii_punctuation() || matches!(c, '‘' | '’' | '“' | '”')
+}
+
 /// Drop filler and edge punctuation, collapse spaces, capitalise the first letter.
 ///
 /// Removing the date, time and duration phrases leaves the words that introduced
@@ -129,7 +133,7 @@ pub fn clean_title(text: &str) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-        .trim_matches(|c: char| !c.is_alphanumeric())
+        .trim_matches(is_edge_noise)
         .to_owned();
     loop {
         let lower = words.to_ascii_lowercase();
@@ -138,11 +142,9 @@ pub fn clean_title(text: &str) -> String {
             None => break,
         }
     }
-    let mut words = words
-        .trim_matches(|c: char| !c.is_alphanumeric())
-        .to_owned();
+    let mut words = words.trim_matches(is_edge_noise).to_owned();
     loop {
-        let trimmed = words.trim_end_matches(|c: char| !c.is_alphanumeric());
+        let trimmed = words.trim_end_matches(is_edge_noise);
         let last = trimmed.rsplit(' ').next().unwrap_or_default();
         let lower = last.to_ascii_lowercase();
         if lower.is_empty() {
@@ -158,7 +160,23 @@ pub fn clean_title(text: &str) -> String {
         }
         break;
     }
-    let words = words.trim_matches(|c: char| !c.is_alphanumeric());
+    let words = words.trim_matches(|c: char| {
+        c.is_whitespace()
+            || c == ','
+            || c == '.'
+            || c == '!'
+            || c == '?'
+            || c == ';'
+            || c == ':'
+            || c == '-'
+            || c == '_'
+            || c == '('
+            || c == ')'
+            || c == '"'
+            || c == '\''
+            || c == '‘'
+            || c == '’'
+    });
     let mut chars = words.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
@@ -439,7 +457,6 @@ mod tests {
         assert_eq!(out[0].duration_min, 30);
     }
 
-    #[ignore = "bug: duration parser does not match 2h format"]
     #[tokio::test]
     async fn duration_2h() {
         let mut picked = answer();
@@ -485,7 +502,6 @@ mod tests {
         assert!(result.is_ok(), "10k input must not panic");
     }
 
-    #[ignore = "bug: clean_title strips emoji as non-alphanumeric"]
     #[tokio::test]
     async fn emoji_input_kept() {
         let out = drafts("🚀 Launch rocket", answer()).await;
@@ -493,11 +509,14 @@ mod tests {
         assert!(out[0].title.contains("🚀"));
     }
 
-    #[ignore = "bug: non-English clause split/title selection fails"]
     #[tokio::test]
     async fn non_english_words_kept() {
         let out = drafts("comprar leche mañana", answer()).await;
         assert!(!out.is_empty());
-        assert!(out[0].title.contains("comprar"));
+        assert!(
+            out[0].title.to_lowercase().contains("comprar"),
+            "title was: {}",
+            out[0].title
+        );
     }
 }

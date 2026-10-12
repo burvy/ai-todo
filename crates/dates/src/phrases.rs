@@ -205,7 +205,7 @@ fn is_minute_unit(word: &str) -> bool {
 }
 
 fn is_hour_unit(word: &str) -> bool {
-    matches!(word, "hour" | "hours" | "hr" | "hrs")
+    matches!(word, "hour" | "hours" | "hr" | "hrs" | "h")
 }
 
 /// A duration phrase in minutes: "about an hour", "half an hour", "90 minutes", "2 hours", "45 min".
