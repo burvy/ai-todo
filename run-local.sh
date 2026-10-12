@@ -87,6 +87,8 @@ fi
 
 PORT=$port
 export PORT
+RAMBL_DEFAULT_TZ="${RAMBL_DEFAULT_TZ:-America/New_York}"
+export RAMBL_DEFAULT_TZ
 [ "$fresh" -eq 1 ]       && DATA_PATH=':memory:' && export DATA_PATH
 [ "$log_capture" -eq 1 ] && CAPTURE_DEBUG=1 && export CAPTURE_DEBUG
 

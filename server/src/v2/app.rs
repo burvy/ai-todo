@@ -2,11 +2,11 @@
 //! returns a `Snapshot` in one call, so a snapshot is never half-updated. The HTTP
 //! layer holds the `App` lock for the whole call.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use capture::Revision;
-use chrono::{DateTime, Duration, NaiveTime, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
 use chrono_tz::Tz;
 use scheduler::{BusyBlock, ScheduledPlacement, WorkingHours};
 use serde::Serialize;
@@ -88,6 +88,41 @@ impl<S: Store> App<S> {
             tz: tz.name().to_owned(),
             generated: ctx.now,
         })
+    }
+
+    /// The same value with the plan narrowed to `from .. from + days`.
+    ///
+    /// The scheduler fills a long horizon and a week grid has nowhere to draw a
+    /// placement nine months out, so floating placements are filtered to the window.
+    /// **Pinned tasks keep their placement whatever the window is**: they are facts
+    /// about a fixed instant, and the section 9 invariant requires every open pinned
+    /// task to show one. The task list stays the whole list too, since a task the
+    /// caller cannot see yet must not look deleted.
+    pub fn snapshot_in_window(
+        &self,
+        tz: Tz,
+        from: NaiveDate,
+        days: u32,
+    ) -> Result<Snapshot, ApiError> {
+        let mut snapshot = self.snapshot(tz)?;
+        let Some(start) = from
+            .and_time(NaiveTime::MIN)
+            .and_local_timezone(tz)
+            .single()
+        else {
+            return Ok(snapshot);
+        };
+        let end = start + Duration::days(i64::from(days));
+        let pinned: HashSet<TaskId> = snapshot
+            .tasks
+            .iter()
+            .filter(|task| matches!(task.when, When::At(_)))
+            .map(|task| task.id.clone())
+            .collect();
+        snapshot.plan.placements.retain(|placement| {
+            pinned.contains(&placement.task) || (start <= placement.start && placement.end <= end)
+        });
+        Ok(snapshot)
     }
 
     pub fn create(&mut self, draft: TaskDraft, tz: Tz) -> Result<Snapshot, ApiError> {

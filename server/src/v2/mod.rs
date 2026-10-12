@@ -11,15 +11,20 @@ use std::sync::Arc;
 use todo_core::SystemClock;
 
 use app::App;
-use store::{MemoryStore, SqliteStore, Store};
+use store::{SqliteStore, Store};
 
-/// The production app: SQLite at `RAMBL_DATA` when set, otherwise in memory.
-pub fn app_from_env() -> App<Box<dyn Store>> {
-    let store: Box<dyn Store> = match std::env::var("RAMBL_DATA") {
-        Ok(path) => Box::new(
-            SqliteStore::open(std::path::Path::new(&path)).expect("open RAMBL_DATA database"),
-        ),
-        Err(_) => Box::new(MemoryStore::default()),
-    };
-    App::new(store, Arc::new(SystemClock))
+/// The production app: SQLite at `RAMBL_DATA`, or `data/rambl.db` when that is
+/// unset. v2 is on disk by default, so a restart never loses tasks; [`MemoryStore`]
+/// is for tests only.
+///
+/// A database that will not open is a startup failure, not something to recover
+/// from at runtime: serving reads against a store that quietly dropped every
+/// write would be worse than refusing to start.
+pub fn app_from_env() -> Result<App<Box<dyn Store>>, String> {
+    let store = SqliteStore::open_from_env().map_err(|error| {
+        let path =
+            std::env::var("RAMBL_DATA").unwrap_or_else(|_| store::DEFAULT_DATA_PATH.to_owned());
+        format!("could not open the Rambl database at `{path}`: {error}")
+    })?;
+    Ok(App::new(Box::new(store), Arc::new(SystemClock)))
 }
