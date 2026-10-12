@@ -1,2 +1,3 @@
 *.pdf binary
 *.png binary
+crates/capture/tests/fixtures/** text eol=lf
