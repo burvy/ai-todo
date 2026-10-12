@@ -382,7 +382,7 @@ fn TaskList(
                         save_label_filter(None);
                     }
                 >"All"</button>
-                <For each=labels key=|label| *label let:label>
+                <For each=labels key=|label| label_name(*label) let:label>
                     <button
                         type="button"
                         class:active=move || selected_label.get() == Some(label)
@@ -575,55 +575,58 @@ fn TaskList(
                     </li>
                         }
 
-                        fn label_name(label: Label) -> &'static str {
-                            match label {
-                                Label::School => "School",
-                                Label::Work => "Work",
-                                Label::Errands => "Errands",
-                                Label::Health => "Health",
-                                Label::Personal => "Personal",
-                                Label::Other => "Other",
-                            }
-                        }
-
-                        fn load_label_filter() -> Option<Label> {
-                            #[cfg(target_arch = "wasm32")]
-                            {
-                                let value = leptos::prelude::window()
-                                    .local_storage()
-                                    .ok()
-                                    .flatten()
-                                    .and_then(|storage| storage.get_item("rambl-task-label-filter").ok().flatten());
-                                return value.and_then(|value| match value.as_str() {
-                                    "School" => Some(Label::School),
-                                    "Work" => Some(Label::Work),
-                                    "Errands" => Some(Label::Errands),
-                                    "Health" => Some(Label::Health),
-                                    "Personal" => Some(Label::Personal),
-                                    "Other" => Some(Label::Other),
-                                    _ => None,
-                                });
-                            }
-                            #[cfg(not(target_arch = "wasm32"))]
-                            {
-                                None
-                            }
-                        }
-
-                        fn save_label_filter(label: Option<Label>) {
-                            #[cfg(target_arch = "wasm32")]
-                            if let Ok(Some(storage)) = leptos::prelude::window().local_storage() {
-                                let value = label.map(label_name);
-                                let _ = match value {
-                                    Some(value) => storage.set_item("rambl-task-label-filter", value),
-                                    None => storage.remove_item("rambl-task-label-filter"),
-                                };
-                            }
-                        }
                     }
                 </For>
             </ul>
         </section>
+    }
+
+    fn label_name(label: Label) -> &'static str {
+        match label {
+            Label::School => "School",
+            Label::Work => "Work",
+            Label::Errands => "Errands",
+            Label::Health => "Health",
+            Label::Personal => "Personal",
+            Label::Other => "Other",
+        }
+    }
+
+    fn load_label_filter() -> Option<Label> {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let value = leptos::prelude::window()
+                .local_storage()
+                .ok()
+                .flatten()
+                .and_then(|storage| storage.get_item("rambl-task-label-filter").ok().flatten());
+            return value.and_then(|value| match value.as_str() {
+                "School" => Some(Label::School),
+                "Work" => Some(Label::Work),
+                "Errands" => Some(Label::Errands),
+                "Health" => Some(Label::Health),
+                "Personal" => Some(Label::Personal),
+                "Other" => Some(Label::Other),
+                _ => None,
+            });
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            None
+        }
+    }
+
+    fn save_label_filter(label: Option<Label>) {
+        #[cfg(target_arch = "wasm32")]
+        if let Ok(Some(storage)) = leptos::prelude::window().local_storage() {
+            let value = label.map(label_name);
+            let _ = match value {
+                Some(value) => storage.set_item("rambl-task-label-filter", value),
+                None => storage.remove_item("rambl-task-label-filter"),
+            };
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = label;
     }
 }
 
