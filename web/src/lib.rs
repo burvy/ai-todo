@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
 use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
@@ -9,6 +11,7 @@ pub mod account;
 pub mod api;
 pub mod brain;
 pub mod mascot;
+pub mod pen;
 pub mod settings;
 pub mod speech;
 pub mod week;
@@ -146,6 +149,10 @@ pub fn App() -> impl IntoView {
     let (pane, set_pane) = signal(0_u8);
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
+    let pen_flight = RwSignal::new(mascot::PenFlight::Parked);
+    let pen_pos = RwSignal::new((0.0_f64, 0.0));
+    let pen_queue = RwSignal::new(Vec::<TaskId>::new());
+    let written = RwSignal::new(HashSet::<TaskId>::new());
 
     window_event_listener(leptos::ev::keydown, move |event| {
         if event.key() == " "
@@ -167,6 +174,9 @@ pub fn App() -> impl IntoView {
                 state=mascot_state
                 set_state=set_mascot_state
                 set_talking
+                pen_flight
+                pen_pos
+                pen_queue
             />
         </header>
         {move || error.get().map(|e| view! {
@@ -191,7 +201,7 @@ pub fn App() -> impl IntoView {
         <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
             <div class="tasks-pane">
                 <ImportIcs set_snapshot set_error />
-                <TaskList snapshot set_snapshot set_error view_settings set_mascot_state />
+                <TaskList snapshot set_snapshot set_error view_settings set_mascot_state pen_queue written pen_pos pen_flight />
             </div>
             <week::WeekGrid snapshot=snapshot settings=view_settings set_mascot_state=set_mascot_state />
         </main>
@@ -207,7 +217,10 @@ pub fn App() -> impl IntoView {
             brain_speech
             brain_pose
             set_brain_event
+            pen_flight=pen_flight
+            pen_pos=pen_pos
         />
+        <mascot::PenRig flight=pen_flight pos=pen_pos pose=brain_pose />
     }
 }
 
@@ -260,89 +273,182 @@ fn CaptureBox(
     state: ReadSignal<mascot::State>,
     set_state: WriteSignal<mascot::State>,
     set_talking: WriteSignal<bool>,
+    pen_flight: RwSignal<mascot::PenFlight>,
+    pen_pos: RwSignal<(f64, f64)>,
+    pen_queue: RwSignal<Vec<TaskId>>,
 ) -> impl IntoView {
     let (text, set_text) = signal(String::new());
     let (listening, set_listening) = signal(false);
     let speech_session = std::rc::Rc::new(std::cell::RefCell::new(None::<speech::Session>));
-    let speech_session_for_mic = speech_session.clone();
+    let input_ref = NodeRef::<leptos::html::Input>::new();
 
-    let handle_submit = move |ev: leptos::ev::SubmitEvent| {
-        ev.prevent_default();
-        let text_val = text.get_untracked();
-        if !text_val.is_empty() {
-            wasm_bindgen_futures::spawn_local(async move {
-                let draft = TaskDraft {
-                    title: text_val,
-                    duration_min: 30,
-                    when: When::Anytime,
-                    label: Label::Other,
-                    priority: Priority::Medium,
-                    source: Source::Text,
-                };
-                if let Ok(new_snapshot) = api::create_task(draft).await {
-                    set_snapshot.set(new_snapshot);
-                }
-                set_text.set(String::new());
+    // Caret follow: on input, position pen at caret; after 2s of inactivity, fly home
+    let linger_timer = std::rc::Rc::new(std::cell::RefCell::new(None::<Timeout>));
+    let restart_linger = {
+        let linger_timer = linger_timer.clone();
+        move || {
+            if let Some(timer) = linger_timer.borrow_mut().take() {
+                timer.cancel();
+            }
+            let pen_flight = pen_flight;
+            let linger_timer = linger_timer.clone();
+            let timer = Timeout::new(pen::LINGER_MS, move || {
+                pen_flight.set(mascot::PenFlight::FlyingHome);
+                let timer = Timeout::new(pen::FLY_MS, move || {
+                    pen_flight.set(mascot::PenFlight::Parked);
+                });
+                timer.forget();
             });
+            linger_timer.borrow_mut().replace(timer);
         }
     };
+
+    let measure_caret = move || {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let Some(input_el) = input_ref.get() else {
+                return;
+            };
+            let el: web_sys::Element = input_el.clone().into();
+            let rect = el.get_bounding_client_rect();
+            let sel = input_el.selection_start().ok().flatten().unwrap_or(0);
+            let caret_x = rect.left() + f64::from(sel) * 8.0;
+            let caret_y = rect.top() + rect.height() / 2.0;
+            let center = pen::writing_pen_center(caret_x, caret_y);
+            pen_pos.set(center);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = (input_ref, pen_pos);
+        }
+    };
+
+    let handle_input = move |_ev: leptos::ev::Event| {
+        if mascot::pen_busy(&pen_flight.get_untracked()) {
+            return;
+        }
+        if matches!(state.get_untracked(), mascot::State::Dragging) {
+            return;
+        }
+        pen_flight.set(mascot::PenFlight::WritingCaret);
+        measure_caret();
+        restart_linger();
+    };
+
+    let handle_submit = {
+        let linger_timer = linger_timer.clone();
+        move |ev: leptos::ev::SubmitEvent| {
+            ev.prevent_default();
+            let text_val = text.get_untracked();
+            if !text_val.is_empty() {
+                if let Some(timer) = linger_timer.borrow_mut().take() {
+                    timer.cancel();
+                }
+                let _ = (pen_queue, pen_flight);
+                let set_snapshot = set_snapshot;
+                let set_text = set_text;
+                wasm_bindgen_futures::spawn_local(async move {
+                    let draft = TaskDraft {
+                        title: text_val,
+                        duration_min: 30,
+                        when: When::Anytime,
+                        label: Label::Other,
+                        priority: Priority::Medium,
+                        source: Source::Text,
+                    };
+                    if let Ok(new_snapshot) = api::create_task(draft).await {
+                        set_snapshot.set(new_snapshot);
+                    } else {
+                        pen_flight.set(mascot::PenFlight::Parked);
+                    }
+                    set_text.set(String::new());
+                });
+            }
+        }
+    };
+
+    // Speech session for grab-to-listen
+    let start_speech = {
+        let speech_session_home = speech_session.clone();
+        move || {
+            if !speech::supported() {
+                return;
+            }
+            set_error.set(None);
+            let text_for_speech = std::rc::Rc::new(std::cell::RefCell::new(text.get_untracked()));
+            let result = speech::Session::start(
+                text_for_speech,
+                move |value| set_text.set(value),
+                move |value| {
+                    set_listening.set(value);
+                    set_talking.set(value);
+                },
+                move |value| set_error.set(value),
+            );
+            match result {
+                Ok(session) => {
+                    *speech_session_home.borrow_mut() = Some(session);
+                    set_listening.set(true);
+                    set_talking.set(true);
+                }
+                Err(message) => set_error.set(Some(message)),
+            }
+        }
+    };
+    let stop_speech = {
+        let speech_session = speech_session.clone();
+        move || {
+            if let Some(session) = speech_session.borrow().as_ref() {
+                session.stop();
+            }
+            set_listening.set(false);
+            set_talking.set(false);
+        }
+    };
+
+    // Clone closures for use in multiple event handlers
+    let start_speech_down = start_speech.clone();
+    let start_speech_key = start_speech.clone();
+    let stop_speech_up = stop_speech.clone();
+    let stop_speech_key = stop_speech.clone();
 
     view! {
         <form class="capture" on:submit=handle_submit>
             <input
+                node_ref=input_ref
                 prop:value=text
-                on:input=move |ev| set_text.set(event_target_value(&ev))
+                on:input=handle_input
                 placeholder="Say what you need to do…"
                 aria-label="Ramble"
             />
-            {if speech::supported() {
-                    let speech_session_for_mic = speech_session_for_mic.clone();
-                    view! {
-                        <button
-                            type="button"
-                            aria-label="Speak to capture"
-                            class=move || if listening.get() { "mic listening" } else { "mic" }
-                            on:click=move |_| {
-                                if listening.get_untracked() {
-                                    if let Some(session) = speech_session_for_mic.borrow().as_ref() {
-                                        session.stop();
-                                    }
-                                    return;
-                                }
-                                set_error.set(None);
-                                let text_for_speech = std::rc::Rc::new(std::cell::RefCell::new(
-                                    text.get_untracked(),
-                                ));
-                                let result = speech::Session::start(
-                                    text_for_speech,
-                                    move |value| set_text.set(value),
-                                    move |value| {
-                                        set_listening.set(value);
-                                        set_talking.set(value);
-                                    },
-                                    move |value| set_error.set(value),
-                                );
-                                match result {
-                                    Ok(session) => {
-                                        *speech_session_for_mic.borrow_mut() = Some(session);
-                                        set_listening.set(true);
-                                        set_talking.set(true);
-                                    }
-                                    Err(message) => set_error.set(Some(message)),
-                                }
-                            }
-                        >"Mic"</button>
-                    }.into_any()
-                } else {
-                    view! { <span></span> }.into_any()
-                }}
             <button
-                class="mascot-home"
+                class=move || {
+                    let s = state.get();
+                    if mascot::is_away(&s) { "mascot-home away" } else { "mascot-home" }
+                }
                 type="button"
-                aria-label="Talk with Rambo"
-                on:pointerdown=move |_| {
-                    set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Talk));
-                    set_talking.set(true);
+                tabindex="0"
+                aria-label="Grab Rambo to listen"
+                on:pointerdown=move |ev| {
+                    ev.prevent_default();
+                    set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Grab));
+                    start_speech_down();
+                }
+                on:pointerup=move |_| {
+                    if listening.get_untracked() {
+                        stop_speech_up();
+                    }
+                }
+                on:keydown=move |ev| {
+                    if ev.key() == " " || ev.key() == "Enter" {
+                        ev.prevent_default();
+                        if listening.get_untracked() {
+                            stop_speech_key();
+                        } else {
+                            set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Grab));
+                            start_speech_key();
+                        }
+                    }
                 }
             >
                 <img src="assets/pen.svg" alt="Rambo" />
@@ -365,7 +471,10 @@ fn Mascot(
     brain_speech: ReadSignal<Option<String>>,
     brain_pose: ReadSignal<String>,
     set_brain_event: WriteSignal<Option<rambl_brain::Event>>,
+    pen_flight: RwSignal<mascot::PenFlight>,
+    pen_pos: RwSignal<(f64, f64)>,
 ) -> impl IntoView {
+    let _ = (pen_flight, pen_pos);
     let (animation, set_animation) = signal("home");
     let start_return = move || {
         if mascot::prefers_reduced_motion() {
@@ -373,16 +482,16 @@ fn Mascot(
             set_animation.set("home");
             return;
         }
-        set_animation.set("falling");
-        set_state.set(mascot::State::Falling);
+        set_animation.set("recovering");
+        set_state.set(mascot::State::Recovering);
         let set_state = set_state;
         let set_animation = set_animation;
-        Timeout::new(450, move || {
-            set_state.set(mascot::State::Returning);
-            set_animation.set("returning");
+        Timeout::new(mascot::RECOVER_MS, move || {
+            set_state.set(mascot::State::Skittering);
+            set_animation.set("skittering");
             let set_state = set_state;
             let set_animation = set_animation;
-            Timeout::new(450, move || {
+            Timeout::new(mascot::SKITTER_MS, move || {
                 set_state.set(mascot::State::Home);
                 set_animation.set("home");
             })
@@ -391,23 +500,65 @@ fn Mascot(
         .forget();
     };
 
+    // Track whether pointer moved (to distinguish Release from Drop)
+    let moved = std::rc::Rc::new(std::cell::RefCell::new(false));
+    let moved_down = moved.clone();
+    let moved_move = moved.clone();
+    let moved_for_up = moved.clone();
+
     view! {
         <span
             class=move || format!("mascot {} {}", animation.get(), brain_pose.get())
-            draggable="true"
-            on:dragstart=move |_| {
-                set_brain_event.set(Some(rambl_brain::Event::Dragged));
-                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Grab))
-            }
-            on:dragend=move |_| {
-                if matches!(state.get_untracked(), mascot::State::Dragging) {
-                    start_return();
+            on:pointerdown=move |ev| {
+                ev.prevent_default();
+                set_brain_event.set(Some(rambl_brain::Event::Poked));
+                *moved_down.borrow_mut() = false;
+                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Grab));
+                set_talking.set(true);
+                if let Some(el) = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+                    let _ = el.set_pointer_capture(ev.pointer_id());
                 }
             }
-            on:pointerdown=move |_| {
-                set_brain_event.set(Some(rambl_brain::Event::Poked));
-                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Talk));
-                set_talking.set(true);
+            on:pointermove=move |ev| {
+                if matches!(state.get_untracked(), mascot::State::Dragging) {
+                    *moved_move.borrow_mut() = true;
+                    let client_x = ev.client_x() as f64;
+                    let client_y = ev.client_y() as f64;
+                    pen_pos.set((client_x, client_y));
+                }
+            }
+            on:pointerup=move |ev: leptos::ev::PointerEvent| {
+                if !matches!(state.get_untracked(), mascot::State::Dragging) {
+                    return;
+                }
+                let did_move = *moved_for_up.borrow();
+                if !did_move {
+                    set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Release));
+                    set_talking.set(false);
+                    return;
+                }
+                let client_x = ev.client_x() as f64;
+                let client_y = ev.client_y() as f64;
+                pen_pos.set((client_x, client_y));
+
+                // Check if dropped on a task row
+                let doc = web_sys::window().unwrap().document().unwrap();
+                if let Some(el) = doc.element_from_point(client_x as f32, client_y as f32)
+                    && let Some(li) = el.closest("li[data-id]").ok().flatten()
+                {
+                    let task_id = li.get_attribute("data-id").unwrap_or_default();
+                    let task_title = li.get_attribute("data-title").unwrap_or_default();
+                    set_state.set(mascot::transition(
+                        &state.get_untracked(),
+                        mascot::Event::DropTask { task_id, title: task_title },
+                    ));
+                    set_talking.set(false);
+                    return;
+                }
+                // Dropped on empty space
+                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::DropEmpty));
+                set_talking.set(false);
+                start_return();
             }
         >
             <img src="assets/pen.svg" alt="Rambo" />
@@ -631,7 +782,12 @@ fn TaskList(
     set_error: WriteSignal<Option<String>>,
     view_settings: ReadSignal<settings::Settings>,
     set_mascot_state: WriteSignal<mascot::State>,
+    pen_queue: RwSignal<Vec<TaskId>>,
+    written: RwSignal<HashSet<TaskId>>,
+    pen_pos: RwSignal<(f64, f64)>,
+    pen_flight: RwSignal<mascot::PenFlight>,
 ) -> impl IntoView {
+    let _ = (pen_pos, pen_flight);
     let (dragged_task, set_dragged_task) = signal::<Option<TaskId>>(None);
     let (selected_label, set_selected_label) = signal(load_label_filter());
     let (editing_task, set_editing_task) = signal::<Option<TaskId>>(None);
@@ -661,6 +817,66 @@ fn TaskList(
             .filter(|task| selected_label.get().is_none_or(|label| task.label == label))
             .collect::<Vec<_>>()
     };
+
+    // Pen queue choreography: process new tasks, animate pen writing each row
+    Effect::new(move |_| {
+        let queue = pen_queue.get();
+        if queue.is_empty() || mascot::prefers_reduced_motion() {
+            return;
+        }
+        let total = queue.len();
+        let pen_queue = pen_queue;
+        let written = written;
+        wasm_bindgen_futures::spawn_local(async move {
+            for (i, task_id) in queue.into_iter().enumerate() {
+                let idx = i as u32;
+                pen_flight.set(mascot::PenFlight::FlyingToRow {
+                    index: idx,
+                    total: total as u32,
+                });
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let doc = web_sys::window().unwrap().document().unwrap();
+                    if let Some(row) = doc
+                        .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
+                        .ok()
+                        .flatten()
+                    {
+                        let rect = row.get_bounding_client_rect();
+                        let center = pen::writing_pen_center(
+                            rect.left() + 40.0,
+                            rect.top() + rect.height() / 2.0,
+                        );
+                        pen_pos.set(center);
+                    }
+                }
+                gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
+                pen_flight.set(mascot::PenFlight::WritingRow {
+                    index: idx,
+                    total: total as u32,
+                });
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let doc = web_sys::window().unwrap().document().unwrap();
+                    if let Some(row) = doc
+                        .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
+                        .ok()
+                        .flatten()
+                    {
+                        row.set_class_name("pen-writing");
+                    }
+                }
+                written.update(|h| {
+                    h.insert(task_id);
+                });
+                gloo_timers::future::TimeoutFuture::new(pen::WRITE_MS).await;
+            }
+            pen_flight.set(mascot::PenFlight::FlyingHome);
+            gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
+            pen_flight.set(mascot::PenFlight::Parked);
+            pen_queue.set(Vec::new());
+        });
+    });
 
     view! {
         <section aria-labelledby="tasks-heading">
@@ -693,6 +909,7 @@ fn TaskList(
                         let drop_task_id = task_id.0.clone();
                         let drop_task_title = task_title.clone();
                         let render_task_id = task_id.0.clone();
+                        let render_task_id_attr = render_task_id.clone();
                         let render_task_title = task_title.clone();
 
                         let toggle_done = {
@@ -790,6 +1007,8 @@ fn TaskList(
                         };
                         view! {
                     <li
+                        data-id={render_task_id_attr}
+                        data-title={render_task_title.clone()}
                         on:drop=handle_drop
                         on:dragover=handle_drag_over
                         draggable="true"
@@ -827,13 +1046,16 @@ fn TaskList(
                                 }
                             }
                         >
-                            <strong>{render_task_title.clone()}</strong> " — " {task.duration_min} " min"
+                            <span class="pen-title-wrap">
+                                <strong class="pen-title">{render_task_title.clone()}</strong>
+                            </span> " — " {task.duration_min} " min"
                             {move || {
                                 let time = task_time(&snapshot.get(), &render_task_id);
                                 (!time.is_empty()).then(|| view! { <span class="task-time">" · " {time}</span> })
                             }}
                             {is_overdue(&task).then(|| view! { <span class="overdue">"Overdue"</span> })}
                         </span>
+                        <span class="pen-underline"><img src="assets/pen-underline.svg" alt="" /></span>
                         <button
                             class="delete"
                             type="button"
