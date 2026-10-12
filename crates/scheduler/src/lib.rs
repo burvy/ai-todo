@@ -5,6 +5,8 @@ use chrono_tz::Tz;
 use std::collections::HashMap;
 use todo_core::When;
 
+const MIN_BLOCK_MIN: u16 = 5;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimeWindow {
     pub start: NaiveTime,
@@ -57,7 +59,8 @@ pub fn plan(
         }
         match task.when {
             When::At(start) => {
-                let end = start + Duration::minutes(i64::from(task.duration_min));
+                let duration = task.duration_min.max(MIN_BLOCK_MIN) as i64;
+                let end = start + Duration::minutes(duration);
                 placements.push(todo_core::Placement {
                     task: task.id.clone(),
                     start,
@@ -82,17 +85,12 @@ pub fn plan(
             .map(|index| (index, deadline_of(&tasks[index]))),
     ) {
         let task = &tasks[index];
-        let Some(start) = next_slot(
-            ctx.now,
-            i64::from(task.duration_min),
-            deadline,
-            hours,
-            &occupied,
-        ) else {
+        let duration = task.duration_min.max(MIN_BLOCK_MIN) as i64;
+        let Some(start) = next_slot(ctx.now, duration, deadline, hours, &occupied) else {
             unplaced.push(task.id.clone());
             continue;
         };
-        let end = start + Duration::minutes(i64::from(task.duration_min));
+        let end = start + Duration::minutes(duration);
         placements.push(todo_core::Placement {
             task: task.id.clone(),
             start,
@@ -694,7 +692,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "bug: zero-duration task is dropped by planner"]
     fn zero_duration_task_is_placed_at_start() {
         let at = Utc.with_ymd_and_hms(2026, 1, 5, 8, 0, 0).unwrap();
         let hours = WorkingHours::every_day(
@@ -709,6 +706,8 @@ mod tests {
             plan.placements[0].start,
             Utc.with_ymd_and_hms(2026, 1, 5, 9, 0, 0).unwrap()
         );
+        let end = plan.placements[0].end;
+        assert_eq!(end, Utc.with_ymd_and_hms(2026, 1, 5, 9, 5, 0).unwrap());
     }
 
     #[test]
