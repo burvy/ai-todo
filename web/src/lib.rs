@@ -72,8 +72,8 @@ pub fn App() -> impl IntoView {
         <settings::SettingsPanel settings=view_settings set_settings=set_view_settings />
         <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event set_speech=set_brain_speech set_pose=set_brain_pose />
         <nav class="pane-switch" aria-label="Show">
-            <button type="button" class:active=move || pane.get() == 0 on:click=move |_| show_pane(main_ref, 0, set_pane)>"To do"</button>
-            <button type="button" class:active=move || pane.get() == 1 on:click=move |_| show_pane(main_ref, 1, set_pane)>"Planner"</button>
+            <button type="button" class:active=move || pane.get() == 0 aria-pressed=move || (pane.get() == 0).to_string() on:click=move |_| show_pane(main_ref, 0, set_pane)>"To do"</button>
+            <button type="button" class:active=move || pane.get() == 1 aria-pressed=move || (pane.get() == 1).to_string() on:click=move |_| show_pane(main_ref, 1, set_pane)>"Planner"</button>
         </nav>
         <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
             <div class="tasks-pane">
@@ -109,7 +109,11 @@ fn pane_at(scroll_left: f64, pane_width: f64) -> u8 {
 #[cfg(target_arch = "wasm32")]
 fn show_pane(main: NodeRef<leptos::html::Main>, index: u8, set_pane: WriteSignal<u8>) {
     if let Some(element) = main.get() {
-        element.set_scroll_left(i32::from(index) * element.client_width());
+        // Scroll to the pane's own offset: the grid gap sits between panes, so a multiple
+        // of the width lands short of the planner.
+        if let Some(pane) = element.children().item(u32::from(index)) {
+            element.set_scroll_left(pane.unchecked_into::<web_sys::HtmlElement>().offset_left());
+        }
     }
     set_pane.set(index);
 }
