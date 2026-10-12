@@ -10,6 +10,7 @@ mod message_tests;
 mod reset;
 mod revise;
 mod upload;
+mod v2;
 
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -1694,6 +1695,7 @@ fn app(state: AppState) -> Router {
         .route("/api/reset", post(reset::reset))
         .with_state(state)
         .layer(CorsLayer::permissive());
+    router = router.merge(v2::http::router(v2::app_from_env()));
     if Path::new("static").is_dir() {
         let static_files = ServiceBuilder::new()
             .layer(SetResponseHeaderLayer::overriding(

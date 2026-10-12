@@ -42,11 +42,19 @@ impl IntoResponse for ImportError {
 /// block is easy to spot in the planner, a wrongly-timed one silently ruins
 /// the schedule.
 pub fn parse_ics(text: &str) -> Result<Vec<BusyRow>, ImportError> {
+    Ok(parse_events(text)?
+        .into_iter()
+        .map(|(_, row)| row)
+        .collect())
+}
+
+/// Each kept event with its iCalendar UID, when it has one. v2 imports key on the UID.
+pub fn parse_events(text: &str) -> Result<Vec<(Option<String>, BusyRow)>, ImportError> {
     let calendar: icalendar::Calendar = text
         .parse()
         .map_err(|error| ImportError(format!("that is not an iCalendar file: {error}")))?;
 
-    let mut busy: Vec<BusyRow> = calendar
+    let mut busy: Vec<(Option<String>, BusyRow)> = calendar
         .events()
         .filter_map(|event| {
             if event
@@ -62,23 +70,32 @@ pub fn parse_ics(text: &str) -> Result<Vec<BusyRow>, ImportError> {
             }
             let start = to_utc(&date_of(event, "DTSTART")?)?;
             // `DTEND` is the norm, but `DURATION` is legal and Google uses it.
-            // A missing `DTEND` must not drop the event, so no `?` here.
+            // A missing `DTEND` must not drop the event, so no `?` here. With neither
+            // `DTEND` nor `DURATION`, the event gets 30 minutes, never zero length.
             let end = date_of(event, "DTEND")
                 .and_then(|value| to_utc(&value))
                 .or_else(|| duration_after(event, start))
-                .unwrap_or(start);
+                .unwrap_or(start + chrono::Duration::minutes(30));
             if end < start {
                 return None;
             }
-            Some(BusyRow {
-                start,
-                end,
-                title: summary_of(event),
-            })
+            let uid = event
+                .properties()
+                .get("UID")
+                .map(|property| property.value().trim().to_string())
+                .filter(|uid| !uid.is_empty());
+            Some((
+                uid,
+                BusyRow {
+                    start,
+                    end,
+                    title: summary_of(event),
+                },
+            ))
         })
         .collect();
 
-    busy.sort_by_key(|block| block.start);
+    busy.sort_by_key(|(_, block)| block.start);
     Ok(busy)
 }
 
