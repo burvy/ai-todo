@@ -207,10 +207,15 @@ impl<S: Store> App<S> {
         }
         if let Some(when) = patch.when {
             // A deadline remembers the zone it was set in (docs/ARCHITECTURE.md 4.1):
-            // editing a task's when re-anchors it to the current zone, and anything
-            // that is no longer a deadline has no zone to remember.
-            task.when = when;
-            task.due_tz = due_zone(when, tz);
+            // editing the instant re-anchors a deadline to the zone the edit was
+            // made in, and anything that is no longer a deadline has no zone to
+            // remember. The web dialog always sends `when`, so a patch that leaves
+            // the instant alone (a title-only save from another zone) must not
+            // re-stamp the zone.
+            if when != task.when {
+                task.when = when;
+                task.due_tz = due_zone(when, tz);
+            }
         }
         if let Some(done) = patch.done {
             task.done = done;
@@ -911,6 +916,55 @@ mod tests {
             When::DueBy(due),
             "the instant itself did not move"
         );
+    }
+
+    /// The web dialog always sends `when` on save, so a patch that leaves the
+    /// instant unchanged must keep the stored zone: a title-only edit made from
+    /// another zone must not flip a deadline's `due_tz`.
+    #[test]
+    fn a_same_when_patch_keeps_a_deadlines_zone() {
+        let clock = Arc::new(FixedClock(
+            Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+        ));
+        let mut app = App::new(MemoryStore::new(), clock);
+        let due = Utc.with_ymd_and_hms(2026, 10, 16, 21, 0, 0).unwrap();
+        let mut draft = draft("Deadline");
+        draft.when = When::DueBy(due);
+        let created = app.create(draft, USER, NEW_YORK).expect("create");
+        let id = created.tasks[0].id.0.clone();
+
+        // A title-only edit from Los Angeles sends `when` unchanged: zone stays.
+        app.patch(
+            &id,
+            Patch {
+                title: Some("Renamed".into()),
+                when: Some(When::DueBy(due)),
+                ..Patch::default()
+            },
+            USER,
+            chrono_tz::America::Los_Angeles,
+        )
+        .expect("patched");
+        let task = app.find(USER, &id).unwrap();
+        assert_eq!(task.title, "Renamed");
+        assert_eq!(task.when, When::DueBy(due), "the instant did not move");
+        assert_eq!(task.due_tz.as_deref(), Some("America/New_York"));
+
+        // Editing the deadline itself from Los Angeles still re-anchors it there:
+        // a genuinely new instant gets the zone of the edit.
+        app.patch(
+            &id,
+            Patch {
+                when: Some(When::DueBy(due + chrono::Duration::hours(2))),
+                ..Patch::default()
+            },
+            USER,
+            chrono_tz::America::Los_Angeles,
+        )
+        .expect("patched");
+        let task = app.find(USER, &id).unwrap();
+        assert_eq!(task.when, When::DueBy(due + chrono::Duration::hours(2)));
+        assert_eq!(task.due_tz.as_deref(), Some("America/Los_Angeles"));
     }
 
     /// Newest first (docs/ARCHITECTURE.md 4.1): each new task takes a smaller

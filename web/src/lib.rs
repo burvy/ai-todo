@@ -817,10 +817,13 @@ fn due_display(task: &todo_core::Task, time: DateTime<Utc>) -> String {
 
 /// Parse a deadline typed into the edit dialog as a time in `tz`, so a deadline
 /// shown in its original zone saves as the same local time even after a move.
+/// Fall-back makes a wall clock ambiguous (the hour repeats); `.earliest()` picks
+/// the first of the two, where `.single()` used to give up silently. A time in a
+/// spring-forward gap genuinely does not exist and still fails.
 fn parse_due_input(value: &str, tz: chrono_tz::Tz) -> Option<DateTime<Utc>> {
     let naive = chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M").ok()?;
     tz.from_local_datetime(&naive)
-        .single()
+        .earliest()
         .map(|local| local.with_timezone(&Utc))
 }
 
@@ -1173,6 +1176,10 @@ fn TaskList(
                     snapshot.get().tasks.into_iter().find(|task| task.id == id).map(|task| {
                         let imported = task.source == Source::Calendar;
                         let task_id = task.id.clone();
+                        // The zone a deadline in this dialog is shown and parsed in,
+                        // rendered next to the date field so the user knows the wall
+                        // clock means that zone (docs/ARCHITECTURE.md 4.1).
+                        let due_zone = task.due_tz.clone();
                         view! {
                             <p class="dialog-task-title">{task.title.clone()}</p>
                             {imported.then(|| view! {
@@ -1216,6 +1223,12 @@ fn TaskList(
                                     prop:value=edit_datetime
                                     on:input=move |event| set_edit_datetime.set(event_target_value(&event))
                                 />
+                                {move || match due_zone.as_deref() {
+                                    Some(zone) if edit_when.get() == EditWhen::DueBy => Some(view! {
+                                        <span class="due-zone">"(" {zone.to_owned()} ")"</span>
+                                    }),
+                                    _ => None,
+                                }}
                             </fieldset>
                             <div class="dialog-actions">
                                 <button
@@ -1437,6 +1450,16 @@ mod tests {
         let after = Utc.with_ymd_and_hms(2026, 11, 3, 4, 59, 0).unwrap();
         assert_eq!(due_input_value(after, ny), "2026-11-02T23:59");
         assert_eq!(parse_due_input("2026-11-02T23:59", ny), Some(after));
+
+        // The fall-back itself: 01:30 New York on 2026-11-01 happens twice — 01:30
+        // EDT and again 01:30 EST after the clocks fall back. `.earliest()` picks
+        // the first one; `.single()` used to reject the whole time silently.
+        let fold_earliest = Utc.with_ymd_and_hms(2026, 11, 1, 5, 30, 0).unwrap();
+        assert_eq!(parse_due_input("2026-11-01T01:30", ny), Some(fold_earliest));
+
+        // A spring-forward gap is not a time at all: 02:30 on 2026-03-08 New York
+        // (the clocks jump 02:00 to 03:00) must not invent an instant.
+        assert_eq!(parse_due_input("2026-03-08T02:30", ny), None);
     }
 
     /// A deadline set as 17:00 New York reads 17:00 New York even when the browser
