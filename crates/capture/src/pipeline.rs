@@ -72,7 +72,8 @@ fn phrases(found: &[Candidate], keep: impl Fn(&Value) -> bool) -> Vec<String> {
 }
 
 /// Title spans the code proposes: the clause without its date, time and duration
-/// phrases, then the whole clause. Jev chooses one.
+/// phrases. The whole clause is offered only when stripping removed everything,
+/// so a captured date never repeats inside the title.
 fn title_spans(clause: &str, found: &[Candidate]) -> Vec<String> {
     let mut stripped = String::new();
     let mut cursor = 0;
@@ -82,16 +83,15 @@ fn title_spans(clause: &str, found: &[Candidate]) -> Vec<String> {
     }
     stripped.push_str(&clause[cursor..]);
 
-    let mut spans = Vec::new();
-    for span in [clean_title(&stripped), clean_title(clause)] {
-        if !span.is_empty() && !spans.contains(&span) {
-            spans.push(span);
-        }
+    let stripped = clean_title(&stripped);
+    if !stripped.is_empty() {
+        return vec![stripped];
     }
-    if spans.is_empty() {
-        spans.push(clause.trim().to_owned());
+    let whole = clean_title(clause);
+    if !whole.is_empty() {
+        return vec![whole];
     }
-    spans
+    vec![clause.trim().to_owned()]
 }
 
 /// Drop filler and edge punctuation, collapse spaces, capitalise the first letter.
@@ -119,9 +119,9 @@ pub fn clean_title(text: &str) -> String {
         "right, ",
     ];
     /// Words that only make sense in front of the phrase they introduce.
-    const TRAILING: [&str; 15] = [
+    const TRAILING: [&str; 16] = [
         "a", "an", "the", "on", "by", "at", "for", "to", "of", "in", "with", "before", "after",
-        "from", "or",
+        "from", "or", "due",
     ];
     const TRAILING_HEDGES: [&str; 4] = ["maybe", "probably", "just", "only"];
 
@@ -303,6 +303,9 @@ mod tests {
             clean_title("review chapters six and seven maybe"),
             "Review chapters six and seven"
         );
+        // "Due" only stands in front of the date it introduced.
+        assert_eq!(clean_title("lab report due"), "Lab report");
+        assert_eq!(clean_title("taxes due by"), "Taxes");
     }
 
     #[test]
@@ -313,6 +316,36 @@ mod tests {
         );
         // A title may legitimately end in one of these when nothing was stripped.
         assert_eq!(clean_title("finish the paper"), "Finish the paper");
+    }
+
+    #[test]
+    fn the_whole_clause_is_not_a_title_when_stripping_leaves_words() {
+        // The date is captured separately, so it must not repeat in the title:
+        // Jev gets only the stripped span to choose from.
+        let spans = title_spans(
+            "Call mom tomorrow at 3",
+            &candidates("Call mom tomorrow at 3", &ctx()),
+        );
+        assert_eq!(spans, vec!["Call mom".to_string()]);
+
+        let spans = title_spans(
+            "Lab report due Wednesday",
+            &candidates("Lab report due Wednesday", &ctx()),
+        );
+        assert_eq!(spans, vec!["Lab report".to_string()]);
+    }
+
+    #[test]
+    fn a_clause_without_a_date_offers_only_itself() {
+        let spans = title_spans("Buy milk", &candidates("Buy milk", &ctx()));
+        assert_eq!(spans, vec!["Buy milk".to_string()]);
+    }
+
+    #[test]
+    fn a_clause_that_is_all_date_falls_back_to_the_whole_clause() {
+        // Nothing survives stripping, so the clause itself is the only span.
+        let spans = title_spans("tomorrow at 3", &candidates("tomorrow at 3", &ctx()));
+        assert_eq!(spans, vec!["Tomorrow at 3".to_string()]);
     }
 
     #[tokio::test]
