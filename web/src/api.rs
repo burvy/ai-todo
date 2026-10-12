@@ -119,11 +119,25 @@ pub fn fixture_snapshot() -> Snapshot {
         .expect("fixture snapshot must be valid")
 }
 
-/// Fetch today's date in YYYY-MM-DD format
+/// Today's date on this device, as YYYY-MM-DD.
+///
+/// The browser's clock, not chrono's: chrono's `Local::now` panics on wasm32, because it
+/// asks the platform clock, which the browser build does not have.
 pub fn today_date() -> String {
-    use chrono::Local;
-    let now = Local::now();
-    now.format("%Y-%m-%d").to_string()
+    #[cfg(target_arch = "wasm32")]
+    {
+        let now = js_sys::Date::new_0();
+        format!(
+            "{:04}-{:02}-{:02}",
+            now.get_full_year(),
+            now.get_month() + 1,
+            now.get_date()
+        )
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        chrono::Local::now().format("%Y-%m-%d").to_string()
+    }
 }
 
 pub fn use_snapshot() -> ReadSignal<Snapshot> {
