@@ -17,6 +17,20 @@ pub enum Event {
     Return,
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn prefers_reduced_motion() -> bool {
+    leptos::prelude::window()
+        .match_media("(prefers-reduced-motion: reduce)")
+        .ok()
+        .flatten()
+        .is_some_and(|query| query.matches())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn prefers_reduced_motion() -> bool {
+    false
+}
+
 pub fn transition(state: &State, event: Event) -> State {
     match (state, event) {
         (State::Home, Event::Grab) => State::Dragging,

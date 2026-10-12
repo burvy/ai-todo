@@ -34,19 +34,3 @@ pub async fn fetch_snapshot(from: &str, days: u8) -> Result<Snapshot, gloo_net::
         .json()
         .await
 }
-
-pub async fn edit_task(_task_id: &str) -> Result<(), gloo_net::Error> {
-    Ok(())
-}
-
-pub async fn move_task(_task_id: &str) -> Result<(), gloo_net::Error> {
-    Ok(())
-}
-
-pub async fn complete_task(_task_id: &str) -> Result<(), gloo_net::Error> {
-    Ok(())
-}
-
-pub async fn delete_task(_task_id: &str) -> Result<(), gloo_net::Error> {
-    Ok(())
-}

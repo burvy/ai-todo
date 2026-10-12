@@ -24,10 +24,15 @@
       .mascot-home { transition: transform .25s ease; }
       .mascot-home:active { transform: translateY(1rem) rotate(8deg); }
       .mascot { animation: mascot-home .35s ease-in-out; }
+      .mascot.falling { animation: mascot-fall .45s ease-in forwards; }
+      .mascot.returning { animation: mascot-return .45s ease-out forwards; }
       @keyframes mascot-home { from { transform: translateY(2rem); } to { transform: translateY(0); } }
+      @keyframes mascot-fall { from { transform: translateY(0); } to { transform: translateY(60vh) rotate(12deg); } }
+      @keyframes mascot-return { from { transform: translateY(60vh) rotate(12deg); } to { transform: translateY(0); } }
     }
     @media (prefers-reduced-motion: reduce) {
       .mascot-home { transition: none; animation: none; }
+      .mascot { animation: none; }
     }
     .week { display: grid; grid-template-columns: repeat(7, 1fr); gap: .25rem; overflow-x: auto; }
     .day { min-width: 7rem; border-left: 1px solid currentColor; padding: .25rem; }
