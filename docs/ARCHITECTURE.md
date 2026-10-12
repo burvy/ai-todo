@@ -67,7 +67,7 @@ An unfinished task past its `DueBy` remains in the list marked **Overdue**. The 
 1. **Segment** (code): split text into clauses.
 2. **Candidates** (code, `dates`): per clause, title spans, date phrases ("tomorrow", "Wednesday", "Oct 30"), time phrases ("at 3", "10am"), duration phrases. Each candidate already carries its resolved value from `LocalContext`.
 3. **Judge** (one Jev request per capture, all questions in parallel): per clause `is_task` (Noul), `title` (Choice of spans), `day` (Choice of date candidates + none), `time` (Choice of time candidates + none), `duration` (Choice), `label` (Choice), `priority` (Score). Jev gets the local time as text for context only.
-4. **Resolve** (code): build `TaskDraft`. Day + time -> `When::At`; day only -> `DueBy(day 17:00 local)`; neither -> `Anytime`.
+4. **Resolve** (code): build `TaskDraft`. Day + time -> `When::At`; day only -> `DueBy(day 23:59:59 local)`; neither -> `Anytime`.
 
 Without a Jev key, `FakeJudge`'s deterministic rules pick the first candidate. Tests use it, so the pipeline is tested end to end without the network.
 
@@ -75,7 +75,7 @@ Without a Jev key, `FakeJudge`'s deterministic rules pick the first candidate. T
 
 All JSON. Every request carries the header `X-Rambl-TZ: America/New_York` (from `Intl.DateTimeFormat().resolvedOptions().timeZone`). Every mutating call returns the full `Snapshot`. Errors are `{ "error": { "code", "message" } }` with a fitting status.
 
-**Accounts.** Rambl is multi-user. Every request except sign-in carries `Authorization: Bearer <session token>`. The token names a row in `v2_sessions`; the row names the user; **every task read and write is scoped to that user, in the store, not in the handler** — `Store` methods take the user id, so a handler cannot forget it. A missing, unknown or expired token is a 401 before the handler runs. With `GOOGLE_CLIENT_ID` unset the server is in local mode: one fixed local user, no sign-in.
+**Accounts.** Rambl is multi-user. Every request carries either `Authorization: Bearer <session token>` for signed-in users, or `X-Rambl-Anon: <anon_id>` for anonymous users. The token or anon_id names the user; **every task read and write is scoped to that user, in the store, not in the handler** — `Store` methods take the user id, so a handler cannot forget it. In local mode (`GOOGLE_CLIENT_ID` unset), the server uses the fixed local user for all requests regardless of headers. Anonymous users have a daily Jev cap of `RAMBL_JEV_DAILY_CAP_ANON` (default 30); when exceeded, capture falls back to `FakeJudge` with `jev_fallback: true`.
 
 Anonymous users do not sign in. Their account and tasks are deleted after 30 days without a visit; Rambl nudges them to sign in before then to keep their tasks.
 
@@ -109,6 +109,9 @@ Task edits use an `updated_at` field and last-write-wins per task. A reorder con
 | `RAMBL_DEFAULT_TZ` | `America/New_York` | Zone for requests with no `X-Rambl-TZ`. `TZ_NAME` is read behind it so `.env` files written for v1 keep working. |
 | `GOOGLE_CLIENT_ID` | unset | The OAuth client ID tokens must be minted for. Unset means local mode: one user, no sign-in. |
 | `RAMBL_JEV_DAILY_CAP` | `200` | Captures per user per day before capture falls back to `FakeJudge`. |
+| `RAMBL_JEV_DAILY_CAP_ANON` | `30` | Captures per anonymous user per day before capture falls back to `FakeJudge` with `jev_fallback: true`. |
+
+Working hours: 08:00 to 23:59:59 local time, every day.
 
 ## 7. Server (`server/`)
 

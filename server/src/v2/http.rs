@@ -25,6 +25,7 @@ use judge::AnyJudge;
 use todo_core::{LocalContext, Source, TaskId};
 
 const TZ_HEADER: HeaderName = HeaderName::from_static("x-rambl-tz");
+const ANON_HEADER: HeaderName = HeaderName::from_static("x-rambl-anon");
 
 /// The state every handler shares: the app (locked for each call), the judge, and how
 /// a request is turned into a user.
@@ -38,6 +39,9 @@ pub struct Shared {
     local: bool,
     /// Captures per user per day before capture falls back to [`judge::FakeJudge`].
     jev_daily_cap: u32,
+    /// Captures per anonymous user per day before capture falls back to
+    /// [`judge::FakeJudge`] with `jev_fallback: true`.
+    anon_jev_daily_cap: u32,
 }
 
 /// The signed-in user.
@@ -53,6 +57,13 @@ impl CurrentUser {
         if shared.local {
             return Ok(auth::LOCAL_USER.to_owned());
         }
+        // Check for anonymous header
+        if let Some(anon_id) = headers.get(&ANON_HEADER).and_then(|v| v.to_str().ok()) {
+            if !anon_id.is_empty() {
+                return Ok(anon_id.to_owned());
+            }
+        }
+        // Check for authorization header
         let token = auth::bearer(headers)
             .ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
         let app = shared.app.lock().expect("app mutex");
@@ -180,6 +191,13 @@ pub fn router_with_verifier(
 fn jev_daily_cap_from_env() -> u32 {
     std::env::var("RAMBL_JEV_DAILY_CAP")
         .ok()
+n/// `RAMBL_JEV_DAILY_CAP_ANON` captures per anonymous user per day, 30 unless it says otherwise.
+fn anon_jev_daily_cap_from_env() -> u32 {
+    std::env::var("RAMBL_JEV_DAILY_CAP_ANON")
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(DEFAULT_ANON_JEV_DAILY_CAP)
+}
         .and_then(|raw| raw.trim().parse().ok())
         .unwrap_or(DEFAULT_JEV_DAILY_CAP)
 }
