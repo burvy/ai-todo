@@ -95,7 +95,7 @@ The pen mascot (`illustrations/pen.svg`) is Rambo. It is the writing pen, not ju
 
 ## Rambo character sheet (placeholder poses)
 
-Rambo is a friendly, boy-ish fountain pen who wears his cap like a ballcap. The eight poses are in `web/assets/rambo/`; `web/assets/rambo/sheet.html` shows them on light and dark paper at 96 px and 48 px. Every file starts with `<!-- PLACEHOLDER: replace me, see art/GUIDE.md -->`, uses viewBox `0 0 64 112`, and keeps the class names `pen-barrel`, `pen-cap`, `pen-nib`, `pen-lead`, `pen-gloss`, `eye-white`, `eye-black`, `brow` (extra parts: `mouth`, `mouth-fill`, `tongue`, `lid`, `blush`, `ink-drop`, `fx`, `fx-fill`). Colours are CSS variables with fallbacks (`--rambo-barrel`, `--rambo-cap`, `--rambo-nib`, `--rambo-lead`, `--rambo-ink`, `--rambo-eye`, `--rambo-pupil`, `--rambo-brow`, `--rambo-blush`, `--rambo-fx`), so the theme can restyle them and the built-in dark-mode block works.
+Rambo is a friendly, boy-ish fountain pen who wears his cap like a ballcap. The nine poses are in `web/assets/rambo/`; `web/assets/rambo/sheet.html` shows them on light and dark paper at 96 px and 48 px. Every file starts with `<!-- PLACEHOLDER: replace me, see art/GUIDE.md -->`, uses viewBox `0 0 64 112`, and keeps the class names `pen-barrel`, `pen-cap`, `pen-nib`, `pen-lead`, `pen-gloss`, `eye-white`, `eye-black`, `brow` (extra parts: `mouth`, `mouth-fill`, `tongue`, `lid`, `blush`, `ink-drop`, `fx`, `fx-fill`). Colours are CSS variables with fallbacks (`--rambo-barrel`, `--rambo-cap`, `--rambo-nib`, `--rambo-lead`, `--rambo-ink`, `--rambo-eye`, `--rambo-pupil`, `--rambo-brow`, `--rambo-blush`, `--rambo-fx`), so the theme can restyle them and the built-in dark-mode block works.
 
 | Pose (file) | When shown | Brain pose / state (`crates/rambl-brain`) |
 |---|---|---|
@@ -107,6 +107,7 @@ Rambo is a friendly, boy-ish fountain pen who wears his cap like a ballcap. The 
 | `teasing.svg` | Playing, poked, dragged | `play`, `dangle` (`State::Playing`, `dragged`) |
 | `worried.svg` | A task is overdue | `worried` (`task_overdue`) |
 | `lobotomized.svg` | Lobotomized mode: no brain, vacant | `lobotomized`, `Mode::Lobotomized` |
+| `listening.svg` | Picked up: he listens for your voice. There is no mic button — picking Rambo up is how you talk to him | new rule; Phyllis wires it |
 
 Replace a pose with your own drawing:
 
