@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use capture::Revision;
 use chrono::{DateTime, Duration, NaiveTime, Utc};
 use chrono_tz::Tz;
 use scheduler::{BusyBlock, ScheduledPlacement, WorkingHours};
@@ -175,6 +176,80 @@ impl<S: Store> App<S> {
             updated,
             snapshot: self.snapshot(tz)?,
         })
+    }
+
+    /// Adds the drafts a capture produced. Returns their ids and the new snapshot.
+    pub fn add_drafts(
+        &mut self,
+        drafts: Vec<TaskDraft>,
+        tz: Tz,
+    ) -> Result<(Vec<TaskId>, Snapshot), ApiError> {
+        let ctx = self.ctx(tz);
+        let tasks = self.load()?;
+        let first_order = tasks.iter().map(|task| task.order).max().unwrap_or(-1) + 1;
+        let mut ids = Vec::new();
+        for (offset, draft) in drafts.into_iter().enumerate() {
+            let order = first_order + offset as i64;
+            check_title(&draft.title)?;
+            check_duration(draft.duration_min)?;
+            let id = self.fresh_id(ctx.now.timestamp_nanos_opt().unwrap_or_default())?;
+            let task = Task {
+                id: id.clone(),
+                title: draft.title.trim().to_owned(),
+                duration_min: draft.duration_min,
+                when: draft.when,
+                done: false,
+                order,
+                label: draft.label,
+                priority: draft.priority,
+                source: draft.source,
+                created: ctx.now,
+                external_uid: None,
+            };
+            self.store.put(&task).map_err(Self::storage_error)?;
+            ids.push(id);
+        }
+        Ok((ids, self.snapshot(tz)?))
+    }
+
+    /// Applies what a revision changed. Fields the instruction did not touch stay as they are.
+    pub fn apply_revision(
+        &mut self,
+        id: &str,
+        revision: &Revision,
+        tz: Tz,
+    ) -> Result<Snapshot, ApiError> {
+        let ctx = self.ctx(tz);
+        let mut task = self.find(id)?;
+        match (revision.day, revision.time) {
+            (Some(day), Some(time)) => task.when = When::At(ctx.at(day, time)),
+            (Some(day), None) => {
+                let end_of_day = NaiveTime::from_hms_opt(17, 0, 0).expect("17:00 is valid");
+                task.when = When::DueBy(ctx.at(day, end_of_day));
+            }
+            _ => {}
+        }
+        if let Some(minutes) = revision.duration_min {
+            task.duration_min = minutes.clamp(MIN_DURATION_MIN, MAX_DURATION_MIN);
+        }
+        if let Some(priority) = revision.priority {
+            task.priority = priority;
+        }
+        if let Some(label) = revision.label {
+            task.label = label;
+        }
+        self.store.put(&task).map_err(Self::storage_error)?;
+        self.snapshot(tz)
+    }
+
+    /// The task's title, for a revision prompt.
+    pub fn title_of(&self, id: &str) -> Result<String, ApiError> {
+        Ok(self.find(id)?.title)
+    }
+
+    /// The app's notion of now.
+    pub fn now(&self) -> DateTime<Utc> {
+        self.clock.now()
     }
 
     pub fn delete(&mut self, id: &str, tz: Tz) -> Result<Snapshot, ApiError> {

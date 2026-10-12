@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod http;
+pub mod ics_export;
 pub mod store;
 
 use std::sync::Arc;

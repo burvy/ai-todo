@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::{
     Json, Router,
-    extract::{Multipart, State},
+    extract::{FromRequest, Multipart, State},
     http::{HeaderMap, StatusCode, header::HeaderName},
     response::{IntoResponse, Response},
     routing::{get, patch, post, put},
@@ -15,11 +15,20 @@ use serde::{Deserialize, Serialize};
 use todo_core::{ApiError, ErrorCode, Snapshot, TaskDraft};
 
 use super::app::{App, ImportResult, ImportedEvent, Patch};
+use super::ics_export::build_ics;
 use super::store::Store;
+use capture::{Revision, capture_text};
+use chrono::{DateTime, Utc};
+use judge::AnyJudge;
+use todo_core::{LocalContext, Source, TaskId};
 
 const TZ_HEADER: HeaderName = HeaderName::from_static("x-rambl-tz");
 
-type Shared = Arc<Mutex<App<Box<dyn Store>>>>;
+/// The state every handler shares: the app (locked for each call) and the judge.
+pub struct Shared {
+    app: Mutex<App<Box<dyn Store>>>,
+    judge: AnyJudge,
+}
 
 /// An error response: `{ "error": { "code", "message" } }` with a status for the code.
 pub struct HttpError(ApiError);
@@ -67,59 +76,65 @@ pub fn zone(headers: &HeaderMap) -> Result<Tz, HttpError> {
     }
 }
 
-pub fn router(app: App<Box<dyn Store>>) -> Router {
+pub fn router(app: App<Box<dyn Store>>, judge: AnyJudge) -> Router {
     Router::new()
         .route("/api/v1/snapshot", get(snapshot))
         .route("/api/v1/tasks", post(create))
         .route("/api/v1/tasks/order", put(reorder))
         .route("/api/v1/import", post(import))
         .route("/api/v1/tasks/{id}", patch(update).delete(remove))
-        .with_state(Arc::new(Mutex::new(app)))
+        .route("/api/v1/capture", post(capture))
+        .route("/api/v1/tasks/{id}/revise", post(revise_task))
+        .route("/api/v1/calendar.ics", get(calendar_ics))
+        .with_state(Arc::new(Shared {
+            app: Mutex::new(app),
+            judge,
+        }))
 }
 
 async fn snapshot(
-    State(app): State<Shared>,
+    State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
 ) -> Result<Json<Snapshot>, HttpError> {
     let tz = zone(&headers)?;
-    let app = app.lock().unwrap();
+    let app = shared.app.lock().unwrap();
     Ok(Json(app.snapshot(tz)?))
 }
 
 async fn create(
-    State(app): State<Shared>,
+    State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
     Json(draft): Json<TaskDraft>,
 ) -> Result<Json<Snapshot>, HttpError> {
     let tz = zone(&headers)?;
-    let mut app = app.lock().unwrap();
+    let mut app = shared.app.lock().unwrap();
     Ok(Json(app.create(draft, tz)?))
 }
 
 async fn update(
-    State(app): State<Shared>,
+    State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(patch): Json<Patch>,
 ) -> Result<Json<Snapshot>, HttpError> {
     let tz = zone(&headers)?;
-    let mut app = app.lock().unwrap();
+    let mut app = shared.app.lock().unwrap();
     Ok(Json(app.patch(&id, patch, tz)?))
 }
 
 async fn remove(
-    State(app): State<Shared>,
+    State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<Snapshot>, HttpError> {
     let tz = zone(&headers)?;
-    let mut app = app.lock().unwrap();
+    let mut app = shared.app.lock().unwrap();
     Ok(Json(app.delete(&id, tz)?))
 }
 
 /// `POST /api/v1/import`: a multipart `file` holding an .ics calendar.
 async fn import(
-    State(app): State<Shared>,
+    State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<ImportResult>, HttpError> {
@@ -142,7 +157,7 @@ async fn import(
             end: row.end,
         })
         .collect();
-    let mut app = app.lock().unwrap();
+    let mut app = shared.app.lock().unwrap();
     Ok(Json(app.import(events, tz)?))
 }
 
@@ -159,13 +174,144 @@ struct OrderIn {
 }
 
 async fn reorder(
-    State(app): State<Shared>,
+    State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
     Json(body): Json<OrderIn>,
 ) -> Result<Json<Snapshot>, HttpError> {
     let tz = zone(&headers)?;
-    let mut app = app.lock().unwrap();
+    let mut app = shared.app.lock().unwrap();
     Ok(Json(app.reorder(&body.ids, tz)?))
+}
+
+#[derive(Deserialize)]
+struct CaptureIn {
+    text: String,
+}
+
+#[derive(Serialize)]
+struct CaptureOut {
+    created: Vec<TaskId>,
+    snapshot: todo_core::Snapshot,
+}
+
+/// `POST /api/v1/capture`: JSON `{text}`, or multipart `file` (.pdf, .eml or text).
+async fn capture(
+    State(shared): State<Arc<Shared>>,
+    request: axum::extract::Request,
+) -> Result<Json<CaptureOut>, HttpError> {
+    let tz = zone(request.headers())?;
+    let (text, source, anchor) = read_capture(request).await?;
+    let now = anchor.unwrap_or_else(|| shared.app.lock().unwrap().now());
+    let ctx = LocalContext { now, tz };
+    let drafts = capture_text(&shared.judge, &text, source, &ctx)
+        .await
+        .map_err(upstream)?;
+    let mut app = shared.app.lock().unwrap();
+    let (created, snapshot) = app.add_drafts(drafts, tz)?;
+    Ok(Json(CaptureOut { created, snapshot }))
+}
+
+/// The capture text, its source, and an anchor time when the source has a send date.
+async fn read_capture(
+    request: axum::extract::Request,
+) -> Result<(String, Source, Option<DateTime<Utc>>), HttpError> {
+    let multipart = request
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("multipart/form-data"));
+    if multipart {
+        let mut multipart = Multipart::from_request(request, &())
+            .await
+            .map_err(bad_request)?;
+        while let Some(field) = multipart.next_field().await.map_err(bad_request)? {
+            if field.name() == Some("file") {
+                let name = field.file_name().unwrap_or_default().to_ascii_lowercase();
+                let bytes = field.bytes().await.map_err(bad_request)?;
+                return file_text(&name, &bytes);
+            }
+        }
+        return Err(bad_request("send the document as multipart field `file`"));
+    }
+    let Json(body) = Json::<CaptureIn>::from_request(request, &())
+        .await
+        .map_err(bad_request)?;
+    if body.text.trim().is_empty() {
+        return Err(bad_request("text is required"));
+    }
+    Ok((body.text, Source::Text, None))
+}
+
+fn file_text(
+    name: &str,
+    bytes: &[u8],
+) -> Result<(String, Source, Option<DateTime<Utc>>), HttpError> {
+    if name.ends_with(".pdf") {
+        let text = capture::pdf_to_text(bytes).map_err(|capture::PdfError::Unreadable(why)| {
+            bad_request(format!("could not read that PDF: {why}"))
+        })?;
+        return Ok((text, Source::Pdf, None));
+    }
+    let text = String::from_utf8(bytes.to_vec())
+        .map_err(|_| bad_request("that file is not UTF-8 text"))?;
+    if name.ends_with(".eml") {
+        let email = capture::parse_email(&text);
+        let body = format!("{}\n{}", email.subject, email.body);
+        return Ok((body, Source::Email, email.sent));
+    }
+    Ok((text, Source::Text, None))
+}
+
+#[derive(Deserialize)]
+struct ReviseIn {
+    instruction: String,
+}
+
+/// `POST /api/v1/tasks/{id}/revise`: one sentence re-classifies the task.
+async fn revise_task(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(body): Json<ReviseIn>,
+) -> Result<Json<todo_core::Snapshot>, HttpError> {
+    let tz = zone(&headers)?;
+    let instruction = body.instruction.trim().to_owned();
+    if instruction.is_empty() {
+        return Err(bad_request("instruction is required"));
+    }
+    let (title, now) = {
+        let app = shared.app.lock().unwrap();
+        (app.title_of(&id)?, app.now())
+    };
+    let ctx = LocalContext { now, tz };
+    let revision: Revision = capture::revise(&shared.judge, &title, &instruction, &ctx)
+        .await
+        .map_err(upstream)?;
+    let mut app = shared.app.lock().unwrap();
+    Ok(Json(app.apply_revision(&id, &revision, tz)?))
+}
+
+/// `GET /api/v1/calendar.ics`: the plan as an iCalendar file.
+async fn calendar_ics(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+) -> Result<([(HeaderName, &'static str); 1], String), HttpError> {
+    let tz = zone(&headers)?;
+    let snapshot = shared.app.lock().unwrap().snapshot(tz)?;
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/calendar; charset=utf-8",
+        )],
+        build_ics(&snapshot),
+    ))
+}
+
+fn upstream(error: anyhow::Error) -> HttpError {
+    HttpError(ApiError {
+        code: ErrorCode::Upstream,
+        message: format!("judgment failed: {error}"),
+    })
 }
 
 #[cfg(test)]
@@ -180,10 +326,13 @@ mod tests {
     use tower::ServiceExt;
 
     fn router_at(now: chrono::DateTime<Utc>) -> Router {
-        super::router(App::new(
-            Box::new(MemoryStore::default()) as Box<dyn Store>,
-            Arc::new(FixedClock(now)),
-        ))
+        super::router(
+            App::new(
+                Box::new(MemoryStore::default()) as Box<dyn Store>,
+                Arc::new(FixedClock(now)),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+        )
     }
 
     /// The snapshot invariant from ARCHITECTURE.md section 9: every open pinned task
@@ -510,6 +659,185 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let snapshot: Snapshot = serde_json::from_value(body["snapshot"].clone()).unwrap();
         assert_invariant(&snapshot);
+    }
+
+    async fn send_raw(
+        router: &Router,
+        method: &str,
+        uri: &str,
+        content_type: &str,
+        body: &str,
+    ) -> (StatusCode, serde_json::Value, String) {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("x-rambl-tz", "America/New_York")
+            .header("content-type", content_type)
+            .body(Body::from(body.to_owned()))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let headers = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let json = serde_json::from_slice(&bytes).unwrap_or_default();
+        (status, json, headers)
+    }
+
+    #[tokio::test]
+    async fn capture_json_creates_tasks_and_returns_their_ids() {
+        let router = router_at(sunday_night());
+        let (status, body, _) = send_raw(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            "application/json",
+            r#"{"text":"Buy milk"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["created"].as_array().unwrap().len(), 1);
+        let snapshot: Snapshot = serde_json::from_value(body["snapshot"].clone()).unwrap();
+        assert_eq!(snapshot.tasks.len(), 1);
+        assert_invariant(&snapshot);
+    }
+
+    #[tokio::test]
+    async fn capture_multipart_text_file_is_read_as_text() {
+        let router = router_at(sunday_night());
+        let boundary = "XRAMBLCAP";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"notes.txt\"\r\nContent-Type: text/plain\r\n\r\nSubmit the lab report\r\n--{boundary}--\r\n"
+        );
+        let (status, json, _) = send_raw(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            &format!("multipart/form-data; boundary={boundary}"),
+            &body,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let snapshot: Snapshot = serde_json::from_value(json["snapshot"].clone()).unwrap();
+        assert_eq!(snapshot.tasks[0].source, Source::Text);
+    }
+
+    #[tokio::test]
+    async fn capture_with_a_bad_pdf_or_empty_text_is_a_400() {
+        let router = router_at(sunday_night());
+        let boundary = "XRAMBLBAD";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"x.pdf\"\r\n\r\nnot a pdf\r\n--{boundary}--\r\n"
+        );
+        let (status, _, _) = send_raw(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            &format!("multipart/form-data; boundary={boundary}"),
+            &body,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _, _) = send_raw(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            "application/json",
+            r#"{"text":"   "}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    async fn create_task(router: &Router, title: &str) -> String {
+        let draft = format!(
+            r#"{{"title":"{title}","duration_min":30,"when":{{"kind":"anytime"}},"label":"Other","priority":"low","source":"text"}}"#
+        );
+        let (_, body) = send(router, "POST", "/api/v1/tasks", Some(&draft)).await;
+        serde_json::from_value::<Snapshot>(body)
+            .unwrap()
+            .tasks
+            .iter()
+            .find(|task| task.title == title)
+            .unwrap()
+            .id
+            .0
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn revise_thursday_at_two_pins_the_task() {
+        let router = router_at(sunday_night());
+        let id = create_task(&router, "Meet Maya").await;
+        let (status, body) = send(
+            &router,
+            "POST",
+            &format!("/api/v1/tasks/{id}/revise"),
+            Some(r#"{"instruction":"make it Thursday at 2"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        let task = snapshot.tasks.iter().find(|task| task.id.0 == id).unwrap();
+        // Thursday 2026-10-15 14:00 EDT is 18:00 UTC.
+        assert_eq!(
+            task.when,
+            When::At(Utc.with_ymd_and_hms(2026, 10, 15, 18, 0, 0).unwrap())
+        );
+        assert_invariant(&snapshot);
+    }
+
+    #[tokio::test]
+    async fn revise_errors_unknown_id_and_empty_instruction() {
+        let router = router_at(sunday_night());
+        let (status, _) = send(
+            &router,
+            "POST",
+            "/api/v1/tasks/nope/revise",
+            Some(r#"{"instruction":"tomorrow"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let id = create_task(&router, "Read").await;
+        let (status, _) = send(
+            &router,
+            "POST",
+            &format!("/api/v1/tasks/{id}/revise"),
+            Some(r#"{"instruction":"  "}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn calendar_ics_exports_the_plan_as_events() {
+        let router = router_at(sunday_night());
+        let id = create_task(&router, "Read").await;
+        assert!(!id.is_empty());
+        let request = Request::builder()
+            .uri("/api/v1/calendar.ics")
+            .header("x-rambl-tz", "America/New_York")
+            .body(Body::empty())
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "text/calendar; charset=utf-8"
+        );
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(text.starts_with("BEGIN:VCALENDAR"));
+        let calendar: icalendar::Calendar = text.parse().unwrap();
+        assert_eq!(
+            calendar.events().count(),
+            1,
+            "one anytime task, placed once"
+        );
     }
 
     #[tokio::test]

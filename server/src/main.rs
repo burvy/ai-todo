@@ -1695,7 +1695,10 @@ fn app(state: AppState) -> Router {
         .route("/api/reset", post(reset::reset))
         .with_state(state)
         .layer(CorsLayer::permissive());
-    router = router.merge(v2::http::router(v2::app_from_env()));
+    router = router.merge(v2::http::router(
+        v2::app_from_env(),
+        judge::AnyJudge::from_env(),
+    ));
     if Path::new("static").is_dir() {
         let static_files = ServiceBuilder::new()
             .layer(SetResponseHeaderLayer::overriding(
