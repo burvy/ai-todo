@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use judge::find_date_candidates;
 use judge::{Judgment, understand};
 use serde::Deserialize;
-use todo_core::Task;
+use todo_core::v1::Task;
 
 use crate::{
     AppState, clamp_duration, date_candidates_local, local_time_as_utc, parse_deadline,
@@ -167,7 +167,7 @@ fn mentions(instruction: &str, words: &[&str]) -> bool {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Timelike};
-    use todo_core::Source;
+    use todo_core::v1::Source;
 
     fn now() -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 10, 11, 15, 0, 0).unwrap()

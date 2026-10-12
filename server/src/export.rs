@@ -29,7 +29,7 @@ pub async fn calendar_ics(State(state): State<AppState>) -> Response {
         .unwrap()
 }
 
-fn build_ics(tasks: &[todo_core::Task], placements: &[crate::PlacementOut]) -> String {
+fn build_ics(tasks: &[todo_core::v1::Task], placements: &[crate::PlacementOut]) -> String {
     let mut ics =
         String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//ai-todo//planner//EN\r\n");
     for placement in placements {
@@ -63,7 +63,7 @@ fn build_ics(tasks: &[todo_core::Task], placements: &[crate::PlacementOut]) -> S
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use todo_core::Source;
+    use todo_core::v1::Source;
 
     #[test]
     fn escapes_ical_text() {
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn exports_events_and_round_trips() {
         let tasks = vec![
-            todo_core::Task {
+            todo_core::v1::Task {
                 id: "t1".into(),
                 title: "Write, plan".into(),
                 notes: String::new(),
@@ -87,7 +87,7 @@ mod tests {
                 position: 0,
                 pinned_start: None,
             },
-            todo_core::Task {
+            todo_core::v1::Task {
                 id: "t2".into(),
                 title: "Read; notes".into(),
                 notes: String::new(),
