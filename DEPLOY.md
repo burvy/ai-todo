@@ -15,6 +15,9 @@ and `rambl.env.example` there. Copy `rambl.env.example` to `rambl.env` and fill 
 - `GOOGLE_CLIENT_ID=138340425604-qagdhrfblj66i5s9i9icq07lb32sd2g2.apps.googleusercontent.com`,
   the public Google OAuth web client (its authorized origins are https://rambl.burvy.dev
   and http://localhost:3160). Leave it empty to turn sign-in off.
+- `RAMBL_ADMIN_EMAILS=you@example.com,someone@example.com`, optional. Comma-separated
+  list of the emails allowed to open the `/admin` page (it shows today's usage and can
+  block users or addresses and change plans). Leave it empty to turn the page off.
 
 `rambl.env` is read only from the exe's own folder, and real environment
 variables override it. Tasks are stored in `data\rambl.db` next to the exe;

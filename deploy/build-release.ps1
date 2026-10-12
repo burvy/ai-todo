@@ -24,6 +24,7 @@ Copy-Item -Force (Join-Path $repoRoot 'target\release\rambl-server.exe') (Join-P
 TYPESAFE_API_KEY=
 RAMBL_PORT=3160
 RAMBL_DEFAULT_TZ=America/New_York
+RAMBL_ADMIN_EMAILS=boss@example.com
 GOOGLE_CLIENT_ID=138340425604-qagdhrfblj66i5s9i9icq07lb32sd2g2.apps.googleusercontent.com
 '@ | Set-Content -Encoding utf8 (Join-Path $stage 'rambl.env.example')
 
