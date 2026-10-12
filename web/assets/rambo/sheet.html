@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rambo character sheet — placeholder</title>
+  <style>
+    :root { color-scheme: light dark; font: 16px system-ui, sans-serif; }
+    body { max-width: 900px; margin: 0 auto; padding: 2rem; }
+    h1 { font-size: 1.25rem; margin-bottom: .25rem; }
+    p.sub { opacity: .7; font-size: .85rem; margin-top: 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 1rem; }
+    .card { border: 1px solid currentColor; border-radius: .5rem; padding: 1rem; text-align: center; }
+    .card img { width: 64px; height: 112px; display: block; margin: 0 auto .5rem; }
+    .card h3 { margin: 0; font-size: .9rem; font-weight: 600; }
+    .card p { margin: .25rem 0 0; font-size: .75rem; opacity: .7; }
+    .note { border-top: 1px solid currentColor; padding-top: 1rem; margin-top: 2rem; font-size: .85rem; opacity: .8; }
+  </style>
+</head>
+<body>
+  <h1>Rambo character sheet (placeholder)</h1>
+  <p class="sub">All poses share pen.svg's design — same viewBox 0 0 64 112, same class names (pen-barrel, pen-cap, pen-nib, eye-white, eye-black, brow). Replace by drawing, scanning, tracing, simplifying, and exporting Plain SVG.</p>
+
+  <div class="grid">
+    <article class="card">
+      <img src="../rambo/idle.svg" alt="idle pose">
+      <h3>idle</h3>
+      <p>Neutral / brain idle mode</p>
+    </article>
+    <article class="card">
+      <img src="../rambo/writing.svg" alt="writing pose">
+      <h3>writing</h3>
+      <p>Pen at caret, nib tilted</p>
+    </article>
+    <article class="card">
+      <img src="../rambo/flying.svg" alt="flying pose">
+      <h3>flying</h3>
+      <p>Moving to new title</p>
+    </article>
+    <article class="card">
+      <img src="../rambo/happy.svg" alt="happy pose">
+      <h3>happy</h3>
+      <p>Task added / cheer</p>
+    </article>
+    <article class="card">
+      <img src="../rambo/sleepy.svg" alt="sleepy pose">
+      <h3>sleepy</h3>
+      <p>Rest / low energy</p>
+    </article>
+    <article class="card">
+      <img src="../rambo/teasing.svg" alt="teasing pose">
+      <h3>teasing</h3>
+      <p>Playful / teasing</p>
+    </article>
+    <article class="card">
+      <img src="../rambo/worried.svg" alt="worried pose">
+      <h3>worried</h3>
+      <p>Overdue / concern</p>
+    </article>
+    <article class="card">
+      <img src="../rambo/lobotomized.svg" alt="lobotomized pose">
+      <h3>lobotomized</h3>
+      <p>Lobotomized mode (no eyes)</p>
+    </article>
+  </div>
+
+  <div class="note">
+    <strong>Replacement steps (same as art/GUIDE.md):</strong> draw at ~5 cm square, scan 600 dpi greyscale, clean in editor, vectorize in Inkscape (Trace Bitmap, Brightness cutoff), simplify, set viewBox 0 0 64 112, export Plain SVG. Keep the six class names. Every file stays marked placeholder — update art/GUIDE.md when replaced.
+  </div>
+</body>
+</html>

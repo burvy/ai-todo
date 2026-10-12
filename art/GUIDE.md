@@ -92,3 +92,20 @@ The pen mascot (`illustrations/pen.svg`) is Rambo. It is the writing pen, not ju
 - [ ] Sounds are under 1.5 s and under 100 KB.
 - [ ] Viewed in the app in **light and dark** mode (settings gear › desk), on a phone width as well as a desktop.
 - [ ] Update this inventory: change "placeholder" to "hand-made by <name>, <date>" for that row.
+
+## Rambo character placeholder
+
+| Pose | When shown | Brain mood | File |
+|---|---|---|---|
+| idle | Default / rest | Interactive / neutral | web/assets/rambo/idle.svg |
+| writing | Typing at caret / writing title | Interactive / working | web/assets/rambo/writing.svg |
+| flying | Moving to new list row | Interactive / working | web/assets/rambo/flying.svg |
+| happy | Task added / positive | Cheer / happy | web/assets/rambo/happy.svg |
+| sleepy | Low energy / rest | Sleepy | web/assets/rambo/sleepy.svg |
+| teasing | Playful feedback | Teasing | web/assets/rambo/teasing.svg |
+| worried | Overdue task | Overdue / concerned | web/assets/rambo/worried.svg |
+| lobotomized | Lobotomized mode (no movement) | Lobotomized | web/assets/rambo/lobotomized.svg |
+
+All share pen.svg base (viewBox 0 0 64 112, class names pen-barrel / pen-cap / pen-nib / pen-lead / pen-gloss / eye-white / eye-black / brow). See web/assets/rambo/sheet.html for preview.
+
+Redo: draw 6x10 cm pen on paper, scan 600 dpi, vectorize, keep viewBox and class names, export Plain SVG, keep placeholder comment at top.
