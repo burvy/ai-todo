@@ -118,9 +118,8 @@ pub fn supported() -> bool {
 }
 
 fn recognition(window: &Window) -> Result<SpeechRecognition, String> {
-    let constructor = constructor(window).ok_or_else(|| {
-        "Speech recognition is not available in this browser.".to_string()
-    })?;
+    let constructor = constructor(window)
+        .ok_or_else(|| "Speech recognition is not available in this browser.".to_string())?;
     let value = constructor
         .call0(&JsValue::from(window))
         .map_err(|_| "Could not start speech recognition.".to_string())?;
