@@ -147,8 +147,11 @@ pub enum ErrorCode {
     BadRequest,
     NotFound,
     Conflict,
+    /// A dependency (Jev, a database) is temporarily down: 503, try again later.
     Unavailable,
     Upstream,
+    /// This server's own fault, such as a storage failure: 500.
+    Internal,
 }
 
 /// The inner `error` object of a failed response: `{ "error": { "code", "message" } }`.

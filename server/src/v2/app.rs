@@ -15,7 +15,7 @@ use todo_core::{
     Task, TaskDraft, TaskId, When,
 };
 
-use super::store::Store;
+use super::store::{Store, StoreError};
 
 pub const MIN_DURATION_MIN: u16 = 5;
 pub const MAX_DURATION_MIN: u16 = 480;
@@ -56,10 +56,19 @@ impl<S: Store> App<S> {
         }
     }
 
-    fn storage_error(error: anyhow::Error) -> ApiError {
+    /// Storage failures become the error the client sees.
+    ///
+    /// A missing task is a 404 and a refused write is a 409; anything else is
+    /// the database's fault and must not read as the caller's.
+    fn storage_error(error: StoreError) -> ApiError {
+        let code = match error {
+            StoreError::NotFound => ErrorCode::NotFound,
+            StoreError::Conflict(_) => ErrorCode::Conflict,
+            StoreError::Backend(_) => ErrorCode::Internal,
+        };
         ApiError {
-            code: ErrorCode::Unavailable,
-            message: format!("storage error: {error}"),
+            code,
+            message: error.to_string(),
         }
     }
 
@@ -100,7 +109,7 @@ impl<S: Store> App<S> {
             created: ctx.now,
             external_uid: None,
         };
-        self.store.put(&task).map_err(Self::storage_error)?;
+        self.store.put(task).map_err(Self::storage_error)?;
         self.snapshot(tz)
     }
 
@@ -123,7 +132,7 @@ impl<S: Store> App<S> {
         if let Some(label) = patch.label {
             task.label = label;
         }
-        self.store.put(&task).map_err(Self::storage_error)?;
+        self.store.put(task).map_err(Self::storage_error)?;
         self.snapshot(tz)
     }
 
@@ -132,22 +141,23 @@ impl<S: Store> App<S> {
     pub fn import(&mut self, events: Vec<ImportedEvent>, tz: Tz) -> Result<ImportResult, ApiError> {
         let ctx = self.ctx(tz);
         let tasks = self.load()?;
-        let mut known: HashMap<String, TaskId> = tasks
-            .iter()
-            .filter_map(|task| task.external_uid.clone().map(|uid| (uid, task.id.clone())))
-            .collect();
         let mut order = tasks.iter().map(|task| task.order).max().unwrap_or(-1) + 1;
         let mut created = Vec::new();
         let mut updated = Vec::new();
         for event in events {
             let duration_min = event_minutes(event.start, event.end);
-            if let Some(id) = event.uid.as_ref().and_then(|uid| known.get(uid)).cloned() {
-                let mut task = self.find(&id.0)?;
+            // The store owns the uid index, so this is one lookup per event
+            // rather than a map built from every task on the server.
+            let existing = match &event.uid {
+                Some(uid) => self.store.find_by_uid(uid).map_err(Self::storage_error)?,
+                None => None,
+            };
+            if let Some(mut task) = existing {
                 task.title = event.title;
                 task.duration_min = duration_min;
                 task.when = When::At(event.start);
-                self.store.put(&task).map_err(Self::storage_error)?;
-                updated.push(id);
+                updated.push(task.id.clone());
+                self.store.put(task).map_err(Self::storage_error)?;
                 continue;
             }
             let id = self.fresh_id(ctx.now.timestamp_nanos_opt().unwrap_or_default())?;
@@ -165,11 +175,8 @@ impl<S: Store> App<S> {
                 external_uid: event.uid.clone(),
             };
             order += 1;
-            self.store.put(&task).map_err(Self::storage_error)?;
-            if let Some(uid) = event.uid {
-                known.insert(uid, id.clone());
-            }
             created.push(id);
+            self.store.put(task).map_err(Self::storage_error)?;
         }
         Ok(ImportResult {
             created,
@@ -206,7 +213,7 @@ impl<S: Store> App<S> {
                 created: ctx.now,
                 external_uid: None,
             };
-            self.store.put(&task).map_err(Self::storage_error)?;
+            self.store.put(task).map_err(Self::storage_error)?;
             ids.push(id);
         }
         Ok((ids, self.snapshot(tz)?))
@@ -238,7 +245,7 @@ impl<S: Store> App<S> {
         if let Some(label) = revision.label {
             task.label = label;
         }
-        self.store.put(&task).map_err(Self::storage_error)?;
+        self.store.put(task).map_err(Self::storage_error)?;
         self.snapshot(tz)
     }
 
@@ -271,18 +278,19 @@ impl<S: Store> App<S> {
                 message: "ids must list every task exactly once".into(),
             });
         }
-        for (index, id) in ids.iter().enumerate() {
-            let mut task = self.find(id)?;
-            task.order = index as i64;
-            self.store.put(&task).map_err(Self::storage_error)?;
-        }
+        // One transaction for the whole reorder, so a list that fails halfway
+        // cannot leave the tasks half-renumbered.
+        let ordered: Vec<TaskId> = ids.iter().cloned().map(TaskId).collect();
+        self.store
+            .set_order(&ordered)
+            .map_err(Self::storage_error)?;
         self.snapshot(tz)
     }
 
     fn find(&self, id: &str) -> Result<Task, ApiError> {
-        self.store
-            .get(&TaskId(id.to_owned()))
-            .map_err(Self::storage_error)?
+        self.load()?
+            .into_iter()
+            .find(|task| task.id.0 == id)
             .ok_or_else(|| ApiError {
                 code: ErrorCode::NotFound,
                 message: "task not found".into(),
@@ -291,9 +299,11 @@ impl<S: Store> App<S> {
 
     /// An id that is not used yet. The first candidate is the clock in nanoseconds.
     fn fresh_id(&self, seed: i64) -> Result<TaskId, ApiError> {
+        let taken: std::collections::HashSet<String> =
+            self.load()?.into_iter().map(|task| task.id.0).collect();
         for attempt in 0.. {
             let id = TaskId(format!("t{}", seed + attempt));
-            if self.store.get(&id).map_err(Self::storage_error)?.is_none() {
+            if !taken.contains(&id.0) {
                 return Ok(id);
             }
         }
