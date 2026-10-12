@@ -30,7 +30,7 @@ use futures::future::join_all;
 use judge::{choose, classify_intent, find_date_candidates, split_sentences, understand};
 use scheduler::{BusyBlock, Placement, UnschedulableReason, WorkingHours};
 use serde::{Deserialize, Serialize};
-use todo_core::{Source, Task};
+use todo_core::v1::{Source, Task};
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
