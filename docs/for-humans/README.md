@@ -18,7 +18,7 @@ to do and the exact path or link. Paths were checked against origin/main
 
 - [ ] Create the Google sign-in client (OAuth client ID) in Google Cloud: https://console.cloud.google.com/apis/credentials
 - [ ] Turn on the Cloudflare Access lock in front of the site — temporary, until accounts ship: https://one.dash.cloudflare.com/
-- [ ] Put the Jev key (`TYPESAFE_API_KEY`) in the server's `.env` — see Environment variables in [README.md](../../README.md) (gitignored: never on origin/main).
+- [ ] Put the Jev key (`TYPESAFE_API_KEY`) in the server's `rambl.env` — see Environment variables in [README.md](../../README.md) (gitignored: never on origin/main).
 
 ## Deploy
 

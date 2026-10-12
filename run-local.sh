@@ -3,7 +3,7 @@
 # Build and run ai-todo locally, then open it in the browser.
 # Linux/macOS counterpart of run-local.ps1.
 #
-#   ./run-local.sh                  persistent data in data/ai-todo.db
+#   ./run-local.sh                  persistent data in data/rambl.db
 #   ./run-local.sh --fresh          throwaway in-memory data (clean demo)
 #   ./run-local.sh --port 9000 --log-capture
 #   ./run-local.sh --debug          fast dev build instead of --release
@@ -42,7 +42,7 @@ case "$port" in
     ''|*[!0-9]*) die "--port must be a number, got '$port'" 2 ;;
 esac
 
-# Run from wherever the script lives, so data/ resolves.
+# Run from wherever the script lives, so data/ and rambl.env resolve.
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 # A stale server from an earlier run is the usual reason the next one dies
@@ -61,10 +61,10 @@ Either stop it (lsof -nP -iTCP:$port -sTCP:LISTEN), or use another port:
     fi
 fi
 
-# Jev key: .env (TYPESAFE_API_KEY=...) is loaded by the server itself; fall
+# Jev key: rambl.env (TYPESAFE_API_KEY=...) is loaded by the server itself; fall
 # back to jev-api-key.env. The file is either "TYPESAFE_API_KEY=..." or just
 # the bare key, so handle both. The value is exported, never printed.
-if [ -z "${TYPESAFE_API_KEY:-}" ] && [ ! -f .env ] && [ -f jev-api-key.env ]; then
+if [ -z "${TYPESAFE_API_KEY:-}" ] && [ ! -f rambl.env ] && [ -f jev-api-key.env ]; then
     value=$(sed -n 's/^[[:space:]]*TYPESAFE_API_KEY[[:space:]]*=[[:space:]]*//p' jev-api-key.env | head -n 1)
     if [ -z "$value" ]; then
         # Not a "NAME=value" file: treat the first non-blank, non-comment line
@@ -80,8 +80,8 @@ if [ -z "${TYPESAFE_API_KEY:-}" ] && [ ! -f .env ] && [ -f jev-api-key.env ]; th
         export TYPESAFE_API_KEY
     fi
 fi
-if [ -z "${TYPESAFE_API_KEY:-}" ] && [ ! -f .env ]; then
-    printf 'warning: no Jev key found (.env or jev-api-key.env).\n' >&2
+if [ -z "${TYPESAFE_API_KEY:-}" ] && [ ! -f rambl.env ]; then
+    printf 'warning: no Jev key found (rambl.env or jev-api-key.env).\n' >&2
     printf '         Capture falls back to one task per line.\n' >&2
 fi
 
@@ -95,11 +95,11 @@ export RAMBL_DEFAULT_TZ
 # --release is what run-local.ps1 uses and what a demo should run, but it
 # costs ~100s from cold. --debug rebuilds in a few seconds.
 if [ -n "$profile" ]; then
-    cargo build --release -p server
-    server=./target/release/server
+    cargo build --release -p rambl-server
+    server=./target/release/rambl-server
 else
-    cargo build -p server
-    server=./target/debug/server
+    cargo build -p rambl-server
+    server=./target/debug/rambl-server
 fi
 
 url="http://localhost:$port"
