@@ -1,4 +1,4 @@
-# Rambl features
+﻿# Rambl features
 
 This is the implementation map for the current `origin/main`. Each feature has a
 stable reference such as **I.1**. *Planned* means the behaviour is not in the
@@ -119,6 +119,11 @@ b. Not visible; covered by scheduler and server tests.
 c. Code: `crates/core/src/lib.rs:Placement, Plan`;
 `server/src/v2/app.rs:plan`.
 
+### 4. Phone swipe between panels
+a. On narrow screens the task list and planner sit side by side; swiping switches the visible pane and snaps to the nearest pane width.
+b. On a phone, swipe horizontally between To do and Planner; the pane snaps at half the pane width.
+c. Code: `web/src/lib.rs:pane_at, show_pane, track_pane`; `web/src/lib.rs:test` (swipe mapping to nearest pane).
+
 ### 5. System colour scheme
 a. The page follows the operating system's light or dark setting.
 b. Change the system theme and reload the page.
@@ -127,7 +132,7 @@ c. Code: `web/theme.css` (`:root` and `@media (prefers-color-scheme: dark)`).
 ### 6. Parchment theme
 a. The page is aged paper: warm palette, serif headings, a tiled paper texture that switches to a dark variant in dark mode.
 b. Look at the page background and the masthead in light and dark mode; with `web/assets/theme/*.svg` deleted it still reads as parchment.
-c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics: `web/assets/theme/` *(planned, drawn separately)*.
+c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics deleted; theme reads as parchment without external assets.
 
 ## IV. RAMBL, THE MASCOT
 
@@ -144,18 +149,18 @@ c. Code: `web/src/lib.rs:Mascot`; `web/src/mascot.rs:transition`;
 
 ### 3. Drop actions
 a. Dropping Rambo on a task opens a prompt with Edit, Move, Done, Delete and
-Never mind actions. The edit dialog is *(planned)*.
+Never mind actions. The edit dialog is built (`web/src/lib.rs` dialog form with title/duration/when fields; calendar imports show a sync-back notice).
 b. Drag the pen onto a task row and choose an action.
 c. Code: `web/src/lib.rs:Mascot`; `web/src/api.rs:patch_task, delete_task`.
 
 ### 4. Reduced motion
 a. With reduced motion enabled, Rambo returns immediately instead of animating.
-b. Enable reduced motion in the operating system and drag Rambo away from home.
+b. Enable reduced motion in the operating system and drag Rambo away from home. Named poses (`home`, `falling`, `returning`) are shown via `brain_pose`; events like `TaskOverdue` drive pose changes.
 c. Code: `web/src/mascot.rs:prefers_reduced_motion`; `web/src/lib.rs:Mascot`.
 
 ### 5. Mascot brain
-a. The mascot crate provides deterministic, seeded behaviour without web code; wiring it
-into the web mascot is *(planned)*.
+a. The mascot crate provides deterministic, seeded behaviour; it is wired into the web mascot via `brain::Controller` (`web/src/lib.rs`, `web/src/brain.rs`).
+
 b. Not visible; covered by tests in `crates/rambl-brain/src/lib.rs`.
 c. Code: `crates/rambl-brain/src/lib.rs:Brain, step, step_with`;
 `crates/rambl-brain/src/rng.rs:Seeded`.
@@ -259,7 +264,7 @@ c. Code: `server/src/v2/auth.rs:LOCAL_USER`;
 
 ### 4. Anonymous use
 a. Use without an account. A request with no bearer token gets an `X-Rambl-Anon` id the server issued; sending that id back keeps the same tasks. Signing in adopts the anonymous tasks (a calendar event the account already has keeps the signed-in copy) and ends the anonymous id. Forged, unknown or malformed ids get a fresh id, and each client address may be issued `RAMBL_ANON_IDS_PER_IP` (default 20) new ids a day.
-b. Not visible: the anonymous id is kept in the page and sent on every request. The sign-in reminder is *(planned)*. Anonymous accounts unused for 30 days are deleted with their tasks by the daily backup task, after the backup; signed-in accounts never are.
+b. Not visible: the anonymous id is kept in the page and sent on every request. The sign-in reminder is planned; anonymous accounts unused for 30 days are deleted with their tasks by the daily backup task, after the backup; signed-in accounts never are.
 c. Code: `server/src/v2/http.rs:assign_anonymous_id, CurrentUser`; `server/src/v2/store.rs:adopt_anonymous, touch_anonymous, expire_anonymous`; `server/src/v2/backup.rs:run_cycle_sync`.
 
 ### 5. Administration
