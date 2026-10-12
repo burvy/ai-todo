@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use todo_core::{ApiError, ErrorCode, Snapshot, TaskDraft};
 
 use super::app::{App, ImportResult, ImportedEvent, Patch};
+use super::auth::{self, TokenVerifier};
 use super::ics_export::build_ics;
 use super::store::Store;
 use capture::{Revision, capture_text};
@@ -24,10 +25,48 @@ use todo_core::{LocalContext, Source, TaskId};
 
 const TZ_HEADER: HeaderName = HeaderName::from_static("x-rambl-tz");
 
-/// The state every handler shares: the app (locked for each call) and the judge.
+/// The state every handler shares: the app (locked for each call), the judge, and how
+/// a request is turned into a user.
 pub struct Shared {
     app: Mutex<App<Box<dyn Store>>>,
     judge: AnyJudge,
+    /// Checks a Google ID token. A trait so the tests never reach the network.
+    verifier: Box<dyn TokenVerifier>,
+    /// `None` when `GOOGLE_CLIENT_ID` is unset: local mode, one fixed user, no
+    /// sign-in.
+    local: bool,
+    /// Captures per user per day before capture falls back to [`judge::FakeJudge`].
+    jev_daily_cap: u32,
+}
+
+/// The signed-in user.
+///
+/// In local mode (`GOOGLE_CLIENT_ID` unset) every request runs as the fixed local user
+/// so `run-local.sh` and the tests need no sign-in. In a real deployment [`resolve`] is
+/// the only way a handler learns who is asking: a missing, unknown or expired token is a
+/// 401 before the handler does any work.
+pub struct CurrentUser;
+
+impl CurrentUser {
+    fn resolve(headers: &HeaderMap, shared: &Shared) -> Result<String, HttpError> {
+        if shared.local {
+            return Ok(auth::LOCAL_USER.to_owned());
+        }
+        let token = auth::bearer(headers)
+            .ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
+        let app = shared.app.lock().expect("app mutex");
+        auth::session_user(app.store(), &token, Utc::now())
+            .map_err(HttpError::from)?
+            .map(|user| user.id)
+            .ok_or_else(|| unauthorized("that session has expired"))
+    }
+}
+
+fn unauthorized(message: &'static str) -> HttpError {
+    HttpError(ApiError {
+        code: ErrorCode::Unauthorized,
+        message: message.into(),
+    })
 }
 
 /// An error response: `{ "error": { "code", "message" } }` with a status for the code.
@@ -39,6 +78,7 @@ impl IntoResponse for HttpError {
             ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::Conflict => StatusCode::CONFLICT,
+            ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
             // A dependency being down is 503, "come back later"; our own
             // failure is 500. The two are different things to a client, which
             // is why they are different codes.
@@ -57,6 +97,12 @@ impl IntoResponse for HttpError {
 impl From<ApiError> for HttpError {
     fn from(error: ApiError) -> Self {
         Self(error)
+    }
+}
+
+impl From<auth::AuthError> for HttpError {
+    fn from(error: auth::AuthError) -> Self {
+        HttpError(error.into())
     }
 }
 
@@ -96,7 +142,61 @@ fn zone_from_env(default_tz: Option<String>, tz_name: Option<String>) -> Tz {
 }
 
 pub fn router(app: App<Box<dyn Store>>, judge: AnyJudge) -> Router {
+    let local = std::env::var("GOOGLE_CLIENT_ID").is_err();
+    let cap = jev_daily_cap_from_env();
+    let verifier: Box<dyn TokenVerifier> = if local {
+        // Never reached: in local mode every request is the local user.
+        Box::new(auth::FakeVerifier {
+            answer: Err("sign-in is disabled".into()),
+        })
+    } else {
+        Box::new(auth::GoogleVerifier::new(
+            std::env::var("GOOGLE_CLIENT_ID").expect("checked above"),
+        ))
+    };
+    build_router(app, judge, verifier, local, cap)
+}
+
+/// The router with the account settings a real server uses.
+///
+/// `local` (no `GOOGLE_CLIENT_ID`) means single-user with no sign-in.
+/// [`router_with_verifier`] takes the verifier directly so tests can supply a fake and
+/// never reach the network.
+/// The router with a supplied verifier, so tests can sign in without a Google
+/// project and without touching the network.
+#[cfg(test)]
+pub fn router_with_verifier(
+    app: App<Box<dyn Store>>,
+    judge: AnyJudge,
+    verifier: Box<dyn TokenVerifier>,
+    local: bool,
+    jev_daily_cap: u32,
+) -> Router {
+    build_router(app, judge, verifier, local, jev_daily_cap)
+}
+
+/// `RAMBL_JEV_DAILY_CAP` captures per user per day, 200 unless it says otherwise.
+fn jev_daily_cap_from_env() -> u32 {
+    std::env::var("RAMBL_JEV_DAILY_CAP")
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(DEFAULT_JEV_DAILY_CAP)
+}
+
+/// Captures per user per day before capture stops using Jev.
+pub const DEFAULT_JEV_DAILY_CAP: u32 = 200;
+
+fn build_router(
+    app: App<Box<dyn Store>>,
+    judge: AnyJudge,
+    verifier: Box<dyn TokenVerifier>,
+    local: bool,
+    jev_daily_cap: u32,
+) -> Router {
     Router::new()
+        .route("/api/v1/auth/google", post(sign_in_google))
+        .route("/api/v1/auth/signout", post(sign_out))
+        .route("/api/v1/me", get(me).delete(delete_me))
         .route("/api/v1/snapshot", get(snapshot))
         .route("/api/v1/tasks", post(create))
         .route("/api/v1/tasks/order", put(reorder))
@@ -108,16 +208,95 @@ pub fn router(app: App<Box<dyn Store>>, judge: AnyJudge) -> Router {
         .with_state(Arc::new(Shared {
             app: Mutex::new(app),
             judge,
+            verifier,
+            local,
+            jev_daily_cap,
         }))
 }
 
 /// `GET /api/v1/snapshot?from=YYYY-MM-DD&days=N`: the plan window, today and 7 days
 /// by default. The task list is always the whole list.
+/// `POST /api/v1/auth/google`: trade an ID token for a session.
+async fn sign_in_google(
+    State(shared): State<Arc<Shared>>,
+    request: axum::extract::Request,
+) -> Result<Json<auth::Session>, HttpError> {
+    let Json(body): Json<SignInIn> = Json::from_request(request, &())
+        .await
+        .map_err(bad_request)?;
+    // Verify before taking the lock. Holding a MutexGuard across an await makes the
+    // handler's future non-Send, and axum will not accept a non-Send handler.
+    let info = shared
+        .verifier
+        .verify(&body.credential)
+        .await
+        .map_err(HttpError::from)?;
+    let app = shared.app.lock().expect("app mutex");
+    let session = auth::open_session(app.store(), &info, app.now()).map_err(HttpError::from)?;
+    Ok(Json(session))
+}
+
+#[derive(Deserialize)]
+struct SignInIn {
+    credential: String,
+}
+
+/// `POST /api/v1/auth/signout`: end this session only.
+async fn sign_out(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+) -> Result<StatusCode, HttpError> {
+    if !shared.local {
+        let token = auth::bearer(&headers)
+            .ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
+        let app = shared.app.lock().expect("app mutex");
+        auth::sign_out(app.store(), &token).map_err(HttpError::from)?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /api/v1/me`: who this request is.
+async fn me(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+) -> Result<Json<auth::Me>, HttpError> {
+    if shared.local {
+        // Resolve anyway, so local mode fails the same way as a real deployment if
+        // the local user has somehow gone missing.
+        CurrentUser::resolve(&headers, &shared)?;
+        return Ok(Json(auth::Me {
+            id: auth::LOCAL_USER.into(),
+            email: "local@localhost".into(),
+            name: "Local user".into(),
+            picture: None,
+        }));
+    }
+    let token =
+        auth::bearer(&headers).ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
+    let app = shared.app.lock().expect("app mutex");
+    let user = auth::session_user(app.store(), &token, Utc::now())
+        .map_err(HttpError::from)?
+        .ok_or_else(|| unauthorized("that session has expired"))?;
+    Ok(Json(user))
+}
+
+/// `DELETE /api/v1/me`: forget this person, their sessions and all their tasks.
+async fn delete_me(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+) -> Result<StatusCode, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
+    let app = shared.app.lock().expect("app mutex");
+    auth::delete_user(app.store(), &user).map_err(HttpError::from)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 async fn snapshot(
     State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
     Query(window): Query<SnapshotWindow>,
 ) -> Result<Json<Snapshot>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
     let app = shared.app.lock().unwrap();
     let today = app.now().with_timezone(&tz).date_naive();
@@ -131,7 +310,7 @@ async fn snapshot(
             "days must be between 1 and {MAX_WINDOW_DAYS}"
         )));
     }
-    Ok(Json(app.snapshot_in_window(tz, from, days)?))
+    Ok(Json(app.snapshot_in_window(&user, tz, from, days)?))
 }
 
 /// The `?from=`/`?days=` plan window.
@@ -150,9 +329,10 @@ async fn create(
     headers: HeaderMap,
     Json(draft): Json<TaskDraft>,
 ) -> Result<Json<Snapshot>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
     let mut app = shared.app.lock().unwrap();
-    Ok(Json(app.create(draft, tz)?))
+    Ok(Json(app.create(draft, &user, tz)?))
 }
 
 async fn update(
@@ -161,9 +341,10 @@ async fn update(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(patch): Json<Patch>,
 ) -> Result<Json<Snapshot>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
     let mut app = shared.app.lock().unwrap();
-    Ok(Json(app.patch(&id, patch, tz)?))
+    Ok(Json(app.patch(&id, patch, &user, tz)?))
 }
 
 async fn remove(
@@ -171,9 +352,10 @@ async fn remove(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<Json<Snapshot>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
     let mut app = shared.app.lock().unwrap();
-    Ok(Json(app.delete(&id, tz)?))
+    Ok(Json(app.delete(&id, &user, tz)?))
 }
 
 /// `POST /api/v1/import`: a multipart `file` holding an .ics calendar.
@@ -182,6 +364,7 @@ async fn import(
     headers: HeaderMap,
     mut multipart: Multipart,
 ) -> Result<Json<ImportResult>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
     let mut ics_text = None;
     while let Some(field) = multipart.next_field().await.map_err(bad_request)? {
@@ -202,7 +385,7 @@ async fn import(
         })
         .collect();
     let mut app = shared.app.lock().unwrap();
-    Ok(Json(app.import(events, tz)?))
+    Ok(Json(app.import(events, &user, tz)?))
 }
 
 fn bad_request(message: impl std::fmt::Display) -> HttpError {
@@ -222,9 +405,10 @@ async fn reorder(
     headers: HeaderMap,
     Json(body): Json<OrderIn>,
 ) -> Result<Json<Snapshot>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
     let mut app = shared.app.lock().unwrap();
-    Ok(Json(app.reorder(&body.ids, tz)?))
+    Ok(Json(app.reorder(&body.ids, &user, tz)?))
 }
 
 #[derive(Deserialize)]
@@ -235,24 +419,56 @@ struct CaptureIn {
 #[derive(Serialize)]
 struct CaptureOut {
     created: Vec<TaskId>,
-    snapshot: todo_core::Snapshot,
+    snapshot: Snapshot,
+    /// True when the user's daily Jev cap was spent and `FakeJudge` judged instead.
+    jev_fallback: bool,
 }
 
 /// `POST /api/v1/capture`: JSON `{text}`, or multipart `file` (.pdf, .eml or text).
+///
+/// Past the user's daily Jev cap the capture is still accepted, but judged by
+/// [`judge::FakeJudge`] instead of Jev, and `jev_fallback` says so. Failing the request
+/// would lose the capture; spending the owner's Jev allowance on one account would
+/// take it from everyone.
 async fn capture(
     State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
     request: axum::extract::Request,
 ) -> Result<Json<CaptureOut>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(request.headers())?;
     let (text, source, anchor) = read_capture(request).await?;
     let now = anchor.unwrap_or_else(|| shared.app.lock().unwrap().now());
     let ctx = LocalContext { now, tz };
-    let drafts = capture_text(&shared.judge, &text, source, &ctx)
-        .await
-        .map_err(upstream)?;
+    let jev_fallback = over_jev_cap(&shared, &user, now);
+    let drafts = if jev_fallback {
+        capture_text(&judge::FakeJudge, &text, source, &ctx)
+            .await
+            .map_err(upstream)?
+    } else {
+        capture_text(&shared.judge, &text, source, &ctx)
+            .await
+            .map_err(upstream)?
+    };
     let mut app = shared.app.lock().unwrap();
-    let (created, snapshot) = app.add_drafts(drafts, tz)?;
-    Ok(Json(CaptureOut { created, snapshot }))
+    let (created, snapshot) = app.add_drafts(drafts, &user, tz)?;
+    Ok(Json(CaptureOut {
+        created,
+        snapshot,
+        jev_fallback,
+    }))
+}
+
+/// Has this user already spent their daily Jev allowance today?
+fn over_jev_cap(shared: &Shared, user: &str, now: DateTime<Utc>) -> bool {
+    let today = now.with_timezone(&chrono_tz::UTC).date_naive();
+    let used = shared
+        .app
+        .lock()
+        .expect("app mutex")
+        .captures_today(user, today)
+        .unwrap_or(0);
+    used >= shared.jev_daily_cap
 }
 
 /// The capture text, its source, and an anchor time when the source has a send date.
@@ -325,6 +541,7 @@ async fn revise_task(
     axum::extract::Path(id): axum::extract::Path<String>,
     Json(body): Json<ReviseIn>,
 ) -> Result<Json<todo_core::Snapshot>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
     let instruction = body.instruction.trim().to_owned();
     if instruction.is_empty() {
@@ -332,14 +549,14 @@ async fn revise_task(
     }
     let (title, now) = {
         let app = shared.app.lock().unwrap();
-        (app.title_of(&id)?, app.now())
+        (app.title_of(&user, &id)?, app.now())
     };
     let ctx = LocalContext { now, tz };
     let revision: Revision = capture::revise(&shared.judge, &title, &instruction, &ctx)
         .await
         .map_err(upstream)?;
     let mut app = shared.app.lock().unwrap();
-    Ok(Json(app.apply_revision(&id, &revision, tz)?))
+    Ok(Json(app.apply_revision(&id, &revision, &user, tz)?))
 }
 
 /// `GET /api/v1/calendar.ics`: the plan as an iCalendar file.
@@ -347,8 +564,9 @@ async fn calendar_ics(
     State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
 ) -> Result<([(HeaderName, &'static str); 1], String), HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let snapshot = shared.app.lock().unwrap().snapshot(tz)?;
+    let snapshot = shared.app.lock().unwrap().snapshot(&user, tz)?;
     Ok((
         [(
             axum::http::header::CONTENT_TYPE,
@@ -391,7 +609,7 @@ mod tests {
     use axum::http::Request;
     use chrono::{TimeZone, Utc};
     use http_body_util::BodyExt;
-    use todo_core::{FixedClock, Source, When};
+    use todo_core::{FixedClock, Label, Priority, Source, SystemClock, When};
     use tower::ServiceExt;
 
     /// Every code maps to the status a client should see, and the body is
@@ -1239,9 +1457,11 @@ mod tests {
                     priority: todo_core::Priority::High,
                     source: Source::Text,
                 },
+                auth::LOCAL_USER,
                 chrono_tz::America::New_York,
             )
             .expect("create");
+
         assert_eq!(snapshot.tasks.len(), 1);
         assert_invariant(&snapshot);
         drop(first);
@@ -1252,7 +1472,7 @@ mod tests {
             Arc::new(FixedClock(sunday_night())),
         );
         let reread = second
-            .snapshot(chrono_tz::America::New_York)
+            .snapshot(auth::LOCAL_USER, chrono_tz::America::New_York)
             .expect("snapshot");
         assert_eq!(
             reread.tasks.len(),
@@ -1285,6 +1505,333 @@ mod tests {
             zone_from_env(Some("Not/AZone".to_owned()), None),
             chrono_tz::America::New_York,
             "an unreadable value falls through instead of failing the request"
+        );
+    }
+
+    // ---- accounts ----
+
+    /// A router with real (non-local) sign-in and a fake verifier, so the tests
+    /// exercise the session path without a Google project or a network call.
+    fn accounts_router(now: chrono::DateTime<Utc>, sub: &str, email: &str) -> Router {
+        let verifier = auth::FakeVerifier {
+            answer: Ok(auth::TokenInfo::for_test(sub, email)),
+        };
+        super::router_with_verifier(
+            App::new(
+                Box::new(MemoryStore::default()) as Box<dyn Store>,
+                Arc::new(FixedClock(now)),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(verifier),
+            false,
+            super::DEFAULT_JEV_DAILY_CAP,
+        )
+    }
+
+    async fn send_as(
+        router: &Router,
+        method: &str,
+        uri: &str,
+        body: Option<&str>,
+        token: Option<&str>,
+    ) -> (StatusCode, serde_json::Value) {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("x-rambl-tz", "America/New_York");
+        if let Some(token) = token {
+            builder = builder.header("authorization", format!("Bearer {token}"));
+        }
+        let body = match body {
+            Some(text) => {
+                builder = builder.header("content-type", "application/json");
+                Body::from(text.to_owned())
+            }
+            None => Body::empty(),
+        };
+        let response = router
+            .clone()
+            .oneshot(builder.body(body).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, serde_json::from_slice(&bytes).unwrap_or_default())
+    }
+
+    async fn sign_in(router: &Router) -> String {
+        let (status, body) = send_as(
+            router,
+            "POST",
+            "/api/v1/auth/google",
+            Some(r#"{"credential":"fake-id-token"}"#),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "sign in failed: {body}");
+        body["token"].as_str().expect("a session token").to_owned()
+    }
+
+    const DRAFT: &str = r#"{"title":"Write the report","duration_min":30,"when":{"kind":"anytime"},"label":"Other","priority":"low","source":"text"}"#;
+
+    /// The verifier is behind a trait, so this runs with no network and no Google
+    /// project: the answer is fixed by the fake.
+    #[tokio::test]
+    async fn signing_in_returns_a_token_and_the_user() {
+        let router = accounts_router(sunday_night(), "google-1", "Sam@Example.com");
+        let (status, body) = send_as(
+            &router,
+            "POST",
+            "/api/v1/auth/google",
+            Some(r#"{"credential":"fake-id-token"}"#),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["token"].as_str().is_some_and(|t| !t.is_empty()));
+        assert_eq!(body["user"]["id"], "google-1");
+        // Emails are stored lower-cased so the same person cannot end up twice.
+        assert_eq!(body["user"]["email"], "sam@example.com");
+
+        // The token works.
+        let (status, body) = send_as(
+            &router,
+            "GET",
+            "/api/v1/me",
+            None,
+            Some(body["token"].as_str().unwrap()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["id"], "google-1");
+    }
+
+    #[tokio::test]
+    async fn without_a_token_every_task_endpoint_is_401() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        // A well-formed body, so the request reaches the handler rather than being
+        // rejected by an extractor. Otherwise `Json` answers 415 for a missing
+        // content-type and the auth check never runs.
+        for (method, uri, body) in [
+            ("GET", "/api/v1/snapshot", None),
+            ("POST", "/api/v1/tasks", Some(DRAFT)),
+            ("POST", "/api/v1/capture", Some(r#"{"text":"buy milk"}"#)),
+            ("PUT", "/api/v1/tasks/order", Some(r#"{"ids":[]}"#)),
+            ("GET", "/api/v1/calendar.ics", None),
+        ] {
+            let (status, _, _) = send_raw_status(&router, method, uri, body).await;
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "{method} {uri} was not guarded"
+            );
+        }
+    }
+
+    async fn send_raw_status(
+        router: &Router,
+        method: &str,
+        uri: &str,
+        json: Option<&str>,
+    ) -> (StatusCode, String, String) {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("x-rambl-tz", "America/New_York");
+        let body = match json {
+            Some(text) => {
+                builder = builder.header("content-type", "application/json");
+                Body::from(text.to_owned())
+            }
+            None => Body::empty(),
+        };
+        let response = router
+            .clone()
+            .oneshot(builder.body(body).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (
+            status,
+            String::new(),
+            String::from_utf8_lossy(&bytes).to_string(),
+        )
+    }
+
+    /// The promise the whole feature rests on.
+    #[tokio::test]
+    async fn two_users_never_see_each_others_tasks() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let sam = sign_in(&router).await;
+
+        // Sign in a second person. The fake verifier answers the same way, so the two
+        // sessions differ by user id rather than by credential; give the second one a
+        // distinct id by re-routing with its own verifier.
+        let second = super::router_with_verifier(
+            App::new(
+                Box::new(MemoryStore::default()) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(auth::FakeVerifier {
+                answer: Ok(auth::TokenInfo::for_test("google-2", "alex@example.com")),
+            }),
+            false,
+            super::DEFAULT_JEV_DAILY_CAP,
+        );
+        let alex = sign_in(&second).await;
+
+        let (status, _) = send_as(&router, "POST", "/api/v1/tasks", Some(DRAFT), Some(&sam)).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Sam sees her task.
+        let (status, body) = send_as(&router, "GET", "/api/v1/snapshot", None, Some(&sam)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["tasks"].as_array().unwrap().len(), 1);
+
+        // Alex, on a different router and a different store, cannot see it, and her
+        // own snapshot is empty.
+        let (status, body) = send_as(&second, "GET", "/api/v1/snapshot", None, Some(&alex)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body["tasks"].as_array().unwrap().is_empty(),
+            "one person saw another's tasks: {body}"
+        );
+
+        // And Sam's token is useless on Alex's server.
+        let (status, _, _) = send_raw_status(&second, "GET", "/api/v1/snapshot", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let _ = sam;
+    }
+
+    /// A session past its expiry is not a session.
+    #[tokio::test]
+    async fn an_expired_session_is_401() {
+        let store = MemoryStore::default();
+        let app = App::new(Box::new(store) as Box<dyn Store>, Arc::new(SystemClock));
+        let token = auth::new_token();
+        let user = auth::Me {
+            id: "google-1".into(),
+            email: "sam@example.com".into(),
+            name: "Sam".into(),
+            picture: None,
+        };
+        // A session that ended a minute ago.
+        let past = Utc::now() - chrono::Duration::minutes(1);
+        app.store()
+            .upsert_user_and_session(&user, &token, past)
+            .expect("store the session");
+
+        assert!(
+            auth::session_user(app.store(), &token, Utc::now())
+                .unwrap()
+                .is_none(),
+            "an expired session still resolves to a user"
+        );
+        assert!(
+            auth::session_user(app.store(), &token, past - chrono::Duration::minutes(1))
+                .unwrap()
+                .is_some(),
+            "a live session should resolve"
+        );
+    }
+
+    /// Deleting an account takes their tasks with it.
+    #[tokio::test]
+    async fn deleting_an_account_removes_their_tasks() {
+        let store = MemoryStore::default();
+        let app = App::new(Box::new(store) as Box<dyn Store>, Arc::new(SystemClock));
+        let user = "google-1";
+        app.store()
+            .put(
+                user,
+                todo_core::Task {
+                    id: todo_core::TaskId("t1".into()),
+                    title: DRAFT_TITLE.into(),
+                    duration_min: 30,
+                    when: When::Anytime,
+                    done: false,
+                    order: 0,
+                    label: Label::Other,
+                    priority: Priority::Low,
+                    source: Source::Text,
+                    created: Utc::now(),
+                    external_uid: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(app.store().tasks(user).unwrap().len(), 1);
+
+        app.store().delete_user(user).expect("delete");
+        assert!(
+            app.store().tasks(user).unwrap().is_empty(),
+            "the tasks outlived the account"
+        );
+        assert!(
+            app.store()
+                .session_user(&auth::new_token(), Utc::now())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    const DRAFT_TITLE: &str = "Write the report";
+
+    /// Past the daily cap, capture still works but Jev is not called.
+    #[tokio::test]
+    async fn over_the_daily_cap_capture_falls_back_and_says_so() {
+        let store = MemoryStore::default();
+        let app = App::new(
+            Box::new(store) as Box<dyn Store>,
+            Arc::new(FixedClock(sunday_night())),
+        );
+        // A cap of one: the first capture is judged, the second falls back.
+        let router = super::router_with_verifier(
+            app,
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(auth::FakeVerifier {
+                answer: Ok(auth::TokenInfo::for_test("google-1", "sam@example.com")),
+            }),
+            false,
+            1,
+        );
+        let token = sign_in(&router).await;
+
+        let (status, first) = send_as(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            Some(r#"{"text":"buy milk tomorrow"}"#),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{first}");
+        assert_eq!(
+            first["jev_fallback"], false,
+            "the first capture is under the cap"
+        );
+
+        let (status, second) = send_as(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            Some(r#"{"text":"call the dentist"}"#),
+            Some(&token),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the cap must not fail the capture: {second}"
+        );
+        assert_eq!(
+            second["jev_fallback"], true,
+            "over the cap, and the response must say so: {second}"
+        );
+        assert!(
+            second["created"].as_array().is_some_and(|c| !c.is_empty()),
+            "the fallback still creates the task"
         );
     }
 }

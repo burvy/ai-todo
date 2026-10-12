@@ -1,0 +1,262 @@
+//! Signing in, sessions, and working out who sent a request.
+//!
+//! The pattern follows `plgroup-server/src/auth.rs` from the PL group site: Google
+//! checks the ID token's signature and expiry, and we check the token was made for us
+//! (the audience check) before trusting anything else in it. A sign-in is a row in
+//! `users` plus a row in `sessions`; every later request carries the session token.
+//!
+//! When `GOOGLE_CLIENT_ID` is not set the server is in local mode: there is no real
+//! client id to check an audience against, so every request runs as one fixed local
+//! user and no sign-in is needed. That keeps `run-local.sh` and the tests working
+//! without a Google project.
+
+use std::time::Duration;
+
+use anyhow::Result;
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use serde::{Deserialize, Serialize};
+
+use super::store::{Store, StoreError};
+use todo_core::ErrorCode;
+
+/// How long a sign-in lasts before the session token stops working.
+pub const SESSION_LENGTH: Duration = Duration::from_secs(60 * 60 * 24 * 90);
+
+/// The user every request runs as when `GOOGLE_CLIENT_ID` is unset.
+///
+/// A fixed id, not a generated one, so a restart keeps finding the same local user's
+/// tasks instead of appearing to lose them.
+pub const LOCAL_USER: &str = "local";
+
+/// What Google's `tokeninfo` endpoint reports about an ID token.
+///
+/// Every field is a string, including the booleans and the audience: that is what the
+/// endpoint returns, so this mirrors it rather than being strict.
+#[derive(Clone, Debug, Deserialize)]
+pub struct TokenInfo {
+    /// "audience" — only accept IDs minted for this client.
+    pub aud: String,
+    /// "subject" — permanently unique Google id for the person.
+    pub sub: String,
+    pub email: String,
+    /// "true"/"false" as a string, so it must be compared to `"true"`.
+    pub email_verified: String,
+    pub name: Option<String>,
+    pub picture: Option<String>,
+}
+
+/// The person behind a verified ID token.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Me {
+    pub id: String,
+    pub email: String,
+    pub name: String,
+    pub picture: Option<String>,
+}
+
+impl Me {
+    fn from_token(info: &TokenInfo) -> Self {
+        let email = info.email.to_lowercase();
+        Self {
+            id: info.sub.clone(),
+            email: email.clone(),
+            name: info.name.clone().unwrap_or_else(|| email.clone()),
+            picture: info.picture.clone(),
+        }
+    }
+}
+
+/// The answer to a sign-in: a token to send back, and who it belongs to.
+#[derive(Clone, Debug, Serialize)]
+pub struct Session {
+    pub token: String,
+    pub user: Me,
+}
+
+/// Why a credential was not accepted.
+#[derive(Debug)]
+pub enum AuthError {
+    /// Google said no, or the token was not minted for us.
+    Rejected(String),
+    /// We could not ask Google. This is our failure to reach them, not the caller's.
+    Unavailable(anyhow::Error),
+}
+
+impl std::fmt::Display for AuthError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthError::Rejected(why) => write!(f, "invalid Google sign-in: {why}"),
+            AuthError::Unavailable(_) => write!(f, "could not reach Google"),
+        }
+    }
+}
+
+/// Checks an ID token. Behind a trait so tests never touch the network.
+pub trait TokenVerifier: Send + Sync {
+    fn verify<'a>(
+        &'a self,
+        credential: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<TokenInfo, AuthError>> + Send + 'a>,
+    >;
+}
+
+/// The real one: asks Google's `tokeninfo` and checks the audience is ours.
+pub struct GoogleVerifier {
+    http: reqwest::Client,
+    client_id: String,
+}
+
+impl GoogleVerifier {
+    pub fn new(client_id: impl Into<String>) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            client_id: client_id.into(),
+        }
+    }
+}
+
+impl TokenVerifier for GoogleVerifier {
+    fn verify<'a>(
+        &'a self,
+        credential: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<TokenInfo, AuthError>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let response = self
+                .http
+                .get("https://oauth2.googleapis.com/tokeninfo")
+                .query(&[("id_token", credential)])
+                .send()
+                .await
+                .map_err(|why| AuthError::Unavailable(anyhow::anyhow!("{why}")))?;
+            if !response.status().is_success() {
+                return Err(AuthError::Rejected(format!(
+                    "tokeninfo returned {}",
+                    response.status()
+                )));
+            }
+            let info: TokenInfo = response
+                .json()
+                .await
+                .map_err(|why| AuthError::Rejected(format!("unreadable tokeninfo: {why}")))?;
+            // The two checks that matter. An audience is not ours, so the token is
+            // real but for someone else's app: reject rather than trust it.
+            if info.aud != self.client_id {
+                return Err(AuthError::Rejected(
+                    "token was not made for this app".into(),
+                ));
+            }
+            if info.email_verified != "true" {
+                return Err(AuthError::Rejected("email is not verified".into()));
+            }
+            Ok(info)
+        })
+    }
+}
+
+/// Verifies with a fixed answer. Tests use this; it is never wired into a router.
+pub struct FakeVerifier {
+    pub answer: Result<TokenInfo, String>,
+}
+
+impl TokenVerifier for FakeVerifier {
+    fn verify<'a>(
+        &'a self,
+        _credential: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<TokenInfo, AuthError>> + Send + 'a>,
+    > {
+        let answer = self.answer.clone();
+        Box::pin(async move { answer.map_err(AuthError::Rejected) })
+    }
+}
+
+impl TokenInfo {
+    /// A tokeninfo answer a test can hand to [`FakeVerifier`].
+    #[cfg(test)]
+    pub fn for_test(sub: &str, email: &str) -> Self {
+        Self {
+            aud: "test-client".into(),
+            sub: sub.into(),
+            email: email.into(),
+            email_verified: "true".into(),
+            name: Some(format!("Test {sub}")),
+            picture: None,
+        }
+    }
+}
+
+/// A random session token.
+pub fn new_token() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+/// Create or refresh the user and open a session. The store half of a sign-in.
+///
+/// Kept separate from verification so a caller can finish the network call *before*
+/// taking the store lock: holding a `MutexGuard` across an `await` makes the handler's
+/// future non-`Send`, and axum rejects a non-`Send` handler.
+pub fn open_session<S: Store + ?Sized>(
+    store: &S,
+    info: &TokenInfo,
+    now: DateTime<Utc>,
+) -> Result<Session, AuthError> {
+    let user = Me::from_token(info);
+    let token = new_token();
+    let expires_at = now + ChronoDuration::from_std(SESSION_LENGTH).unwrap_or_default();
+    store
+        .upsert_user_and_session(&user, &token, expires_at)
+        .map_err(store_auth_error)?;
+    Ok(Session { token, user })
+}
+
+/// End one session. Signing out is not signing in everywhere else.
+pub fn sign_out<S: Store + ?Sized>(store: &S, token: &str) -> Result<(), AuthError> {
+    store.delete_session(token).map_err(store_auth_error)
+}
+
+/// The user a session token belongs to, if the session has not expired.
+pub fn session_user<S: Store + ?Sized>(
+    store: &S,
+    token: &str,
+    now: DateTime<Utc>,
+) -> Result<Option<Me>, AuthError> {
+    store.session_user(token, now).map_err(store_auth_error)
+}
+
+/// Forget a person and everything they own.
+pub fn delete_user<S: Store>(store: &S, user: &str) -> Result<(), AuthError> {
+    store.delete_user(user).map_err(store_auth_error)
+}
+
+fn store_auth_error(error: StoreError) -> AuthError {
+    AuthError::Unavailable(anyhow::anyhow!("{error}"))
+}
+
+/// An [`AuthError`] as the error a client sees.
+impl From<AuthError> for todo_core::ApiError {
+    fn from(error: AuthError) -> Self {
+        let code = match error {
+            // We could not reach Google: that is a dependency being down, so the
+            // caller should retry. Not the caller's credential.
+            AuthError::Unavailable(_) => ErrorCode::Unavailable,
+            AuthError::Rejected(_) => ErrorCode::BadRequest,
+        };
+        todo_core::ApiError {
+            code,
+            message: error.to_string(),
+        }
+    }
+}
+
+/// The bearer token from an `Authorization` header, if there is one.
+pub fn bearer(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(|token| token.trim().to_owned())
+        .filter(|token| !token.is_empty())
+}
