@@ -133,9 +133,64 @@ Working hours: 08:00 to 23:59:59 local time, every day.
 - Handlers only parse input, build the `LocalContext` from the header and `clock`, call `App`, and map errors.
 - Config from env: `TYPESAFE_API_KEY`, `PORT`, `RAMBL_DATA` (db path), `RAMBL_DEFAULT_TZ` (when the header is missing).
 
-### 7.1 Recurrence (later)
+### 7.1 Recurring tasks (design, not built yet)
 
-Recurrence is design-only for now. A series stores weekly-on-these-days, an until-date, and exceptions. The scheduler expands occurrences; imported iCalendar `RRULE`s map to the same model.
+A **series** repeats weekly on chosen days, optionally until a date. The stored data never lists every week; the server **expands occurrences** for the next 14 days at snapshot time and shows them as normal task rows. Marking an occurrence done, skipping it or moving it writes an **exception** row, so the expansion stays correct after a restart. An imported iCalendar `RRULE:FREQ=WEEKLY;BYDAY=…;UNTIL=…` becomes a series (today it imports as one task — see the `a_weekly_recurring_class_is_present_for_the_week` import test).
+
+**Types (`core`).**
+
+- `Recurrence { weekdays: BTreeSet<Weekday>, until: Option<NaiveDate> }` — the rule. Empty `weekdays` never constructs; `until` is the last day an occurrence exists, inclusive.
+- `Series { id: SeriesId, user, title, duration_min: u16, rule: Recurrence, start_day: NaiveDate, time_of_day: Option<NaiveTime>, zone: String, external_uid: Option<String>, created }` — one per repeated thing. `time_of_day` comes from the capture or import; without it an occurrence floats (`Anytime`) and is placed in the first free slot of its week. `zone` is where the weekly time lives, like `due_tz` for a deadline.
+- `SeriesException { series: SeriesId, date: NaiveDate, kind: ExceptionKind }` with `ExceptionKind::{Done, Skipped, Moved { to: When }}` — one per deviating occurrence, keyed by local date.
+- `Occurrence { series: SeriesId, date: NaiveDate, when: When, status: OccurrenceStatus }` — the pure expansion result, with `OccurrenceStatus::{Open, Done, Moved}`. Skipped days produce no occurrence at all.
+
+**Expansion (pure, in `scheduler`).** `expand(series, window_start, window_end, exceptions) -> Vec<Occurrence>`: for each day in the window whose weekday is in `rule.weekdays` and which is on/after `start_day` and on/before `until`, produce one `Occurrence`. Its `when` is `At(ctx.at(date, time))` in the series' zone (each occurrence is re-derived in the zone stored on the series, so DST shifts the UTC instant but never the local 07:00), or `Anytime` without a `time_of_day`. Exceptions reshape the output: a `skipped` date yields nothing; a `done` date yields the occurrence with `status: Done` (and no placement); a `moved` date yields the occurrence at its new `When` with `status: Moved`, its id still naming the original date so the exception row stays addressable.
+
+**Snapshot.** `Snapshot::build` expands every series for `[today, today + 14 days)` and appends the occurrences as ephemeral `Task`s: skipped days never appear; done ones appear marked done; moved ones sit at their new time. Each row gets `id` = `"{series_id}:{date}"` (the original date for a moved one), `source` = a new `Source::Series`, `created` = the series'. The plan is built from these rows together with the stored tasks, so open occurrences occupy real slots and the week grid shows them with no new plan type. `Placement.task` already holds a `TaskId`, and an occurrence id is a valid `TaskId`. Occurrence ids never enter the `v2_tasks` table.
+
+**Store (migration 8).** Two tables, both user-scoped:
+
+- `v2_series`: `id TEXT`, `user TEXT`, `title TEXT`, `duration_min INTEGER`, `weekdays TEXT` (e.g. `"124"` = Mon/Tue/Thu, `chrono::Weekday` numbers from Monday=1), `until TEXT` nullable (`YYYY-MM-DD`), `start_day TEXT`, `time_of_day TEXT` nullable (`HH:MM`), `zone TEXT`, `external_uid TEXT` nullable, `created TEXT`. Primary key `(user, id)`; index on `user`.
+- `v2_series_exceptions`: `series TEXT`, `user TEXT`, `date TEXT`, `kind TEXT` (`"done"` / `"skipped"` / `"moved"`), `moved_when TEXT` nullable (the same `When` + `due_tz` encoding as a task row), primary key `(user, series, date)`.
+
+`SCHEMA_VERSION` 7 → 8, `MIGRATION_8` creates both tables. `App` methods: `create_series`, `update_series`, `delete_series` (drops its exceptions), `patch_occurrence` (upsert the exception row, in the same critical section as every other mutation so the returned snapshot is never half-updated).
+
+**API (JSON, under `/v2`).**
+
+- `POST /v2/series` / `PATCH /v2/series/{id}` / `DELETE /v2/series/{id}` — the series body; `updated_at`-style optimistic concurrency is not needed because only the series row itself changes.
+- `PATCH /v2/series/{id}/dates/{date}` with `{"kind": "done" | "skipped" | "moved", "when": <When object>, "due_tz": …}` (the last two only for `moved`). The server validates the grammar `"{series_id}:{date}"` and that `date` is a real day of this series' rule inside the expansion window — a client id is never trusted as an identity (the same rule as everywhere else).
+- `Snapshot` gains `series: Vec<Series>` alongside the ephemeral occurrence rows, so the web UI can draw the rule without a second call.
+
+**Capture.** A scanner runs on each clause **before** `dates::candidates`: `recurrence(clause) -> Option<(title_spans, weekdays, Option<time>, Option<until>)>`. It accepts:
+
+- `every <weekday>` / `<weekday>s` / `every <weekday> and <weekday>…` / `weekly on <weekday>[, <weekday>]` — the existing `WEEKDAYS` name table (`crates/dates/src/phrases.rs`) supplies the names; plural stripping (`mondays`, `tuesdays`) is added there, not in `capture`.
+- `every weekday` = Mon–Fri; `every day` = all seven.
+- `until <day phrase>` — anything the existing `day()` resolver already accepts ("until December 15", "until Friday"). Two additions to `day()`: a bare month after `until` ("until December") means the last day of the month **before** it, and `end of the month` = the last day of the current month.
+- `at 7am`, `at 19:00` etc. reuse the existing time candidates.
+- No match — "every", "always" or a weekday with no `every`/`weekly on` marker — leaves the clause to the normal one-shot path ("a thing next Monday" is not a series).
+
+The match wins over one-shot day phrases: `gym every Monday and Thursday` produces a series, not two `At` tasks. Jev still judges that the clause is a task; the scanner decides it repeats. A clause with both a one-shot date and a recurrence marker ("submit the report every Friday starting October 30") is a series whose `start_day` is that date.
+
+**Done / skip / move.**
+
+- **Done:** `PATCH …/dates/{date}` `done` — the row stays in the snapshot marked done while its date is inside the expansion window (the exception row keeps the state across restarts); once the date falls out of the 14-day window it scrolls away like any done task.
+- **Skip ("not today"):** `skipped` — the row disappears from this week; nothing else changes.
+- **Move:** `moved` with a new `When` — the original slot is freed (the day's occurrence is emitted at the new time instead, `status: Moved`) and a normal-looking row appears there. The dialog is the same one the web app uses for a task edit, writing through the occurrence endpoint instead of `PUT /tasks/{id}`.
+- Editing the series (`PATCH /v2/series/{id}`) changes future occurrences only; past exceptions keep their dates.
+
+**ICS import.** In `ics_import.rs`, a `VEVENT` with `RRULE:FREQ=WEEKLY;BYDAY=<days>;UNTIL=<date>T035959Z` (Outlook's spelling of a local end date) builds a series: `weekdays` from `BYDAY`, `until` = the `UNTIL` instant's date in the event's TZID zone, `time_of_day` = DTSTART's local time, `zone` = the TZID, `external_uid` = the VEVENT UID so re-import updates instead of duplicating (same rule as one-shot imports). `COUNT`, like any other extra part (`BYSETPOS`, `BYMONTHDAY`), is not supported. Any other `FREQ` (daily, monthly, yearly) imports as today — one `At` task at the first occurrence — and the import response lists both it and any event whose rule carried unsupported parts under `unmapped`, so the client can say so. The existing tests (`a_weekly_recurring_class_is_present_for_the_week`, `cancelled_event_with_rrule_is_excluded`) then assert the *new* behaviour for weekly rules and the old behaviour for everything else.
+
+**Web UI.** A series shows as a list row with the title and a recurrence chip (`Mon · Thu · until Dec 15`). Its occurrences look like ordinary rows in the list and the week grid, with the date in place of a due date. The task dialog gains days-of-week checkboxes and an until field for a series, and occurrence rows gain **Done**, **Not today** (skip) and **Move**. No new request paths beyond the endpoints above; `api.rs` still funnels everything into the one snapshot signal.
+
+**Out of scope (stated so it stays out).** Monthly, yearly and daily rules; `BYSETPOS`/`BYMONTHDAY`; editing one occurrence's title or duration independently of the series (an occurrence inherits the series until it is moved); reordering occurrences relative to tasks beyond what `plan` already does; timezone changes for a series after creation (the series keeps its zone); series in the paid-tier or ad paths.
+
+**Test plan.**
+
+- `dates`: fixed-clock table rows for the scanner — `gym every Monday and Thursday`, `every weekday until December` (until = Nov 30 of the current year), `weekly on Tue and Fri at 6pm`, `standup every day at 9`, and the negatives (`a thing next Monday` is not a series). DST: a 07:00 America/New_York series expands at 11:00Z and 12:00Z across the March change.
+- `scheduler`: `expand` invariants — no occurrence on a day outside the weekday set, none after `until`, an exception of every kind honoured, a moved occurrence at its new instant.
+- `capture`: golden fixtures with `FakeJudge` — a recurrence clause produces a series draft, a one-shot clause stays a task, a mixed clause uses `start_day`.
+- `server` (HTTP, `MemoryStore` + `SqliteStore` shared suite, `FixedClock`): create a series → the snapshot shows the expected occurrence rows; done/skip/move an occurrence → the snapshot reflects it; restart (fresh `App`) → done occurrences still done; move frees the original slot in the plan; weekly ICS import → a series, not one task; a non-weekly `RRULE` → one `At` task and `unmapped`; a made-up occurrence id (`other-series:2026-01-01`, a foreign series id, a date outside the rule) is refused.
+- `web`: a fixture snapshot with a series renders the chip and the occurrence rows in the list and week grid.
 
 ## 8. Web (`web/`, Leptos CSR)
 
