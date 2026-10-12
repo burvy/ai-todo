@@ -11,7 +11,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use todo_core::{Label, Priority, Source, Task, TaskId, When};
 
@@ -22,6 +22,9 @@ fn parse_plan(value: &str) -> super::auth::Plan {
         _ => super::auth::Plan::Free,
     }
 }
+
+/// An anonymous user's `last_activity_at` is refreshed at most this often.
+const ACTIVITY_THROTTLE: Duration = Duration::hours(1);
 
 /// Where the v2 database lives when `RAMBL_DATA` is not set.
 pub const DEFAULT_DATA_PATH: &str = "data/rambl.db";
@@ -35,7 +38,7 @@ pub fn data_path_from_env() -> std::path::PathBuf {
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
@@ -45,6 +48,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_3,
     MIGRATION_4,
     MIGRATION_5,
+    MIGRATION_6,
 ];
 
 const MIGRATION_1: &str = "
@@ -132,13 +136,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS v2_tasks_uid_idx
     ON v2_tasks (user_id, external_uid) WHERE external_uid IS NOT NULL;
 ";
 
+/// `updated_at` for last-write-wins edits, and `last_activity_at` for expiring idle
+/// anonymous users. SQLite refuses a non-constant `DEFAULT` on `ADD COLUMN`, so each
+/// column gets a constant placeholder and the existing rows are then filled in: a task's
+/// version is when it was created, an anonymous user's last visit is the migration time
+/// (nobody is expired for being idle before this existed). Times are written as
+/// `format_ts` writes them, so the text compares correctly.
+const MIGRATION_6: &str = "
+ALTER TABLE v2_tasks ADD COLUMN updated_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00+00:00';
+UPDATE v2_tasks SET updated_at = created;
+ALTER TABLE v2_users ADD COLUMN last_activity_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00+00:00';
+UPDATE v2_users SET last_activity_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now');
+";
+
 /// Every column of `v2_tasks`, in one list.
 ///
 /// Reads and writes are built from this string, so a field added here cannot
 /// be added to the `SELECT` and forgotten in the `INSERT`. The index below is
 /// checked against it by a test.
 const TASK_COLUMNS: &str = "id, title, duration_min, when_kind, when_time, done, \"order\", \
-                            label, priority, source, created, external_uid";
+                            label, priority, source, created, external_uid, updated_at";
 
 /// A store that could not answer.
 ///
@@ -230,7 +247,18 @@ pub trait Store: Send + Sync {
     fn user_plan(&self, user: &str) -> Result<super::auth::Plan, StoreError>;
     fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError>;
     fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError>;
-    fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError>;
+    /// Create the anonymous user `user`, first seen at `now`, unless it exists.
+    fn ensure_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError>;
+
+    /// Record that the anonymous user `user` was seen at `now`. Does nothing for a
+    /// signed-in user (they never expire) and writes at most once per
+    /// [`ACTIVITY_THROTTLE`], so a busy page is not a write per request.
+    fn touch_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError>;
+
+    /// Delete every anonymous user last seen at or before `cutoff`, with their tasks,
+    /// in one transaction. Returns how many users went. Signed-in users are never
+    /// touched.
+    fn expire_anonymous(&self, cutoff: DateTime<Utc>) -> Result<usize, StoreError>;
 
     /// Count one capture by this user from this client address on this day.
     fn record_capture(&self, user: &str, ip: &str, day: NaiveDate) -> Result<(), StoreError>;
@@ -287,6 +315,8 @@ pub struct MemoryStore {
     captures: Mutex<Vec<(String, String, NaiveDate)>>,
     anon_issued: Mutex<Vec<(String, NaiveDate)>>,
     blocks: Mutex<Vec<Block>>,
+    /// When each anonymous user was last seen.
+    activity: Mutex<std::collections::HashMap<String, DateTime<Utc>>>,
 }
 
 #[cfg(test)]
@@ -360,8 +390,14 @@ impl<S: Store + ?Sized> Store for Box<S> {
     fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
         (**self).anonymous_exists(user)
     }
-    fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError> {
-        (**self).ensure_anonymous(user)
+    fn ensure_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
+        (**self).ensure_anonymous(user, now)
+    }
+    fn touch_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
+        (**self).touch_anonymous(user, now)
+    }
+    fn expire_anonymous(&self, cutoff: DateTime<Utc>) -> Result<usize, StoreError> {
+        (**self).expire_anonymous(cutoff)
     }
     fn record_capture(&self, user: &str, ip: &str, day: NaiveDate) -> Result<(), StoreError> {
         (**self).record_capture(user, ip, day)
@@ -468,9 +504,13 @@ impl Store for MemoryStore {
             .any(|held| held.id == user && held.plan == super::auth::Plan::Anon))
     }
 
-    fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError> {
+    fn ensure_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
         let mut users = self.users.lock().expect("memory store mutex");
         if !users.iter().any(|held| held.id == user) {
+            self.activity
+                .lock()
+                .expect("memory store mutex")
+                .insert(user.to_owned(), now);
             users.push(super::auth::Me {
                 id: user.to_owned(),
                 email: String::new(),
@@ -480,6 +520,40 @@ impl Store for MemoryStore {
             });
         }
         Ok(())
+    }
+
+    fn touch_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
+        if let Some(seen) = self
+            .activity
+            .lock()
+            .expect("memory store mutex")
+            .get_mut(user)
+            && *seen < now - ACTIVITY_THROTTLE
+        {
+            *seen = now;
+        }
+        Ok(())
+    }
+
+    fn expire_anonymous(&self, cutoff: DateTime<Utc>) -> Result<usize, StoreError> {
+        let mut activity = self.activity.lock().expect("memory store mutex");
+        let gone: Vec<String> = activity
+            .iter()
+            .filter(|(_, seen)| **seen <= cutoff)
+            .map(|(user, _)| user.clone())
+            .collect();
+        for user in &gone {
+            activity.remove(user);
+        }
+        self.tasks
+            .lock()
+            .expect("memory store mutex")
+            .retain(|(owner, _)| !gone.contains(owner));
+        self.users
+            .lock()
+            .expect("memory store mutex")
+            .retain(|held| !gone.contains(&held.id));
+        Ok(gone.len())
     }
 
     fn delete(&self, user: &str, id: &TaskId) -> Result<bool, StoreError> {
@@ -763,7 +837,10 @@ impl SqliteStore {
         let tx = conn
             .unchecked_transaction()
             .map_err(|e| StoreError::Backend(e.to_string()))?;
-        for statement in MIGRATIONS {
+        // Only what this file has not seen: a migration is not safe to run twice (an
+        // `ADD COLUMN` fails the second time), and the file already holds the first
+        // `version` of them.
+        for statement in MIGRATIONS.iter().skip(version as usize) {
             tx.execute_batch(statement)
                 .map_err(|e| StoreError::Backend(e.to_string()))?;
         }
@@ -807,7 +884,7 @@ impl Store for SqliteStore {
         conn.execute(
             &format!(
                 "INSERT INTO v2_tasks ({TASK_COLUMNS}, user_id) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
                  ON CONFLICT(id) DO UPDATE SET \
                      title = excluded.title, \
                      duration_min = excluded.duration_min, \
@@ -820,6 +897,7 @@ impl Store for SqliteStore {
                      source = excluded.source, \
                      created = excluded.created, \
                      external_uid = excluded.external_uid, \
+                     updated_at = excluded.updated_at, \
                      user_id = excluded.user_id"
             ),
             params![
@@ -835,6 +913,7 @@ impl Store for SqliteStore {
                 source_to_stored(task.source),
                 format_ts(task.created),
                 task.external_uid,
+                format_ts(task.updated_at),
                 user,
             ],
         )
@@ -1189,17 +1268,51 @@ impl Store for SqliteStore {
         Ok(found.is_some())
     }
 
-    fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError> {
+    fn ensure_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
         self.conn
             .lock()
             .expect("db mutex")
             .execute(
-                "INSERT OR IGNORE INTO v2_users (id,email,name,picture,created_at,plan) \
-                 VALUES (?1,'','',NULL,?2,'anon')",
-                params![user, format_ts(Utc::now())],
+                "INSERT OR IGNORE INTO v2_users \
+                     (id, email, name, picture, created_at, plan, last_activity_at) \
+                 VALUES (?1, '', '', NULL, ?2, 'anon', ?2)",
+                params![user, format_ts(now)],
             )
             .map_err(backend)?;
         Ok(())
+    }
+
+    fn touch_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
+        self.conn
+            .lock()
+            .expect("db mutex")
+            .execute(
+                "UPDATE v2_users SET last_activity_at = ?2 \
+                 WHERE id = ?1 AND plan = 'anon' AND last_activity_at < ?3",
+                params![user, format_ts(now), format_ts(now - ACTIVITY_THROTTLE)],
+            )
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    fn expire_anonymous(&self, cutoff: DateTime<Utc>) -> Result<usize, StoreError> {
+        let mut conn = self.conn.lock().expect("db mutex");
+        let tx = conn.transaction().map_err(backend)?;
+        let cutoff = format_ts(cutoff);
+        let stale = "SELECT id FROM v2_users WHERE plan = 'anon' AND last_activity_at <= ?1";
+        tx.execute(
+            &format!("DELETE FROM v2_tasks WHERE user_id IN ({stale})"),
+            params![cutoff],
+        )
+        .map_err(backend)?;
+        let users = tx
+            .execute(
+                &format!("DELETE FROM v2_users WHERE id IN ({stale})"),
+                params![cutoff],
+            )
+            .map_err(backend)?;
+        tx.commit().map_err(backend)?;
+        Ok(users)
     }
 }
 
@@ -1278,6 +1391,7 @@ fn read_task(row: &rusqlite::Row<'_>) -> Result<Task, rusqlite::Error> {
     let priority: String = row.get(8)?;
     let source: String = row.get(9)?;
     let created: String = row.get(10)?;
+    let updated_at: String = row.get(12)?;
 
     Ok(Task {
         id: TaskId(row.get(0)?),
@@ -1290,6 +1404,7 @@ fn read_task(row: &rusqlite::Row<'_>) -> Result<Task, rusqlite::Error> {
         priority: priority_from_stored(&priority),
         source: source_from_stored(&source),
         created: parse_ts(&created).unwrap_or_else(Utc::now),
+        updated_at: parse_ts(&updated_at).unwrap_or_else(Utc::now),
         external_uid: row.get(11)?,
     })
 }
@@ -1455,6 +1570,7 @@ mod tests {
             priority: Priority::Medium,
             source: Source::Text,
             created: at(9),
+            updated_at: at(9),
             external_uid: None,
         }
     }
@@ -1524,6 +1640,7 @@ mod tests {
         original.priority = Priority::Critical;
         original.source = Source::Calendar;
         original.created = at(8);
+        original.updated_at = at(10);
         original.external_uid = Some("abc-123@rambl".into());
         store.put(USER, original.clone()).unwrap();
         assert_eq!(read(store, &original.id), original);
@@ -1689,7 +1806,7 @@ mod tests {
     /// and ends the anonymous id.
     fn adoption_moves_anonymous_tasks_and_ends_the_id(store: &dyn Store) {
         const ANON: &str = "anon_0123456789abcdef0123456789abcdef";
-        store.ensure_anonymous(ANON).unwrap();
+        store.ensure_anonymous(ANON, at(9)).unwrap();
         store
             .put(ANON, anonymous_task("a1", Some("uid-1")))
             .unwrap();
@@ -1828,7 +1945,7 @@ mod tests {
         const ANON: &str = "anon_0123456789abcdef0123456789abcdef";
         {
             let store = SqliteStore::open(&path).unwrap();
-            store.ensure_anonymous(ANON).unwrap();
+            store.ensure_anonymous(ANON, at(9)).unwrap();
             store.put(ANON, anonymous_task("a1", None)).unwrap();
         }
         let reopened = SqliteStore::open(&path).unwrap();
@@ -2058,6 +2175,191 @@ mod tests {
             assert_eq!(when_from_parts(kind, time.map(format_ts).as_deref()), when);
         }
         assert_eq!(when_to_parts(When::Anytime), ("anytime", None));
+    }
+
+    const DAY: Duration = Duration::days(1);
+
+    fn anon_id(n: u32) -> String {
+        format!("anon_{n:032x}")
+    }
+
+    /// A signed-in user (plan `free`) with one task, so expiry has something to spare.
+    fn sign_in(store: &dyn Store, id: &str) {
+        let me = super::super::auth::Me {
+            id: id.to_owned(),
+            email: format!("{id}@example.com"),
+            name: id.to_owned(),
+            picture: None,
+            plan: super::super::auth::Plan::Free,
+        };
+        store
+            .upsert_user_and_session(&me, &format!("token-{id}"), at(23))
+            .unwrap();
+        store.put(id, task("keep", 0)).unwrap();
+    }
+
+    /// Idle anonymous accounts go, with their tasks, and nobody else does.
+    fn idle_anonymous_accounts_expire(store: &dyn Store) {
+        let now = at(12);
+        let (just_inside, exactly_old, long_gone) = (anon_id(1), anon_id(2), anon_id(3));
+        for (id, last_seen) in [
+            (&just_inside, now - DAY * 30 + Duration::hours(1)), // 29 days 23 hours
+            (&exactly_old, now - DAY * 30),                      // 30 days
+            (&long_gone, now - DAY * 90),
+        ] {
+            store.ensure_anonymous(id, last_seen).unwrap();
+            store.put(id, task(&format!("{id}-1"), 0)).unwrap();
+            store.put(id, task(&format!("{id}-2"), 1)).unwrap();
+        }
+        sign_in(store, "carol");
+
+        let removed = store.expire_anonymous(now - DAY * 30).unwrap();
+
+        assert_eq!(removed, 2, "30 days and older go; 29 days 23 hours stays");
+        assert!(store.anonymous_exists(&just_inside).unwrap());
+        assert_eq!(store.tasks(&just_inside).unwrap().len(), 2);
+        for gone in [&exactly_old, &long_gone] {
+            assert!(!store.anonymous_exists(gone).unwrap(), "{gone} survived");
+            assert!(store.tasks(gone).unwrap().is_empty(), "{gone} kept tasks");
+        }
+        assert_eq!(
+            store.tasks("carol").unwrap().len(),
+            1,
+            "a signed-in user is never expired"
+        );
+        assert_eq!(store.expire_anonymous(now - DAY * 30).unwrap(), 0);
+    }
+
+    /// A visit keeps an anonymous id alive, but is written at most once an hour.
+    fn visits_keep_anonymous_ids_alive_with_a_throttle(store: &dyn Store) {
+        let start = at(0);
+        let id = anon_id(7);
+        store.ensure_anonymous(&id, start).unwrap();
+
+        // Within the hour nothing is written, so the old time still expires it.
+        store
+            .touch_anonymous(&id, start + Duration::minutes(30))
+            .unwrap();
+        let throttled = store
+            .expire_anonymous(start + Duration::minutes(10))
+            .unwrap();
+        assert_eq!(
+            throttled, 1,
+            "a visit inside the throttle must not be written"
+        );
+
+        let id = anon_id(8);
+        store.ensure_anonymous(&id, start).unwrap();
+        store.touch_anonymous(&id, start + DAY * 20).unwrap();
+        assert_eq!(
+            store.expire_anonymous(start + DAY * 19).unwrap(),
+            0,
+            "a visit after the throttle keeps the id alive"
+        );
+        assert!(store.anonymous_exists(&id).unwrap());
+
+        // Signed-in users and unknown ids are ignored, not an error.
+        sign_in(store, "dave");
+        store.touch_anonymous("dave", at(1)).unwrap();
+        store.touch_anonymous("nobody", at(1)).unwrap();
+    }
+
+    #[test]
+    fn both_stores_expire_idle_anonymous_accounts() {
+        idle_anonymous_accounts_expire(&MemoryStore::new());
+        idle_anonymous_accounts_expire(&SqliteStore::open_in_memory().unwrap());
+    }
+
+    #[test]
+    fn both_stores_throttle_activity_writes() {
+        visits_keep_anonymous_ids_alive_with_a_throttle(&MemoryStore::new());
+        visits_keep_anonymous_ids_alive_with_a_throttle(&SqliteStore::open_in_memory().unwrap());
+    }
+
+    #[test]
+    fn a_signed_in_user_is_kept_however_long_since_their_last_activity() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        sign_in(&store, "erin");
+        store
+            .conn
+            .lock()
+            .expect("db mutex")
+            .execute(
+                "UPDATE v2_users SET last_activity_at = ?1 WHERE id = 'erin'",
+                params![format_ts(at(12) - DAY * 60)],
+            )
+            .unwrap();
+
+        assert_eq!(store.expire_anonymous(at(12) - DAY * 30).unwrap(), 0);
+        assert_eq!(store.tasks("erin").unwrap().len(), 1);
+    }
+
+    /// A database as an earlier build left it: the first `version` migrations applied.
+    fn database_at(path: &Path, version: usize) -> Connection {
+        let conn = Connection::open(path).unwrap();
+        for migration in &MIGRATIONS[..version] {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.pragma_update(None, "user_version", version as i64)
+            .unwrap();
+        conn
+    }
+
+    #[test]
+    fn a_version_5_database_migrates_and_keeps_its_data() {
+        let path = unique_temp_dir().join("rambl.db");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let before = Utc::now();
+        {
+            let conn = database_at(&path, 5);
+            conn.execute_batch(
+                "INSERT INTO v2_users (id, email, name, picture, created_at, plan) VALUES
+                     ('anon_old', '', '', NULL, '2026-01-01T00:00:00+00:00', 'anon'),
+                     ('carol', 'c@example.com', 'Carol', NULL, '2026-01-01T00:00:00+00:00', 'free');
+                 INSERT INTO v2_tasks (id, title, duration_min, when_kind, when_time, done,
+                     \"order\", label, priority, source, created, external_uid, user_id) VALUES
+                     ('a1', 'Anon task', 30, 'anytime', NULL, 0, 0, 'work', 'medium', 'text',
+                      '2026-02-03T04:05:06+00:00', NULL, 'anon_old'),
+                     ('c1', 'Carol task', 30, 'anytime', NULL, 0, 0, 'work', 'medium', 'text',
+                      '2026-02-03T04:05:06+00:00', NULL, 'carol');",
+            )
+            .unwrap();
+        }
+
+        let store = SqliteStore::open(&path).expect("a v5 database must open and migrate");
+
+        let carol = store.tasks("carol").unwrap();
+        assert_eq!(carol.len(), 1);
+        assert_eq!(
+            carol[0].updated_at, carol[0].created,
+            "an existing task's version is when it was created"
+        );
+        assert_eq!(store.tasks("anon_old").unwrap().len(), 1);
+        // Nobody is expired for the time before idleness was tracked: the migration
+        // counts as their last visit.
+        assert_eq!(store.expire_anonymous(before - DAY * 30).unwrap(), 0);
+        assert!(store.anonymous_exists("anon_old").unwrap());
+        assert_eq!(store.expire_anonymous(Utc::now() + DAY).unwrap(), 1);
+        let version: i64 = store
+            .conn
+            .lock()
+            .expect("db mutex")
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_database_in_the_middle_of_the_history_applies_only_what_it_lacks() {
+        let path = unique_temp_dir().join("rambl.db");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        drop(database_at(&path, 3));
+
+        SqliteStore::open(&path).expect("migrating from version 3 must not redo version 2");
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     /// A folder of its own, so two tests writing at once cannot collide.

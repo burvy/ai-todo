@@ -310,7 +310,9 @@ fn Mascot(
                                             todo_core::Priority::High => todo_core::Priority::Low,
                                             todo_core::Priority::Critical => todo_core::Priority::High,
                                         };
-                                        let body = api::PatchTaskBody::new().priority(new_priority);
+                                        let body = api::PatchTaskBody::new()
+                                            .priority(new_priority)
+                                            .updated_at(task.updated_at);
                                         if let Ok(new_snap) = api::patch_task(&task.id, body).await {
                                             set_snapshot_clone.set(new_snap);
                                         }
@@ -332,7 +334,9 @@ fn Mascot(
                                 let set_state_clone = set_state;
                                 wasm_bindgen_futures::spawn_local(async move {
                                     if let Some(task) = snapshot_val.tasks.iter().find(|t| t.id.0 == task_id) {
-                                        let body = api::PatchTaskBody::new().done(!task.done);
+                                        let body = api::PatchTaskBody::new()
+                                        .done(!task.done)
+                                        .updated_at(task.updated_at);
                                         if let Ok(new_snap) = api::patch_task(&task.id, body).await {
                                             set_snapshot_clone.set(new_snap);
                                         }
@@ -589,7 +593,9 @@ fn TaskList(
                                 let task_id_clone = task_id_clone.clone();
                                 let set_snapshot_clone = set_snapshot;
                                 wasm_bindgen_futures::spawn_local(async move {
-                                    let body = api::PatchTaskBody::new().done(!task.done);
+                                    let body = api::PatchTaskBody::new()
+                                        .done(!task.done)
+                                        .updated_at(task.updated_at);
                                     if let Ok(new_snap) = api::patch_task(&task_id_clone, body).await {
                                         set_snapshot_clone.set(new_snap);
                                     }
@@ -746,6 +752,7 @@ fn TaskList(
                     snapshot.get().tasks.into_iter().find(|task| task.id == id).map(|task| {
                         let imported = task.source == Source::Calendar;
                         let task_id = task.id.clone();
+                        let seen = task.updated_at;
                         view! {
                             <p class="dialog-task-title">{task.title.clone()}</p>
                             {imported.then(|| view! {
@@ -800,7 +807,9 @@ fn TaskList(
                                             wasm_bindgen_futures::spawn_local(async move {
                                                 if let Ok(new_snap) = api::patch_task(
                                                     &task_id,
-                                                    api::PatchTaskBody::new().done(!task.done),
+                                                    api::PatchTaskBody::new()
+                                                        .done(!task.done)
+                                                        .updated_at(task.updated_at),
                                                 ).await {
                                                     set_snapshot.set(new_snap);
                                                     set_editing_task.set(None);
@@ -844,7 +853,8 @@ fn TaskList(
                                             let body = api::PatchTaskBody::new()
                                                 .title(title)
                                                 .duration_min(duration.unwrap_or(1))
-                                                .when(when.unwrap_or(When::Anytime));
+                                                .when(when.unwrap_or(When::Anytime))
+                                                .updated_at(seen);
                                             wasm_bindgen_futures::spawn_local(async move {
                                                 if let Ok(new_snap) = api::patch_task(&task_id, body).await {
                                                     set_snapshot.set(new_snap);

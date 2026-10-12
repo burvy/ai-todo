@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use gloo_net::http::{Request, RequestBuilder, Response};
 #[cfg(target_arch = "wasm32")]
 use js_sys;
@@ -231,11 +232,20 @@ pub struct PatchTaskBody {
     pub priority: Option<todo_core::Priority>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<todo_core::Source>,
+    /// The task's `updated_at` as this page last saw it; the server refuses the edit if
+    /// the task has changed since.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 impl PatchTaskBody {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn updated_at(mut self, updated_at: DateTime<Utc>) -> Self {
+        self.updated_at = Some(updated_at);
+        self
     }
 
     pub fn title(mut self, title: String) -> Self {
