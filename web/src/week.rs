@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Timelike, Utc};
 use gloo_timers::callback::Interval;
 use leptos::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
@@ -33,16 +33,6 @@ pub fn WeekGrid(
                     <For each=days key=|day| *day let:day>
                         <div class="day">
                             <h3>{format!("Day {}", day + 1)}</h3>
-                            <For each=move || {
-                                    // Re-read every minute, so "today" moves on at midnight.
-                                    let _ = now_minutes.get();
-                                    let snapshot = snapshot.get();
-                                    let ctx = planner_context(&snapshot.tz);
-                                    placements_on_day(&snapshot.plan.placements, i64::from(day), &ctx)
-                                }
-                                key=|placement| placement.task.clone() let:placement>
-                                <PlacementBlock placement snapshot set_mascot_state />
-                            </For>
                             <div class="hours">
                                 {move || (day == 0).then(|| view! {
                                     <div
@@ -54,6 +44,16 @@ pub fn WeekGrid(
                                         aria-label="Current time"
                                     ></div>
                                 })}
+                            <For each=move || {
+                                    // Re-read every minute, so "today" moves on at midnight.
+                                    let _ = now_minutes.get();
+                                    let snapshot = snapshot.get();
+                                    let ctx = planner_context(&snapshot.tz);
+                                    placements_on_day(&snapshot.plan.placements, i64::from(day), &ctx)
+                                }
+                                key=|placement| placement.task.clone() let:placement>
+                                <PlacementBlock placement snapshot settings set_mascot_state />
+                            </For>
                                 <For each=hours key=|hour| *hour let:hour>
                                     <div class="hour"><span>{format!("{hour:02}:00")}</span></div>
                                 </For>
@@ -73,6 +73,23 @@ const HOUR_PX: f32 = 64.0;
 /// How far down the hour rows the current time sits. The rows start at start_hour.
 fn now_line_top(now_minutes: u16, start_hour: u8, hour_px: f32) -> f32 {
     (f32::from(now_minutes) - f32::from(start_hour) * 60.0).max(0.0) / 60.0 * hour_px
+}
+/// Placement top/height in pixels, clipped to planner bounds.
+/// start/end are minutes-since-midnight in planner zone.
+fn placement_style(
+    start_minutes: u16,
+    end_minutes: u16,
+    planner_start_hour: u8,
+    hour_px: f32,
+    planner_end_hour: u8,
+) -> (f32, f32) {
+    let start = f32::from(start_minutes) - f32::from(planner_start_hour) * 60.0;
+    let end = f32::from(end_minutes) - f32::from(planner_start_hour) * 60.0;
+    let top = start.max(0.0) / 60.0 * hour_px;
+    let max_bottom = (i32::from(planner_end_hour) - i32::from(planner_start_hour)) as f32 * hour_px;
+    let bottom = (end / 60.0 * hour_px).min(max_bottom);
+    let height = (bottom - top).max(0.0);
+    (top, height)
 }
 
 /// The planner's clock and zone: now, and the zone the server planned with. An unknown
@@ -137,13 +154,27 @@ fn set_interval(callback: impl FnMut() + 'static, millis: u32) -> Interval {
 fn PlacementBlock(
     placement: Placement,
     snapshot: ReadSignal<Snapshot>,
+    settings: ReadSignal<Settings>,
     set_mascot_state: WriteSignal<mascot::State>,
 ) -> impl IntoView {
     let task_id = placement.task.clone();
     let render_task_id = task_id.clone();
     let render_time = local_time_label(&planner_context(&snapshot.get().tz), placement.start);
     view! {
-        <div class="placement"
+        <div class="placement" style=move || {
+            let s = settings.get();
+            let ctx = planner_context(&snapshot.get().tz);
+            let local_start = ctx.local(placement.start);
+            let local_end = ctx.local(placement.end);
+            let start_min = local_start.hour() as u16 * 60 + local_start.minute() as u16;
+            let end_min = if local_end.date() > local_start.date() {
+                s.end_hour as u16 * 60
+            } else {
+                local_end.hour() as u16 * 60 + local_end.minute() as u16
+            };
+            let (top, height) = placement_style(start_min, end_min, s.start_hour, HOUR_PX, s.end_hour);
+            format!("top: {}px; height: {}px;", top, height)
+        }
             on:drop=move |_| set_mascot_state.update(|state| {
                 if matches!(state, mascot::State::Dragging)
                     && let Some(task) = snapshot.get().tasks.iter().find(|task| task.id == task_id)
@@ -256,5 +287,32 @@ mod tests {
     fn an_unknown_zone_name_falls_back_to_utc() {
         let context = planner_context("Not/AZone");
         assert_eq!(context.tz, chrono_tz::UTC);
+    }
+
+    #[test]
+    fn placement_style_0930_start_8am_64px() {
+        // 09:30 start => 90 min after 8:00 => 90/60*64 = 96; 45 min => 48
+        let (top, height) = placement_style(9 * 60 + 30, 9 * 60 + 75, 8, HOUR_PX, 18);
+        assert!((top - 96.0).abs() < 0.01, "top={}, expected 96", top);
+        assert!(
+            (height - 48.0).abs() < 0.01,
+            "height={}, expected 48",
+            height
+        );
+    }
+
+    #[test]
+    fn placement_style_clipped_at_end() {
+        let (top, height) = placement_style(17 * 60, 19 * 60, 8, HOUR_PX, 18);
+        assert!((top - 9.0 * HOUR_PX).abs() < 0.01);
+        assert!((height - 1.0 * HOUR_PX).abs() < 0.01);
+    }
+
+    #[test]
+    fn placement_style_midnight_crossing_clipped_to_end() {
+        // Task starts at 23:30 and ends at 01:30 next day; planner ends 24:00 (18 not used here, planner 8-24)
+        let (top, height) = placement_style(23 * 60 + 30, 25 * 60 + 30, 8, HOUR_PX, 24);
+        assert!((top - 15.5 * HOUR_PX).abs() < 0.01); // 23:30 = 15h30 after 8:00
+        assert!((height - 0.5 * HOUR_PX).abs() < 0.01); // 30 min until 24:00
     }
 }

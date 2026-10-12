@@ -789,3 +789,4 @@ button {
     animation: none;
   }
 }
+.placement { position: absolute; left: 0; right: 0; box-sizing: border-box; border: 1px solid var(--rule); background: var(--paper); }
