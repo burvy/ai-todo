@@ -8,7 +8,7 @@ re-plans the schedule.
 
 ## Run locally
 
-Create a `.env` file in the repository root:
+Create a `rambl.env` file in the repository root:
 
 ```text
 TYPESAFE_API_KEY=your-key-here
@@ -26,38 +26,22 @@ Or on Linux/macOS:
 ./run-local.sh
 ```
 
-Open `http://localhost:8080`. Without `TYPESAFE_API_KEY`, capture falls back
+Open `http://localhost:3160`. Without `TYPESAFE_API_KEY`, capture falls back
 to one task per line. Sample rambles are in `crates/capture/tests/fixtures/rambles.md`.
 
 ### Environment variables
 
+Settings are read from `rambl.env` in the working folder (the repository root
+locally, the exe's folder on a server). Real environment variables win over it.
+
 | Variable | Default | Purpose |
 |---|---|---|
 | `TYPESAFE_API_KEY` | none | Jev API key |
-| `PORT` | `8080` | HTTP port |
-| `TZ_NAME` | `America/New_York` | Working-hours and deadline timezone |
-
-`DATA_PATH` can override the SQLite database path; its default is
-`data/ai-todo.db`.
+| `RAMBL_PORT` | `3160` | HTTP port (falls back to `PORT`) |
+| `RAMBL_DEFAULT_TZ` | `America/New_York` | Zone for requests with no `X-Rambl-TZ` |
+| `RAMBL_DATA` | `data/rambl.db` | SQLite database path |
+| `GOOGLE_CLIENT_ID` | none | Enables Google sign-in; unset means local mode |
 
 ## Deploy
 
 See [DEPLOY.md](DEPLOY.md).
-
-Design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Jev notes: [docs/jev.md](docs/jev.md).
-
-## Project layout
-
-- `crates/judge/`: Jev client and task extraction
-- `crates/scheduler/`: deterministic calendar placement
-- `server/`: HTTP API and SQLite persistence
-- `web/`: Leptos web interface
-- `art/`: icons, illustrations, brand card, sound and font specs (placeholders; redo guide in [art/GUIDE.md](art/GUIDE.md))
-- `deploy/`: Windows release build script
-
-Run checks with:
-
-```powershell
-cargo test --workspace
-cargo clippy --workspace -- -D warnings
-```

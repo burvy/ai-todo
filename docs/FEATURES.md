@@ -370,7 +370,7 @@ b. Run `.\run-local.ps1` on Windows or `./run-local.sh` on Linux and macOS.
 c. Code: `run-local.ps1`; `run-local.sh`; `server/src/v2/mod.rs:app_from_env`.
 
 ### 2. Single-file release
-a. The release build produces one self-contained `server.exe` that serves the
+a. The release build produces one self-contained `rambl-server.exe` that serves the
 web application and API; the former v1 server and legacy routes are removed.
 b. Run `.\deploy\build-release.ps1`, then copy the staged release.
 c. Code: `deploy/build-release.ps1`; `server/src/main.rs:WEB_DIST`;
