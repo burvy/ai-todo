@@ -24,8 +24,8 @@ pub const MAX_DURATION_MIN: u16 = 480;
 fn working_hours(tz: Tz) -> WorkingHours {
     WorkingHours::every_day(
         tz,
-        NaiveTime::from_hms_opt(9, 0, 0).expect("09:00 is valid"),
-        NaiveTime::from_hms_opt(17, 0, 0).expect("17:00 is valid"),
+        NaiveTime::from_hms_opt(8, 0, 0).expect("08:00 is valid"),
+        NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59 is valid"),
     )
 }
 
