@@ -450,6 +450,15 @@ impl Store for MemoryStore {
 
     fn put(&self, user: &str, task: Task) -> Result<(), StoreError> {
         let mut stored = self.tasks.lock().expect("memory store mutex");
+        if stored
+            .iter()
+            .any(|(owner, other)| owner != user && other.id == task.id)
+        {
+            return Err(StoreError::Conflict(format!(
+                "task id {} belongs to another user",
+                task.id.0
+            )));
+        }
         if let Some(uid) = task.external_uid.as_deref()
             && let Some(clash) = stored
                 .iter()
@@ -881,9 +890,12 @@ impl Store for SqliteStore {
     fn put(&self, user: &str, task: Task) -> Result<(), StoreError> {
         let (when_kind, when_time) = when_to_parts(task.when);
         let conn = self.conn.lock().expect("db mutex");
-        conn.execute(
-            &format!(
-                "INSERT INTO v2_tasks ({TASK_COLUMNS}, user_id) \
+        // The id is unique across every user, so an id already held by someone else is
+        // refused, not taken over: the `WHERE` makes that upsert change nothing.
+        let written = conn
+            .execute(
+                &format!(
+                    "INSERT INTO v2_tasks ({TASK_COLUMNS}, user_id) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
                  ON CONFLICT(id) DO UPDATE SET \
                      title = excluded.title, \
@@ -897,27 +909,33 @@ impl Store for SqliteStore {
                      source = excluded.source, \
                      created = excluded.created, \
                      external_uid = excluded.external_uid, \
-                     updated_at = excluded.updated_at, \
-                     user_id = excluded.user_id"
-            ),
-            params![
-                task.id.0,
-                task.title,
-                i64::from(task.duration_min),
-                when_kind,
-                when_time.map(format_ts),
-                i64::from(task.done),
-                task.order,
-                label_to_stored(task.label),
-                priority_to_stored(task.priority),
-                source_to_stored(task.source),
-                format_ts(task.created),
-                task.external_uid,
-                format_ts(task.updated_at),
-                user,
-            ],
-        )
-        .map_err(conflict)?;
+                     updated_at = excluded.updated_at \
+                 WHERE v2_tasks.user_id = excluded.user_id"
+                ),
+                params![
+                    task.id.0,
+                    task.title,
+                    i64::from(task.duration_min),
+                    when_kind,
+                    when_time.map(format_ts),
+                    i64::from(task.done),
+                    task.order,
+                    label_to_stored(task.label),
+                    priority_to_stored(task.priority),
+                    source_to_stored(task.source),
+                    format_ts(task.created),
+                    task.external_uid,
+                    format_ts(task.updated_at),
+                    user,
+                ],
+            )
+            .map_err(conflict)?;
+        if written == 0 {
+            return Err(StoreError::Conflict(format!(
+                "task id {} belongs to another user",
+                task.id.0
+            )));
+        }
         Ok(())
     }
 
@@ -1591,6 +1609,17 @@ mod tests {
     fn users_are_isolated(store: &dyn Store) {
         store.put(USER, task("mine", 0)).unwrap();
         store.put(OTHER, task("theirs", 0)).unwrap();
+
+        // An id held by one user cannot be written, and so cannot be taken over, by
+        // another: the first user's task stays where it is, untouched.
+        let mut hijack = task("mine", 0);
+        hijack.title = "hijacked".into();
+        assert!(matches!(
+            store.put(OTHER, hijack),
+            Err(StoreError::Conflict(_))
+        ));
+        assert_eq!(store.tasks(USER).unwrap()[0].title, "Task mine");
+        assert_eq!(store.tasks(OTHER).unwrap().len(), 1);
 
         let mine = store.tasks(USER).unwrap();
         assert_eq!(
