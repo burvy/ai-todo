@@ -59,6 +59,7 @@ fn month_of(word: &str) -> Option<u32> {
     if word == "sept" {
         return Some(9);
     }
+    // 3-letter prefixes are intentional ("sep" -> "september", "oct" -> "october").
     MONTHS
         .iter()
         .find(|(name, _)| *name == word || (word.len() == 3 && name.starts_with(word)))

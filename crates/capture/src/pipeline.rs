@@ -375,6 +375,17 @@ mod tests {
         assert_eq!(out[0].when, When::Anytime);
     }
 
+    #[test]
+    fn local_now_text_is_local_time_not_utc() {
+        // 2026-10-12 01:00 UTC is 2026-10-11 21:00 in New York (EDT, UTC-4).
+        let q = question("call me back", &[], &ctx());
+        assert!(
+            q.local_now.contains("2026-10-11 21:00"),
+            "local_now was '{:?}', expected local time, not UTC",
+            q.local_now
+        );
+    }
+
     #[tokio::test]
     async fn a_clause_that_is_not_a_task_is_dropped() {
         let mut no = answer();

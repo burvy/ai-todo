@@ -58,12 +58,6 @@ fn split_sentences(text: &str) -> Vec<String> {
         .collect();
     let mut merged: Vec<String> = Vec::new();
     for clause in raw {
-        if is_hedged_self_talk(&clause) {
-            continue;
-        }
-        if is_policy_line(&clause) {
-            continue;
-        }
         if is_time_fragment(&clause)
             && let Some(previous) = merged.last_mut()
         {
@@ -81,18 +75,6 @@ fn split_sentences(text: &str) -> Vec<String> {
         merged.push(clause);
     }
     merged
-}
-
-fn is_hedged_self_talk(clause: &str) -> bool {
-    let lower = clause.trim().to_ascii_lowercase();
-    [
-        "i should probably ",
-        "i guess ",
-        "maybe i'll ",
-        "maybe i will ",
-    ]
-    .iter()
-    .any(|prefix| lower.starts_with(prefix))
 }
 
 fn is_pronoun_clause(clause: &str) -> bool {
@@ -211,30 +193,6 @@ fn word_count_without_filler(sentence: &str) -> usize {
         .count()
 }
 
-/// Check if a clause is a policy line (not a task).
-/// Policy lines contain: late work, grading, attendance, "unless", percent penalties.
-pub fn is_policy_line(clause: &str) -> bool {
-    let lower = clause.to_lowercase();
-    let policy_keywords = [
-        "late work",
-        "grading",
-        "attendance",
-        "unless",
-        "percent",
-        "%",
-        "penalty",
-        "penalties",
-        "late penalty",
-        "extension",
-        "arranged in advance",
-        "drops",
-        "drop policy",
-        "late loses",
-        "loses percent",
-    ];
-    policy_keywords.iter().any(|kw| lower.contains(kw))
-}
-
 /// Clauses of a capture, in order. Blank clauses are dropped.
 pub fn split_clauses(text: &str) -> Vec<String> {
     split_sentences(text)
@@ -284,6 +242,29 @@ mod tests {
         assert!(
             !clauses.iter().any(|clause| clause.trim() == "Hour"),
             "the wrap did not leave a bare fragment: {clauses:?}"
+        );
+    }
+
+    #[test]
+    fn policy_keywords_are_no_longer_dropped_from_segments() {
+        let clauses = split_clauses("Pick up the dry cleaning, drops off at 5");
+        // Segmentation splits on the comma; neither half may be dropped for "drops".
+        assert!(
+            clauses.contains(&"drops off at 5".to_string()),
+            "'drops' clause was dropped: {clauses:?}"
+        );
+        assert!(
+            clauses.contains(&"Pick up the dry cleaning".to_string()),
+            "first clause was dropped: {clauses:?}"
+        );
+    }
+
+    #[test]
+    fn percent_is_no_longer_a_policy_keyword() {
+        let clauses = split_clauses("Get the report to 100%");
+        assert!(
+            clauses.contains(&"Get the report to 100%".to_string()),
+            "segment wrongly dropped the percent clause: {clauses:?}"
         );
     }
 }
