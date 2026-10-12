@@ -869,7 +869,7 @@ fn task_time(snapshot: &Snapshot, id: &str) -> String {
         .placements
         .iter()
         .find(|p| p.task.0 == id)
-        .map(|p| p.start.format("%a %H:%M").to_string())
+        .map(|p| week::local_time_label(&week::planner_context(&snapshot.tz), p.start))
         .unwrap_or_default()
 }
 

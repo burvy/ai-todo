@@ -37,9 +37,8 @@ pub fn WeekGrid(
                                     // Re-read every minute, so "today" moves on at midnight.
                                     let _ = now_minutes.get();
                                     let snapshot = snapshot.get();
-                                    planner_context(&snapshot.tz).map_or_else(Vec::new, |ctx| {
-                                        placements_on_day(&snapshot.plan.placements, i64::from(day), &ctx)
-                                    })
+                                    let ctx = planner_context(&snapshot.tz);
+                                    placements_on_day(&snapshot.plan.placements, i64::from(day), &ctx)
                                 }
                                 key=|placement| placement.task.clone() let:placement>
                                 <PlacementBlock placement snapshot set_mascot_state />
@@ -78,11 +77,16 @@ fn now_line_top(now_minutes: u16, start_hour: u8, hour_px: f32) -> f32 {
 
 /// The planner's clock and zone: now, and the zone the server planned with. An unknown
 /// zone name falls back to UTC, so the tasks still show.
-fn planner_context(tz_name: &str) -> Option<LocalContext> {
-    Some(LocalContext {
+pub(crate) fn planner_context(tz_name: &str) -> LocalContext {
+    LocalContext {
         now: now_utc(),
         tz: tz_name.parse().unwrap_or(chrono_tz::UTC),
-    })
+    }
+}
+
+/// A placement's start as the planner shows it: weekday and clock time in the zone.
+pub(crate) fn local_time_label(ctx: &LocalContext, start: DateTime<Utc>) -> String {
+    ctx.local(start).format("%a %H:%M").to_string()
 }
 
 /// The current instant. On the page it comes from the browser: the platform clock that
@@ -137,7 +141,7 @@ fn PlacementBlock(
 ) -> impl IntoView {
     let task_id = placement.task.clone();
     let render_task_id = task_id.clone();
-    let render_time = placement.start.format("%a %H:%M").to_string();
+    let render_time = local_time_label(&planner_context(&snapshot.get().tz), placement.start);
     view! {
         <div class="placement"
             on:drop=move |_| set_mascot_state.update(|state| {
@@ -242,8 +246,15 @@ mod tests {
     }
 
     #[test]
+    fn a_task_shows_its_clock_time_in_the_users_zone() {
+        // 14:00 UTC on Monday 12 Oct is 10:00 in New York (EDT, UTC-4).
+        let ny = zone("America/New_York", at_utc(10, 12, 12, 0));
+        assert_eq!(local_time_label(&ny, at_utc(10, 12, 14, 0)), "Mon 10:00");
+    }
+
+    #[test]
     fn an_unknown_zone_name_falls_back_to_utc() {
-        let context = planner_context("Not/AZone").unwrap();
+        let context = planner_context("Not/AZone");
         assert_eq!(context.tz, chrono_tz::UTC);
     }
 }
