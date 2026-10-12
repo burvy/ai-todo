@@ -214,9 +214,9 @@ b. Not visible; see the environment table in `docs/ARCHITECTURE.md`.
 c. Code: `server/src/v2/mod.rs:app_from_env`;
 `server/src/v2/http.rs:jev_daily_cap_from_env, zone_from_env`.
 
-### 5. Task order and overdue state *(planned)*
-a. *(planned; decided in docs/ARCHITECTURE.md 4.1)* New tasks appear newest first. Unfinished tasks past their due time remain in the list as
-overdue and are scheduled in the next available slot.
+### 5. Task order and overdue state
+a. New tasks appear newest first. Unfinished tasks past their due time remain in the list as
+overdue and are scheduled in the next available slot. *(planned: overdue state and scheduling)*
 b. Add tasks in sequence, then inspect the list and a task whose due time has passed.
 c. Code: `server/src/v2/app.rs:sort_tasks, plan`; `web/src/lib.rs:TaskList`;
 `crates/core/src/lib.rs:When`.

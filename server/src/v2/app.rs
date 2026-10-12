@@ -144,7 +144,7 @@ impl<S: Store> App<S> {
         check_duration(draft.duration_min)?;
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
-        let order = tasks.iter().map(|task| task.order).max().unwrap_or(-1) + 1;
+        let order = tasks.iter().map(|task| task.order).min().unwrap_or(0) - 1;
         let task = Task {
             id: Self::fresh_id(&tasks, ctx.now.timestamp_nanos_opt().unwrap_or_default()),
             title: draft.title.trim().to_owned(),
@@ -207,7 +207,7 @@ impl<S: Store> App<S> {
     ) -> Result<ImportResult, ApiError> {
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
-        let mut order = tasks.iter().map(|task| task.order).max().unwrap_or(-1) + 1;
+        let mut order = tasks.iter().map(|task| task.order).min().unwrap_or(0) - 1;
         let mut created = Vec::new();
         let mut updated = Vec::new();
         for event in events {
@@ -268,7 +268,7 @@ impl<S: Store> App<S> {
     ) -> Result<(Vec<TaskId>, Snapshot), ApiError> {
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
-        let first_order = tasks.iter().map(|task| task.order).max().unwrap_or(-1) + 1;
+        let first_order = tasks.iter().map(|task| task.order).min().unwrap_or(0) - 1;
         let mut ids = Vec::new();
         for (offset, draft) in drafts.into_iter().enumerate() {
             let order = first_order + offset as i64;
