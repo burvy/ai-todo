@@ -27,7 +27,7 @@ use chrono::{DateTime, Datelike, NaiveDateTime, NaiveTime, TimeZone, Timelike, U
 use chrono_tz::Tz;
 use db::{BusyRow, Db};
 use futures::future::join_all;
-use judge::{choose, classify_intent, find_date_candidates, split_sentences, understand};
+use judge::v1::{choose, classify_intent, find_date_candidates, split_sentences, understand};
 use scheduler::{BusyBlock, Placement, UnschedulableReason, WorkingHours};
 use serde::{Deserialize, Serialize};
 use todo_core::v1::{Source, Task};
@@ -645,7 +645,7 @@ pub async fn capture_text(text: &str, source: Source, anchor: DateTime<Utc>) -> 
 }
 
 fn tasks_from_judgments(
-    judgments: Vec<(String, Vec<String>, judge::Judgment)>,
+    judgments: Vec<(String, Vec<String>, judge::v1::Judgment)>,
     source: Source,
     anchor: DateTime<Utc>,
 ) -> Vec<Task> {
@@ -2113,7 +2113,7 @@ mod tests {
     #[test]
     fn fake_judge_capture_keeps_two_tasks_and_friday_deadline() {
         let anchor = Utc.with_ymd_and_hms(2026, 10, 11, 12, 0, 0).unwrap();
-        let sentences = judge::split_sentences(
+        let sentences = judge::v1::split_sentences(
             "I need to finish my chem lab report by Friday and email Professor Lee tomorrow",
         );
         let judgments = sentences
@@ -2123,7 +2123,7 @@ mod tests {
                 (
                     sentence.clone(),
                     candidates.clone(),
-                    judge::Judgment {
+                    judge::v1::Judgment {
                         is_task: 0.9,
                         deadline: candidates.first().cloned(),
                         priority: 1,
