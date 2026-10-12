@@ -2219,7 +2219,7 @@ mod tests {
             .unwrap()
     }
 
-    const SYLLABUS_PDF: &[u8] = include_bytes!("../../demo/syllabus.pdf");
+    const SYLLABUS_PDF: &[u8] = include_bytes!("../../crates/capture/tests/fixtures/syllabus.pdf");
 
     /// A multipart body with one `file` part, the shape a browser file drop
     /// sends. `multer` is not a dependency, so the body is written by hand.
@@ -2480,7 +2480,7 @@ mod tests {
     async fn the_whole_demo_week_imports() {
         let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
         let router = app(new_state_with(db));
-        let week = include_str!("../../demo/outlook/week.ics");
+        let week = include_str!("../tests/fixtures/week.ics");
 
         let res = router.oneshot(import_confirmed(week, false)).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
@@ -2501,7 +2501,7 @@ mod tests {
         // frontend's file picker will use.
         let db = Arc::new(Db::open_in_memory().expect("in-memory database"));
         let router = app(new_state_with(db));
-        let week = include_str!("../../demo/outlook/week.ics");
+        let week = include_str!("../tests/fixtures/week.ics");
 
         let boundary = "icsboundary";
         let mut body = Vec::new();

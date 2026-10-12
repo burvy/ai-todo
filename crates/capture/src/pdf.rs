@@ -68,7 +68,7 @@ fn normalise(text: &str) -> String {
 mod tests {
     use super::*;
 
-    const PDF: &[u8] = include_bytes!("../../../demo/syllabus.pdf");
+    const PDF: &[u8] = include_bytes!("../tests/fixtures/syllabus.pdf");
 
     #[test]
     fn reads_a_real_pdf() {

@@ -27,7 +27,7 @@ Or on Linux/macOS:
 ```
 
 Open `http://localhost:8080`. Without `TYPESAFE_API_KEY`, capture falls back
-to one task per line. Sample rambles are in `demo/rambles.md`.
+to one task per line. Sample rambles are in `crates/capture/tests/fixtures/rambles.md`.
 
 ### Environment variables
 

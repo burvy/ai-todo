@@ -175,7 +175,7 @@ pub fn from_text(text: String) -> Extracted {
 mod tests {
     use super::*;
 
-    const PDF: &[u8] = include_bytes!("../../demo/syllabus.pdf");
+    const PDF: &[u8] = include_bytes!("../../crates/capture/tests/fixtures/syllabus.pdf");
 
     // Outlook's own header layout and date format, the same shape the
     // capture crate's own tests use.
