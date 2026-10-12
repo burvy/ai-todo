@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rambl</title>
+  
+<script type="module">
+import init, * as bindings from '/rambl-web-f533949829ae1c07.js';
+const wasm = await init({ module_or_path: '/rambl-web-f533949829ae1c07_bg.wasm' });
+
+
+window.wasmBindings = bindings;
+
+
+dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
+
+</script>
+  <style>
+    :root { color-scheme: light dark; font: 16px system-ui, sans-serif; }
+    body { max-width: 1100px; margin: 0 auto; padding: 1rem; }
+    main { display: grid; gap: 1rem; grid-template-columns: minmax(16rem, 1fr) minmax(24rem, 2fr); }
+    section { border: 1px solid currentColor; border-radius: .5rem; padding: 1rem; }
+    input, button { font: inherit; padding: .5rem; }
+    .capture { display: flex; gap: .5rem; }
+    .capture input { flex: 1; }
+    .week { display: grid; grid-template-columns: repeat(7, 1fr); gap: .25rem; overflow-x: auto; }
+    .day { min-width: 7rem; border-left: 1px solid currentColor; padding: .25rem; }
+    .hour { min-height: 2rem; border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
+    .placement { border: 1px solid currentColor; border-radius: .25rem; padding: .2rem; }
+    @media (max-width: 700px) { main { grid-template-columns: 1fr; } }
+  </style>
+<link rel="modulepreload" href="/rambl-web-f533949829ae1c07.js" crossorigin="anonymous" integrity="sha384-kRBiSY2YHN76UFbk3RRbCXsBZ+oN3gMIwlVE0ySya2+OQG41nal4J4IewSudcw35"><link rel="preload" href="/rambl-web-f533949829ae1c07_bg.wasm" crossorigin="anonymous" integrity="sha384-kGt73EhLsEE16KRQge2H/c1JkCm46UxEqKdvBgOkJx5eg8jdDAK77Xr4q4Xq7aMA" as="fetch" type="application/wasm"></head>
+<body></body>
+</html>
