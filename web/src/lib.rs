@@ -1,42 +1,157 @@
+use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
 use todo_core::Placement;
 use todo_core::Snapshot;
+use wasm_bindgen::JsCast;
 
 pub mod api;
+pub mod mascot;
 
 #[component]
 pub fn App() -> impl IntoView {
     let snapshot = api::use_snapshot();
+    let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
+    let (talking, set_talking) = signal(false);
+    window_event_listener(leptos::ev::keydown, move |event| {
+        if event.key() == " "
+            && !matches!(event.target(), Some(target) if target.dyn_ref::<web_sys::HtmlInputElement>().is_some()
+                || target.dyn_ref::<web_sys::HtmlTextAreaElement>().is_some())
+        {
+            set_talking.set(true);
+        }
+    });
     view! {
-        <header><h1>"Rambl"</h1><CaptureBox /></header>
+        <header><h1>"Rambl"</h1><CaptureBox state=mascot_state set_state=set_mascot_state set_talking /></header>
         <main>
-            <TaskList snapshot=snapshot />
-            <WeekGrid snapshot=snapshot />
+            <TaskList snapshot=snapshot set_mascot_state=set_mascot_state />
+            <WeekGrid snapshot=snapshot set_mascot_state=set_mascot_state />
         </main>
+        <Mascot state=mascot_state set_state=set_mascot_state talking set_talking />
     }
 }
 
 #[component]
-fn CaptureBox() -> impl IntoView {
+fn CaptureBox(
+    state: ReadSignal<mascot::State>,
+    set_state: WriteSignal<mascot::State>,
+    set_talking: WriteSignal<bool>,
+) -> impl IntoView {
     view! {
         <form class="capture" on:submit=|ev| ev.prevent_default()>
             <input placeholder="Say what you need to do…" aria-label="Ramble" />
-            <button type="button" aria-label="Use microphone">"Mic"</button>
+            <button class="mascot-home" type="button" aria-label="Talk with Rambl"
+                on:pointerdown=move |_| {
+                    set_state.set(mascot::transition(&state.get(), mascot::Event::Talk));
+                    set_talking.set(true);
+                }>
+                <img src="assets/pen.svg" alt="Rambl" />
+            </button>
             <button type="submit">"Add"</button>
         </form>
     }
 }
 
 #[component]
-fn TaskList(snapshot: ReadSignal<Snapshot>) -> impl IntoView {
+fn Mascot(
+    state: ReadSignal<mascot::State>,
+    set_state: WriteSignal<mascot::State>,
+    talking: ReadSignal<bool>,
+    set_talking: WriteSignal<bool>,
+) -> impl IntoView {
+    let (animation, set_animation) = signal("home");
+    let start_return = move || {
+        if mascot::prefers_reduced_motion() {
+            set_state.set(mascot::State::Home);
+            set_animation.set("home");
+            return;
+        }
+        set_animation.set("falling");
+        set_state.set(mascot::State::Falling);
+        let set_state = set_state;
+        let set_animation = set_animation;
+        Timeout::new(450, move || {
+            set_state.set(mascot::State::Returning);
+            set_animation.set("returning");
+            let set_state = set_state;
+            let set_animation = set_animation;
+            Timeout::new(450, move || {
+                set_state.set(mascot::State::Home);
+                set_animation.set("home");
+            })
+            .forget();
+        })
+        .forget();
+    };
+    view! {
+        <span class=move || format!("mascot {}", animation.get()) draggable="true"
+            on:dragstart=move |_| set_state.set(mascot::transition(&state.get(), mascot::Event::Grab))
+            on:dragend=move |_| {
+                if matches!(state.get(), mascot::State::Dragging) {
+                    start_return();
+                }
+            }
+            on:pointerdown=move |_| {
+                set_state.set(mascot::transition(&state.get(), mascot::Event::Talk));
+                set_talking.set(true);
+            }>
+            <img src="assets/pen.svg" alt="Rambl" />
+        </span>
+        <span class="mascot-status" aria-live="polite">
+            {move || match state.get() {
+                mascot::State::Asking { ref title, .. } => view! {
+                    <span class="ask">
+                        <span>{format!("Hey! What do you want with \"{title}\"?")}</span>
+                        // TODO: wire these to PUT /tasks/{id}, PUT /tasks/{id}/placement,
+                        // POST /tasks/{id}/done, and DELETE /tasks/{id}.
+                        <button type="button" on:click=move |_| set_state.set(mascot::transition(&state.get(), mascot::Event::Choose))>"Edit"</button>
+                        <button type="button" on:click=move |_| set_state.set(mascot::transition(&state.get(), mascot::Event::Choose))>"Move"</button>
+                        <button type="button" on:click=move |_| set_state.set(mascot::transition(&state.get(), mascot::Event::Choose))>"Done"</button>
+                        <button type="button" on:click=move |_| set_state.set(mascot::transition(&state.get(), mascot::Event::Choose))>"Delete"</button>
+                        <button type="button" on:click=move |_| set_state.set(mascot::transition(&state.get(), mascot::Event::Return))>"Never mind"</button>
+                    </span>
+                }.into_any(),
+                _ => view! { <span></span> }.into_any(),
+            }}
+            {move || talking.get().then(|| view! {
+                <span class="talking">"I'm listening."</span>
+            })}
+        </span>
+    }
+}
+
+#[component]
+fn TaskList(
+    snapshot: ReadSignal<Snapshot>,
+    set_mascot_state: WriteSignal<mascot::State>,
+) -> impl IntoView {
     view! {
         <section aria-labelledby="tasks-heading">
             <h2 id="tasks-heading">"Tasks"</h2>
             <ul>
                 <For each=move || snapshot.get().tasks key=|task| task.id.clone() let:task>
-                    <li><strong>{task.title}</strong> " — " {task.duration_min} " min"
-                        {move || task_time(&snapshot.get(), &task.id.0)}
+                    {
+                        let task_id = task.id.0.clone();
+                        let task_title = task.title.clone();
+                        let drop_task_id = task_id.clone();
+                        let drop_task_title = task_title.clone();
+                        let render_task_id = task_id.clone();
+                        let render_task_title = task_title.clone();
+                        view! {
+                    <li
+                        on:drop=move |_| set_mascot_state.update(|state| {
+                            if matches!(state, mascot::State::Dragging) {
+                                *state = mascot::transition(state, mascot::Event::DropTask {
+                                    task_id: drop_task_id.clone(), title: drop_task_title.clone()
+                                });
+                            }
+                        })
+                        on:dragover=|ev| ev.prevent_default()
+                        draggable="true"
+                    ><strong>{render_task_title}</strong> " — " {task.duration_min} " min"
+                        {move || task_time(&snapshot.get(), &render_task_id)}
                     </li>
+                        }
+                    }
                 </For>
             </ul>
         </section>
@@ -44,7 +159,10 @@ fn TaskList(snapshot: ReadSignal<Snapshot>) -> impl IntoView {
 }
 
 #[component]
-fn WeekGrid(snapshot: ReadSignal<Snapshot>) -> impl IntoView {
+fn WeekGrid(
+    snapshot: ReadSignal<Snapshot>,
+    set_mascot_state: WriteSignal<mascot::State>,
+) -> impl IntoView {
     view! {
         <section aria-labelledby="week-heading">
             <h2 id="week-heading">"Week"</h2>
@@ -53,7 +171,18 @@ fn WeekGrid(snapshot: ReadSignal<Snapshot>) -> impl IntoView {
                     <div class="day"><h3>{format!("Day {}", day + 1)}</h3>
                         <For each=move || snapshot.get().plan.placements.clone()
                             key=|placement| placement.task.clone() let:placement>
-                            <div class="placement">{placement.task.0.clone()} " " {placement_time(&placement)}</div>
+                            <div class="placement"
+                                on:drop=move |_| set_mascot_state.update(|state| {
+                                    if matches!(state, mascot::State::Dragging)
+                                        && let Some(task) = snapshot.get().tasks.iter().find(|task| task.id == placement.task)
+                                    {
+                                        *state = mascot::transition(state, mascot::Event::DropTask {
+                                            task_id: task.id.0.clone(), title: task.title.clone()
+                                        });
+                                    }
+                                })
+                                on:dragover=|ev| ev.prevent_default()
+                            >{placement.task.0.clone()} " " {placement_time(&placement)}</div>
                         </For>
                         <div class="hour"></div><div class="hour"></div><div class="hour"></div>
                     </div>

@@ -9,6 +9,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["alloc", "serde"] }
 gloo-net = { version = "0.7", features = ["json"] }
+gloo-timers = "0.3"
+web-sys = { version = "0.3", features = ["HtmlInputElement", "HtmlTextAreaElement", "Window", "MediaQueryList"] }
 js-sys = "0.3.102"
 leptos = { version = "0.8.19", features = ["csr"] }
 todo-core = { package = "todo-core", path = "../crates/core" }
