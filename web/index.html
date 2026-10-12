@@ -12,6 +12,7 @@
     main { display: grid; gap: 1rem; grid-template-columns: minmax(16rem, 1fr) minmax(24rem, 2fr); align-items: start; }
     .tasks-pane { display: grid; gap: 1rem; min-width: 0; }
     .pane-switch { display: none; gap: .5rem; margin: .5rem 0; }
+    @media (prefers-reduced-motion: no-preference) { main { scroll-behavior: smooth; } }
     .pane-switch button.active { font-weight: 700; outline: 2px solid currentColor; }
     section { border: 1px solid currentColor; border-radius: .5rem; padding: 1rem; }
     input, button { font: inherit; padding: .5rem; }
@@ -62,8 +63,9 @@
     .now-line { position: absolute; left: 0; right: 0; border-top: 2px solid #d33; pointer-events: none; }
     @media (max-width: 700px) {
       .pane-switch { display: flex; }
-      main { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 100%; overflow-x: auto; scroll-snap-type: x mandatory; }
-      main > * { scroll-snap-align: start; min-width: 0; }
+      main { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 100%; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: none; }
+      main::-webkit-scrollbar { display: none; }
+      main > * { scroll-snap-align: start; scroll-snap-stop: always; min-width: 0; }
     }
   </style>
 </head>
