@@ -9,7 +9,7 @@ The spec for how Rambl looks. Code lives in `web/theme.css` (linked from `web/in
 | Token | Hex | Use |
 |---|---|---|
 | `--paper` | `#f2e6cd` | page background |
-| `--paper-raised` | `#f8efdb` | cards, panels, inputs (lighter sheet on top) |
+| `--paper-raised` | `#fdf7ea` | cards, panels, inputs (the sheet, clearly lighter than the page) |
 | `--paper-sunken` | `#eadcc0` | the mascot's circle (deeper paper) |
 | `--ink` | `#2b2318` | body text |
 | `--ink-soft` | `#5f5138` | secondary text |
@@ -20,25 +20,30 @@ The spec for how Rambl looks. Code lives in `web/theme.css` (linked from `web/in
 | `--now` | `#b03a2a` | the current-time line |
 | `--wash` | `rgba(138, 75, 31, 0.12)` | tint behind active chips and placements |
 | `--backdrop` | `rgba(43, 35, 24, 0.35)` | dialog backdrop |
+| `--glow` | white highlight top, walnut bloom bottom | the lamp over the page (`body` background, top layer) |
 
 **Dark** (the same paper, aged and lamp-lit), under `@media (prefers-color-scheme: dark)`:
 
 | Token | Hex |
 |---|---|
-| `--paper` | `#1e1811` |
-| `--paper-raised` | `#272016` |
-| `--paper-sunken` | `#171209` |
-| `--ink` | `#e9dcc0` |
-| `--ink-soft` | `#c3b294` |
-| `--ink-faint` | `#9a8a6d` |
-| `--rule` | `#453a2a` |
-| `--accent` | `#d9a45c` |
-| `--danger` | `#e0705f` |
-| `--now` | `#d96a4f` |
-| `--wash` | `rgba(217, 164, 92, 0.16)` |
-| `--backdrop` | `rgba(10, 8, 5, 0.55)` |
+| `--paper` | `#191410` |
+| `--paper-raised` | `#2b241b` |
+| `--paper-sunken` | `#110e0a` |
+| `--ink` | `#f2e6cb` |
+| `--ink-soft` | `#cdbe9f` |
+| `--ink-faint` | `#9c8c6c` |
+| `--rule` | `#574733` |
+| `--accent` | `#e2ab61` |
+| `--danger` | `#e88b7c` |
+| `--now` | `#e4705a` |
+| `--wash` | `rgba(226, 171, 97, 0.16)` |
+| `--glow` | amber highlight top, black bloom bottom |
+| `--backdrop` | `rgba(10, 8, 5, 0.6)` |
 
-`color-scheme` is `light` or `dark` to match, so checkboxes, scrollbars and the dialog follow the paper. Contrast of `--ink` on `--paper` is about 13:1 in light and 12:1 in dark; both clear the 7:1 bar for body text. Every text token clears 4.5:1 for small text: `--ink-faint` is the weakest at 5.3:1 on `--paper-raised` (it was 3.7:1 before review).
+The dark steps are deliberately wide: page, sheet and sunken circle are told apart at a
+glance, so nothing reads as brown-on-brown.
+
+`color-scheme` is `light` or `dark` to match, so checkboxes, scrollbars and the dialog follow the paper. Contrast of `--ink` on `--paper` is about 13:1 in light and 15:1 in dark; both clear the 7:1 bar for body text. Every text token clears 4.5:1 for small text: `--ink-faint` is the weakest at 5.3:1 on `--paper-raised` in light and 4.7:1 in dark (it was 3.7:1 before review).
 
 ## Type
 
@@ -68,8 +73,8 @@ Four graphics, shared with the mascot art, live in `web/assets/theme/` and are c
 |---|---|---|
 | `paper.svg` | 512x512, tileable | page background, light mode (`--texture-paper`) |
 | `paper-dark.svg` | 512x512, tileable | page background, dark mode (`--texture-paper` under the dark media query) |
-| `edge.svg` | 512x24, repeat-x | torn strip along the bottom of the masthead (`header::before`, `--edge-h` = 24px). The masthead's top and bottom padding are at least that tall, so the strip never crosses the title. In dark mode the strip is tinted down with `filter: brightness(0.42)` instead of being redrawn. |
-| `stain.svg` | 256x256, transparent | faint stain in the masthead corner, 45% opacity, clipped by the header |
+| `edge.svg` | 512x24, repeat-x | torn deckle along the bottom of the masthead (`header::before`, `--edge-h` = 24px). The file is an **alpha shape**: only the page colour below the ragged line is filled, and the strip paints it through a CSS `mask`, with a rule-tinted head as the sheet's shadow. The same file therefore reads right on a light or a dark sheet — no colour override is needed. The masthead's top and bottom padding are at least the strip's height, so the tear never crosses the title. |
+| `stain.svg` | 256x256, transparent | alpha cup ring in the masthead corner, painted through a `mask` in `color-mix(--accent 55%)` at 50% opacity and clipped by the header, so it is ink rather than a smudge |
 | `paper.svg` / `paper-dark.svg` | 512x512 | full-bleed colour + stitched grain, no frame, so the tile repeats without seams (the framed placeholder showed a grid of panels) |
 
 Graphics are drawn by Oscar under the names above (`web/assets/theme/README.md` is the replacement guide).
