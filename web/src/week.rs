@@ -167,7 +167,7 @@ fn PlacementBlock(
             let local_start = ctx.local(placement.start);
             let local_end = ctx.local(placement.end);
             let start_min = local_start.hour() as u16 * 60 + local_start.minute() as u16;
-            let end_min = if local_end.date_naive() > local_start.date_naive() {
+            let end_min = if local_end.date() > local_start.date() {
                 s.end_hour as u16 * 60
             } else {
                 local_end.hour() as u16 * 60 + local_end.minute() as u16
