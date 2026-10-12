@@ -4,17 +4,18 @@ The one design document. The hackathon build (v1: `static/` front end, `server/s
 
 ## 1. What Rambl does
 
-You type or say a ramble ("um call mom tomorrow at 3, lab report due Wednesday"). Rambl turns it into tasks, plans them into your week around your calendar, and keeps the list and the week in agreement. Import busy time from an `.ics` file, export the plan as `.ics`.
+You type or say a ramble ("um call mom tomorrow at 3, lab report due Wednesday"). Rambl turns it into tasks, plans them into your week around your fixed events, and keeps the list and the week in agreement. Import events from an `.ics` file (they become ordinary tasks you can edit and move), export the plan as `.ics`.
 
 ## 2. Failures v1 had, and the rule that prevents each
 
 | v1 failure | Cause | v2 rule |
 |---|---|---|
 | "Tomorrow" became Tuesday on Sunday evening | Day math used the UTC date; Jev was told UTC time | All time goes through one `LocalContext { now, tz }`. The user's IANA zone comes from the client. Nothing reads `Utc::now()` or a `.date_naive()` of a UTC value outside `core::clock`. |
-| Task time and calendar time disagreed | The list showed the deadline, the calendar showed the placement, and they were fetched separately | The server returns one `Snapshot` (tasks + plan + busy) from every call. The list and the week render from the same snapshot. A task's shown time is its placement. |
+| Task time and calendar time disagreed | The list showed the deadline, the calendar showed the placement, and they were fetched separately | The server returns one `Snapshot` (tasks + plan) from every call. The list and the week render from the same snapshot. A task's shown time is its placement. |
 | AI put tasks on the wrong day or time | Jev's free-form date answer was re-parsed; code and Jev each did date logic | Jev only **selects** among candidates that code found in the text. Code alone turns the chosen candidate into a date (`dates` crate). |
 | Titles lost words or kept filler | Ad hoc prefix stripping | Code proposes title spans; Jev chooses one; one tested cleaner removes filler. |
 | Scheduler walked UTC days | Working hours stored as UTC time of day | Working hours are local; the scheduler resolves each local day with its own offset (kept from v1 #77). |
+| Imported calendar events were grey, fixed blocks that could not be edited or moved | A separate "busy" type | There is no busy or grey state. An imported event is a normal `Task` (`source: Calendar`, `when: At(start)`, duration from the event) that can be edited, moved, reordered, done or deleted like any other. Re-importing updates by the event's UID. |
 | Cancelled / transparent calendar events blocked time; mutex deadlock | Fixes landed late, no invariant tests | Kept fixes, each with a regression test. Locks are never held across a call that locks again (one `App` method per request). |
 
 ## 3. Workspace layout
@@ -23,7 +24,7 @@ You type or say a ramble ("um call mom tomorrow at 3, lab report due Wednesday")
 crates/
   core/       types shared by server and web (wasm-safe: serde + chrono only)
   dates/      text -> date/time candidates; candidate + LocalContext -> instant. Pure.
-  scheduler/  tasks + busy + hours + LocalContext -> Plan. Pure.
+  scheduler/  tasks + hours + LocalContext -> Plan (`At` tasks are fixed, the rest flow around them). Pure.
   judge/      trait Judge + JevJudge (HTTP) + FakeJudge (tests)
   capture/    ramble/PDF/email -> Vec<TaskDraft>, using dates + judge
 server/       axum: Store trait (Sqlite, Memory), App service, thin handlers
@@ -42,12 +43,13 @@ pub trait Clock: Send + Sync { fn now(&self) -> DateTime<Utc>; }   // SystemCloc
 pub enum When { Anytime, DueBy(DateTime<Utc>), At(DateTime<Utc>) } // At = fixed start (pinned)
 
 pub struct Task { id: TaskId, title: String, duration_min: u16, when: When, done: bool,
-                  order: i64, label: Label, priority: Priority, source: Source, created: DateTime<Utc> }
+                  order: i64, label: Label, priority: Priority, source: Source, created: DateTime<Utc>,
+                  external_uid: Option<String> }   // iCalendar UID for imported events
+
 pub struct TaskDraft { title, duration_min, when, label, priority, source }      // no id
-pub struct Busy { start, end, title }
 pub struct Placement { task: TaskId, start: DateTime<Utc>, end: DateTime<Utc> }
 pub struct Plan { placements: Vec<Placement>, unplaced: Vec<TaskId> }
-pub struct Snapshot { tasks: Vec<Task>, plan: Plan, busy: Vec<Busy>, tz: String, generated: DateTime<Utc> }
+pub struct Snapshot { tasks: Vec<Task>, plan: Plan, tz: String, generated: DateTime<Utc> }
 pub struct ApiError { code: ErrorCode, message: String }
 ```
 
@@ -75,14 +77,14 @@ All JSON. Every request carries the header `X-Rambl-TZ: America/New_York` (from 
 | `POST /api/v1/tasks/{id}/revise` | `{instruction}` (goes through the capture pipeline for one clause) | `Snapshot` |
 | `PUT /api/v1/tasks/order` | `{ids: [...]}` (full order) | `Snapshot` |
 | `DELETE /api/v1/tasks/{id}` | none | `Snapshot` |
-| `POST /api/v1/busy/import` | multipart `file` (.ics), `confirm=true` to accept clashes | `Snapshot`, or 409 `{clashes}` |
+| `POST /api/v1/import` | multipart `file` (.ics) | `{created: [id], updated: [id], snapshot}`. Events become tasks (`At`, `source: Calendar`); same UID updates the existing task. Cancelled and transparent events are skipped. Overlapping `At` tasks are allowed and drawn side by side. |
 | `GET /api/v1/calendar.ics` | none | iCalendar |
 
 The server is the only planner: the client never computes placements.
 
 ## 7. Server (`server/`)
 
-- `Store` trait: `tasks()`, `put(Task)`, `delete(id)`, `set_order(ids)`, `busy()`, `replace_busy(..)`. `SqliteStore` for real, `MemoryStore` for tests.
+- `Store` trait: `tasks()`, `put(Task)`, `delete(id)`, `set_order(ids)`, `find_by_uid(uid)`. `SqliteStore` for real, `MemoryStore` for tests.
 - `App { store, judge, clock, hours }`: one method per endpoint. It loads, mutates, re-plans and returns the snapshot inside one critical section, so a snapshot is never half-updated.
 - Handlers only parse input, build the `LocalContext` from the header and `clock`, call `App`, and map errors.
 - Config from env: `TYPESAFE_API_KEY`, `PORT`, `RAMBL_DATA` (db path), `RAMBL_DEFAULT_TZ` (when the header is missing).
@@ -94,8 +96,9 @@ Plain and fast: a text box with a mic button (Web Speech API via `web-sys`), the
 ## 9. Testing (the definition of done for every change)
 
 - `dates`: a table of phrases at fixed instants, including Sunday 21:00 New York (Monday in UTC), both DST change days, month and year rollover, "next Tuesday" on a Tuesday, and every weekday from every weekday.
-- `scheduler`: invariants for random inputs: no overlap with busy or each other, `At` tasks exactly at their start, `DueBy` tasks end by their due time when there is room, the order breaks ties.
+- `scheduler`: invariants for random inputs: flexible tasks never overlap `At` tasks or each other, `At` tasks exactly at their start, `DueBy` tasks end by their due time when there is room, the order breaks ties.
 - `capture`: golden fixtures (rambles in, drafts out) with `FakeJudge`; live Jev tests are `#[ignore]` and run by hand.
+- `import`: a committed synthetic `.ics` fixture shaped like a real export (TZID times, LOCATION, 16 events in one week): every event becomes an editable `At` task at the right local time, re-import updates instead of duplicating, a moved imported task keeps its new time. burvy's real sample (`Z:\App Data\Downloads\calendar_this_week.ics`) is personal: use it only in a local `#[ignore]` test via the env var `RAMBL_SAMPLE_ICS`, never commit it.
 - `server`: HTTP tests (`tower::ServiceExt`) with `MemoryStore`, `FixedClock` and `FakeJudge`. A shared check runs on every returned snapshot: each open task with a placement shows that placement, and no placement exists for a done or deleted task.
 - `web`: `wasm-bindgen-test` that the list and week render the same times from a fixture snapshot.
 - CI: `cargo fmt --check`, `cargo clippy --workspace -- -D warnings`, `cargo test --workspace`, `trunk build`.
