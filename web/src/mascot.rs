@@ -1,16 +1,24 @@
-//! Rambo the pen: his states, and his body on the move.
+//! Rambo the pen: one mascot, one state machine, one DOM element.
 //!
 //! [`State`] and [`transition`] are the pure state machine — unit-tested
-//! without the DOM. [`PenRig`] is the body the view moves: a fixed layer
-//! that flies between his circle, the capture caret and fresh task rows.
+//! without the DOM. The single element is a fixed-position button at the
+//! bottom-right corner; CSS classes and CSS variables move it for dragging,
+//! writing at the caret, writing task rows, and skittering back home.
+//!
+//! Writing flight is part of the same state machine: when Rambo writes,
+//! he leaves home and returns. The view layer reads the state and places
+//! the element accordingly.
 
-use leptos::prelude::*;
-
+/// Rambo's complete state: where he is and what he's doing.
+///
+/// One element, one state — the element is always visible at home unless
+/// it is Dragging, Recovering, Skittering, Asking, WritingCaret,
+/// WritingRow, or Flying.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum State {
-    /// On his circle next to the capture box.
+    /// Resting at his home spot (bottom-right corner).
     Home,
-    /// Picked up: listening, and ready to be dragged.
+    /// Picked up: listening, being dragged with the pointer.
     Dragging,
     /// Dropped on empty space: sits there a moment, dazed.
     Recovering,
@@ -18,13 +26,19 @@ pub enum State {
     Skittering,
     /// Dropped on a task: asking what to do with it.
     Asking { task_id: String, title: String },
+    /// Flying to the capture caret or a task row (transit, not writing yet).
+    Flying,
+    /// Writing along at the capture caret while the user types.
+    WritingCaret,
+    /// Writing a fresh task row's title, nib sweeping left to right.
+    WritingRow,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
-    /// Pointer down on him (or Space held): he starts listening.
+    /// Pointer down on him (or Space/Enter): he starts listening.
     Grab,
-    /// Released without moving: capture what he heard, back to his circle.
+    /// Released without moving: capture what he heard, back to home.
     Release,
     /// Dropped on empty space.
     DropEmpty,
@@ -36,6 +50,12 @@ pub enum Event {
     Choose,
     /// Hold-to-talk from wherever he is.
     Talk,
+    /// Start writing at the caret (user is typing).
+    WriteCaret,
+    /// Fly to a fresh task row and write it.
+    WriteRow,
+    /// Finish writing and fly home.
+    FlyHome,
 }
 
 /// Milliseconds he sits dazed where he was dropped.
@@ -45,21 +65,63 @@ pub const SKITTER_MS: u32 = 900;
 
 pub fn transition(state: &State, event: Event) -> State {
     match (state, event) {
+        // From home: grab or talk starts dragging; writing starts flying.
         (State::Home, Event::Grab | Event::Talk) => State::Dragging,
+        (State::Home, Event::WriteCaret) => State::WritingCaret,
+        (State::Home, Event::WriteRow) => State::Flying,
+        (State::Home, Event::FlyHome) => State::Home,
+
+        // Dragging: release goes home; drop on task asks; drop empty recovers.
         (State::Dragging, Event::Release) => State::Home,
         (State::Dragging, Event::DropEmpty) => State::Recovering,
         (State::Dragging, Event::DropTask { task_id, title }) => State::Asking { task_id, title },
+
+        // Recovering → Skittering → Home.
         (State::Recovering, Event::Return) => State::Skittering,
         (State::Skittering, Event::Return) => State::Home,
+
+        // Asking: choose or return goes home.
         (State::Asking { .. }, Event::Choose | Event::Return) => State::Home,
+
+        // Writing caret: fly home when done.
+        (State::WritingCaret, Event::FlyHome) => State::Flying,
+
+        // Flying to a row: arrive and write.
+        (State::Flying, Event::WriteRow) => State::WritingRow,
+
+        // Writing row: fly home when done.
+        (State::WritingRow, Event::FlyHome) => State::Flying,
+
+        // Flying home: arrive.
+        (State::Flying, Event::FlyHome) => State::Home,
+
+        // Talk is available while away (no state change).
         (state, Event::Talk) => state.clone(),
+
+        // Default: stay.
         (state, _) => state.clone(),
     }
 }
 
-/// Is he away from his circle (so the circle's own pen should hide)?
+/// Is he away from home (not resting at his circle)?
 pub fn is_away(state: &State) -> bool {
     !matches!(state, State::Home)
+}
+
+/// Is he writing or flying for writing (so typing must not yank him)?
+pub fn pen_busy(state: &State) -> bool {
+    matches!(
+        state,
+        State::Flying | State::WritingCaret | State::WritingRow
+    )
+}
+
+/// Is he in a writing-related state (caret, row, or flying for writing)?
+pub fn is_writing_flight(state: &State) -> bool {
+    matches!(
+        state,
+        State::Flying | State::WritingCaret | State::WritingRow
+    )
 }
 
 /// Where a hop of the skitter run is at `progress` (0..=1): straight line from
@@ -96,64 +158,24 @@ pub fn prefers_reduced_motion() -> bool {
     false
 }
 
-/// The writing pen's trip. While he writes — with you at the capture caret,
-/// or across fresh task rows — the view shows him through these phases.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PenFlight {
-    /// Hidden on his circle; the circle's own pen shows.
-    Parked,
-    /// Writing along at the capture caret.
-    WritingCaret,
-    /// Flying to the fresh row `index` of `total`.
-    FlyingToRow { index: u32, total: u32 },
-    /// Writing that row's title, nib sweeping left to right.
-    WritingRow { index: u32, total: u32 },
-    /// Heading back to his circle.
-    FlyingHome,
-}
-
-/// True while a row batch owns the pen (so typing must not yank him away).
-pub fn pen_busy(flight: &PenFlight) -> bool {
-    matches!(
-        flight,
-        PenFlight::FlyingToRow { .. } | PenFlight::WritingRow { .. }
-    )
-}
-
-/// The class the rig carries for a flight. The CSS block in index.html owns
-/// what each class looks like.
-pub fn pen_class(flight: &PenFlight) -> &'static str {
-    match flight {
-        PenFlight::Parked => "pen-rig",
-        PenFlight::WritingCaret => "pen-rig is-away is-caret",
-        PenFlight::FlyingToRow { .. } => "pen-rig is-away is-flying",
-        PenFlight::WritingRow { .. } => "pen-rig is-away is-writing",
-        PenFlight::FlyingHome => "pen-rig is-away is-flying",
-    }
-}
-
-/// Rambo's travelling body: a pen-sized image on a fixed layer, placed with
-/// CSS variables and posed by the flight's class. Hidden while parked — his
-/// circle in the capture row carries the resting pen.
-#[component]
-pub fn PenRig(
-    flight: RwSignal<PenFlight>,
-    pos: RwSignal<(f64, f64)>,
-    pose: ReadSignal<String>,
-) -> impl IntoView {
-    view! {
-        <div
-            class=move || {
-                let pose = pose.get();
-                if pose.is_empty() { pen_class(&flight.get()).to_owned() }
-                else { format!("{} pose-{pose}", pen_class(&flight.get())) }
-            }
-            style:--pen-x=move || format!("{:.1}px", pos.get().0)
-            style:--pen-y=move || format!("{:.1}px", pos.get().1)
-            aria-hidden="true"
-        >
-            <img class="pen-rig-pen" src="assets/pen.svg" alt="" />
-        </div>
+/// The CSS class the single Rambo element carries for its current state.
+/// The CSS block in theme.css (marked "Rambo") owns what each class looks like.
+pub fn rambo_class(state: &State, pose: &str) -> String {
+    let base = "rambo";
+    let extra = match state {
+        State::Home => "",
+        State::Dragging => " is-dragging",
+        State::Recovering => " is-recovering",
+        State::Skittering => " is-skittering",
+        State::Asking { .. } => " is-asking",
+        State::Flying => " is-flying",
+        State::WritingCaret => " is-flying is-writing is-caret",
+        State::WritingRow => " is-flying is-writing",
+    };
+    if pose.is_empty() {
+        format!("{base}{extra}")
+    } else {
+        format!("{base}{extra} pose-{pose}")
     }
 }
 
@@ -217,18 +239,58 @@ mod tests {
     }
 
     #[test]
-    fn the_pen_is_busy_only_for_row_batches() {
-        assert!(!pen_busy(&PenFlight::Parked));
-        assert!(!pen_busy(&PenFlight::WritingCaret));
-        assert!(pen_busy(&PenFlight::WritingRow { index: 0, total: 2 }));
-        assert!(pen_busy(&PenFlight::FlyingToRow { index: 1, total: 2 }));
+    fn writing_caret_then_fly_home() {
+        let state = transition(&State::Home, Event::WriteCaret);
+        assert_eq!(state, State::WritingCaret);
+        let state = transition(&state, Event::FlyHome);
+        assert_eq!(state, State::Flying);
+        assert_eq!(transition(&state, Event::FlyHome), State::Home);
     }
 
     #[test]
-    fn pen_classes_cover_every_flight() {
-        assert_eq!(pen_class(&PenFlight::Parked), "pen-rig");
-        assert!(pen_class(&PenFlight::WritingCaret).contains("is-caret"));
-        assert!(pen_class(&PenFlight::FlyingHome).contains("is-flying"));
-        assert!(pen_class(&PenFlight::WritingRow { index: 0, total: 1 }).contains("is-writing"));
+    fn writing_row_fly_through_flying_state() {
+        let state = transition(&State::Home, Event::WriteRow);
+        assert_eq!(state, State::Flying);
+        let state = transition(&state, Event::WriteRow);
+        assert_eq!(state, State::WritingRow);
+        let state = transition(&state, Event::FlyHome);
+        assert_eq!(state, State::Flying);
+        assert_eq!(transition(&state, Event::FlyHome), State::Home);
+    }
+
+    #[test]
+    fn pen_busy_during_writing_flight() {
+        assert!(!pen_busy(&State::Home));
+        assert!(!pen_busy(&State::Dragging));
+        assert!(pen_busy(&State::Flying));
+        assert!(pen_busy(&State::WritingCaret));
+        assert!(pen_busy(&State::WritingRow));
+    }
+
+    #[test]
+    fn rambo_classes_cover_every_state() {
+        assert_eq!(rambo_class(&State::Home, ""), "rambo");
+        assert!(rambo_class(&State::Dragging, "").contains("is-dragging"));
+        assert!(rambo_class(&State::Flying, "").contains("is-flying"));
+        assert!(rambo_class(&State::WritingCaret, "").contains("is-caret"));
+        assert!(rambo_class(&State::WritingRow, "").contains("is-writing"));
+        assert!(rambo_class(&State::Home, "listening").contains("pose-listening"));
+    }
+
+    #[test]
+    fn is_away_returns_true_for_non_home_states() {
+        assert!(!is_away(&State::Home));
+        assert!(is_away(&State::Dragging));
+        assert!(is_away(&State::WritingCaret));
+        assert!(is_away(&State::Flying));
+    }
+
+    #[test]
+    fn is_writing_flight_identifies_writing_states() {
+        assert!(!is_writing_flight(&State::Home));
+        assert!(!is_writing_flight(&State::Dragging));
+        assert!(is_writing_flight(&State::Flying));
+        assert!(is_writing_flight(&State::WritingCaret));
+        assert!(is_writing_flight(&State::WritingRow));
     }
 }

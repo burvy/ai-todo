@@ -13,7 +13,7 @@ pub const WRITE_MS: u32 = 600;
 pub const LINGER_MS: u32 = 2000;
 /// Flight time between two spots (caret, row, home).
 pub const FLY_MS: u32 = 450;
-/// The pen's drawn size in CSS pixels; must mirror `.pen-rig-pen` in index.html.
+/// The pen's drawn size in CSS pixels; must mirror `.rambo img` in theme.css.
 pub const PEN_W: f64 = 30.0;
 pub const PEN_H: f64 = 52.0;
 /// The scale the pen writes at (shrunk so it does not cover the words).
