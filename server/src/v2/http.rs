@@ -488,6 +488,16 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
+    #[tokio::test]
+    async fn event_with_no_end_gets_thirty_minutes() {
+        let router = router_at(sunday_night());
+        let ics = "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VEVENT\nUID:no-end@example.test\nDTSTART:20261012T130000Z\nSUMMARY:No end\nEND:VEVENT\nEND:VCALENDAR\n";
+        let (status, body) = import_ics(&router, ics).await;
+        assert_eq!(status, StatusCode::OK);
+        let snapshot: Snapshot = serde_json::from_value(body["snapshot"].clone()).unwrap();
+        assert_eq!(snapshot.tasks[0].duration_min, 30);
+    }
+
     /// Runs against burvy's real calendar. Personal data, so never committed: point
     /// `RAMBL_SAMPLE_ICS` at a local file and run `cargo test -- --ignored`.
     #[tokio::test]

@@ -70,11 +70,12 @@ pub fn parse_events(text: &str) -> Result<Vec<(Option<String>, BusyRow)>, Import
             }
             let start = to_utc(&date_of(event, "DTSTART")?)?;
             // `DTEND` is the norm, but `DURATION` is legal and Google uses it.
-            // A missing `DTEND` must not drop the event, so no `?` here.
+            // A missing `DTEND` must not drop the event, so no `?` here. With neither
+            // `DTEND` nor `DURATION`, the event gets 30 minutes, never zero length.
             let end = date_of(event, "DTEND")
                 .and_then(|value| to_utc(&value))
                 .or_else(|| duration_after(event, start))
-                .unwrap_or(start);
+                .unwrap_or(start + chrono::Duration::minutes(30));
             if end < start {
                 return None;
             }
