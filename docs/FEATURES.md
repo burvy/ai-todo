@@ -69,10 +69,10 @@ b. Drag a task row above or below another row.
 c. Code: `web/src/lib.rs:TaskList`; `web/src/api.rs:reorder_tasks`;
 `server/src/v2/http.rs:reorder`; `server/src/v2/app.rs:reorder`.
 
-### 4. Edit through Rambl
-a. Dropping Rambl on a task offers actions; the built actions can change priority,
+### 4. Edit through Rambo
+a. Dropping Rambo on a task offers actions; the built actions can change priority,
 toggle completion, or delete the task.
-b. Drag Rambl onto a task, then choose **Edit**, **Done**, or **Delete**.
+b. Drag Rambo onto a task, then choose **Edit**, **Done**, or **Delete**.
 c. Code: `web/src/lib.rs:Mascot`; `web/src/api.rs:patch_task, delete_task`.
 
 ### 5. Labels and priorities
@@ -124,25 +124,25 @@ c. Code: `web/index.html`.
 ## IV. RAMBL, THE MASCOT
 
 ### 1. Talk button
-a. The pen beside the capture box is Rambl's send and talk control.
+a. The pen beside the capture box is Rambo's send and talk control.
 b. Click the pen to send or press and hold it to show the listening state.
 c. Code: `web/src/lib.rs:CaptureBox, Mascot`; `web/src/mascot.rs:State, Event, transition`.
 
 ### 2. Drag, fall and return
-a. Rambl can be dragged; when dropped away from a target he falls and returns home.
+a. Rambo can be dragged; when dropped away from a target he falls and returns home.
 b. Drag the pen to empty space and release it.
 c. Code: `web/src/lib.rs:Mascot`; `web/src/mascot.rs:transition`;
 `web/index.html`.
 
 ### 3. Drop actions
-a. Dropping Rambl on a task opens a prompt with Edit, Move, Done, Delete and
+a. Dropping Rambo on a task opens a prompt with Edit, Move, Done, Delete and
 Never mind actions. The edit dialog is *(planned)*.
 b. Drag the pen onto a task row and choose an action.
 c. Code: `web/src/lib.rs:Mascot`; `web/src/api.rs:patch_task, delete_task`.
 
 ### 4. Reduced motion
-a. With reduced motion enabled, Rambl returns immediately instead of animating.
-b. Enable reduced motion in the operating system and drag Rambl away from home.
+a. With reduced motion enabled, Rambo returns immediately instead of animating.
+b. Enable reduced motion in the operating system and drag Rambo away from home.
 c. Code: `web/src/mascot.rs:prefers_reduced_motion`; `web/src/lib.rs:Mascot`.
 
 ### 5. Mascot brain

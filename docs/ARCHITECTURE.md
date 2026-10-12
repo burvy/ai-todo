@@ -60,7 +60,7 @@ pub struct ApiError { code: ErrorCode, message: String }
 
 New tasks receive the highest position in the list, so the list is newest first. The scheduler still fills time in list order; a deadline takes precedence over list position. `When::At` is an absolute instant, like a calendar event. `When::DueBy` stores the user's time zone at capture time as part of the due date, so the intended local deadline is preserved if the user later travels.
 
-An unfinished task past its `DueBy` remains in the list marked **Overdue**. The scheduler places it in the next free slot, and Rambl teases the user about it.
+An unfinished task past its `DueBy` remains in the list marked **Overdue**. The scheduler places it in the next free slot, and Rambo teases the user about it.
 
 ## 5. Capture pipeline (`crates/capture`)
 
@@ -77,7 +77,7 @@ All JSON. Every request carries the header `X-Rambl-TZ: America/New_York` (from 
 
 **Accounts.** Rambl is multi-user. Every request except sign-in carries `Authorization: Bearer <session token>`. The token names a row in `v2_sessions`; the row names the user; **every task read and write is scoped to that user, in the store, not in the handler** — `Store` methods take the user id, so a handler cannot forget it. A missing, unknown or expired token is a 401 before the handler runs. With `GOOGLE_CLIENT_ID` unset the server is in local mode: one fixed local user, no sign-in.
 
-Anonymous users do not sign in. Their account and tasks are deleted after 30 days without a visit; Rambl nudges them to sign in before then to keep their tasks.
+Anonymous users do not sign in. Their account and tasks are deleted after 30 days without a visit; Rambo nudges them to sign in before then to keep their tasks.
 
 | Method and path | Body | Returns |
 |---|---|---|
@@ -126,9 +126,9 @@ Recurrence is design-only for now. A series stores weekly-on-these-days, an unti
 
 Plain and fast: a text box with a mic button (Web Speech API via `web-sys`), the task list, and a 7-day week grid. Light and dark follow the OS. No animations, sounds or textures, except the mascot below. One `api.rs` module makes every request and stores the returned `Snapshot` in one signal; the list and the week are derived from that signal only. Reorder by drag sends `PUT /tasks/order`. Built by `trunk build --release` into `web/dist`, which the server serves.
 
-### 8.1 Rambl, the mascot
+### 8.1 Rambo, the mascot
 
-The pen character (`art/illustrations/pen.svg`) is named **Rambl**. He lives in a small circle next to the text box and is the talk button: tap to send, hold to talk.
+The pen character (`art/illustrations/pen.svg`) is named **Rambo**. He lives in a small circle next to the text box and is the talk button: tap to send, hold to talk.
 
 - **Drag:** he can be picked up and dragged anywhere.
 - **Fall:** dropped on empty space, he falls to the bottom of the window (short gravity animation, a small bounce), then skitters back to his circle.
