@@ -1,6 +1,7 @@
 //! Deterministic task scheduling over recurring working hours and busy blocks.
 
-use chrono::{DateTime, Datelike, Duration, NaiveTime, Utc, Weekday};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
+use chrono_tz::Tz;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
@@ -29,13 +30,21 @@ pub struct TimeWindow {
     pub end: NaiveTime,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// The times a task may be placed, kept in the *local* timezone rather than
+/// UTC.
+///
+/// Keeping these as UTC time-of-day loses the offset, so a window built on one
+/// day is reused on days with a different offset and work drifts by an hour
+/// across a DST change. Storing the zone alongside the windows lets each day
+/// be resolved with the offset that is actually in force on that day.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkingHours {
+    pub timezone: Tz,
     pub days: HashMap<Weekday, Vec<TimeWindow>>,
 }
 
 impl WorkingHours {
-    pub fn every_day(start: NaiveTime, end: NaiveTime) -> Self {
+    pub fn every_day(timezone: Tz, start: NaiveTime, end: NaiveTime) -> Self {
         let mut days = HashMap::new();
         for day in [
             Weekday::Mon,
@@ -48,7 +57,16 @@ impl WorkingHours {
         ] {
             days.insert(day, vec![TimeWindow { start, end }]);
         }
-        Self { days }
+        Self { timezone, days }
+    }
+}
+
+impl Default for WorkingHours {
+    fn default() -> Self {
+        Self {
+            timezone: chrono_tz::UTC,
+            days: HashMap::new(),
+        }
     }
 }
 
@@ -187,17 +205,23 @@ fn next_slot(
     hours: &WorkingHours,
     occupied: &[(DateTime<Utc>, DateTime<Utc>)],
 ) -> Option<DateTime<Utc>> {
+    let timezone = hours.timezone;
+    // Walk local dates, not UTC dates: the window belongs to a local day, and
+    // near midnight the two disagree.
+    let first_day = from.with_timezone(&timezone).date_naive();
     for day_offset in 0..366 {
-        let date = from.date_naive() + Duration::days(day_offset);
-        let Some(windows) = hours.days.get(&date.weekday()) else {
+        let local_date = first_day + Duration::days(day_offset);
+        let Some(windows) = hours.days.get(&local_date.weekday()) else {
             continue;
         };
         for window in windows {
-            let mut candidate =
-                DateTime::<Utc>::from_naive_utc_and_offset(date.and_time(window.start), Utc);
-            let window_end =
-                DateTime::<Utc>::from_naive_utc_and_offset(date.and_time(window.end), Utc);
-            if window.end <= window.start {
+            let (Some(mut candidate), Some(window_end)) = (
+                local_to_utc(timezone, local_date, window.start),
+                local_to_utc(timezone, local_date, window.end),
+            ) else {
+                continue;
+            };
+            if window_end <= candidate {
                 continue;
             }
             if candidate < from {
@@ -223,6 +247,19 @@ fn next_slot(
     None
 }
 
+/// Resolve one local wall-clock slot to the UTC instant it names on that date.
+///
+/// A spring-forward gap has no such instant, so it yields nothing and the slot
+/// is simply skipped. A repeated hour is ambiguous; the first (pre-shift)
+/// reading is used so a slot never lands twice.
+fn local_to_utc(timezone: Tz, date: NaiveDate, time: NaiveTime) -> Option<DateTime<Utc>> {
+    match timezone.from_local_datetime(&date.and_time(time)) {
+        chrono::LocalResult::Single(instant) => Some(instant.with_timezone(&Utc)),
+        chrono::LocalResult::Ambiguous(instant, _) => Some(instant.with_timezone(&Utc)),
+        chrono::LocalResult::None => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,6 +270,7 @@ mod tests {
     }
     fn hours() -> WorkingHours {
         WorkingHours::every_day(
+            chrono_tz::UTC,
             NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
             NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
         )
@@ -333,5 +371,89 @@ mod tests {
             task_id: "empty".into(),
             reason: UnschedulableReason::NoAvailableTime
         }));
+    }
+
+    /// The live bug: a working window turned into a UTC time-of-day on the day the
+    /// request arrives is reused for every later day, so across a DST change work
+    /// lands an hour off. The task's own deadline is unaffected, which is why the
+    /// task time looked right while the calendar time did not.
+    #[test]
+    fn working_window_stays_local_across_a_dst_change() {
+        let local_hours = WorkingHours::every_day(
+            chrono_tz::America::New_York,
+            NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        // US DST began 2026-03-08, so from the Monday after it New York is
+        // UTC-4 and 09:00 local is 13:00 UTC, not the 14:00 that the winter
+        // offset would have produced.
+        let after_change = Utc.with_ymd_and_hms(2026, 3, 9, 8, 0, 0).unwrap();
+        let output = schedule(&[task("a", 60)], &[], &local_hours, after_change);
+        let Placement::Scheduled(placement) = &output[0] else {
+            panic!("expected a placement, got {:?}", output);
+        };
+        assert_eq!(
+            placement.start,
+            Utc.with_ymd_and_hms(2026, 3, 9, 13, 0, 0).unwrap(),
+            "09:00 New York on 2026-03-09 is 13:00 UTC"
+        );
+    }
+
+    #[test]
+    fn the_window_end_is_local_too_on_the_dst_day() {
+        let local_hours = WorkingHours::every_day(
+            chrono_tz::America::New_York,
+            NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+        );
+        let after_change = Utc.with_ymd_and_hms(2026, 3, 9, 8, 0, 0).unwrap();
+        // Busy the morning away. The last hour of the local day has to still
+        // fit before the 17:00 local close, which is 21:00 UTC on that date.
+        let busy = [BusyBlock {
+            start: Utc.with_ymd_and_hms(2026, 3, 9, 13, 0, 0).unwrap(),
+            end: Utc.with_ymd_and_hms(2026, 3, 9, 20, 0, 0).unwrap(),
+        }];
+        let output = schedule(&[task("b", 60)], &busy, &local_hours, after_change);
+        let Placement::Scheduled(placement) = &output[0] else {
+            panic!("expected a placement, got {:?}", output);
+        };
+        assert_eq!(
+            placement.start,
+            Utc.with_ymd_and_hms(2026, 3, 9, 20, 0, 0).unwrap(),
+            "20:00 UTC is 16:00 New York on the DST day"
+        );
+        assert_eq!(
+            placement.end,
+            Utc.with_ymd_and_hms(2026, 3, 9, 21, 0, 0).unwrap(),
+            "21:00 UTC is 17:00 New York, the close of the working day"
+        );
+    }
+
+    /// A zone far enough east that the local working day wraps midnight in UTC.
+    /// The window must still be found, and still start at 09:00 local.
+    #[test]
+    fn a_local_day_that_wraps_midnight_in_utc_is_still_found() {
+        let timezone = chrono_tz::Pacific::Auckland;
+        let local_hours = WorkingHours::every_day(
+            timezone,
+            NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        // 2026-01-05 08:00 UTC is late evening on Monday the 5th in Auckland,
+        // so Monday's working day is over and the next one is Tuesday.
+        let monday_evening = Utc.with_ymd_and_hms(2026, 1, 5, 8, 0, 0).unwrap();
+        let output = schedule(&[task("a", 60)], &[], &local_hours, monday_evening);
+        let Placement::Scheduled(placement) = &output[0] else {
+            panic!("expected a placement, got {:?}", output);
+        };
+        let local_start = placement.start.with_timezone(&timezone);
+        let local_end = placement.end.with_timezone(&timezone);
+        assert_eq!(
+            local_start.time(),
+            NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            "work still starts at 09:00 local"
+        );
+        assert_eq!(local_end.time(), NaiveTime::from_hms_opt(10, 0, 0).unwrap());
+        assert_eq!(local_start.weekday(), Weekday::Tue, "the next local day");
     }
 }

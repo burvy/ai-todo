@@ -707,6 +707,21 @@ fn local_time_as_utc(tz: Tz, local: NaiveDateTime) -> DateTime<Utc> {
         .with_timezone(&Utc)
 }
 
+/// The hours work may be placed in, as local wall-clock time.
+///
+/// These are deliberately *not* converted to a UTC time-of-day here. Doing that
+/// froze today's UTC offset into the window, so on a day whose offset differs
+/// (either side of a DST change) every placement landed an hour out, even
+/// though the task deadline itself was fine. The scheduler now resolves each
+/// day with the offset actually in force on that day.
+fn working_hours() -> WorkingHours {
+    WorkingHours::every_day(
+        timezone(),
+        NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+        NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+    )
+}
+
 /// Busy blocks for the next weekday in the configured local timezone, returned as UTC.
 fn reason_text(reason: &UnschedulableReason) -> &'static str {
     match reason {
@@ -982,17 +997,7 @@ fn reschedule(state: &AppState) -> ScheduleOut {
             end: block.end,
         })
         .collect();
-    let tz = timezone();
-    let local_now = Utc::now().with_timezone(&tz);
-    let local_start = local_now
-        .date_naive()
-        .and_time(NaiveTime::from_hms_opt(9, 0, 0).unwrap());
-    let local_end = local_now
-        .date_naive()
-        .and_time(NaiveTime::from_hms_opt(18, 0, 0).unwrap());
-    let start_utc = local_time_as_utc(tz, local_start).time();
-    let end_utc = local_time_as_utc(tz, local_end).time();
-    let hours = WorkingHours::every_day(start_utc, end_utc);
+    let hours = working_hours();
 
     let mut placements = Vec::new();
     let mut unscheduled = Vec::new();
