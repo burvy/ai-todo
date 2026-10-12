@@ -57,8 +57,15 @@ fn next_priority_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBod
 }
 
 /// What the page tells the user when an edit did not apply.
+///
+/// The wording follows why the edit failed, not whether the reload afterwards worked: a
+/// refusal from the server is not "could not reach the server" just because the reload
+/// that followed also failed.
 fn refused_note(error: &api::ApiError, reloaded: bool) -> &'static str {
     match (error, reloaded) {
+        (api::ApiError::Network(_), _) => {
+            "Could not reach the server, so that change was not saved."
+        }
         (
             api::ApiError::Server(todo_core::ApiError {
                 code: todo_core::ErrorCode::StaleUpdate,
@@ -66,8 +73,15 @@ fn refused_note(error: &api::ApiError, reloaded: bool) -> &'static str {
             }),
             true,
         ) => "That task changed elsewhere, so it was reloaded. Try again.",
+        (
+            api::ApiError::Server(todo_core::ApiError {
+                code: todo_core::ErrorCode::StaleUpdate,
+                ..
+            }),
+            false,
+        ) => "That task changed elsewhere. Reload the page to see it.",
         (_, true) => "That change was not saved. The list was reloaded.",
-        (_, false) => "Could not reach the server, so that change was not saved.",
+        (_, false) => "That change was not saved.",
     }
 }
 
@@ -88,6 +102,8 @@ struct EditSink {
 async fn patch_and_show(id: &todo_core::TaskId, body: api::PatchTaskBody, sink: EditSink) -> bool {
     match api::patch_task(id, body).await {
         Ok(snapshot) => {
+            // A note about an earlier refusal must not outlive the retry that worked.
+            sink.set_error.set(None);
             sink.set_snapshot.set(snapshot);
             true
         }
@@ -154,7 +170,7 @@ pub fn App() -> impl IntoView {
             />
         </header>
         {move || error.get().map(|e| view! {
-            <div class="error" aria-live="assertive">{e}</div>
+            <div class="error" aria-live="polite">{e}</div>
         })}
         <settings::SettingsPanel settings=view_settings set_settings=set_view_settings />
         <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event set_speech=set_brain_speech set_pose=set_brain_pose />
@@ -1010,9 +1026,20 @@ mod tests {
             message: String::new(),
         });
         assert!(refused_note(&stale, true).contains("changed elsewhere"));
+        assert!(refused_note(&stale, false).contains("Reload the page"));
         let offline = api::ApiError::Network("offline".into());
-        assert!(refused_note(&offline, false).contains("Could not reach the server"));
-        assert!(refused_note(&offline, true).contains("not saved"));
+        for reloaded in [true, false] {
+            assert!(refused_note(&offline, reloaded).contains("Could not reach the server"));
+        }
+        // A server refusal is never reported as an unreachable server, reload or not.
+        let refused = api::ApiError::Server(todo_core::ApiError {
+            code: todo_core::ErrorCode::BadRequest,
+            message: String::new(),
+        });
+        for reloaded in [true, false] {
+            assert!(!refused_note(&refused, reloaded).contains("reach"));
+            assert!(refused_note(&refused, reloaded).contains("not saved"));
+        }
     }
 
     #[test]
