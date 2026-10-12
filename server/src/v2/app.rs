@@ -37,6 +37,8 @@ pub struct Patch {
     pub when: Option<When>,
     pub done: Option<bool>,
     pub label: Option<Label>,
+    /// The `updated_at` of the task as the client last saw it. Absent means "don't check".
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 pub struct App<S: Store> {
@@ -156,6 +158,7 @@ impl<S: Store> App<S> {
             priority: draft.priority,
             source: draft.source,
             created: ctx.now,
+            updated_at: ctx.now,
             external_uid: None,
         };
         self.store
@@ -175,6 +178,7 @@ impl<S: Store> App<S> {
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
         let task = Self::held(&mut tasks, id)?;
+        check_fresh(task, patch.updated_at)?;
         if let Some(title) = patch.title {
             check_title(&title)?;
             task.title = title.trim().to_owned();
@@ -192,6 +196,7 @@ impl<S: Store> App<S> {
         if let Some(label) = patch.label {
             task.label = label;
         }
+        task.updated_at = ctx.now;
         let task = task.clone();
         self.store.put(user, task).map_err(Self::storage_error)?;
         Ok(Self::snapshot_of(tasks, &ctx, tz))
@@ -225,6 +230,7 @@ impl<S: Store> App<S> {
                 task.title = event.title;
                 task.duration_min = duration_min;
                 task.when = When::At(event.start);
+                task.updated_at = ctx.now;
                 updated.push(task.id.clone());
                 if let Some(slot) = tasks.iter_mut().find(|held| held.id == task.id) {
                     *slot = task.clone();
@@ -243,6 +249,7 @@ impl<S: Store> App<S> {
                 priority: Priority::Low,
                 source: Source::Calendar,
                 created: ctx.now,
+                updated_at: ctx.now,
                 external_uid: event.uid.clone(),
             };
             order += 1;
@@ -287,6 +294,7 @@ impl<S: Store> App<S> {
                 priority: draft.priority,
                 source: draft.source,
                 created: ctx.now,
+                updated_at: ctx.now,
                 external_uid: None,
             };
             ids.push(task.id.clone());
@@ -303,12 +311,14 @@ impl<S: Store> App<S> {
         &mut self,
         id: &str,
         revision: &Revision,
+        seen: Option<DateTime<Utc>>,
         user: &str,
         tz: Tz,
     ) -> Result<Snapshot, ApiError> {
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
         let task = Self::held(&mut tasks, id)?;
+        check_fresh(task, seen)?;
         match (revision.day, revision.time) {
             (Some(day), Some(time)) => task.when = When::At(ctx.at(day, time)),
             (Some(day), None) => {
@@ -326,6 +336,7 @@ impl<S: Store> App<S> {
         if let Some(label) = revision.label {
             task.label = label;
         }
+        task.updated_at = ctx.now;
         let task = task.clone();
         self.store.put(user, task).map_err(Self::storage_error)?;
         Ok(Self::snapshot_of(tasks, &ctx, tz))
@@ -446,6 +457,18 @@ pub struct ImportResult {
 fn event_minutes(start: DateTime<Utc>, end: DateTime<Utc>) -> u16 {
     let minutes = (end - start).num_minutes();
     minutes.clamp(i64::from(MIN_DURATION_MIN), i64::from(MAX_DURATION_MIN)) as u16
+}
+
+/// Refuses an edit made against a version older than the stored one, so the last
+/// writer cannot silently undo a change it never saw. No version sent means no check.
+fn check_fresh(task: &Task, seen: Option<DateTime<Utc>>) -> Result<(), ApiError> {
+    match seen {
+        Some(seen) if seen < task.updated_at => Err(ApiError {
+            code: ErrorCode::StaleUpdate,
+            message: "the task changed since you loaded it; reload and try again".into(),
+        }),
+        _ => Ok(()),
+    }
 }
 
 fn check_title(title: &str) -> Result<(), ApiError> {
@@ -572,8 +595,14 @@ mod tests {
             self.inner.anonymous_exists(user)
         }
 
-        fn ensure_anonymous(&self, user: &str) -> Result<(), StoreError> {
-            self.inner.ensure_anonymous(user)
+        fn ensure_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
+            self.inner.ensure_anonymous(user, now)
+        }
+        fn touch_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
+            self.inner.touch_anonymous(user, now)
+        }
+        fn expire_anonymous(&self, cutoff: DateTime<Utc>) -> Result<usize, StoreError> {
+            self.inner.expire_anonymous(cutoff)
         }
         fn record_capture(
             &self,
@@ -753,5 +782,118 @@ mod tests {
             .delete(&id, crate::v2::auth::LOCAL_USER, tz)
             .expect("delete");
         assert!(snapshot.tasks.is_empty(), "the delete is in the answer");
+    }
+
+    /// A clock the test can move, so a task can be edited "later".
+    struct SettableClock(std::sync::Mutex<DateTime<Utc>>);
+
+    impl todo_core::Clock for SettableClock {
+        fn now(&self) -> DateTime<Utc> {
+            *self.0.lock().expect("clock mutex")
+        }
+    }
+
+    const NEW_YORK: Tz = chrono_tz::America::New_York;
+    const USER: &str = crate::v2::auth::LOCAL_USER;
+
+    /// An app on a clock the test controls, holding one task created at `start`.
+    fn app_with_one_task(start: DateTime<Utc>) -> (App<MemoryStore>, Arc<SettableClock>, String) {
+        let clock = Arc::new(SettableClock(std::sync::Mutex::new(start)));
+        let mut app = App::new(MemoryStore::new(), clock.clone());
+        let snapshot = app
+            .create(draft("Write the report"), USER, NEW_YORK)
+            .unwrap();
+        let id = snapshot.tasks[0].id.0.clone();
+        (app, clock, id)
+    }
+
+    fn stored_updated_at(app: &App<MemoryStore>, id: &str) -> DateTime<Utc> {
+        app.find(USER, id).unwrap().updated_at
+    }
+
+    fn done_patch(seen: Option<DateTime<Utc>>) -> Patch {
+        Patch {
+            done: Some(true),
+            updated_at: seen,
+            ..Patch::default()
+        }
+    }
+
+    #[test]
+    fn a_new_task_is_versioned_when_it_is_created() {
+        let start = Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap();
+        let (app, _, id) = app_with_one_task(start);
+        assert_eq!(stored_updated_at(&app, &id), start);
+    }
+
+    #[test]
+    fn an_accepted_edit_moves_the_version_to_now() {
+        let start = Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap();
+        let (mut app, clock, id) = app_with_one_task(start);
+        let later = start + Duration::hours(1);
+        *clock.0.lock().unwrap() = later;
+        app.patch(&id, done_patch(Some(start)), USER, NEW_YORK)
+            .unwrap();
+        assert_eq!(stored_updated_at(&app, &id), later);
+    }
+
+    #[test]
+    fn an_edit_made_against_an_older_version_is_refused_and_changes_nothing() {
+        let start = Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap();
+        let (mut app, clock, id) = app_with_one_task(start);
+        // Another device edits at +1h; this one still holds the version from `start`.
+        *clock.0.lock().unwrap() = start + Duration::hours(1);
+        app.patch(&id, done_patch(Some(start)), USER, NEW_YORK)
+            .unwrap();
+        *clock.0.lock().unwrap() = start + Duration::hours(2);
+
+        let stale = Patch {
+            title: Some("Overwrite".into()),
+            updated_at: Some(start),
+            ..Patch::default()
+        };
+        let error = app.patch(&id, stale, USER, NEW_YORK).unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::StaleUpdate);
+        let kept = app.find(USER, &id).unwrap();
+        assert_eq!(
+            kept.title, "Write the report",
+            "a refused edit must not apply"
+        );
+        assert_eq!(kept.updated_at, start + Duration::hours(1));
+    }
+
+    #[test]
+    fn an_edit_at_the_stored_version_or_newer_or_unversioned_is_accepted() {
+        let start = Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap();
+        for seen in [Some(start), Some(start + Duration::seconds(1)), None] {
+            let (mut app, _, id) = app_with_one_task(start);
+            app.patch(&id, done_patch(seen), USER, NEW_YORK)
+                .unwrap_or_else(|error| panic!("{seen:?} was refused: {error:?}"));
+            assert!(app.find(USER, &id).unwrap().done);
+        }
+    }
+
+    #[test]
+    fn a_revision_made_against_an_older_version_is_refused() {
+        let start = Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap();
+        let (mut app, clock, id) = app_with_one_task(start);
+        *clock.0.lock().unwrap() = start + Duration::hours(1);
+        app.patch(&id, done_patch(Some(start)), USER, NEW_YORK)
+            .unwrap();
+
+        let revision = Revision::default();
+        let error = app
+            .apply_revision(&id, &revision, Some(start), USER, NEW_YORK)
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::StaleUpdate);
+        app.apply_revision(
+            &id,
+            &revision,
+            Some(start + Duration::hours(1)),
+            USER,
+            NEW_YORK,
+        )
+        .expect("the current version is accepted");
     }
 }

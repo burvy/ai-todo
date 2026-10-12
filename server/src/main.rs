@@ -63,7 +63,7 @@ async fn main() {
         );
     }
     let store = v2::app_from_env().unwrap_or_else(|problem| fatal(&problem));
-    v2::start_backups();
+    v2::start_backups().unwrap_or_else(|problem| fatal(&problem));
     v2::admin::start_console(v2::store::data_path_from_env());
     let port = port_from_env();
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

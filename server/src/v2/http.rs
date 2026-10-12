@@ -112,6 +112,10 @@ impl CurrentUser {
         let app = shared.app.lock().expect("app mutex");
         match anonymous {
             Some(id) if app.store().anonymous_exists(id).map_err(store_failed)? => {
+                // A visit keeps the id alive; see `Store::touch_anonymous`.
+                app.store()
+                    .touch_anonymous(id, app.now())
+                    .map_err(store_failed)?;
                 Ok(id.to_owned())
             }
             _ => Err(unauthorized("send Authorization: Bearer <token>")),
@@ -134,7 +138,7 @@ impl IntoResponse for HttpError {
         let status = match self.0.code {
             ErrorCode::BadRequest => StatusCode::BAD_REQUEST,
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
-            ErrorCode::Conflict => StatusCode::CONFLICT,
+            ErrorCode::Conflict | ErrorCode::StaleUpdate => StatusCode::CONFLICT,
             ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
             // A dependency being down is 503, "come back later"; our own
             // failure is 500. The two are different things to a client, which
@@ -354,7 +358,9 @@ fn issue_anonymous_id(shared: &Shared, ip: &str) -> Result<String, HttpError> {
         ));
     }
     let id = new_anon_id();
-    app.store().ensure_anonymous(&id).map_err(store_failed)?;
+    app.store()
+        .ensure_anonymous(&id, app.now())
+        .map_err(store_failed)?;
     Ok(id)
 }
 
@@ -725,6 +731,8 @@ fn file_text(
 #[derive(Deserialize)]
 struct ReviseIn {
     instruction: String,
+    /// The task's `updated_at` as the client last saw it; see [`Patch::updated_at`].
+    updated_at: Option<chrono::DateTime<Utc>>,
 }
 
 /// `POST /api/v1/tasks/{id}/revise`: one sentence re-classifies the task.
@@ -749,7 +757,13 @@ async fn revise_task(
         .await
         .map_err(upstream)?;
     let mut app = shared.app.lock().unwrap();
-    Ok(Json(app.apply_revision(&id, &revision, &user, tz)?))
+    Ok(Json(app.apply_revision(
+        &id,
+        &revision,
+        body.updated_at,
+        &user,
+        tz,
+    )?))
 }
 
 /// `GET /api/v1/calendar.ics`: the plan as an iCalendar file.
@@ -815,6 +829,7 @@ mod tests {
             (ErrorCode::BadRequest, StatusCode::BAD_REQUEST),
             (ErrorCode::NotFound, StatusCode::NOT_FOUND),
             (ErrorCode::Conflict, StatusCode::CONFLICT),
+            (ErrorCode::StaleUpdate, StatusCode::CONFLICT),
             // A dependency is down: come back later.
             (ErrorCode::Unavailable, StatusCode::SERVICE_UNAVAILABLE),
             (ErrorCode::Upstream, StatusCode::BAD_GATEWAY),
@@ -1004,6 +1019,40 @@ mod tests {
         assert!(snapshot.plan.placements.is_empty());
         assert!(snapshot.tasks[0].done);
         assert_invariant(&snapshot);
+    }
+
+    #[tokio::test]
+    async fn a_patch_made_against_an_older_version_is_a_409_and_changes_nothing() {
+        let router = router_at(sunday_night());
+        let (_, body) = send(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(r#"{"title":"Pay rent","duration_min":30,"when":{"kind":"anytime"},"label":"Other","priority":"low","source":"text"}"#),
+        )
+        .await;
+        let task = serde_json::from_value::<Snapshot>(body)
+            .unwrap()
+            .tasks
+            .remove(0);
+        let path = format!("/api/v1/tasks/{}", task.id.0);
+
+        let stale = r#"{"title":"Overwritten","updated_at":"1970-01-01T00:00:00Z"}"#;
+        let (status, body) = send(&router, "PATCH", &path, Some(stale)).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"]["code"], "stale_update");
+
+        let current = format!(
+            r#"{{"title":"Pay the rent","updated_at":"{}"}}"#,
+            task.updated_at.to_rfc3339()
+        );
+        let (status, body) = send(&router, "PATCH", &path, Some(&current)).await;
+        assert_eq!(status, StatusCode::OK);
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(
+            snapshot.tasks[0].title, "Pay the rent",
+            "the refused edit applied"
+        );
     }
 
     #[tokio::test]
@@ -1987,6 +2036,7 @@ mod tests {
                     priority: Priority::Low,
                     source: Source::Text,
                     created: Utc::now(),
+                    updated_at: Utc::now(),
                     external_uid: None,
                 },
             )

@@ -77,7 +77,7 @@ All JSON. Every request carries the header `X-Rambl-TZ: America/New_York` (from 
 
 **Accounts.** Rambl is multi-user. Every request carries either `Authorization: Bearer <session token>` for signed-in users, or `X-Rambl-Anon: <anon_id>` for anonymous users. The token or anon_id names the user; **every task read and write is scoped to that user, in the store, not in the handler** — `Store` methods take the user id, so a handler cannot forget it. In local mode (`GOOGLE_CLIENT_ID` unset), the server uses the fixed local user for all requests regardless of headers. Each account has a persisted plan: anonymous, free, or paid. Daily Jev caps are `RAMBL_JEV_DAILY_CAP_ANON` (default 30), `RAMBL_JEV_DAILY_CAP` (default 200), and `RAMBL_JEV_DAILY_CAP_PAID` (default 1000); the admin console changes plans with `plan <email|id> <anon|free|paid>`. When a cap is exceeded, or the user or client address is blocked, capture falls back to `FakeJudge` with `jev_fallback: true`.
 
-Anonymous users do not sign in. *(planned)* Their account and tasks are deleted after 30 days without a visit, and Rambo nudges them to sign in before then. Until then they are kept.
+Anonymous users do not sign in. Their account and tasks are deleted after 30 days without a visit (`last_activity_at`, refreshed by a visit at most once an hour and cleared by the daily backup task, only after that backup succeeded); signed-in accounts are never deleted. *(planned)* Rambo nudges them to sign in before then.
 
 | Method and path | Body | Returns |
 |---|---|---|
@@ -89,7 +89,7 @@ Anonymous users do not sign in. *(planned)* Their account and tasks are deleted 
 | `GET /api/v1/snapshot?from=YYYY-MM-DD&days=7` | none | `Snapshot`. The window bounds the plan (today and 7 days by default); the task list is always the whole list, and pinned tasks keep their placement whatever the window is. |
 | `POST /api/v1/capture` | `{text}` or multipart `file` (pdf, eml, txt) | `{created: [id], snapshot, jev_fallback}`. `jev_fallback` is true once the user is past `RAMBL_JEV_DAILY_CAP` captures today (200 by default), when Jev is not called and `FakeJudge` judges instead. |
 | `POST /api/v1/tasks` | `TaskDraft` | `Snapshot` |
-| `PATCH /api/v1/tasks/{id}` | any of `title, duration_min, when, done, label` | `Snapshot` |
+| `PATCH /api/v1/tasks/{id}` | any of `title, duration_min, when, done, label`, plus `updated_at` (the version the page last saw) | `Snapshot`; `409 stale_update` if the task changed since `updated_at` |
 | `POST /api/v1/tasks/{id}/revise` | `{instruction}` (goes through the capture pipeline for one clause) | `Snapshot` |
 | `PUT /api/v1/tasks/order` | `{ids: [...]}` (full order) | `Snapshot` |
 | `DELETE /api/v1/tasks/{id}` | none | `Snapshot` |
@@ -100,7 +100,7 @@ The server is the only planner: the client never computes placements.
 
 ### 6.1 Concurrent writes
 
-Task edits use an `updated_at` field and last-write-wins per task. A reorder conflict is handled by re-sending the full order, rather than merging partial positions.
+Task edits use an `updated_at` field and last-write-wins per task. The server sets `updated_at` to its own clock on every accepted change. A `PATCH` or `revise` that carries an `updated_at` older than the stored one is refused with `409 stale_update` and changes nothing, so the page reloads and redoes the edit; one equal to or newer than the stored value, or none at all, is accepted. The check is in `App`, so both stores behave the same. A reorder conflict is handled by re-sending the full order, rather than merging partial positions.
 
 ### Configuration
 

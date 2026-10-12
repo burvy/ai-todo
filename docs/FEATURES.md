@@ -57,7 +57,8 @@ c. Code: `web/src/lib.rs:TaskList, load_snapshot_from_api`; `web/src/api.rs:fetc
 
 ### 2. Add, complete and delete
 a. Tasks can be added from the capture box, marked done, and deleted; each change
-refreshes the complete snapshot.
+refreshes the complete snapshot. An edit made from a stale copy of a task (it changed on another
+device since this page loaded it) is refused with `409 stale_update`; the page keeps what the server has.
 b. Type a task and press **Add**; use the task row's controls to finish or delete it.
 c. Code: `web/src/lib.rs:CaptureBox, TaskList`;
 `web/src/api.rs:create_task, patch_task, delete_task`;
@@ -245,8 +246,8 @@ c. Code: `server/src/v2/auth.rs:LOCAL_USER`;
 
 ### 4. Anonymous use
 a. Use without an account. A request with no bearer token gets an `X-Rambl-Anon` id the server issued; sending that id back keeps the same tasks. Signing in adopts the anonymous tasks (a calendar event the account already has keeps the signed-in copy) and ends the anonymous id. Forged, unknown or malformed ids get a fresh id, and each client address may be issued `RAMBL_ANON_IDS_PER_IP` (default 20) new ids a day.
-b. Not visible: the anonymous id is kept in the page and sent on every request. The 30-day cleanup of idle anonymous accounts and the sign-in reminder are *(planned)*.
-c. Code: `server/src/v2/http.rs:assign_anonymous_id, CurrentUser`; `server/src/v2/store.rs:adopt_anonymous`.
+b. Not visible: the anonymous id is kept in the page and sent on every request. The sign-in reminder is *(planned)*. Anonymous accounts unused for 30 days are deleted with their tasks by the daily backup task, after the backup; signed-in accounts never are.
+c. Code: `server/src/v2/http.rs:assign_anonymous_id, CurrentUser`; `server/src/v2/store.rs:adopt_anonymous, touch_anonymous, expire_anonymous`; `server/src/v2/backup.rs:run_cycle_sync`.
 
 ### 5. Administration
 a. A local console reads commands from the server's terminal: `usage` (today's top users and addresses), `blocked`, `block|unblock user <email|id>`, `block|unblock ip <addr>`, and `plan <email|id> <anon|free|paid>`. A blocked user or address still uses the app, but capture is judged by `FakeJudge`.
@@ -359,7 +360,9 @@ c. Code: `server/src/v2/store.rs:MemoryStore`.
 a. Automatic daily SQLite backups are created at startup and every 24 hours, with backups
 older than 14 days removed.
 b. Not visible; inspect `data/backups/rambl-YYYY-MM-DD.db` after the server starts.
-c. Code: `server/src/v2/backup.rs:BackupService, run_backup_sync, delete_old_backups`;
+After a successful backup the same task deletes anonymous accounts idle for 30 days (see VII.4);
+if the backup fails, nothing is deleted.
+c. Code: `server/src/v2/backup.rs:BackupService, run_cycle_sync, run_backup_sync, delete_old_backups`;
 `server/src/v2/mod.rs:start_backups`.
 
 ## XIII. DEPLOY

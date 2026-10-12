@@ -103,6 +103,9 @@ pub struct Task {
     pub priority: Priority,
     pub source: Source,
     pub created: DateTime<Utc>,
+    /// When the server last accepted a change to this task. Clients send back the value
+    /// they last saw; an edit made against an older one is refused (`StaleUpdate`).
+    pub updated_at: DateTime<Utc>,
     /// iCalendar UID for imported events. Re-importing the same UID updates this task.
     pub external_uid: Option<String>,
 }
@@ -146,6 +149,8 @@ pub enum ErrorCode {
     BadRequest,
     NotFound,
     Conflict,
+    /// The task changed since the client last saw it (409): fetch it again and redo the edit.
+    StaleUpdate,
     /// No valid session: 401. Separate from `BadRequest` because the fix is to sign
     /// in again, not to send a different request.
     Unauthorized,
@@ -232,6 +237,7 @@ mod tests {
             priority: Priority::High,
             source: Source::Text,
             created: at,
+            updated_at: at,
             external_uid: None,
         };
         let snapshot = Snapshot {
