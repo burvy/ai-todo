@@ -2,6 +2,8 @@ use std::collections::HashSet;
 
 use chrono::{DateTime, Utc};
 use gloo_timers::callback::Timeout;
+#[cfg(target_arch = "wasm32")]
+use js_sys::Array;
 use leptos::prelude::*;
 use todo_core::Snapshot;
 use todo_core::{Label, Priority, Source, TaskDraft, TaskId, When};
@@ -876,7 +878,11 @@ fn TaskList(
                             .ok()
                             .flatten()
                         {
-                            row.set_class_name("pen-pending");
+                            {
+                                let arr = Array::new();
+                                arr.push(&"pen-pending".into());
+                                row.class_list().add(&arr).ok();
+                            }
                             let rect = row.get_bounding_client_rect();
                             let center = pen::writing_pen_center(
                                 rect.left() + 40.0,
@@ -899,7 +905,13 @@ fn TaskList(
                             .ok()
                             .flatten()
                         {
-                            row.set_class_name("pen-writing");
+                            {
+                                let arr = Array::new();
+                                arr.push(&"pen-pending".into());
+                                row.class_list().remove(&arr).ok();
+                                arr.push(&"pen-writing".into());
+                                row.class_list().add(&arr).ok();
+                            }
                         }
                     }
                 }
