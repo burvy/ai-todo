@@ -12,7 +12,7 @@ to do and the exact path or link. Paths were checked against origin/main
 
 ## Rambl's voice
 
-- [ ] Edit Rambl's reply lines in `crates/rambl-brain` (planned — the directory does not exist yet; its `README.md` will explain the files).
+- [ ] Edit what Rambl says in `crates/rambl-brain/content/lines.toml` and how he behaves in `crates/rambl-brain/content/personality.toml`; `crates/rambl-brain/README.md` explains both. Preview a simulated day with `cargo run -p rambl-brain --example sim`.
 
 ## Accounts and services
 
