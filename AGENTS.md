@@ -67,6 +67,17 @@ Read `git diff origin/main` top to bottom and check:
 - [ ] Spec and README updated if behaviour changed.
 - [ ] Anything you were unsure about is listed in your report.
 
+## Lessons from review (read these)
+
+- **Report the real gate.** Paste the actual result of every gate command. Never say a check passed unless you ran it in your worktree, rebased on the latest `origin/main`.
+- **Leptos: nothing after `view!`.** Helper `fn`s placed after `view! { ... }` inside a component turn the view into a statement (`expected (), found View`). Put helpers at module level.
+- **Background tasks start from `main()` only.** Never spawn timers, consoles or backups from code that tests call (`app_from_env`, routers, constructors).
+- **Durable state lives in the database,** never in a process-wide `HashSet`/`static` that a restart forgets.
+- **Never trust ids from the client.** Validate anything a request sends as an identity against the database.
+- **Docs describe code, not plans.** Mark anything not in code `(planned)`; check with grep before writing a path or function name.
+- **Don't wait for permission.** When the job is clear, start and finish it; only ask when you are genuinely blocked. Report partial work honestly and say what is left.
+- **Rebase before you report.** `git fetch && git rebase origin/main`, then run the gate.
+
 ## Report
 
 Open one PR. In your done message give: the PR number and head commit, what changed (short), how you tested it, and anything a reviewer should look at. Say plainly if something failed or was skipped.
