@@ -103,6 +103,24 @@ function fmtDeadline(iso) {
   return `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`;
 }
 
+/* The task's first calendar block, so the list shows the same time as the planner. */
+function slotFor(taskId) {
+  let first = null;
+  for (const p of state.placements) {
+    if (p.task_id === taskId && (!first || p.start < first.start)) first = p;
+  }
+  return first;
+}
+
+function fmtSlot(p) {
+  const d = new Date(p.start);
+  const today = new Date();
+  const day = isSameDay(d, today) ? 'today'
+    : isSameDay(d, addDays(today, 1)) ? 'tomorrow'
+    : d.toLocaleDateString([], { weekday: 'short' });
+  return `${day} ${fmtRange(p.start, p.end)}`;
+}
+
 /* compact range that fits a narrow day column: "9am – 10am", "3pm – 3:30pm" */
 function fmtRange(startIso, endIso) {
   const s = new Date(startIso), e = new Date(endIso);
@@ -403,13 +421,22 @@ function taskRow(task, isFresh) {
   dur.textContent = fmtDuration(task.duration_min);
   meta.appendChild(dur);
 
+  const slot = !done && slotFor(task.id);
+  if (slot) {
+    const when = document.createElement('span');
+    when.className = 'chip when';
+    when.title = task.pinned_start ? 'Pinned on the planner at this time' : 'Planned on the planner at this time';
+    when.textContent = (task.pinned_start ? '📌 ' : '') + fmtSlot(slot);
+    meta.appendChild(when);
+  }
+
   if (task.deadline) {
     const due = document.createElement('span');
     due.className = 'chip due editable' + (overdue ? ' overdue' : '');
     due.dataset.field = 'deadline';
     due.tabIndex = 0;
     due.title = 'Click to change the deadline — clear it to remove';
-    due.textContent = fmtDeadline(task.deadline);
+    due.textContent = 'due ' + fmtDeadline(task.deadline);
     meta.appendChild(due);
   } else {
     const due = document.createElement('span');
@@ -439,7 +466,9 @@ function taskRow(task, isFresh) {
 /* Everything a row shows. A row whose signature has not changed is kept as
    the same DOM node, so adding tasks never replays old ticks or strikes. */
 function rowSig(t) {
-  return [t.title, t.status, t.deadline, t.duration_min, t.priority, t.label, t.confidence, t.position].join('|');
+  const slot = slotFor(t.id);
+  return [t.title, t.status, t.deadline, t.duration_min, t.priority, t.label, t.confidence, t.position,
+    t.pinned_start, slot && slot.start, slot && slot.end].join('|');
 }
 
 let prevOpen = -1;
@@ -764,6 +793,7 @@ async function refreshCalendar(retry = true) {
   state.busy = data.busy || [];
   state.placements = data.placements || [];
   renderPlanner();
+  renderList();   // list time chips follow the planner
   return data;
 }
 

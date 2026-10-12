@@ -8,12 +8,15 @@ use axum::{
     http::StatusCode,
 };
 use chrono::{DateTime, Utc};
-use judge::{Judgment, find_date_candidates, understand};
+#[cfg(test)]
+use judge::find_date_candidates;
+use judge::{Judgment, understand};
 use serde::Deserialize;
 use todo_core::Task;
 
 use crate::{
-    AppState, clamp_duration, local_time_as_utc, parse_deadline, pinned_start_for, timezone,
+    AppState, clamp_duration, date_candidates_local, local_time_as_utc, parse_deadline,
+    pinned_start_for, timezone,
 };
 use chrono::NaiveTime;
 
@@ -55,10 +58,11 @@ pub async fn revise_task(
     }
 
     let now = Utc::now();
-    let candidates = find_date_candidates(&instruction, now);
+    let candidates = date_candidates_local(&instruction, now);
     let state_text = format!("{}. {}", current.title, instruction);
     let title_candidates = vec![crate::clean_title(&instruction)];
-    let judgment = understand(&state_text, &candidates, &title_candidates, now)
+    let local_now = now.with_timezone(&timezone()).to_rfc3339();
+    let judgment = understand(&state_text, &candidates, &title_candidates, now, &local_now)
         .await
         .map_err(|e| error(StatusCode::BAD_GATEWAY, format!("Jev revise failed: {e}")))?;
 
