@@ -72,8 +72,8 @@ impl<S: Store> App<S> {
         }
     }
 
-    fn load(&self) -> Result<Vec<Task>, ApiError> {
-        let mut tasks = self.store.tasks().map_err(Self::storage_error)?;
+    fn load(&self, user: &str) -> Result<Vec<Task>, ApiError> {
+        let mut tasks = self.store.tasks(user).map_err(Self::storage_error)?;
         Self::sort_tasks(&mut tasks);
         Ok(tasks)
     }
@@ -98,9 +98,9 @@ impl<S: Store> App<S> {
     }
 
     /// The whole week in one value: tasks, their plan, the zone and the time it was made.
-    pub fn snapshot(&self, tz: Tz) -> Result<Snapshot, ApiError> {
+    pub fn snapshot(&self, user: &str, tz: Tz) -> Result<Snapshot, ApiError> {
         let ctx = self.ctx(tz);
-        Ok(Self::snapshot_of(self.load()?, &ctx, tz))
+        Ok(Self::snapshot_of(self.load(user)?, &ctx, tz))
     }
 
     /// The same value with the plan narrowed to `from .. from + days`.
@@ -113,11 +113,12 @@ impl<S: Store> App<S> {
     /// caller cannot see yet must not look deleted.
     pub fn snapshot_in_window(
         &self,
+        user: &str,
         tz: Tz,
         from: NaiveDate,
         days: u32,
     ) -> Result<Snapshot, ApiError> {
-        let mut snapshot = self.snapshot(tz)?;
+        let mut snapshot = self.snapshot(user, tz)?;
         let Some(start) = from
             .and_time(NaiveTime::MIN)
             .and_local_timezone(tz)
@@ -138,11 +139,11 @@ impl<S: Store> App<S> {
         Ok(snapshot)
     }
 
-    pub fn create(&mut self, draft: TaskDraft, tz: Tz) -> Result<Snapshot, ApiError> {
+    pub fn create(&mut self, draft: TaskDraft, user: &str, tz: Tz) -> Result<Snapshot, ApiError> {
         check_title(&draft.title)?;
         check_duration(draft.duration_min)?;
         let ctx = self.ctx(tz);
-        let mut tasks = self.load()?;
+        let mut tasks = self.load(user)?;
         let order = tasks.iter().map(|task| task.order).max().unwrap_or(-1) + 1;
         let task = Task {
             id: Self::fresh_id(&tasks, ctx.now.timestamp_nanos_opt().unwrap_or_default()),
@@ -157,14 +158,22 @@ impl<S: Store> App<S> {
             created: ctx.now,
             external_uid: None,
         };
-        self.store.put(task.clone()).map_err(Self::storage_error)?;
+        self.store
+            .put(user, task.clone())
+            .map_err(Self::storage_error)?;
         tasks.push(task);
         Ok(Self::snapshot_of(tasks, &ctx, tz))
     }
 
-    pub fn patch(&mut self, id: &str, patch: Patch, tz: Tz) -> Result<Snapshot, ApiError> {
+    pub fn patch(
+        &mut self,
+        id: &str,
+        patch: Patch,
+        user: &str,
+        tz: Tz,
+    ) -> Result<Snapshot, ApiError> {
         let ctx = self.ctx(tz);
-        let mut tasks = self.load()?;
+        let mut tasks = self.load(user)?;
         let task = Self::held(&mut tasks, id)?;
         if let Some(title) = patch.title {
             check_title(&title)?;
@@ -184,15 +193,20 @@ impl<S: Store> App<S> {
             task.label = label;
         }
         let task = task.clone();
-        self.store.put(task).map_err(Self::storage_error)?;
+        self.store.put(user, task).map_err(Self::storage_error)?;
         Ok(Self::snapshot_of(tasks, &ctx, tz))
     }
 
     /// Import calendar events as `At` tasks. An event whose UID is already a task
     /// updates that task; any other event becomes a new task.
-    pub fn import(&mut self, events: Vec<ImportedEvent>, tz: Tz) -> Result<ImportResult, ApiError> {
+    pub fn import(
+        &mut self,
+        events: Vec<ImportedEvent>,
+        user: &str,
+        tz: Tz,
+    ) -> Result<ImportResult, ApiError> {
         let ctx = self.ctx(tz);
-        let mut tasks = self.load()?;
+        let mut tasks = self.load(user)?;
         let mut order = tasks.iter().map(|task| task.order).max().unwrap_or(-1) + 1;
         let mut created = Vec::new();
         let mut updated = Vec::new();
@@ -201,7 +215,10 @@ impl<S: Store> App<S> {
             // The store owns the uid index, so this is one lookup per event
             // rather than a map built from every task on the server.
             let existing = match &event.uid {
-                Some(uid) => self.store.find_by_uid(uid).map_err(Self::storage_error)?,
+                Some(uid) => self
+                    .store
+                    .find_by_uid(user, uid)
+                    .map_err(Self::storage_error)?,
                 None => None,
             };
             if let Some(mut task) = existing {
@@ -212,7 +229,7 @@ impl<S: Store> App<S> {
                 if let Some(slot) = tasks.iter_mut().find(|held| held.id == task.id) {
                     *slot = task.clone();
                 }
-                self.store.put(task).map_err(Self::storage_error)?;
+                self.store.put(user, task).map_err(Self::storage_error)?;
                 continue;
             }
             let task = Task {
@@ -230,7 +247,9 @@ impl<S: Store> App<S> {
             };
             order += 1;
             created.push(task.id.clone());
-            self.store.put(task.clone()).map_err(Self::storage_error)?;
+            self.store
+                .put(user, task.clone())
+                .map_err(Self::storage_error)?;
             tasks.push(task);
         }
         Ok(ImportResult {
@@ -244,10 +263,11 @@ impl<S: Store> App<S> {
     pub fn add_drafts(
         &mut self,
         drafts: Vec<TaskDraft>,
+        user: &str,
         tz: Tz,
     ) -> Result<(Vec<TaskId>, Snapshot), ApiError> {
         let ctx = self.ctx(tz);
-        let mut tasks = self.load()?;
+        let mut tasks = self.load(user)?;
         let first_order = tasks.iter().map(|task| task.order).max().unwrap_or(-1) + 1;
         let mut ids = Vec::new();
         for (offset, draft) in drafts.into_iter().enumerate() {
@@ -270,7 +290,9 @@ impl<S: Store> App<S> {
                 external_uid: None,
             };
             ids.push(task.id.clone());
-            self.store.put(task.clone()).map_err(Self::storage_error)?;
+            self.store
+                .put(user, task.clone())
+                .map_err(Self::storage_error)?;
             tasks.push(task);
         }
         Ok((ids, Self::snapshot_of(tasks, &ctx, tz)))
@@ -281,10 +303,11 @@ impl<S: Store> App<S> {
         &mut self,
         id: &str,
         revision: &Revision,
+        user: &str,
         tz: Tz,
     ) -> Result<Snapshot, ApiError> {
         let ctx = self.ctx(tz);
-        let mut tasks = self.load()?;
+        let mut tasks = self.load(user)?;
         let task = Self::held(&mut tasks, id)?;
         match (revision.day, revision.time) {
             (Some(day), Some(time)) => task.when = When::At(ctx.at(day, time)),
@@ -304,13 +327,13 @@ impl<S: Store> App<S> {
             task.label = label;
         }
         let task = task.clone();
-        self.store.put(task).map_err(Self::storage_error)?;
+        self.store.put(user, task).map_err(Self::storage_error)?;
         Ok(Self::snapshot_of(tasks, &ctx, tz))
     }
 
     /// The task's title, for a revision prompt.
-    pub fn title_of(&self, id: &str) -> Result<String, ApiError> {
-        Ok(self.find(id)?.title)
+    pub fn title_of(&self, user: &str, id: &str) -> Result<String, ApiError> {
+        Ok(self.find(user, id)?.title)
     }
 
     /// The app's notion of now.
@@ -318,19 +341,34 @@ impl<S: Store> App<S> {
         self.clock.now()
     }
 
-    pub fn delete(&mut self, id: &str, tz: Tz) -> Result<Snapshot, ApiError> {
+    /// How many captures this user has run on `day`, for the daily Jev cap.
+    pub fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, ApiError> {
+        self.store
+            .captures_today(user, day)
+            .map_err(Self::storage_error)
+    }
+
+    /// The store itself, for the account calls in [`super::auth`], which work on
+    /// users and sessions rather than on tasks.
+    pub fn store(&self) -> &S {
+        &self.store
+    }
+
+    pub fn delete(&mut self, id: &str, user: &str, tz: Tz) -> Result<Snapshot, ApiError> {
         let ctx = self.ctx(tz);
-        let mut tasks = self.load()?;
+        let mut tasks = self.load(user)?;
         let task_id = Self::held(&mut tasks, id)?.id.clone();
         tasks.retain(|task| task.id != task_id);
-        self.store.delete(&task_id).map_err(Self::storage_error)?;
+        self.store
+            .delete(user, &task_id)
+            .map_err(Self::storage_error)?;
         Ok(Self::snapshot_of(tasks, &ctx, tz))
     }
 
     /// `ids` is the full new order: every task exactly once.
-    pub fn reorder(&mut self, ids: &[String], tz: Tz) -> Result<Snapshot, ApiError> {
+    pub fn reorder(&mut self, ids: &[String], user: &str, tz: Tz) -> Result<Snapshot, ApiError> {
         let ctx = self.ctx(tz);
-        let mut tasks = self.load()?;
+        let mut tasks = self.load(user)?;
         let mut current: Vec<&str> = tasks.iter().map(|task| task.id.0.as_str()).collect();
         let mut given: Vec<&str> = ids.iter().map(String::as_str).collect();
         current.sort_unstable();
@@ -345,7 +383,7 @@ impl<S: Store> App<S> {
         // cannot leave the tasks half-renumbered.
         let ordered: Vec<TaskId> = ids.iter().cloned().map(TaskId).collect();
         self.store
-            .set_order(&ordered)
+            .set_order(user, &ordered)
             .map_err(Self::storage_error)?;
         // The store now numbers them by position, so mirror that here rather than
         // re-reading to find out what the client is about to be shown.
@@ -371,8 +409,8 @@ impl<S: Store> App<S> {
             })
     }
 
-    fn find(&self, id: &str) -> Result<Task, ApiError> {
-        self.load()?
+    fn find(&self, user: &str, id: &str) -> Result<Task, ApiError> {
+        self.load(user)?
             .into_iter()
             .find(|task| task.id.0 == id)
             .ok_or_else(|| ApiError {
@@ -547,25 +585,54 @@ mod tests {
     }
 
     impl Store for CountingStore {
-        fn tasks(&self) -> Result<Vec<Task>, StoreError> {
+        fn tasks(&self, user: &str) -> Result<Vec<Task>, StoreError> {
             self.reads.fetch_add(1, Ordering::SeqCst);
-            self.inner.tasks()
+            self.inner.tasks(user)
         }
 
-        fn put(&self, task: Task) -> Result<(), StoreError> {
-            self.inner.put(task)
+        fn put(&self, user: &str, task: Task) -> Result<(), StoreError> {
+            self.inner.put(user, task)
         }
 
-        fn delete(&self, id: &TaskId) -> Result<bool, StoreError> {
-            self.inner.delete(id)
+        fn delete(&self, user: &str, id: &TaskId) -> Result<bool, StoreError> {
+            self.inner.delete(user, id)
         }
 
-        fn set_order(&self, ids: &[TaskId]) -> Result<(), StoreError> {
-            self.inner.set_order(ids)
+        fn set_order(&self, user: &str, ids: &[TaskId]) -> Result<(), StoreError> {
+            self.inner.set_order(user, ids)
         }
 
-        fn find_by_uid(&self, uid: &str) -> Result<Option<Task>, StoreError> {
-            self.inner.find_by_uid(uid)
+        fn find_by_uid(&self, user: &str, uid: &str) -> Result<Option<Task>, StoreError> {
+            self.inner.find_by_uid(user, uid)
+        }
+
+        fn upsert_user_and_session(
+            &self,
+            user: &crate::v2::auth::Me,
+            token: &str,
+            expires_at: chrono::DateTime<Utc>,
+        ) -> Result<(), StoreError> {
+            self.inner.upsert_user_and_session(user, token, expires_at)
+        }
+
+        fn delete_session(&self, token: &str) -> Result<(), StoreError> {
+            self.inner.delete_session(token)
+        }
+
+        fn session_user(
+            &self,
+            token: &str,
+            now: chrono::DateTime<Utc>,
+        ) -> Result<Option<crate::v2::auth::Me>, StoreError> {
+            self.inner.session_user(token, now)
+        }
+
+        fn delete_user(&self, user: &str) -> Result<(), StoreError> {
+            self.inner.delete_user(user)
+        }
+
+        fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
+            self.inner.captures_today(user, day)
         }
     }
 
@@ -591,8 +658,12 @@ mod tests {
     #[test]
     fn create_reads_the_store_once() {
         let (mut app, reads) = app();
-        app.create(draft("Write the report"), chrono_tz::America::New_York)
-            .expect("create");
+        app.create(
+            draft("Write the report"),
+            crate::v2::auth::LOCAL_USER,
+            chrono_tz::America::New_York,
+        )
+        .expect("create");
         assert_eq!(reads.load(Ordering::SeqCst), 1, "create re-read the store");
     }
 
@@ -603,7 +674,11 @@ mod tests {
         let (mut app, reads) = app();
         let drafts: Vec<TaskDraft> = (0..10).map(|i| draft(&format!("Task {i}"))).collect();
         let (ids, snapshot) = app
-            .add_drafts(drafts, chrono_tz::America::New_York)
+            .add_drafts(
+                drafts,
+                crate::v2::auth::LOCAL_USER,
+                chrono_tz::America::New_York,
+            )
             .expect("add drafts");
 
         assert_eq!(ids.len(), 10, "every draft became a task");
@@ -621,7 +696,9 @@ mod tests {
     fn patch_and_delete_and_reorder_each_read_the_store_once() {
         let (mut app, reads) = app();
         let tz = chrono_tz::America::New_York;
-        let snapshot = app.create(draft("Write the report"), tz).expect("create");
+        let snapshot = app
+            .create(draft("Write the report"), crate::v2::auth::LOCAL_USER, tz)
+            .expect("create");
         let id = snapshot.tasks[0].id.0.clone();
 
         let before = reads.load(Ordering::SeqCst);
@@ -631,9 +708,11 @@ mod tests {
                 title: Some("Write the essay".into()),
                 ..Patch::default()
             },
+            crate::v2::auth::LOCAL_USER,
             tz,
         )
         .expect("patch");
+
         assert_eq!(
             reads.load(Ordering::SeqCst) - before,
             1,
@@ -641,7 +720,8 @@ mod tests {
         );
 
         let before = reads.load(Ordering::SeqCst);
-        app.reorder(std::slice::from_ref(&id), tz).expect("reorder");
+        app.reorder(std::slice::from_ref(&id), crate::v2::auth::LOCAL_USER, tz)
+            .expect("reorder");
         assert_eq!(
             reads.load(Ordering::SeqCst) - before,
             1,
@@ -649,7 +729,9 @@ mod tests {
         );
 
         let before = reads.load(Ordering::SeqCst);
-        let after = app.delete(&id, tz).expect("delete");
+        let after = app
+            .delete(&id, crate::v2::auth::LOCAL_USER, tz)
+            .expect("delete");
         assert_eq!(
             reads.load(Ordering::SeqCst) - before,
             1,
@@ -665,7 +747,9 @@ mod tests {
     fn the_returned_snapshot_shows_every_change_it_just_made() {
         let (mut app, _reads) = app();
         let tz = chrono_tz::America::New_York;
-        let mut snapshot = app.create(draft("Write the report"), tz).expect("create");
+        let mut snapshot = app
+            .create(draft("Write the report"), crate::v2::auth::LOCAL_USER, tz)
+            .expect("create");
         let id = snapshot.tasks[0].id.0.clone();
         assert_eq!(snapshot.tasks[0].title, "Write the report");
 
@@ -677,16 +761,20 @@ mod tests {
                     done: Some(true),
                     ..Patch::default()
                 },
+                crate::v2::auth::LOCAL_USER,
                 tz,
             )
             .expect("patch");
+
         assert_eq!(
             snapshot.tasks[0].title, "Write the essay",
             "patch is in the answer"
         );
         assert!(snapshot.tasks[0].done, "the done flag is in the answer");
 
-        snapshot = app.delete(&id, tz).expect("delete");
+        snapshot = app
+            .delete(&id, crate::v2::auth::LOCAL_USER, tz)
+            .expect("delete");
         assert!(snapshot.tasks.is_empty(), "the delete is in the answer");
     }
 }

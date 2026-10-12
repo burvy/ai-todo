@@ -2,6 +2,7 @@
 //! routes until phase 4 removes them.
 
 pub mod app;
+pub mod auth;
 pub mod http;
 pub mod ics_export;
 pub mod store;

@@ -147,6 +147,9 @@ pub enum ErrorCode {
     BadRequest,
     NotFound,
     Conflict,
+    /// No valid session: 401. Separate from `BadRequest` because the fix is to sign
+    /// in again, not to send a different request.
+    Unauthorized,
     /// A dependency (Jev, a database) is temporarily down: 503, try again later.
     Unavailable,
     Upstream,

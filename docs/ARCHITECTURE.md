@@ -68,10 +68,16 @@ Without a Jev key, `FakeJudge`'s deterministic rules pick the first candidate. T
 
 All JSON. Every request carries the header `X-Rambl-TZ: America/New_York` (from `Intl.DateTimeFormat().resolvedOptions().timeZone`). Every mutating call returns the full `Snapshot`. Errors are `{ "error": { "code", "message" } }` with a fitting status.
 
+**Accounts.** Rambl is multi-user. Every request except sign-in carries `Authorization: Bearer <session token>`. The token names a row in `v2_sessions`; the row names the user; **every task read and write is scoped to that user, in the store, not in the handler** — `Store` methods take the user id, so a handler cannot forget it. A missing, unknown or expired token is a 401 before the handler runs. With `GOOGLE_CLIENT_ID` unset the server is in local mode: one fixed local user, no sign-in.
+
 | Method and path | Body | Returns |
 |---|---|---|
-| `GET /api/v1/snapshot?from=YYYY-MM-DD&days=7` | none | `Snapshot` |
-| `POST /api/v1/capture` | `{text}` or multipart `file` (pdf, eml, txt) | `{created: [id], snapshot}` |
+| `POST /api/v1/auth/google` | `{credential}` (a Google ID token) | `{token, user}`. The token is checked against Google's `tokeninfo`; the audience must equal `GOOGLE_CLIENT_ID` and `email_verified` must be true. Sessions last 90 days. |
+| `POST /api/v1/auth/signout` | none | 204. Ends this session only. |
+| `GET /api/v1/me` | none | `{id, email, name, picture}` |
+| `DELETE /api/v1/me` | none | 204. Removes the account, its sessions and every task it owns. |
+| `GET /api/v1/snapshot?from=YYYY-MM-DD&days=7` | none | `Snapshot`. The window bounds the plan (today and 7 days by default); the task list is always the whole list, and pinned tasks keep their placement whatever the window is. |
+| `POST /api/v1/capture` | `{text}` or multipart `file` (pdf, eml, txt) | `{created: [id], snapshot, jev_fallback}`. `jev_fallback` is true once the user is past `RAMBL_JEV_DAILY_CAP` captures today (200 by default), when Jev is not called and `FakeJudge` judges instead. |
 | `POST /api/v1/tasks` | `TaskDraft` | `Snapshot` |
 | `PATCH /api/v1/tasks/{id}` | any of `title, duration_min, when, done, label` | `Snapshot` |
 | `POST /api/v1/tasks/{id}/revise` | `{instruction}` (goes through the capture pipeline for one clause) | `Snapshot` |
@@ -82,10 +88,20 @@ All JSON. Every request carries the header `X-Rambl-TZ: America/New_York` (from 
 
 The server is the only planner: the client never computes placements.
 
+### Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `RAMBL_DATA` | `data/rambl.db` | The v2 SQLite file. |
+| `RAMBL_DEFAULT_TZ` | `America/New_York` | Zone for requests with no `X-Rambl-TZ`. `TZ_NAME` is read behind it so `.env` files written for v1 keep working. |
+| `GOOGLE_CLIENT_ID` | unset | The OAuth client ID tokens must be minted for. Unset means local mode: one user, no sign-in. |
+| `RAMBL_JEV_DAILY_CAP` | `200` | Captures per user per day before capture falls back to `FakeJudge`. |
+
 ## 7. Server (`server/`)
 
-- `Store` trait: `tasks()`, `put(Task)`, `delete(id)`, `set_order(ids)`, `find_by_uid(uid)`. `SqliteStore` for real, `MemoryStore` for tests.
-- `App { store, judge, clock, hours }`: one method per endpoint. It loads, mutates, re-plans and returns the snapshot inside one critical section, so a snapshot is never half-updated.
+- `Store` trait: `tasks(user)`, `put(user, Task)`, `delete(user, id)`, `set_order(user, ids)`, `find_by_uid(user, uid)`, plus `upsert_user_and_session`, `delete_session`, `session_user`, `delete_user` and `captures_today`. The user id is a parameter rather than a filter applied afterwards, so scoping cannot be forgotten. `SqliteStore` for real, `MemoryStore` for tests; the same suite runs against both.
+- `auth` module: Google sign-in, sessions and the `TokenVerifier` trait. Sign-in is verified **before** the store lock is taken — a handler holding a `MutexGuard` across an `await` has a non-`Send` future, which axum rejects.
+- `App { store, judge, clock }`: one method per endpoint, each taking the user id. It loads once, mutates and returns the snapshot built from that same list inside one critical section, so a snapshot is never half-updated and a write is never read back twice.
 - Handlers only parse input, build the `LocalContext` from the header and `clock`, call `App`, and map errors.
 - Config from env: `TYPESAFE_API_KEY`, `PORT`, `RAMBL_DATA` (db path), `RAMBL_DEFAULT_TZ` (when the header is missing).
 
