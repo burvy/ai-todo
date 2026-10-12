@@ -1,3 +1,4 @@
+use gloo_timers::callback::Interval;
 use leptos::prelude::*;
 use todo_core::{Placement, Snapshot};
 
@@ -10,6 +11,8 @@ pub fn WeekGrid(
     set_mascot_state: WriteSignal<mascot::State>,
 ) -> impl IntoView {
     let grid_ref = NodeRef::<leptos::html::Div>::new();
+    let (now_minutes, set_now_minutes) = signal(current_minutes());
+    set_interval(move || set_now_minutes.set(current_minutes()), 60_000).forget();
     Effect::new(move |_| {
         let _ = settings.get();
         if let Some(_grid) = grid_ref.get() {
@@ -25,7 +28,20 @@ pub fn WeekGrid(
             <div class="week-scroll" node_ref=grid_ref>
                 <div class="week" style=move || format!("--days: {}", settings.get().days)>
                     <For each=days key=|day| *day let:day>
-                        <div class="day"><h3>{format!("Day {}", day + 1)}</h3>
+                        <div class="day">
+                            <h3>{format!("Day {}", day + 1)}</h3>
+                            {move || (day == 0).then(|| view! {
+                                <div
+                                    class="now-line"
+                                    style=move || format!(
+                                        "top: {}px",
+                                        (((now_minutes.get() as i32
+                                            - settings.get().start_hour as i32 * 60)
+                                            .max(0) as f32 * 64.0 / 60.0) + 28.0)
+                                    )
+                                    aria-label="Current time"
+                                ></div>
+                            })}
                             <For each=move || snapshot.get().plan.placements.clone()
                                 key=|placement| placement.task.clone() let:placement>
                                 <PlacementBlock placement snapshot set_mascot_state />
@@ -38,6 +54,22 @@ pub fn WeekGrid(
                 </div>
             </div>
         </section>
+    }
+
+    fn current_minutes() -> u16 {
+        #[cfg(target_arch = "wasm32")]
+        {
+            let now = js_sys::Date::new_0();
+            return now.get_hours() as u16 * 60 + now.get_minutes() as u16;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            0
+        }
+    }
+
+    fn set_interval(callback: impl FnMut() + 'static, millis: u32) -> Interval {
+        Interval::new(millis, callback)
     }
 }
 
