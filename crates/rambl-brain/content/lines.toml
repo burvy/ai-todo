@@ -1,0 +1,39 @@
+# Rambl's lines, by situation. The brain picks from these and never says the same
+# line twice in a row. Several per key, separated by `|`.
+# Short, spoken-out-loud, no emoji. Edit freely; nothing else needs to change.
+
+[lines.task_added]
+lines = "Right, that's on the list.|Got it.|New one.|Okay, that one's in.|Adding it now."
+
+[lines.task_done]
+lines = "There it is.|One down.|Good.|Nice.|That's better.|Ha, done.|Off the list it goes."
+
+[lines.task_overdue]
+lines = "That's late now, isn't it.|It slipped.|Running behind on that one.|We let that one go."
+
+[lines.list_empty]
+lines = "Nothing left. Enjoy it while it lasts.|All clear.|Empty list.|You've earned a minute."
+
+[lines.poked]
+lines = "I'm here.|What.|Hello?|You poked me.|Yes?"
+
+[lines.dragged]
+lines = "Careful with me.|Where to?|Hold on.|Put me down, I'm fine.|This is undignified."
+
+[lines.asking]
+lines = "What about this one?|So what do you want with it?|Decisions, please.|This one?"
+
+[lines.wander]
+lines = "Just looking.|Room to move.|Stretching.|Over here.|Nothing on, is there?"
+
+[lines.play]
+lines = "This is better.|I'd rather be doing this.|Five more minutes of this."
+
+[lines.home]
+lines = "Back where I belong.|I'll wait here.|Nothing to do.|Standing by."
+
+[lines.doze]
+lines = "Going quiet now.|Wake me if it's important.|Napping.|Lights out."
+
+[lines.wake]
+lines = "I'm up.|Was I asleep?|Hello?"

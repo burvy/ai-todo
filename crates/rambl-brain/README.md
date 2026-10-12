@@ -64,11 +64,11 @@ is.
 
 ## Editing the lines and his personality
 
-Both files live in `data/` and are compiled into the binary with `include_str!`, so there
+Both files live in `content/` and are compiled into the binary with `include_str!`, so there
 is nothing to deploy alongside it and nothing to load at runtime. Change them, rebuild,
 see the difference in `sim`.
 
-### `data/lines.toml`
+### `content/lines.toml`
 
 What he can say, by situation. Several lines per key, separated by `|`:
 
@@ -86,7 +86,7 @@ Keep them short and sayable out loud, and no emoji. The situations the brain ask
 are `task_added`, `task_done`, `task_overdue`, `list_empty`, `poked`, `dragged`,
 `asking`, `wander`, `play`, `home`, `doze` and `wake`.
 
-### `data/personality.toml`
+### `content/personality.toml`
 
 How he feels and how fast.
 

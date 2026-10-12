@@ -1,0 +1,28 @@
+# How Rambl feels and how quickly. Rates are per step; cooldowns are in steps
+# before he will do that thing again. Lower `sass` for fewer idle lines.
+
+[rates]
+# How fast energy drains. He sleeps it off faster than he burns it in daylight.
+energy_drift = 0.02
+# How fast cheer drifts back to flat.
+cheer_decay = 0.015
+# How fast boredom builds while nothing happens.
+boredom_drift = 0.05
+# How much finishing a task lifts him, and how much an overdue one sinks him.
+cheer_gain = 0.25
+cheer_loss = 0.2
+
+[cooldowns]
+wander = 8
+play = 12
+idle_line = 6
+react = 2
+
+[day]
+# He dozes from night_start until night_end, in local hours.
+night_start = 22
+night_end = 6
+
+[voice]
+# Chance (0.0 to 1.0) that an idle moment comes with a line at all.
+sass = 0.4

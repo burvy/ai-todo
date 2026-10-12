@@ -8,8 +8,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::OnceLock;
 
-const LINES_TOML: &str = include_str!("../data/lines.toml");
-const PERSONALITY_TOML: &str = include_str!("../data/personality.toml");
+const LINES_TOML: &str = include_str!("../content/lines.toml");
+const PERSONALITY_TOML: &str = include_str!("../content/personality.toml");
 
 /// Something in a data file is wrong.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -209,14 +209,14 @@ fn hour(
 /// Rambl's lines, parsed once.
 pub fn lines() -> &'static Lines {
     static LINES: OnceLock<Lines> = OnceLock::new();
-    LINES.get_or_init(|| Lines::parse(LINES_TOML).expect("data/lines.toml is valid"))
+    LINES.get_or_init(|| Lines::parse(LINES_TOML).expect("content/lines.toml is valid"))
 }
 
 /// Rambl's personality, parsed once.
 pub fn personality() -> &'static Personality {
     static PERSONALITY: OnceLock<Personality> = OnceLock::new();
     PERSONALITY.get_or_init(|| {
-        Personality::parse(PERSONALITY_TOML).expect("data/personality.toml is valid")
+        Personality::parse(PERSONALITY_TOML).expect("content/personality.toml is valid")
     })
 }
 
