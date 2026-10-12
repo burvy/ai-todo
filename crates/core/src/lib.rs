@@ -1,8 +1,7 @@
 //! Shared v2 data model (ARCHITECTURE.md section 4). Pure: chrono, chrono-tz and serde
-//! only, so it builds for wasm. The v1 types stay in [`v1`] until the v1 server is retired.
+//! only, so it builds for wasm.
 
 pub mod clock;
-pub mod v1;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 

@@ -1,11 +1,11 @@
-//! v2 API under `/api/v1` (ARCHITECTURE.md sections 6 and 7). Runs alongside the v1
-//! routes until phase 4 removes them.
+//! The v2 API under `/api/v1` (ARCHITECTURE.md sections 6 and 7). It is the whole server.
 
 pub mod app;
 pub mod auth;
 pub mod backup;
 pub mod http;
 pub mod ics_export;
+pub mod ics_import;
 pub mod store;
 
 use std::sync::Arc;

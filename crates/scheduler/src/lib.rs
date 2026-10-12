@@ -2,26 +2,8 @@
 
 use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
 use chrono_tz::Tz;
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use todo_core::When;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Task {
-    pub id: String,
-    pub title: String,
-    pub duration_minutes: i64,
-    pub deadline: Option<DateTime<Utc>>,
-    pub priority: i32,
-    pub position: i64,
-    pub pinned_start: Option<DateTime<Utc>>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct BusyBlock {
-    pub start: DateTime<Utc>,
-    pub end: DateTime<Utc>,
-}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TimeWindow {
@@ -52,123 +34,6 @@ impl Default for WorkingHours {
             NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
         )
     }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ScheduledPlacement {
-    pub task_id: String,
-    pub title: String,
-    pub chunk: usize,
-    pub start: DateTime<Utc>,
-    pub end: DateTime<Utc>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum UnschedulableReason {
-    InvalidDuration,
-    DeadlinePassed,
-    NoAvailableTime,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Placement {
-    Scheduled(ScheduledPlacement),
-    Unschedulable {
-        task_id: String,
-        reason: UnschedulableReason,
-    },
-}
-
-/// Legacy scheduler API retained for the v1 server.
-pub fn schedule(
-    tasks: &[Task],
-    busy_blocks: &[BusyBlock],
-    working_hours: &WorkingHours,
-    now: DateTime<Utc>,
-) -> Vec<Placement> {
-    let mut order: Vec<usize> = (0..tasks.len()).collect();
-    order.sort_by(|&a, &b| {
-        tasks[a]
-            .pinned_start
-            .is_none()
-            .cmp(&tasks[b].pinned_start.is_none())
-            .then_with(|| match (tasks[a].deadline, tasks[b].deadline) {
-                (Some(left), Some(right)) => left.cmp(&right),
-                (Some(_), None) => Ordering::Less,
-                (None, Some(_)) => Ordering::Greater,
-                (None, None) => Ordering::Equal,
-            })
-            .then_with(|| tasks[a].position.cmp(&tasks[b].position))
-            .then_with(|| tasks[b].priority.cmp(&tasks[a].priority))
-            .then_with(|| a.cmp(&b))
-    });
-
-    let mut occupied: Vec<_> = busy_blocks
-        .iter()
-        .filter(|block| block.end > block.start)
-        .map(|block| (block.start, block.end))
-        .collect();
-    let mut result = Vec::new();
-
-    for index in order {
-        let task = &tasks[index];
-        if task.duration_minutes <= 0 {
-            result.push(Placement::Unschedulable {
-                task_id: task.id.clone(),
-                reason: UnschedulableReason::InvalidDuration,
-            });
-            continue;
-        }
-        if task.deadline.is_some_and(|deadline| deadline <= now) {
-            result.push(Placement::Unschedulable {
-                task_id: task.id.clone(),
-                reason: UnschedulableReason::DeadlinePassed,
-            });
-            continue;
-        }
-        if let Some(start) = task.pinned_start {
-            let end = start + Duration::minutes(task.duration_minutes);
-            occupied.push((start, end));
-            result.push(Placement::Scheduled(ScheduledPlacement {
-                task_id: task.id.clone(),
-                title: task.title.clone(),
-                chunk: 1,
-                start,
-                end,
-            }));
-            continue;
-        }
-        let mut remaining = task.duration_minutes;
-        let mut chunk = 1;
-        let mut chunks = Vec::new();
-        while remaining > 0 {
-            let minutes = remaining.min(120);
-            let Some(start) = next_slot(now, minutes, task.deadline, working_hours, &occupied)
-            else {
-                break;
-            };
-            let end = start + Duration::minutes(minutes);
-            occupied.push((start, end));
-            chunks.push(Placement::Scheduled(ScheduledPlacement {
-                task_id: task.id.clone(),
-                title: task.title.clone(),
-                chunk,
-                start,
-                end,
-            }));
-            remaining -= minutes;
-            chunk += 1;
-        }
-        if remaining == 0 {
-            result.extend(chunks);
-        } else {
-            result.push(Placement::Unschedulable {
-                task_id: task.id.clone(),
-                reason: UnschedulableReason::NoAvailableTime,
-            });
-        }
-    }
-    result
 }
 
 /// Place fixed tasks exactly and fill flexible tasks in list order.

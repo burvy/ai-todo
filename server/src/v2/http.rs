@@ -14,9 +14,10 @@ use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use todo_core::{ApiError, ErrorCode, Snapshot, TaskDraft};
 
-use super::app::{App, ImportResult, ImportedEvent, Patch};
+use super::app::{App, ImportResult, Patch};
 use super::auth::{self, TokenVerifier};
 use super::ics_export::build_ics;
+use super::ics_import;
 use super::store::Store;
 use capture::{Revision, capture_text};
 use chrono::{DateTime, NaiveDate, Utc};
@@ -374,16 +375,7 @@ async fn import(
     }
     let ics_text =
         ics_text.ok_or_else(|| bad_request("send the calendar as multipart field `file`"))?;
-    let events = crate::ics::parse_events(&ics_text)
-        .map_err(|error| bad_request(error.0))?
-        .into_iter()
-        .map(|(uid, row)| ImportedEvent {
-            uid,
-            title: row.title,
-            start: row.start,
-            end: row.end,
-        })
-        .collect();
+    let events = ics_import::parse_ics(&ics_text).map_err(|error| bad_request(error.0))?;
     let mut app = shared.app.lock().unwrap();
     Ok(Json(app.import(events, &user, tz)?))
 }
