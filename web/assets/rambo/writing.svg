@@ -1,0 +1,43 @@
+<!-- PLACEHOLDER: replace me, see art/GUIDE.md -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 112" role="img" aria-label="Rambo, writing">
+  <style>
+    svg{--rambo-barrel:#2F5D9E;--rambo-cap:#24486F;--rambo-nib:#D9CFB8;--rambo-lead:#2B2A28;--rambo-ink:#1B2A49;--rambo-eye:#FCFAF4;--rambo-pupil:#2B2A28;--rambo-blush:#E07A7A;--rambo-fx:#6B7C93;--rambo-brow:#12233B}
+    @media (prefers-color-scheme:dark){svg{--rambo-barrel:#5B8FD6;--rambo-cap:#3F6CA8;--rambo-nib:#E8DFC8;--rambo-ink:#9DB7E8;--rambo-fx:#9AA9BF;--rambo-brow:#0E1A2E}}
+    .pen-barrel{fill:var(--rambo-barrel)}
+    .pen-cap{fill:var(--rambo-cap)}
+    .pen-nib{fill:var(--rambo-nib)}
+    .pen-lead{fill:var(--rambo-lead)}
+    .pen-gloss{stroke:rgba(255,255,255,.35);stroke-width:2.4;stroke-linecap:round;fill:none}
+    .eye-white{fill:var(--rambo-eye)}
+    .eye-black{fill:var(--rambo-pupil)}
+    .brow{stroke:var(--rambo-brow);stroke-width:2;stroke-linecap:round;fill:none}
+    .mouth{stroke:var(--rambo-lead);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;fill:none}
+    .mouth-fill{fill:var(--rambo-lead)}
+    .tongue{fill:var(--rambo-blush)}
+    .lid{fill:var(--rambo-barrel)}
+    .blush{fill:var(--rambo-blush);opacity:.45}
+    .ink-drop{fill:var(--rambo-ink)}
+    .fx{stroke:var(--rambo-fx);stroke-width:1.6;stroke-linecap:round;fill:none}
+    .fx-fill{fill:var(--rambo-fx)}
+  </style>
+  <path class="fx" d="M35 108 q4 -3 8 0 t8 0 t8 0" style="stroke:var(--rambo-ink)"/>
+  <g class="pen-body" transform="translate(-5 0) rotate(15 32 104)">
+    <rect class="pen-barrel" x="23" y="25" width="18" height="63" rx="9"/>
+    <path class="pen-gloss" d="M27 36 L27 76"/>
+    <path class="pen-nib" d="M23 88 L32 110 L41 88 Z"/>
+    <path class="pen-lead" d="M28.6 99.5 L32 110 L35.4 99.5 Z"/>
+    <path class="ink-drop" d="M37 74 q2.4 3.2 0 5 q-2.4 -1.8 0 -5 Z"/>
+    <circle class="ink-drop" cx="25.6" cy="84" r="1.1"/>
+    <rect class="pen-cap" x="22" y="12" width="20" height="17" rx="7.5"/>
+    <path class="pen-cap" d="M39 25.5 Q50 23.5 53 29 Q46 31.5 39 29.5 Z"/>
+    <path class="pen-gloss" d="M26 18 L26 22" style="stroke-width:2"/>
+    <circle class="pen-nib" cx="32" cy="11.4" r="1.9"/>
+    <circle class="eye-white" cx="28.6" cy="55" r="4.8"/>
+    <circle class="eye-black" cx="28.8" cy="56.5" r="2.2"/>
+    <circle class="eye-white" cx="35.6" cy="55" r="4.8"/>
+    <circle class="eye-black" cx="35.800000000000004" cy="56.5" r="2.2"/>
+    <path class="brow" d="M24.6 48.4 Q28.4 46.3 32 47.4"/>
+    <path class="brow" d="M33.2 47.4 Q36.6 46.3 40.4 48.4"/>
+    <path class="mouth" d="M30 64.6 Q32 63.4 34 64.6"/>
+  </g>
+</svg>
