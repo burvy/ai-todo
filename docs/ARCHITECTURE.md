@@ -31,7 +31,7 @@ server/       axum: Store trait (Sqlite, Memory), App service, thin handlers
 web/          Leptos CSR app (trunk), talks only through web/src/api.rs
 ```
 
-Removed in v2: `static/` (after `web/` reaches parity), sounds, paper textures and every animation except the mascot's (section 8.1), `/api/message`, `/api/schedule`, spoken replies, `demo/` (its rambles move to `crates/capture/tests/fixtures/`), root `src/`, `Makefile` (one `run-local.ps1` + `run-local.sh` stay).
+Removed in v2: `static/` (after `web/` reaches parity), sounds and every animation except the mascot's (section 8.1), `/api/message`, `/api/schedule`, spoken replies, `demo/` (its rambles move to `crates/capture/tests/fixtures/`), root `src/`, `Makefile` (one `run-local.ps1` + `run-local.sh` stay).
 
 ## 4. Core types (`crates/core`)
 
@@ -132,7 +132,7 @@ Recurrence is design-only for now. A series stores weekly-on-these-days, an unti
 
 ## 8. Web (`web/`, Leptos CSR)
 
-Plain and fast: a text box with a mic button (Web Speech API via `web-sys`), the task list, and a 7-day week grid. Light and dark follow the OS. No animations, sounds or textures, except the mascot below. One `api.rs` module makes every request and stores the returned `Snapshot` in one signal; the list and the week are derived from that signal only. Reorder by drag sends `PUT /tasks/order`. Built by `trunk build --release` into `web/dist`, which the server serves.
+Plain and fast: a text box with a mic button (Web Speech API via `web-sys`), the task list, and a 7-day week grid. Light and dark follow the OS. The look is the parchment theme: tokens and rules in `docs/THEME.md`, all CSS in `web/theme.css` (linked from `web/index.html` with `<link data-trunk rel="css">` and copied into `web/dist`). The one texture is the paper itself (`web/assets/theme/paper.svg`, dark variant `paper-dark.svg`) on the page background; if a graphic is missing the flat paper colours carry the page. No animations or sounds, except the mascot below. One `api.rs` module makes every request and stores the returned `Snapshot` in one signal; the list and the week are derived from that signal only. Reorder by drag sends `PUT /tasks/order`. Built by `trunk build --release` into `web/dist`, which the server serves.
 
 ### 8.1 Rambo, the mascot
 
@@ -173,4 +173,4 @@ Other docs: `README.md` (run and deploy), `docs/jev.md` (Jev API notes).
 - Paid tier with a larger Jev allowance (users already have a `plan` field).
 - Ads to cover Jev.
 - Rambl as an installable app.
-- Redesign animations, sounds and textures with a parchment look; the current stripped-down presentation is intermediate, not final.
+- Give the mascot and page the rest of the parchment treatment: animations and sounds to match the texture (`docs/THEME.md`), and the pose and icon graphics from `web/assets/theme/README.md`.

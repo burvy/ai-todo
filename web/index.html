@@ -5,59 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Rambl</title>
   <link data-trunk rel="rust" href="Cargo.toml">
+  <link data-trunk rel="css" href="theme.css">
   <link data-trunk rel="copy-dir" href="assets">
-  <style>
-    :root { color-scheme: light dark; font: 16px system-ui, sans-serif; }
-    body { max-width: 1100px; margin: 0 auto; padding: 1rem; }
-    main { display: grid; gap: 1rem; grid-template-columns: minmax(16rem, 1fr) minmax(24rem, 2fr); }
-    section { border: 1px solid currentColor; border-radius: .5rem; padding: 1rem; }
-    input, button { font: inherit; padding: .5rem; }
-    .capture { display: flex; gap: .5rem; }
-    .capture input { flex: 1; }
-    .mascot-home { width: 3rem; height: 3rem; padding: .25rem; border-radius: 50%; }
-    .mascot-home img { width: 100%; height: 100%; }
-    .mascot { display: inline-flex; width: 3rem; height: 3rem; padding: .25rem; border: 1px solid currentColor; border-radius: 50%; cursor: grab; }
-    .mascot img { width: 100%; height: 100%; }
-    .mascot:active { cursor: grabbing; }
-    .ask { position: absolute; z-index: 2; margin-top: .5rem; padding: .5rem; border: 1px solid currentColor; border-radius: .5rem; background: Canvas; }
-    .ask button { margin: .25rem; }
-    @media (prefers-reduced-motion: no-preference) {
-      .mascot-home { transition: transform .25s ease; }
-      .mascot-home:active { transform: translateY(1rem) rotate(8deg); }
-      .mascot { animation: mascot-home .35s ease-in-out; }
-      .mascot.falling { animation: mascot-fall .45s ease-in forwards; }
-      .mascot.returning { animation: mascot-return .45s ease-out forwards; }
-      @keyframes mascot-home { from { transform: translateY(2rem); } to { transform: translateY(0); } }
-      @keyframes mascot-fall { from { transform: translateY(0); } to { transform: translateY(60vh) rotate(12deg); } }
-      @keyframes mascot-return { from { transform: translateY(60vh) rotate(12deg); } to { transform: translateY(0); } }
-    }
-    @media (prefers-reduced-motion: reduce) {
-      .mascot-home { transition: none; animation: none; }
-      .mascot { animation: none; }
-    }
-    .week { display: grid; grid-template-columns: repeat(7, 1fr); gap: .25rem; overflow-x: auto; }
-    .week-scroll { max-height: 70vh; overflow-y: auto; }
-    .week { grid-template-columns: repeat(var(--days), minmax(9rem, 1fr)); }
-    .day { position: relative; min-width: 7rem; border-left: 1px solid currentColor; padding: .25rem; }
-    .hour { min-height: 4rem; border-top: 1px solid color-mix(in srgb, currentColor 25%, transparent); }
-    .hour span { font-size: .75rem; opacity: .7; }
-    .placement { border: 1px solid currentColor; border-radius: .25rem; padding: .2rem; }
-    .label-filters { display: flex; flex-wrap: wrap; gap: .25rem; margin-bottom: .75rem; }
-    .label-filters button.active { font-weight: 700; outline: 2px solid currentColor; }
-    .task-editor { display: inline-flex; flex-wrap: wrap; gap: .25rem; align-items: center; }
-    .calendar-notice { flex-basis: 100%; margin: 0; font-size: .85rem; }
-    .task-open { cursor: pointer; }
-    .overdue { color: #c22; font-size: .8rem; font-weight: 700; margin-left: .4rem; }
-    .task-dialog { min-width: min(32rem, 90vw); border: 1px solid currentColor; border-radius: .5rem; padding: 1rem; }
-    .task-dialog form { display: grid; gap: .75rem; }
-    .task-dialog fieldset { display: grid; gap: .4rem; }
-    .duration-chips, .dialog-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
-    .duration-chips button.active { font-weight: 700; outline: 2px solid currentColor; }
-    .dialog-task-title { margin: 0; opacity: .7; }
-    .version { font-size: .8rem; opacity: .7; }
-    .now-line { position: absolute; left: 0; right: 0; border-top: 2px solid #d33; pointer-events: none; }
-    @media (max-width: 700px) { main { grid-template-columns: 1fr; } }
-  </style>
 </head>
 <body></body>
 </html>
