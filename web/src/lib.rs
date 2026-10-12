@@ -1,15 +1,17 @@
 use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
-use todo_core::Placement;
 use todo_core::Snapshot;
 use wasm_bindgen::JsCast;
 
 pub mod api;
 pub mod mascot;
+pub mod settings;
+pub mod week;
 
 #[component]
 pub fn App() -> impl IntoView {
     let snapshot = api::use_snapshot();
+    let (view_settings, set_view_settings) = signal(settings::load());
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
     window_event_listener(leptos::ev::keydown, move |event| {
@@ -22,9 +24,10 @@ pub fn App() -> impl IntoView {
     });
     view! {
         <header><h1>"Rambl"</h1><CaptureBox state=mascot_state set_state=set_mascot_state set_talking /></header>
+        <settings::SettingsPanel settings=view_settings set_settings=set_view_settings />
         <main>
             <TaskList snapshot=snapshot set_mascot_state=set_mascot_state />
-            <WeekGrid snapshot=snapshot set_mascot_state=set_mascot_state />
+            <week::WeekGrid snapshot=snapshot settings=view_settings set_mascot_state=set_mascot_state />
         </main>
         <Mascot state=mascot_state set_state=set_mascot_state talking set_talking />
     }
@@ -158,40 +161,6 @@ fn TaskList(
     }
 }
 
-#[component]
-fn WeekGrid(
-    snapshot: ReadSignal<Snapshot>,
-    set_mascot_state: WriteSignal<mascot::State>,
-) -> impl IntoView {
-    view! {
-        <section aria-labelledby="week-heading">
-            <h2 id="week-heading">"Week"</h2>
-            <div class="week">
-                <For each=move || week_days() key=|day| *day let:day>
-                    <div class="day"><h3>{format!("Day {}", day + 1)}</h3>
-                        <For each=move || snapshot.get().plan.placements.clone()
-                            key=|placement| placement.task.clone() let:placement>
-                            <div class="placement"
-                                on:drop=move |_| set_mascot_state.update(|state| {
-                                    if matches!(state, mascot::State::Dragging)
-                                        && let Some(task) = snapshot.get().tasks.iter().find(|task| task.id == placement.task)
-                                    {
-                                        *state = mascot::transition(state, mascot::Event::DropTask {
-                                            task_id: task.id.0.clone(), title: task.title.clone()
-                                        });
-                                    }
-                                })
-                                on:dragover=|ev| ev.prevent_default()
-                            >{placement.task.0.clone()} " " {placement_time(&placement)}</div>
-                        </For>
-                        <div class="hour"></div><div class="hour"></div><div class="hour"></div>
-                    </div>
-                </For>
-            </div>
-        </section>
-    }
-}
-
 fn task_time(snapshot: &Snapshot, id: &str) -> String {
     snapshot
         .plan
@@ -200,14 +169,6 @@ fn task_time(snapshot: &Snapshot, id: &str) -> String {
         .find(|p| p.task.0 == id)
         .map(|p| p.start.format("%a %H:%M").to_string())
         .unwrap_or_default()
-}
-
-fn placement_time(placement: &Placement) -> String {
-    placement.start.format("%a %H:%M").to_string()
-}
-
-fn week_days() -> Vec<u8> {
-    (0..7).collect()
 }
 
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
@@ -233,7 +194,7 @@ mod tests {
                 .placements
                 .iter()
                 .find(|p| p.task == task.id)
-                .map(placement_time)
+                .map(|placement| placement.start.format("%a %H:%M").to_string())
                 .unwrap_or_default();
             assert_eq!(list_time, week_time);
         }
