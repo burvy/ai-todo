@@ -217,7 +217,6 @@ pub fn App() -> impl IntoView {
             brain_speech
             brain_pose
             set_brain_event
-            pen_flight=pen_flight
             pen_pos=pen_pos
         />
         <mascot::PenRig flight=pen_flight pos=pen_pos pose=brain_pose />
@@ -286,16 +285,17 @@ fn CaptureBox(
     let linger_timer = std::rc::Rc::new(std::cell::RefCell::new(None::<Timeout>));
     let restart_linger = {
         let linger_timer = linger_timer.clone();
+        let pf = pen_flight;
         move || {
             if let Some(timer) = linger_timer.borrow_mut().take() {
                 timer.cancel();
             }
-            let pen_flight = pen_flight;
-            let linger_timer = linger_timer.clone();
+            let pf = pf;
             let timer = Timeout::new(pen::LINGER_MS, move || {
-                pen_flight.set(mascot::PenFlight::FlyingHome);
+                pf.set(mascot::PenFlight::FlyingHome);
+                let pf = pf;
                 let timer = Timeout::new(pen::FLY_MS, move || {
-                    pen_flight.set(mascot::PenFlight::Parked);
+                    pf.set(mascot::PenFlight::Parked);
                 });
                 timer.forget();
             });
@@ -471,10 +471,8 @@ fn Mascot(
     brain_speech: ReadSignal<Option<String>>,
     brain_pose: ReadSignal<String>,
     set_brain_event: WriteSignal<Option<rambl_brain::Event>>,
-    pen_flight: RwSignal<mascot::PenFlight>,
     pen_pos: RwSignal<(f64, f64)>,
 ) -> impl IntoView {
-    let _ = (pen_flight, pen_pos);
     let (animation, set_animation) = signal("home");
     let start_return = move || {
         if mascot::prefers_reduced_motion() {
