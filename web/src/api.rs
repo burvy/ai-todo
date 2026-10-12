@@ -1,4 +1,4 @@
-use gloo_net::http::Request;
+use gloo_net::http::{Request, RequestBuilder, Response};
 #[cfg(target_arch = "wasm32")]
 use js_sys;
 use leptos::prelude::*;
@@ -7,16 +7,66 @@ use std::fmt;
 use todo_core::{ApiError as CoreApiError, Snapshot, TaskDraft, TaskId, When};
 use uuid::Uuid;
 
-fn remember_anon(_response: &gloo_net::http::Response) {
+/// Keeps the anonymous id the server issued, and ends the signed-in session when the
+/// server refuses its token.
+fn check_response(response: &Response) {
+    if response.status() == 401 {
+        crate::account::session_ended();
+    }
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(id) = _response.headers().get("x-rambl-anon") {
+        if let Some(id) = response.headers().get("x-rambl-anon") {
             if let Some(window) = web_sys::window()
                 && let Ok(Some(storage)) = window.local_storage()
             {
                 let _ = storage.set_item("rambl_anon_id", &id);
             }
         }
+    }
+}
+
+/// Every request says who it is: the time zone, the anonymous id, and the session token
+/// when someone is signed in.
+trait Identity: Sized {
+    fn identity(self) -> Self;
+}
+
+impl Identity for RequestBuilder {
+    fn identity(self) -> Self {
+        let request = self
+            .header("X-Rambl-TZ", &timezone())
+            .header("X-Rambl-Anon", &anon_id());
+        match crate::account::token() {
+            Some(token) => request.header("Authorization", &format!("Bearer {token}")),
+            None => request,
+        }
+    }
+}
+
+/// Sends a request and checks the answer; a request with a body is sent the same way.
+trait SendChecked: Sized {
+    async fn send_checked(self) -> Result<Response, ApiError>;
+}
+
+impl SendChecked for RequestBuilder {
+    async fn send_checked(self) -> Result<Response, ApiError> {
+        let response = self
+            .send()
+            .await
+            .map_err(|e| ApiError::Network(e.to_string()))?;
+        check_response(&response);
+        Ok(response)
+    }
+}
+
+impl SendChecked for Request {
+    async fn send_checked(self) -> Result<Response, ApiError> {
+        let response = self
+            .send()
+            .await
+            .map_err(|e| ApiError::Network(e.to_string()))?;
+        check_response(&response);
+        Ok(response)
     }
 }
 
@@ -211,13 +261,7 @@ impl PatchTaskBody {
 /// GET /api/v1/snapshot?from=YYYY-MM-DD&days=7
 pub async fn fetch_snapshot(from: &str, days: u8) -> Result<Snapshot, ApiError> {
     let url = format!("/api/v1/snapshot?from={from}&days={days}");
-    let response = Request::get(&url)
-        .header("X-Rambl-TZ", &timezone())
-        .header("X-Rambl-Anon", &anon_id())
-        .send()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?;
-    remember_anon(&response);
+    let response = Request::get(&url).identity().send_checked().await?;
     response
         .json::<Snapshot>()
         .await
@@ -230,15 +274,12 @@ pub async fn capture_text(text: &str) -> Result<CaptureResponse, ApiError> {
         text: text.to_string(),
     };
     let response = Request::post("/api/v1/capture")
-        .header("X-Rambl-TZ", &timezone())
-        .header("X-Rambl-Anon", &anon_id())
+        .identity()
         .header("Content-Type", "application/json")
         .json(&body)
         .map_err(|e| ApiError::Network(e.to_string()))?
-        .send()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?;
-    remember_anon(&response);
+        .send_checked()
+        .await?;
     response
         .json::<CaptureResponse>()
         .await
@@ -264,14 +305,11 @@ pub async fn capture_file(file: web_sys::File) -> Result<CaptureResponse, ApiErr
         })?;
 
     let response = Request::post("/api/v1/capture")
-        .header("X-Rambl-TZ", &timezone())
-        .header("X-Rambl-Anon", &anon_id())
+        .identity()
         .body(form_data)
         .map_err(|e| ApiError::Network(e.to_string()))?
-        .send()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?;
-    remember_anon(&response);
+        .send_checked()
+        .await?;
     response
         .json::<CaptureResponse>()
         .await
@@ -281,14 +319,12 @@ pub async fn capture_file(file: web_sys::File) -> Result<CaptureResponse, ApiErr
 /// POST /api/v1/tasks - create a new task
 pub async fn create_task(draft: TaskDraft) -> Result<Snapshot, ApiError> {
     Request::post("/api/v1/tasks")
-        .header("X-Rambl-TZ", &timezone())
-        .header("X-Rambl-Anon", &anon_id())
+        .identity()
         .header("Content-Type", "application/json")
         .json(&draft)
         .map_err(|e| ApiError::Network(e.to_string()))?
-        .send()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
         .json::<Snapshot>()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
@@ -298,14 +334,12 @@ pub async fn create_task(draft: TaskDraft) -> Result<Snapshot, ApiError> {
 pub async fn patch_task(id: &TaskId, body: PatchTaskBody) -> Result<Snapshot, ApiError> {
     let url = format!("/api/v1/tasks/{}", id.0);
     Request::patch(&url)
-        .header("X-Rambl-TZ", &timezone())
-        .header("X-Rambl-Anon", &anon_id())
+        .identity()
         .header("Content-Type", "application/json")
         .json(&body)
         .map_err(|e| ApiError::Network(e.to_string()))?
-        .send()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
         .json::<Snapshot>()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
@@ -318,14 +352,12 @@ pub async fn revise_task(id: &TaskId, instruction: &str) -> Result<Snapshot, Api
         instruction: instruction.to_string(),
     };
     Request::post(&url)
-        .header("X-Rambl-TZ", &timezone())
-        .header("X-Rambl-Anon", &anon_id())
+        .identity()
         .header("Content-Type", "application/json")
         .json(&body)
         .map_err(|e| ApiError::Network(e.to_string()))?
-        .send()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
         .json::<Snapshot>()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
@@ -335,14 +367,12 @@ pub async fn revise_task(id: &TaskId, instruction: &str) -> Result<Snapshot, Api
 pub async fn reorder_tasks(ids: Vec<TaskId>) -> Result<Snapshot, ApiError> {
     let body = ReorderBody { ids };
     Request::put("/api/v1/tasks/order")
-        .header("X-Rambl-TZ", &timezone())
-        .header("X-Rambl-Anon", &anon_id())
+        .identity()
         .header("Content-Type", "application/json")
         .json(&body)
         .map_err(|e| ApiError::Network(e.to_string()))?
-        .send()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
         .json::<Snapshot>()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
@@ -352,11 +382,9 @@ pub async fn reorder_tasks(ids: Vec<TaskId>) -> Result<Snapshot, ApiError> {
 pub async fn delete_task(id: &TaskId) -> Result<Snapshot, ApiError> {
     let url = format!("/api/v1/tasks/{}", id.0);
     Request::delete(&url)
-        .header("X-Rambl-TZ", &timezone())
-        .header("X-Rambl-Anon", &anon_id())
-        .send()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?
+        .identity()
+        .send_checked()
+        .await?
         .json::<Snapshot>()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
@@ -381,13 +409,11 @@ pub async fn import_ics(file: web_sys::File) -> Result<ImportResponse, ApiError>
         })?;
 
     Request::post("/api/v1/import")
-        .header("X-Rambl-TZ", &timezone())
-        .header("X-Rambl-Anon", &anon_id())
+        .identity()
         .body(form_data)
         .map_err(|e| ApiError::Network(e.to_string()))?
-        .send()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
         .json::<ImportResponse>()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
@@ -396,11 +422,9 @@ pub async fn import_ics(file: web_sys::File) -> Result<ImportResponse, ApiError>
 /// GET /api/v1/calendar.ics - export calendar as iCalendar
 pub async fn export_calendar() -> Result<String, ApiError> {
     Request::get("/api/v1/calendar.ics")
-        .header("X-Rambl-TZ", &timezone())
-        .header("X-Rambl-Anon", &anon_id())
-        .send()
-        .await
-        .map_err(|e| ApiError::Network(e.to_string()))?
+        .identity()
+        .send_checked()
+        .await?
         .text()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))

@@ -39,6 +39,8 @@ pub struct Shared {
     /// sign-in.
     local: bool,
     caps: Caps,
+    /// The Google client id the page signs in with; `None` when sign-in is off.
+    google_client_id: Option<String>,
 }
 
 /// Daily limits. Past a Jev cap, capture still works but is judged by `FakeJudge`.
@@ -271,8 +273,12 @@ fn build_router(
         verifier,
         local,
         caps,
+        google_client_id: std::env::var("GOOGLE_CLIENT_ID")
+            .ok()
+            .filter(|id| !id.is_empty()),
     });
     Router::new()
+        .route("/api/v1/config", get(config))
         .route("/api/v1/auth/google", post(sign_in_google))
         .route("/api/v1/auth/signout", post(sign_out))
         .route("/api/v1/me", get(me).delete(delete_me))
@@ -379,6 +385,19 @@ fn store_failed(error: StoreError) -> HttpError {
         code: ErrorCode::Internal,
         message: error.to_string(),
     })
+}
+
+/// `GET /api/v1/config`: what the page needs before anyone signs in. The client id is
+/// public: Google shows it on its own sign-in page.
+async fn config(State(shared): State<Arc<Shared>>) -> Json<ConfigOut> {
+    Json(ConfigOut {
+        google_client_id: shared.google_client_id.clone(),
+    })
+}
+
+#[derive(Serialize)]
+struct ConfigOut {
+    google_client_id: Option<String>,
 }
 
 /// `POST /api/v1/auth/google`: trade an ID token for a session.
@@ -2294,6 +2313,15 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["jev_fallback"], true, "{body}");
+    }
+
+    /// With no Google client id configured the page is told so, and shows no sign-in.
+    #[tokio::test]
+    async fn config_without_a_google_client_id_is_null() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let (status, _, body) = call(&router, "GET", "/api/v1/config", None, &[]).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body["google_client_id"].is_null(), "{body}");
     }
 
     #[test]
