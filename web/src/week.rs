@@ -24,7 +24,7 @@ pub fn WeekGrid(
     let hours = move || (settings.get().start_hour..settings.get().end_hour).collect::<Vec<_>>();
     view! {
         <section aria-labelledby="week-heading">
-            <h2 id="week-heading">"Week"</h2>
+            <h2 id="week-heading">"Planner"</h2>
             <div class="week-scroll" node_ref=grid_ref>
                 <div class="week" style=move || format!("--days: {}", settings.get().days)>
                     <For each=days key=|day| *day let:day>

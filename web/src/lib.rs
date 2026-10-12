@@ -72,8 +72,8 @@ pub fn App() -> impl IntoView {
         <settings::SettingsPanel settings=view_settings set_settings=set_view_settings />
         <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event set_speech=set_brain_speech set_pose=set_brain_pose />
         <nav class="pane-switch" aria-label="Show">
-            <button type="button" class:active=move || pane.get() == 0 on:click=move |_| show_pane(main_ref, 0, set_pane)>"Tasks"</button>
-            <button type="button" class:active=move || pane.get() == 1 on:click=move |_| show_pane(main_ref, 1, set_pane)>"Week"</button>
+            <button type="button" class:active=move || pane.get() == 0 on:click=move |_| show_pane(main_ref, 0, set_pane)>"To do"</button>
+            <button type="button" class:active=move || pane.get() == 1 on:click=move |_| show_pane(main_ref, 1, set_pane)>"Planner"</button>
         </nav>
         <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
             <div class="tasks-pane">
@@ -552,7 +552,7 @@ fn TaskList(
 
     view! {
         <section aria-labelledby="tasks-heading">
-            <h2 id="tasks-heading">"Tasks"</h2>
+            <h2 id="tasks-heading">"To do"</h2>
             <div class="label-filters" aria-label="Filter tasks by label">
                 <button
                     type="button"
