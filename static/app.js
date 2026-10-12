@@ -8,7 +8,7 @@
 
 /* ── Config ─────────────────────────────────────────────────── */
 
-const API = window.AI_TODO_API || '';   // e.g. 'https://ai-todo-api.burvy.dev'
+const API = window.AI_TODO_API || '';   // e.g. 'https://rambl.burvy.dev'
 const PENCIL_BELOW = 0.6;               // confidence under this = "pencilled in"
 const WRITE_MS = 600;                   // time the pen takes per title
 const DAY_START = 8, DAY_END = 20;      // planner hours
