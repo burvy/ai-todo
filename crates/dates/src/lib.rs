@@ -410,7 +410,7 @@ mod tests {
             pinned_start("tomorrow at 23:59", &ctx),
             Some(utc(2026, 10, 13, 3, 59))
         );
-        // At 00:01 local => Mon 00:01 NY = Mon 04:01 UTC (same day, early)
+        // At 00:01 local => Mon 00:01 NY = Mon 04:01 UTC (next day, early)
         let ctx_early = ny(utc(2026, 10, 12, 5, 0)); // Mon 01:00 NY
         assert_eq!(
             pinned_start("tomorrow at 0:01", &ctx_early),
@@ -458,21 +458,21 @@ mod tests {
     }
 
     #[test]
-    fn month_rollover_31_dec_to_jan_5() {
+    fn year_rollover_31_dec_to_jan_5() {
         let ctx = ny(utc(2026, 12, 30, 17, 0));
         assert_eq!(phrases::day(&["jan", "5"], &ctx), Some(date(2027, 1, 5)));
         assert_eq!(phrases::day(&["dec", "31"], &ctx), Some(date(2026, 12, 31)));
     }
 
     #[test]
-    fn year_rollover_feb_2028_29_days() {
+    fn leap_year_feb_2028_has_29_days() {
         // 2028 is a leap year; Feb 29 exists.
         let ctx = ny(utc(2028, 2, 28, 16, 0));
         assert_eq!(phrases::day(&["feb", "29"], &ctx), Some(date(2028, 2, 29)));
     }
 
     #[test]
-    fn year_rollover_feb_2027_28_days() {
+    fn leap_year_feb_2027_has_28_days() {
         // 2027 is not leap year; Feb 28 exists, Feb 29 invalid -> None
         let ctx = ny(utc(2027, 2, 27, 16, 0));
         assert_eq!(phrases::day(&["feb", "28"], &ctx), Some(date(2027, 2, 28)));
