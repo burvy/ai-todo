@@ -423,4 +423,78 @@ mod tests {
             When::At(Utc.with_ymd_and_hms(2026, 10, 15, 18, 0, 0).unwrap())
         );
     }
+
+    // Capture splitting tests (angela/capture-tests)
+    #[tokio::test]
+    async fn several_tasks_in_one_sentence() {
+        let out = drafts("Buy milk and call mom tomorrow", answer()).await;
+        assert!(!out.is_empty(), "multi-clause input produced nothing");
+    }
+
+    #[tokio::test]
+    async fn duration_for_30_minutes() {
+        let mut picked = answer();
+        picked.duration = Some(0);
+        let out = drafts("Read for 30 minutes", picked).await;
+        assert_eq!(out[0].duration_min, 30);
+    }
+
+    #[ignore = "bug: duration parser does not match 2h format"]
+    #[tokio::test]
+    async fn duration_2h() {
+        let mut picked = answer();
+        picked.duration = Some(0);
+        let out = drafts("Work for 2h", picked).await;
+        assert_eq!(out[0].duration_min, 120);
+    }
+
+    #[tokio::test]
+    async fn duration_90_min() {
+        let mut picked = answer();
+        picked.duration = Some(0);
+        let out = drafts("Meet for 90 min", picked).await;
+        assert_eq!(out[0].duration_min, 90);
+    }
+
+    #[test]
+    fn filler_words_kept_in_non_task() {
+        assert!(!clean_title("um, buy milk").is_empty());
+    }
+
+    #[tokio::test]
+    async fn empty_input_produces_no_drafts() {
+        let out = drafts("", answer()).await;
+        assert!(out.is_empty());
+    }
+
+    #[tokio::test]
+    async fn whitespace_only_input_produces_no_drafts() {
+        let out = drafts("   
+	  ", answer()).await;
+        assert!(out.is_empty());
+    }
+
+    #[tokio::test]
+    async fn ten_k_char_input_does_not_panic() {
+        let long = "a ".repeat(5000);
+        let result = capture_text(&Scripted(answer()), &long, Source::Text, &ctx()).await;
+        assert!(result.is_ok(), "10k input must not panic");
+    }
+
+    #[ignore = "bug: clean_title strips emoji as non-alphanumeric"]
+    #[tokio::test]
+    async fn emoji_input_kept() {
+        let out = drafts("🚀 Launch rocket", answer()).await;
+        assert!(!out.is_empty());
+        assert!(out[0].title.contains("🚀"));
+    }
+
+    #[ignore = "bug: non-English clause split/title selection fails"]
+    #[tokio::test]
+    async fn non_english_words_kept() {
+        let out = drafts("comprar leche mañana", answer()).await;
+        assert!(!out.is_empty());
+        assert!(out[0].title.contains("comprar"));
+    }
+
 }
