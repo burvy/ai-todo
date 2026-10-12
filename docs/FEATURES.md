@@ -9,14 +9,15 @@ current code.
 ### 1. Ramble to tasks
 a. Type a sentence and Rambl creates a task with a title, duration, date, label and priority.
 b. Type text in the box labelled "Ramble" and press **Add**.
-c. Code: `web/src/lib.rs:CaptureBox, handle_submit`; `web/src/api.rs:create_task`;
+c. Code: `web/src/lib.rs:CaptureBox`; `web/src/api.rs:capture_text, create_task`;
 `crates/capture/src/pipeline.rs:capture_text, clean_title`.
 
 ### 2. Capture from speech
 a. The capture box exposes a microphone control when the browser supports speech recognition.
-b. Click **Mic** beside the capture box. Full transcription is *(planned)*; the current
-control reports listening but does not yet send recognised speech.
-c. Code: `web/src/lib.rs:CaptureBox`; `web/src/api.rs:capture_text`.
+b. Click **Mic** beside the capture box and speak; the transcription appears in the capture box
+and can be submitted as a task.
+c. Code: `web/src/lib.rs:CaptureBox`; `web/src/speech.rs:Session, supported`;
+`web/src/api.rs:capture_text`.
 
 ### 3. Capture in the user's time zone
 a. Words such as "tomorrow", weekdays and clock times are resolved in the user's
@@ -52,7 +53,7 @@ c. Code: `crates/judge/src/fake.rs:FakeJudge`;
 ### 1. Shared task list
 a. The page lists every task with its status, label, priority, duration and planned time.
 b. Open the **Tasks** panel.
-c. Code: `web/src/lib.rs:TaskList`; `web/src/api.rs:fetch_snapshot`.
+c. Code: `web/src/lib.rs:TaskList, load_snapshot_from_api`; `web/src/api.rs:fetch_snapshot`.
 
 ### 2. Add, complete and delete
 a. Tasks can be added from the capture box, marked done, and deleted; each change
@@ -76,9 +77,10 @@ c. Code: `web/src/lib.rs:Mascot`; `web/src/api.rs:patch_task, delete_task`.
 
 ### 5. Labels and priorities
 a. Tasks carry one of six labels and one of four priorities.
-b. Not visible as a separate settings screen; inspect a task in the list or use
-the capture result.
-c. Code: `crates/core/src/lib.rs:Label, Priority, Task`;
+b. Inspect a task in the list or use the capture result. Use the label buttons above the
+list to filter tasks; the selected filter is remembered in the browser.
+c. Code: `web/src/lib.rs:TaskList, label_name, load_label_filter, save_label_filter`;
+`crates/core/src/lib.rs:Label, Priority, Task`;
 `crates/judge/src/fake.rs:label_for`; `server/src/v2/store.rs:label_to_stored, priority_to_stored`.
 
 ### 6. Persistence
@@ -98,7 +100,7 @@ c. Code: `web/src/week.rs:WeekGrid`; `web/src/settings.rs:SettingsPanel, Setting
 a. The task list and planner use the same server snapshot, so a task cannot show
 different data in the two views.
 b. Add, complete, delete, import, or reorder a task and compare both panels.
-c. Code: `web/src/lib.rs:App`; `web/src/api.rs:use_snapshot, fetch_snapshot`;
+c. Code: `web/src/lib.rs:App`; `web/src/api.rs:fetch_snapshot`;
 `crates/core/src/lib.rs:Snapshot`.
 
 ### 3. Fixed and flexible placement
@@ -106,12 +108,12 @@ a. Tasks with an explicit start stay there; other tasks flow into available
 working hours around them.
 b. Capture a phrase such as `dinner Friday at 7`, then inspect the Friday block.
 c. Code: `server/src/v2/app.rs:plan, working_hours`;
-`crates/scheduler/src/lib.rs:schedule`.
+`crates/scheduler/src/lib.rs:plan, WorkingHours`.
 
 ### 4. Unplaced tasks are reported
 a. A task that cannot fit is reported as unplaced rather than silently dropped.
 b. Not visible; covered by scheduler and server tests.
-c. Code: `crates/scheduler/src/lib.rs:Placement, UnschedulableReason`;
+c. Code: `crates/core/src/lib.rs:Placement, Plan`;
 `server/src/v2/app.rs:plan`.
 
 ### 5. System colour scheme
@@ -134,7 +136,7 @@ c. Code: `web/src/lib.rs:Mascot`; `web/src/mascot.rs:transition`;
 
 ### 3. Drop actions
 a. Dropping Rambl on a task opens a prompt with Edit, Move, Done, Delete and
-Never mind actions.
+Never mind actions. The edit dialog is *(planned)*.
 b. Drag the pen onto a task row and choose an action.
 c. Code: `web/src/lib.rs:Mascot`; `web/src/api.rs:patch_task, delete_task`.
 
@@ -144,7 +146,8 @@ b. Enable reduced motion in the operating system and drag Rambl away from home.
 c. Code: `web/src/mascot.rs:prefers_reduced_motion`; `web/src/lib.rs:Mascot`.
 
 ### 5. Mascot brain
-a. The mascot crate provides deterministic, seeded behaviour without web code.
+a. The mascot crate provides deterministic, seeded behaviour without web code; wiring it
+into the web mascot is *(planned)*.
 b. Not visible; covered by tests in `crates/rambl-brain/src/lib.rs`.
 c. Code: `crates/rambl-brain/src/lib.rs:Brain, step, step_with`;
 `crates/rambl-brain/src/rng.rs:Seeded`.
@@ -155,7 +158,7 @@ c. Code: `crates/rambl-brain/src/lib.rs:Brain, step, step_with`;
 a. An `.ics` calendar becomes ordinary editable tasks with their original times.
 b. Choose a file in **Import .ics**.
 c. Code: `web/src/lib.rs:ImportIcs`; `web/src/api.rs:import_ics`;
-`server/src/v2/http.rs:import`; `server/src/ics.rs`.
+`server/src/v2/http.rs:import`; `server/src/v2/ics_import.rs`.
 
 ### 2. Re-import without duplicates
 a. Importing the same event again updates it by its calendar identifier instead
@@ -166,16 +169,21 @@ c. Code: `server/src/v2/app.rs:import, ImportedEvent`;
 
 ### 3. Skip cancelled and transparent events
 a. Cancelled events and transparent free-time events do not become tasks.
-b. Not visible; covered by tests in `server/src/ics.rs`.
-c. Code: `server/src/ics.rs`.
+b. Not visible; covered by tests in `server/src/v2/http.rs` and `server/src/v2/ics_import.rs`.
+c. Code: `server/src/v2/ics_import.rs`.
 
-### 4. Export the plan
+### 4. Edit imported-event tasks
+a. Imported calendar tasks can be edited locally without changing the source calendar.
+b. Choose **Edit** on an imported task; the editor warns that changes will not sync back.
+c. Code: `web/src/lib.rs:TaskList, calendar_notice`; `crates/core/src/lib.rs:Source`.
+
+### 5. Export the plan
 a. The current plan can be downloaded as a standard iCalendar file.
-b. Call `GET /api/v1/calendar.ics`; an export control in the page is *(planned)*.
+b. Click **Download calendar (.ics)** in **View settings**, or call `GET /api/v1/calendar.ics`.
 c. Code: `web/src/api.rs:export_calendar`;
 `server/src/v2/http.rs:calendar_ics`; `server/src/v2/ics_export.rs:build_ics`.
 
-### 5. Accepted import formats
+### 6. Accepted import formats
 a. Calendars use `.ics`; capture accepts PDF, email and text; Outlook `.pst` is
 not read.
 b. Not visible; covered by the capture and HTTP tests.
@@ -189,17 +197,29 @@ a. You can choose the first hour, last hour and number of days shown in the plan
 b. Open **View settings** and change the fields.
 c. Code: `web/src/settings.rs:SettingsPanel, Settings, load, save`.
 
-### 2. Browser time zone
+### 2. Version and calendar export
+a. The settings panel displays the Rambl version and build date and links to an iCalendar export.
+b. Open **View settings**.
+c. Code: `web/src/settings.rs:SettingsPanel`; `web/src/api.rs:export_calendar`.
+
+### 3. Browser time zone
 a. Requests carry the browser's IANA time zone so dates and working hours are local.
 b. Not visible; capture or load a snapshot from the page.
 c. Code: `web/src/api.rs:timezone`; `server/src/v2/http.rs:zone, zone_from_env`.
 
-### 3. Environment configuration
+### 4. Environment configuration
 a. The API key, port, database path and default time zone are configured by
 environment variables rather than a settings screen.
 b. Not visible; see the environment table in `docs/ARCHITECTURE.md`.
 c. Code: `server/src/v2/mod.rs:app_from_env`;
 `server/src/v2/http.rs:jev_daily_cap_from_env, zone_from_env`.
+
+### 5. Task order and overdue state
+a. New tasks appear newest first. Unfinished tasks past their due time remain in the list as
+overdue and are scheduled in the next available slot.
+b. Add tasks in sequence, then inspect the list and a task whose due time has passed.
+c. Code: `server/src/v2/app.rs:sort_tasks, plan`; `web/src/lib.rs:TaskList`;
+`crates/core/src/lib.rs:When`.
 
 ## VII. ACCOUNTS
 
@@ -282,19 +302,20 @@ c. Code: `server/src/v2/http.rs:jev_daily_cap_from_env, over_jev_cap`;
 ### 1. Deterministic placement
 a. The scheduler puts flexible tasks into local working-hour gaps around fixed tasks.
 b. Not visible; covered by scheduler tests.
-c. Code: `crates/scheduler/src/lib.rs:schedule`;
+c. Code: `crates/scheduler/src/lib.rs:plan, WorkingHours`;
 `server/src/v2/app.rs:plan`.
 
 ### 2. Whole-task invariant
 a. A task is placed once as a whole; if no complete slot exists it is unplaced.
 b. Not visible; covered by tests in `crates/scheduler/src/lib.rs`.
-c. Code: `crates/scheduler/src/lib.rs:Placement, UnschedulableReason`.
+c. Code: `crates/core/src/lib.rs:Placement, Plan`.
 
 ### 3. Scheduler v2
-a. The new `plan()`-based scheduler is *(planned)*; the current server still uses
-the existing scheduler path.
+a. The `plan()`-based scheduler places fixed and flexible tasks and is covered by
+invariant tests.
 b. Not visible; track the implementation in `server/src/v2/app.rs:plan`.
-c. Code: `server/src/v2/app.rs:plan`; `crates/scheduler/src/lib.rs:schedule`.
+c. Code: `server/src/v2/app.rs:plan`; `crates/scheduler/src/lib.rs:plan`;
+`crates/scheduler/src/lib.rs:generated_plans_preserve_scheduler_invariants`.
 
 ## XI. SERVER API
 
@@ -326,7 +347,7 @@ c. Code: `server/src/v2/store.rs:SqliteStore, MIGRATIONS, SCHEMA_VERSION`.
 ### 2. Imported-event identity
 a. An imported event keeps its external UID so re-import can update it.
 b. Not visible; import the same `.ics` twice.
-c. Code: `crates/core/src/lib.rs:Task::external_uid`;
+c. Code: `crates/core/src/lib.rs:Task.external_uid`;
 `server/src/v2/store.rs:find_by_uid`; `server/src/v2/app.rs:import`.
 
 ### 3. In-memory test store
@@ -335,10 +356,11 @@ b. Not visible; covered by server HTTP tests.
 c. Code: `server/src/v2/store.rs:MemoryStore`.
 
 ### 4. Daily backup
-a. Automatic daily SQLite backups retained for 14 days are *(planned)*.
-b. Not visible; no backup job is currently installed.
-c. Code: no implementation yet; the production database is configured by
-`server/src/v2/mod.rs:app_from_env`.
+a. Automatic daily SQLite backups are created at startup and every 24 hours, with backups
+older than 14 days removed.
+b. Not visible; inspect `data/backups/rambl-YYYY-MM-DD.db` after the server starts.
+c. Code: `server/src/v2/backup.rs:BackupService, run_backup_sync, delete_old_backups`;
+`server/src/v2/mod.rs:start_backups`.
 
 ## XIII. DEPLOY
 
@@ -349,7 +371,7 @@ c. Code: `run-local.ps1`; `run-local.sh`; `server/src/v2/mod.rs:app_from_env`.
 
 ### 2. Single-file release
 a. The release build produces one self-contained `server.exe` that serves the
-web application and API.
+web application and API; the former v1 server and legacy routes are removed.
 b. Run `.\deploy\build-release.ps1`, then copy the staged release.
 c. Code: `deploy/build-release.ps1`; `server/src/main.rs:WEB_DIST`;
 `DEPLOY.md`.
