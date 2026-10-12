@@ -1,12 +1,14 @@
 //! Thin HTTP handlers for `/api/v1`. They read the time zone header, lock the `App`
 //! for the whole call, and map errors. No business rules live here.
 
-use std::sync::{Arc, Mutex};
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::{
     Json, Router,
     extract::{FromRequest, Multipart, Query, State},
     http::{HeaderMap, StatusCode, header::HeaderName},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, patch, post, put},
 };
@@ -26,6 +28,11 @@ use todo_core::{LocalContext, Source, TaskId};
 
 const TZ_HEADER: HeaderName = HeaderName::from_static("x-rambl-tz");
 const ANON_HEADER: HeaderName = HeaderName::from_static("x-rambl-anon");
+static ISSUED_ANON_IDS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn issued_anon_ids() -> &'static Mutex<HashSet<String>> {
+    ISSUED_ANON_IDS.get_or_init(|| Mutex::new(HashSet::new()))
+}
 
 /// The state every handler shares: the app (locked for each call), the judge, and how
 /// a request is turned into a user.
@@ -57,9 +64,13 @@ impl CurrentUser {
         if shared.local {
             return Ok(auth::LOCAL_USER.to_owned());
         }
-        // Check for anonymous header
         if let Some(anon_id) = headers.get(&ANON_HEADER).and_then(|v| v.to_str().ok()) {
-            if !anon_id.is_empty() {
+            if valid_anon_id(anon_id)
+                && issued_anon_ids()
+                    .lock()
+                    .expect("anonymous id mutex")
+                    .contains(anon_id)
+            {
                 return Ok(anon_id.to_owned());
             }
         }
@@ -191,19 +202,69 @@ pub fn router_with_verifier(
 fn jev_daily_cap_from_env() -> u32 {
     std::env::var("RAMBL_JEV_DAILY_CAP")
         .ok()
-n/// `RAMBL_JEV_DAILY_CAP_ANON` captures per anonymous user per day, 30 unless it says otherwise.
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(DEFAULT_JEV_DAILY_CAP)
+}
+
+/// `RAMBL_JEV_DAILY_CAP_ANON` captures per anonymous user per day, 30 unless it says otherwise.
 fn anon_jev_daily_cap_from_env() -> u32 {
     std::env::var("RAMBL_JEV_DAILY_CAP_ANON")
         .ok()
         .and_then(|raw| raw.trim().parse().ok())
         .unwrap_or(DEFAULT_ANON_JEV_DAILY_CAP)
 }
-        .and_then(|raw| raw.trim().parse().ok())
-        .unwrap_or(DEFAULT_JEV_DAILY_CAP)
-}
 
 /// Captures per user per day before capture stops using Jev.
 pub const DEFAULT_JEV_DAILY_CAP: u32 = 200;
+pub const DEFAULT_ANON_JEV_DAILY_CAP: u32 = 30;
+
+fn valid_anon_id(value: &str) -> bool {
+    let Some(suffix) = value.strip_prefix("anon_") else {
+        return false;
+    };
+    suffix.len() == 32
+        && suffix
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
+fn new_anon_id() -> String {
+    format!("anon_{}", uuid::Uuid::new_v4().simple())
+}
+
+async fn assign_anonymous_id(mut request: axum::extract::Request, next: Next) -> Response {
+    if !request
+        .headers()
+        .contains_key(axum::http::header::AUTHORIZATION)
+    {
+        let id = request
+            .headers()
+            .get(&ANON_HEADER)
+            .and_then(|value| value.to_str().ok())
+            .filter(|value| {
+                valid_anon_id(value)
+                    && issued_anon_ids()
+                        .lock()
+                        .expect("anonymous id mutex")
+                        .contains(*value)
+            })
+            .map(str::to_owned)
+            .unwrap_or_else(new_anon_id);
+        issued_anon_ids()
+            .lock()
+            .expect("anonymous id mutex")
+            .insert(id.clone());
+        if let Ok(value) = id.parse() {
+            request.headers_mut().insert(ANON_HEADER, value);
+        }
+        let mut response = next.run(request).await;
+        response
+            .headers_mut()
+            .insert(ANON_HEADER, id.parse().unwrap());
+        return response;
+    }
+    next.run(request).await
+}
 
 fn build_router(
     app: App<Box<dyn Store>>,
@@ -212,6 +273,7 @@ fn build_router(
     local: bool,
     jev_daily_cap: u32,
 ) -> Router {
+    let anon_jev_daily_cap = anon_jev_daily_cap_from_env();
     Router::new()
         .route("/api/v1/auth/google", post(sign_in_google))
         .route("/api/v1/auth/signout", post(sign_out))
@@ -230,7 +292,9 @@ fn build_router(
             verifier,
             local,
             jev_daily_cap,
+            anon_jev_daily_cap,
         }))
+        .layer(middleware::from_fn(assign_anonymous_id))
 }
 
 /// `GET /api/v1/snapshot?from=YYYY-MM-DD&days=N`: the plan window, today and 7 days
@@ -240,6 +304,12 @@ async fn sign_in_google(
     State(shared): State<Arc<Shared>>,
     request: axum::extract::Request,
 ) -> Result<Json<auth::Session>, HttpError> {
+    let anonymous = request
+        .headers()
+        .get(&ANON_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| valid_anon_id(value))
+        .map(str::to_owned);
     let Json(body): Json<SignInIn> = Json::from_request(request, &())
         .await
         .map_err(bad_request)?;
@@ -251,7 +321,8 @@ async fn sign_in_google(
         .await
         .map_err(HttpError::from)?;
     let app = shared.app.lock().expect("app mutex");
-    let session = auth::open_session(app.store(), &info, app.now()).map_err(HttpError::from)?;
+    let session = auth::open_session(app.store(), &info, app.now(), anonymous.as_deref())
+        .map_err(HttpError::from)?;
     Ok(Json(session))
 }
 
@@ -288,6 +359,7 @@ async fn me(
             email: "local@localhost".into(),
             name: "Local user".into(),
             picture: None,
+            plan: auth::Plan::Free,
         }));
     }
     let token =
@@ -450,7 +522,23 @@ async fn capture(
     let (text, source, anchor) = read_capture(request).await?;
     let now = anchor.unwrap_or_else(|| shared.app.lock().unwrap().now());
     let ctx = LocalContext { now, tz };
-    let jev_fallback = over_jev_cap(&shared, &user, now);
+    let plan = if !headers.contains_key(axum::http::header::AUTHORIZATION) {
+        auth::Plan::Anon
+    } else {
+        shared
+            .app
+            .lock()
+            .expect("app mutex")
+            .store()
+            .user_plan(&user)
+            .map_err(|error| {
+                HttpError(ApiError {
+                    code: ErrorCode::Internal,
+                    message: error.to_string(),
+                })
+            })?
+    };
+    let jev_fallback = over_jev_cap(&shared, &user, now, plan);
     let drafts = if jev_fallback {
         capture_text(&judge::FakeJudge, &text, source, &ctx)
             .await
@@ -470,7 +558,7 @@ async fn capture(
 }
 
 /// Has this user already spent their daily Jev allowance today?
-fn over_jev_cap(shared: &Shared, user: &str, now: DateTime<Utc>) -> bool {
+fn over_jev_cap(shared: &Shared, user: &str, now: DateTime<Utc>, plan: auth::Plan) -> bool {
     let today = now.with_timezone(&chrono_tz::UTC).date_naive();
     let used = shared
         .app
@@ -478,7 +566,18 @@ fn over_jev_cap(shared: &Shared, user: &str, now: DateTime<Utc>) -> bool {
         .expect("app mutex")
         .captures_today(user, today)
         .unwrap_or(0);
-    used >= shared.jev_daily_cap
+    used >= match plan {
+        auth::Plan::Anon => shared.anon_jev_daily_cap,
+        auth::Plan::Free => shared.jev_daily_cap,
+        auth::Plan::Paid => paid_jev_daily_cap_from_env(),
+    }
+}
+
+fn paid_jev_daily_cap_from_env() -> u32 {
+    std::env::var("RAMBL_JEV_DAILY_CAP_PAID")
+        .ok()
+        .and_then(|raw| raw.trim().parse().ok())
+        .unwrap_or(1000)
 }
 
 /// The capture text, its source, and an anchor time when the source has a send date.
@@ -1726,6 +1825,7 @@ mod tests {
             email: "sam@example.com".into(),
             name: "Sam".into(),
             picture: None,
+            plan: auth::Plan::Free,
         };
         // A session that ended a minute ago.
         let past = Utc::now() - chrono::Duration::minutes(1);
@@ -1843,5 +1943,13 @@ mod tests {
             second["created"].as_array().is_some_and(|c| !c.is_empty()),
             "the fallback still creates the task"
         );
+    }
+
+    #[test]
+    fn anonymous_ids_require_prefix_and_32_lowercase_hex_digits() {
+        assert!(valid_anon_id("anon_0123456789abcdef0123456789abcdef"));
+        assert!(!valid_anon_id("0123456789abcdef0123456789abcdef"));
+        assert!(!valid_anon_id("anon_0123456789ABCDEF0123456789abcdef"));
+        assert!(!valid_anon_id("anon_0123"));
     }
 }

@@ -17,17 +17,25 @@ use chrono::{DateTime, Utc};
 use rusqlite::{Connection, params};
 use todo_core::{Label, Priority, Source, Task, TaskId, When};
 
+fn parse_plan(value: &str) -> super::auth::Plan {
+    match value {
+        "anon" => super::auth::Plan::Anon,
+        "paid" => super::auth::Plan::Paid,
+        _ => super::auth::Plan::Free,
+    }
+}
+
 /// Where the v2 database lives when `RAMBL_DATA` is not set.
 pub const DEFAULT_DATA_PATH: &str = "data/rambl.db";
 
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
-const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2];
+const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2, MIGRATION_3];
 
 const MIGRATION_1: &str = "
 CREATE TABLE IF NOT EXISTS v2_tasks (
@@ -80,6 +88,7 @@ CREATE INDEX IF NOT EXISTS v2_tasks_user_idx ON v2_tasks (user_id);
 INSERT OR IGNORE INTO v2_users (id, email, name, picture, created_at)
     VALUES ('local', 'local@localhost', 'Local user', NULL, '1970-01-01T00:00:00Z');
 ";
+const MIGRATION_3: &str = "ALTER TABLE v2_users ADD COLUMN plan TEXT NOT NULL DEFAULT 'free';";
 
 /// Every column of `v2_tasks`, in one list.
 ///
@@ -172,6 +181,12 @@ pub trait Store: Send + Sync {
 
     /// How many captures this user has run today, for the daily Jev cap.
     fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError>;
+
+    /// Move anonymous tasks to a signed-in user, keeping the signed-in copy for
+    /// duplicate external UIDs.
+    fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError>;
+    fn user_plan(&self, user: &str) -> Result<super::auth::Plan, StoreError>;
+    fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError>;
 }
 
 /// Tasks held in memory, with their owner. The HTTP tests use this so they never
@@ -241,6 +256,16 @@ impl<S: Store + ?Sized> Store for Box<S> {
     fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
         (**self).captures_today(user, day)
     }
+
+    fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError> {
+        (**self).adopt_anonymous(anonymous, user)
+    }
+    fn user_plan(&self, user: &str) -> Result<super::auth::Plan, StoreError> {
+        (**self).user_plan(user)
+    }
+    fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError> {
+        (**self).set_user_plan(user, plan)
+    }
 }
 
 impl Store for MemoryStore {
@@ -283,6 +308,29 @@ impl Store for MemoryStore {
             Some((_, existing)) => *existing = task,
             None => stored.push((user.to_owned(), task)),
         }
+        Ok(())
+    }
+
+    fn user_plan(&self, user: &str) -> Result<super::auth::Plan, StoreError> {
+        if user == super::auth::LOCAL_USER {
+            return Ok(super::auth::Plan::Free);
+        }
+        Ok(self
+            .users
+            .lock()
+            .expect("memory store mutex")
+            .iter()
+            .find(|held| held.id == user)
+            .map(|held| held.plan)
+            .unwrap_or(super::auth::Plan::Anon))
+    }
+
+    fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError> {
+        let mut users = self.users.lock().expect("memory store mutex");
+        let Some(found) = users.iter_mut().find(|held| held.id == user) else {
+            return Err(StoreError::NotFound);
+        };
+        found.plan = plan;
         Ok(())
     }
 
@@ -397,6 +445,33 @@ impl Store for MemoryStore {
                     && task.created.with_timezone(&chrono_tz::UTC).date_naive() == day
             })
             .count() as u32)
+    }
+
+    fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError> {
+        let mut stored = self.tasks.lock().expect("memory store mutex");
+        let existing_uids: std::collections::HashSet<_> = stored
+            .iter()
+            .filter(|(owner, _)| owner == user)
+            .filter_map(|(_, task)| task.external_uid.clone())
+            .collect();
+        let mut moved = Vec::new();
+        stored.retain(|(owner, task)| {
+            if owner != anonymous {
+                return true;
+            }
+            if task
+                .external_uid
+                .as_deref()
+                .is_some_and(|uid| existing_uids.contains(uid))
+            {
+                false
+            } else {
+                moved.push(task.clone());
+                false
+            }
+        });
+        stored.extend(moved.into_iter().map(|task| (user.to_owned(), task)));
+        Ok(())
     }
 }
 
@@ -589,8 +664,8 @@ impl Store for SqliteStore {
         // First sign-in creates the user, later ones refresh the name and picture, so
         // a rename at Google reaches the app.
         tx.execute(
-            "INSERT INTO v2_users (id, email, name, picture, created_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5) \
+            "INSERT INTO v2_users (id, email, name, picture, created_at, plan) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
              ON CONFLICT(id) DO UPDATE SET \
                  email = excluded.email, name = excluded.name, picture = excluded.picture",
             params![
@@ -598,7 +673,8 @@ impl Store for SqliteStore {
                 user.email,
                 user.name,
                 user.picture,
-                format_ts(Utc::now())
+                format_ts(Utc::now()),
+                user.plan.as_str()
             ],
         )
         .map_err(backend)?;
@@ -628,7 +704,7 @@ impl Store for SqliteStore {
         let conn = self.conn.lock().expect("db mutex");
         let mut stmt = conn
             .prepare(
-                "SELECT users.id, users.email, users.name, users.picture \
+                "SELECT users.id, users.email, users.name, users.picture, users.plan \
                  FROM v2_sessions JOIN v2_users ON v2_users.id = v2_sessions.user_id \
                  WHERE v2_sessions.token = ?1 AND v2_sessions.expires_at > ?2",
             )
@@ -644,6 +720,7 @@ impl Store for SqliteStore {
             email: row.get(1).map_err(backend)?,
             name: row.get(2).map_err(backend)?,
             picture: row.get(3).map_err(backend)?,
+            plan: parse_plan(&row.get::<_, String>(4).map_err(backend)?),
         }))
     }
 
@@ -681,6 +758,59 @@ impl Store for SqliteStore {
             )
             .map_err(backend)?;
         Ok(count as u32)
+    }
+
+    fn user_plan(&self, user: &str) -> Result<super::auth::Plan, StoreError> {
+        if user == super::auth::LOCAL_USER {
+            return Ok(super::auth::Plan::Free);
+        }
+        let plan: String = self
+            .conn
+            .lock()
+            .expect("db mutex")
+            .query_row(
+                "SELECT plan FROM v2_users WHERE id = ?1",
+                params![user],
+                |row| row.get(0),
+            )
+            .map_err(backend)?;
+        Ok(parse_plan(&plan))
+    }
+
+    fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError> {
+        let changed = self
+            .conn
+            .lock()
+            .expect("db mutex")
+            .execute(
+                "UPDATE v2_users SET plan = ?1 WHERE id = ?2",
+                params![plan.as_str(), user],
+            )
+            .map_err(backend)?;
+        if changed == 0 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
+    }
+
+    fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError> {
+        let mut conn = self.conn.lock().expect("db mutex");
+        let tx = conn.transaction().map_err(backend)?;
+        tx.execute(
+            "DELETE FROM v2_tasks WHERE user_id = ?1 AND external_uid IS NOT NULL
+             AND external_uid IN (
+                 SELECT external_uid FROM v2_tasks
+                 WHERE user_id = ?2 AND external_uid IS NOT NULL
+             )",
+            params![anonymous, user],
+        )
+        .map_err(backend)?;
+        tx.execute(
+            "UPDATE v2_tasks SET user_id = ?1 WHERE user_id = ?2",
+            params![user, anonymous],
+        )
+        .map_err(backend)?;
+        tx.commit().map_err(backend)
     }
 }
 

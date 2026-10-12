@@ -562,6 +562,18 @@ mod tests {
         fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
             self.inner.captures_today(user, day)
         }
+
+        fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError> {
+            self.inner.adopt_anonymous(anonymous, user)
+        }
+
+        fn user_plan(&self, user: &str) -> Result<crate::v2::auth::Plan, StoreError> {
+            self.inner.user_plan(user)
+        }
+
+        fn set_user_plan(&self, user: &str, plan: crate::v2::auth::Plan) -> Result<(), StoreError> {
+            self.inner.set_user_plan(user, plan)
+        }
     }
 
     fn app() -> (App<CountingStore>, Arc<AtomicUsize>) {

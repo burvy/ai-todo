@@ -1,5 +1,6 @@
 //! The v2 API under `/api/v1` (ARCHITECTURE.md sections 6 and 7). It is the whole server.
 
+pub mod admin;
 pub mod app;
 pub mod auth;
 pub mod backup;
