@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod auth;
+pub mod backup;
 pub mod http;
 pub mod ics_export;
 pub mod store;
@@ -12,6 +13,7 @@ use std::sync::Arc;
 use todo_core::SystemClock;
 
 use app::App;
+use backup::BackupService;
 use store::{SqliteStore, Store};
 
 /// The production app: SQLite at `RAMBL_DATA`, or `data/rambl.db` when that is
@@ -27,5 +29,10 @@ pub fn app_from_env() -> Result<App<Box<dyn Store>>, String> {
             std::env::var("RAMBL_DATA").unwrap_or_else(|_| store::DEFAULT_DATA_PATH.to_owned());
         format!("could not open the Rambl database at `{path}`: {error}")
     })?;
+
+    // Start the daily backup service
+    let db_path = backup::db_path_from_env();
+    BackupService::start(db_path, Arc::new(SystemClock));
+
     Ok(App::new(Box::new(store), Arc::new(SystemClock)))
 }
