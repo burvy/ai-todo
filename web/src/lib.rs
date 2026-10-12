@@ -9,6 +9,7 @@ pub mod account;
 pub mod api;
 pub mod brain;
 pub mod mascot;
+pub mod pen;
 pub mod settings;
 pub mod speech;
 pub mod week;
