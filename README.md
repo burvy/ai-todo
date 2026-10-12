@@ -48,9 +48,12 @@ On a development machine, pull the desired revision and stage a release:
 .\deploy\build-release.ps1
 ```
 
-This builds `server.exe` and copies it with `static/` into
-`deploy\dist\ai-todo\`. Copy that staged directory to the server without
-overwriting its `data/` directory, then update the running installation:
+This builds only the server and stages a fresh `deploy\dist\rambl-release\`
+(`server.exe`, `static\`, `.env.example`), then opens it in Explorer. On the
+server, put a `.env` with `TYPESAFE_API_KEY` and `PORT=3160` next to
+`server.exe` once; after that, double-clicking `server.exe` runs Rambl (it works
+from its own folder, so `static\`, `data\` and `.env` beside it are found).
+To update an existing install while keeping its `data\`:
 
 ```powershell
 .\deploy\update-server.ps1 -From C:\path\to\staged\ai-todo

@@ -517,10 +517,8 @@ fn parse_deadline(candidate: &str, now: DateTime<Utc>) -> Option<DateTime<Utc>> 
         let current = now.weekday().number_from_monday() as i64;
         let target = index as i64 + 1;
         let mut days = (target - current + 7) % 7;
-        if days == 0 {
-            if now.time() >= NaiveTime::from_hms_opt(17, 0, 0).unwrap() {
-                days = 7;
-            }
+        if days == 0 && now.time() >= NaiveTime::from_hms_opt(17, 0, 0).unwrap() {
+            days = 7;
         }
         now.date_naive() + chrono::Duration::days(days)
     } else if let Ok(value) = chrono::NaiveDate::parse_from_str(candidate, "%Y-%m-%d") {
@@ -1758,19 +1756,46 @@ fn new_state_with(db: Arc<Db>) -> AppState {
 
 #[tokio::main]
 async fn main() {
+    run_from_exe_folder();
     dotenvy::dotenv().ok();
     let port: u16 = std::env::var("PORT")
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(8080);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .expect("bind port");
-    println!("listening on http://{addr}");
-    axum::serve(listener, app(new_state()))
-        .await
-        .expect("serve");
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => listener,
+        Err(e) => fatal(&format!("could not listen on port {port}: {e}")),
+    };
+    if std::env::var("TYPESAFE_API_KEY").is_err() {
+        println!("note: TYPESAFE_API_KEY is not set (put it in .env next to the exe); Jev is off");
+    }
+    println!("Rambl is running on http://localhost:{port} (close this window to stop it)");
+    if let Err(e) = axum::serve(listener, app(new_state())).await {
+        fatal(&format!("server stopped: {e}"));
+    }
+}
+
+/// A double-clicked exe starts in some other folder; work from the exe's own
+/// folder when it holds the release layout, so `static/`, `data/` and `.env`
+/// next to it are found. `cargo run` (no `static/` beside the exe) is unaffected.
+fn run_from_exe_folder() {
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+        && dir.join("static").is_dir()
+    {
+        let _ = std::env::set_current_dir(dir);
+    }
+}
+
+/// Print the error and wait for Enter, so a double-clicked window does not
+/// vanish before the message can be read.
+fn fatal(message: &str) -> ! {
+    eprintln!("error: {message}");
+    eprintln!("press Enter to close");
+    let _ = std::io::stdin().read_line(&mut String::new());
+    std::process::exit(1);
 }
 
 #[cfg(test)]

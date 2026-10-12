@@ -1,18 +1,26 @@
 $ErrorActionPreference = 'Stop'
 
+# Builds only Rambl's server and stages a clean folder to copy to the server:
+#   server.exe, static\, .env.example
+# Double-click server.exe to run it; it reads .env next to itself.
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$stage = Join-Path $PSScriptRoot 'dist\ai-todo'
+$stage = Join-Path $PSScriptRoot 'dist\rambl-release'
 
-Write-Host 'Building server release...'
+Write-Host 'Building Rambl (server only)...'
 cargo build --release -p server --manifest-path (Join-Path $repoRoot 'Cargo.toml')
+if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
 
+# A fresh folder every time, so no local test data (data\) or old files ride along.
+if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 Copy-Item -Force (Join-Path $repoRoot 'target\release\server.exe') (Join-Path $stage 'server.exe')
-$static = Join-Path $repoRoot 'static'
-if (Test-Path $static) {
-    # Replace the staged copy; copying onto an existing folder would nest it as static\static.
-    $stagedStatic = Join-Path $stage 'static'
-    if (Test-Path $stagedStatic) { Remove-Item -Recurse -Force $stagedStatic }
-    Copy-Item -Recurse -Force $static $stagedStatic
-}
+Copy-Item -Recurse -Force (Join-Path $repoRoot 'static') (Join-Path $stage 'static')
+@'
+# Copy to .env (next to server.exe) on the server and fill in the key.
+TYPESAFE_API_KEY=
+PORT=3160
+TZ_NAME=America/New_York
+'@ | Set-Content -Encoding utf8 (Join-Path $stage '.env.example')
+
 Write-Host "Staged release at $stage"
+if (-not $env:NO_OPEN) { Start-Process explorer.exe $stage }
