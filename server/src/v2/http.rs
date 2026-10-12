@@ -1754,7 +1754,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn without_a_token_every_task_endpoint_is_401() {
+    async fn without_credentials_uses_anonymous_access() {
         let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
         // A well-formed body, so the request reaches the handler rather than being
         // rejected by an extractor. Otherwise `Json` answers 415 for a missing
@@ -1767,12 +1767,22 @@ mod tests {
             ("GET", "/api/v1/calendar.ics", None),
         ] {
             let (status, _, _) = send_raw_status(&router, method, uri, body).await;
-            assert_eq!(
-                status,
-                StatusCode::UNAUTHORIZED,
-                "{method} {uri} was not guarded"
-            );
+            assert_eq!(status, StatusCode::OK, "{method} {uri} was rejected");
         }
+    }
+
+    #[tokio::test]
+    async fn invalid_bearer_token_is_401() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let (status, _, _) = send_raw_status_with_headers(
+            &router,
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            &[("authorization", "Bearer expired")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     async fn send_raw_status(
@@ -1792,6 +1802,32 @@ mod tests {
             }
             None => Body::empty(),
         };
+        let response = router
+            .clone()
+            .oneshot(builder.body(body).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (
+            status,
+            String::new(),
+            String::from_utf8_lossy(&bytes).to_string(),
+        )
+    }
+
+    async fn send_raw_status_with_headers(
+        router: &Router,
+        method: &str,
+        uri: &str,
+        json: Option<&str>,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, String, String) {
+        let mut builder = Request::builder().method(method).uri(uri);
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        let body = json.map_or_else(Body::empty, |text| Body::from(text.to_owned()));
         let response = router
             .clone()
             .oneshot(builder.body(body).unwrap())
