@@ -351,12 +351,50 @@ fn TaskList(
     set_mascot_state: WriteSignal<mascot::State>,
 ) -> impl IntoView {
     let (dragged_task, set_dragged_task) = signal::<Option<TaskId>>(None);
+    let (selected_label, set_selected_label) = signal(load_label_filter());
+    let (editing_task, set_editing_task) = signal::<Option<TaskId>>(None);
+    let (edit_title, set_edit_title) = signal(String::new());
+    let labels = move || {
+        let tasks = snapshot.get().tasks;
+        [Label::School, Label::Work, Label::Errands, Label::Health, Label::Personal, Label::Other]
+            .into_iter()
+            .filter(|label| tasks.iter().any(|task| task.label == *label))
+            .collect::<Vec<_>>()
+    };
+    let visible_tasks = move || {
+        snapshot
+            .get()
+            .tasks
+            .into_iter()
+            .filter(|task| selected_label.get().is_none_or(|label| task.label == label))
+            .collect::<Vec<_>>()
+    };
 
     view! {
         <section aria-labelledby="tasks-heading">
             <h2 id="tasks-heading">"Tasks"</h2>
+            <div class="label-filters" aria-label="Filter tasks by label">
+                <button
+                    type="button"
+                    class:active=move || selected_label.get().is_none()
+                    on:click=move |_| {
+                        set_selected_label.set(None);
+                        save_label_filter(None);
+                    }
+                >"All"</button>
+                <For each=labels key=|label| *label let:label>
+                    <button
+                        type="button"
+                        class:active=move || selected_label.get() == Some(label)
+                        on:click=move |_| {
+                            set_selected_label.set(Some(label));
+                            save_label_filter(Some(label));
+                        }
+                    >{label_name(label)}</button>
+                </For>
+            </div>
             <ul>
-                <For each=move || snapshot.get().tasks key=|task| task.id.clone() let:task>
+                <For each=visible_tasks key=|task| task.id.clone() let:task>
                     {
                         let task_id = task.id.clone();
                         let task_title = task.title.clone();
@@ -458,6 +496,35 @@ fn TaskList(
                         let handle_drag_over = |ev: leptos::ev::DragEvent| {
                             ev.prevent_default();
                         };
+                        let start_edit = {
+                            let task_id = task_id.clone();
+                            let title = task.title.clone();
+                            move |_| {
+                                set_editing_task.set(Some(task_id.clone()));
+                                set_edit_title.set(title.clone());
+                            }
+                        };
+                        let save_edit = {
+                            let task_id = task_id.clone();
+                            move |_| {
+                                let task_id = task_id.clone();
+                                let title = edit_title.get_untracked().trim().to_string();
+                                if title.is_empty() {
+                                    return;
+                                }
+                                wasm_bindgen_futures::spawn_local(async move {
+                                    if let Ok(new_snap) =
+                                        api::patch_task(&task_id, api::PatchTaskBody::new().title(title)).await
+                                    {
+                                        set_snapshot.set(new_snap);
+                                        set_editing_task.set(None);
+                                    }
+                                });
+                            }
+                        };
+                        let cancel_edit = move |_| set_editing_task.set(None);
+                        let is_editing = move || editing_task.get().as_ref() == Some(&task_id);
+                        let calendar_notice = task.source == Source::Calendar;
 
                         view! {
                     <li
@@ -473,7 +540,31 @@ fn TaskList(
                             on:change=toggle_done
                             aria-label=format!("Mark {} as done", task_title)
                         />
-                        <strong>{render_task_title}</strong> " — " {task.duration_min} " min"
+                        {move || if is_editing() {
+                            view! {
+                                <div class="task-editor">
+                                    {calendar_notice.then(|| view! {
+                                        <p class="calendar-notice">
+                                            "This came from your calendar. Changes here won't sync back."
+                                        </p>
+                                    })}
+                                    <input
+                                        prop:value=edit_title
+                                        on:input=move |event| set_edit_title.set(event_target_value(&event))
+                                        aria-label="Edit task title"
+                                    />
+                                    <button type="button" on:click=save_edit>"Save"</button>
+                                    <button type="button" on:click=cancel_edit>"Cancel"</button>
+                                </div>
+                            }.into_any()
+                        } else {
+                            view! {
+                                <span>
+                                    <strong>{render_task_title}</strong> " — " {task.duration_min} " min"
+                                    <button type="button" on:click=start_edit>"Edit"</button>
+                                </span>
+                            }.into_any()
+                        }}
                         {move || task_time(&snapshot.get(), &render_task_id)}
                         <button
                             class="delete"
@@ -482,6 +573,52 @@ fn TaskList(
                             aria-label=format!("Delete {}", task_title)
                         >"Delete"</button>
                     </li>
+                        }
+
+                        fn label_name(label: Label) -> &'static str {
+                            match label {
+                                Label::School => "School",
+                                Label::Work => "Work",
+                                Label::Errands => "Errands",
+                                Label::Health => "Health",
+                                Label::Personal => "Personal",
+                                Label::Other => "Other",
+                            }
+                        }
+
+                        fn load_label_filter() -> Option<Label> {
+                            #[cfg(target_arch = "wasm32")]
+                            {
+                                let value = leptos::prelude::window()
+                                    .local_storage()
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|storage| storage.get_item("rambl-task-label-filter").ok().flatten());
+                                return value.and_then(|value| match value.as_str() {
+                                    "School" => Some(Label::School),
+                                    "Work" => Some(Label::Work),
+                                    "Errands" => Some(Label::Errands),
+                                    "Health" => Some(Label::Health),
+                                    "Personal" => Some(Label::Personal),
+                                    "Other" => Some(Label::Other),
+                                    _ => None,
+                                });
+                            }
+                            #[cfg(not(target_arch = "wasm32"))]
+                            {
+                                None
+                            }
+                        }
+
+                        fn save_label_filter(label: Option<Label>) {
+                            #[cfg(target_arch = "wasm32")]
+                            if let Ok(Some(storage)) = leptos::prelude::window().local_storage() {
+                                let value = label.map(label_name);
+                                let _ = match value {
+                                    Some(value) => storage.set_item("rambl-task-label-filter", value),
+                                    None => storage.remove_item("rambl-task-label-filter"),
+                                };
+                            }
                         }
                     }
                 </For>
