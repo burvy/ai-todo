@@ -21,6 +21,64 @@ async fn load_snapshot_from_api() -> Snapshot {
     }
 }
 
+/// The task `id` as the list holds it right now.
+///
+/// A row keeps the `Task` it was first drawn with, so an edit must read the task here,
+/// at click time: its `updated_at` moves on with every accepted change, and sending the
+/// old one is refused as stale.
+fn held<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a todo_core::Task> {
+    snapshot.tasks.iter().find(|task| task.id.0 == id)
+}
+
+/// The body that flips `id` between done and not done, against the version held now.
+fn toggle_done_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBody> {
+    let task = held(snapshot, id)?;
+    Some(
+        api::PatchTaskBody::new()
+            .done(!task.done)
+            .updated_at(task.updated_at),
+    )
+}
+
+/// The body that moves `id` to the next priority, against the version held now.
+fn next_priority_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBody> {
+    let task = held(snapshot, id)?;
+    let next = match task.priority {
+        todo_core::Priority::Low => todo_core::Priority::Medium,
+        todo_core::Priority::Medium => todo_core::Priority::High,
+        todo_core::Priority::High => todo_core::Priority::Low,
+        todo_core::Priority::Critical => todo_core::Priority::High,
+    };
+    Some(
+        api::PatchTaskBody::new()
+            .priority(next)
+            .updated_at(task.updated_at),
+    )
+}
+
+/// Sends an edit and shows what the server now holds. Returns whether the edit applied.
+///
+/// A refused edit (the task changed on another device) is not an error to hide: the
+/// list is reloaded so the next click starts from the server's copy.
+async fn patch_and_show(
+    id: &todo_core::TaskId,
+    body: api::PatchTaskBody,
+    set_snapshot: WriteSignal<Snapshot>,
+) -> bool {
+    match api::patch_task(id, body).await {
+        Ok(snapshot) => {
+            set_snapshot.set(snapshot);
+            true
+        }
+        Err(_) => {
+            if let Ok(snapshot) = api::fetch_snapshot(&api::today_date(), 7).await {
+                set_snapshot.set(snapshot);
+            }
+            false
+        }
+    }
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     let (snapshot, set_snapshot) = signal(api::fixture_snapshot());
@@ -299,23 +357,12 @@ fn Mascot(
                         <button type="button" on:click=move |_| {
                             if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
                                 let task_id_str = task_id.clone();
-                                let snapshot_val = snapshot.get_untracked();
+                                let body = snapshot.with_untracked(|s| next_priority_body(s, &task_id_str));
                                 let set_snapshot_clone = set_snapshot;
                                 let set_state_clone = set_state;
                                 wasm_bindgen_futures::spawn_local(async move {
-                                    if let Some(task) = snapshot_val.tasks.iter().find(|t| t.id.0 == task_id_str) {
-                                        let new_priority = match task.priority {
-                                            todo_core::Priority::Low => todo_core::Priority::Medium,
-                                            todo_core::Priority::Medium => todo_core::Priority::High,
-                                            todo_core::Priority::High => todo_core::Priority::Low,
-                                            todo_core::Priority::Critical => todo_core::Priority::High,
-                                        };
-                                        let body = api::PatchTaskBody::new()
-                                            .priority(new_priority)
-                                            .updated_at(task.updated_at);
-                                        if let Ok(new_snap) = api::patch_task(&task.id, body).await {
-                                            set_snapshot_clone.set(new_snap);
-                                        }
+                                    if let Some(body) = body {
+                                        patch_and_show(&todo_core::TaskId(task_id_str), body, set_snapshot_clone).await;
                                     }
                                     set_state_clone.set(mascot::State::Home);
                                 });
@@ -329,17 +376,12 @@ fn Mascot(
                         <button type="button" on:click=move |_| {
                             if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
                                 let task_id = task_id.clone();
-                                let snapshot_val = snapshot.get_untracked();
+                                let body = snapshot.with_untracked(|s| toggle_done_body(s, &task_id));
                                 let set_snapshot_clone = set_snapshot;
                                 let set_state_clone = set_state;
                                 wasm_bindgen_futures::spawn_local(async move {
-                                    if let Some(task) = snapshot_val.tasks.iter().find(|t| t.id.0 == task_id) {
-                                        let body = api::PatchTaskBody::new()
-                                        .done(!task.done)
-                                        .updated_at(task.updated_at);
-                                        if let Ok(new_snap) = api::patch_task(&task.id, body).await {
-                                            set_snapshot_clone.set(new_snap);
-                                        }
+                                    if let Some(body) = body {
+                                        patch_and_show(&todo_core::TaskId(task_id), body, set_snapshot_clone).await;
                                     }
                                     set_state_clone.set(mascot::State::Home);
                                 });
@@ -592,13 +634,11 @@ fn TaskList(
                             move |_| {
                                 let task_id_clone = task_id_clone.clone();
                                 let set_snapshot_clone = set_snapshot;
+                                let Some(body) = snapshot.with_untracked(|s| toggle_done_body(s, &task_id_clone.0)) else {
+                                    return;
+                                };
                                 wasm_bindgen_futures::spawn_local(async move {
-                                    let body = api::PatchTaskBody::new()
-                                        .done(!task.done)
-                                        .updated_at(task.updated_at);
-                                    if let Ok(new_snap) = api::patch_task(&task_id_clone, body).await {
-                                        set_snapshot_clone.set(new_snap);
-                                    }
+                                    patch_and_show(&task_id_clone, body, set_snapshot_clone).await;
                                 });
                             }
                         };
@@ -752,7 +792,6 @@ fn TaskList(
                     snapshot.get().tasks.into_iter().find(|task| task.id == id).map(|task| {
                         let imported = task.source == Source::Calendar;
                         let task_id = task.id.clone();
-                        let seen = task.updated_at;
                         view! {
                             <p class="dialog-task-title">{task.title.clone()}</p>
                             {imported.then(|| view! {
@@ -804,14 +843,11 @@ fn TaskList(
                                         let task_id = task_id.clone();
                                         move |_| {
                                             let task_id = task_id.clone();
+                                            let Some(body) = snapshot.with_untracked(|s| toggle_done_body(s, &task_id.0)) else {
+                                                return;
+                                            };
                                             wasm_bindgen_futures::spawn_local(async move {
-                                                if let Ok(new_snap) = api::patch_task(
-                                                    &task_id,
-                                                    api::PatchTaskBody::new()
-                                                        .done(!task.done)
-                                                        .updated_at(task.updated_at),
-                                                ).await {
-                                                    set_snapshot.set(new_snap);
+                                                if patch_and_show(&task_id, body, set_snapshot).await {
                                                     set_editing_task.set(None);
                                                 }
                                             });
@@ -850,14 +886,16 @@ fn TaskList(
                                                 return;
                                             }
                                             let task_id = task_id.clone();
+                                            let Some(seen) = snapshot.with_untracked(|s| held(s, &task_id.0).map(|task| task.updated_at)) else {
+                                                return;
+                                            };
                                             let body = api::PatchTaskBody::new()
                                                 .title(title)
                                                 .duration_min(duration.unwrap_or(1))
                                                 .when(when.unwrap_or(When::Anytime))
                                                 .updated_at(seen);
                                             wasm_bindgen_futures::spawn_local(async move {
-                                                if let Ok(new_snap) = api::patch_task(&task_id, body).await {
-                                                    set_snapshot.set(new_snap);
+                                                if patch_and_show(&task_id, body, set_snapshot).await {
                                                     set_editing_task.set(None);
                                                 }
                                             });
@@ -905,6 +943,34 @@ mod tests {
         task.done = false;
         task.when = When::At(now - chrono::Duration::minutes(1));
         assert!(!is_overdue_at(&task, now));
+    }
+
+    /// A row keeps the task it was first drawn with, so the second click on the same
+    /// task must still carry the server's newest version and the current done state.
+    #[test]
+    fn an_edit_is_built_from_the_task_as_the_list_holds_it_now() {
+        let mut snapshot = api::fixture_snapshot();
+        let id = snapshot.tasks[0].id.0.clone();
+        let first = toggle_done_body(&snapshot, &id).expect("task is listed");
+        assert_eq!(first.done, Some(true));
+        assert_eq!(first.updated_at, Some(snapshot.tasks[0].updated_at));
+
+        // The server accepted that edit: the list now holds a newer version, done.
+        snapshot.tasks[0].done = true;
+        snapshot.tasks[0].updated_at += chrono::Duration::minutes(5);
+        let second = toggle_done_body(&snapshot, &id).expect("task is listed");
+        assert_eq!(second.done, Some(false), "must flip the current state");
+        assert_eq!(second.updated_at, Some(snapshot.tasks[0].updated_at));
+
+        let bump = next_priority_body(&snapshot, &id).expect("task is listed");
+        assert_eq!(bump.updated_at, Some(snapshot.tasks[0].updated_at));
+    }
+
+    #[test]
+    fn no_edit_is_built_for_a_task_that_is_gone() {
+        let snapshot = api::fixture_snapshot();
+        assert!(toggle_done_body(&snapshot, "nope").is_none());
+        assert!(next_priority_body(&snapshot, "nope").is_none());
     }
 
     #[test]
