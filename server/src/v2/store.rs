@@ -23,11 +23,11 @@ pub const DEFAULT_DATA_PATH: &str = "data/rambl.db";
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
-const MIGRATIONS: &[&str] = &[MIGRATION_1];
+const MIGRATIONS: &[&str] = &[MIGRATION_1, MIGRATION_2];
 
 const MIGRATION_1: &str = "
 CREATE TABLE IF NOT EXISTS v2_tasks (
@@ -52,6 +52,33 @@ CREATE INDEX IF NOT EXISTS v2_tasks_order_idx ON v2_tasks (\"order\");
 -- held by two rows. Partial, because most tasks have no UID at all.
 CREATE UNIQUE INDEX IF NOT EXISTS v2_tasks_uid_idx
     ON v2_tasks (external_uid) WHERE external_uid IS NOT NULL;
+";
+
+/// Accounts. A task belongs to a `user_id`; every read and write is scoped to one, so
+/// two people never see each other's tasks. Existing rows get `LOCAL_USER` so a
+/// database written before sign-in keeps its tasks instead of becoming invisible.
+const MIGRATION_2: &str = "
+CREATE TABLE IF NOT EXISTS v2_users (
+    id         TEXT PRIMARY KEY,
+    email      TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    picture    TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS v2_sessions (
+    token      TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS v2_sessions_user_idx ON v2_sessions (user_id);
+-- Tasks belong to a user. SQLite cannot add a NOT NULL column with a REFERENCES
+-- constraint and a default in one statement, so `delete_user` removes the tasks in
+-- the same transaction instead of leaning on the engine to cascade.
+ALTER TABLE v2_tasks ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local';
+CREATE INDEX IF NOT EXISTS v2_tasks_user_idx ON v2_tasks (user_id);
+INSERT OR IGNORE INTO v2_users (id, email, name, picture, created_at)
+    VALUES ('local', 'local@localhost', 'Local user', NULL, '1970-01-01T00:00:00Z');
 ";
 
 /// Every column of `v2_tasks`, in one list.
@@ -94,35 +121,67 @@ impl std::error::Error for StoreError {}
 ///
 /// Implementors must be safe to share across axum's worker threads.
 pub trait Store: Send + Sync {
-    /// Every task, in display order.
-    fn tasks(&self) -> Result<Vec<Task>, StoreError>;
+    /// Every task belonging to this user, in display order.
+    ///
+    /// The user id is a parameter rather than something the caller passes to a
+    /// filter afterwards, so a handler cannot forget it and show one person's tasks to
+    /// another.
+    fn tasks(&self, user: &str) -> Result<Vec<Task>, StoreError>;
 
-    /// Store `task` under its own id, replacing any task already there.
+    /// Store `task` under its own id for this user, replacing any task already there.
     ///
     /// `put` is an upsert so it is total: the caller does not have to know
     /// whether the id is new. Use [`Store::find_by_uid`] before putting an
     /// imported task, so a re-import updates that task instead of colliding
     /// with it.
-    fn put(&self, task: Task) -> Result<(), StoreError>;
+    fn put(&self, user: &str, task: Task) -> Result<(), StoreError>;
 
-    /// Forget the task with this id. Reports whether there was one, so the
+    /// Forget this user's task with that id. Reports whether there was one, so the
     /// caller can answer 404 rather than always 204.
-    fn delete(&self, id: &TaskId) -> Result<bool, StoreError>;
+    fn delete(&self, user: &str, id: &TaskId) -> Result<bool, StoreError>;
 
-    /// Make the order exactly `ids`, first to `0`, `1`, ... Ids that are not
+    /// Make this user's order exactly `ids`, first to `0`, `1`, ... Ids that are not
     /// stored are skipped. One transaction, so a reorder never half-applies.
-    fn set_order(&self, ids: &[TaskId]) -> Result<(), StoreError>;
+    fn set_order(&self, user: &str, ids: &[TaskId]) -> Result<(), StoreError>;
 
-    /// The task imported from this iCalendar UID, if there is one.
+    /// This user's task imported from this iCalendar UID, if there is one.
     ///
     /// This is how a re-import updates instead of duplicating.
-    fn find_by_uid(&self, uid: &str) -> Result<Option<Task>, StoreError>;
+    fn find_by_uid(&self, user: &str, uid: &str) -> Result<Option<Task>, StoreError>;
+
+    /// Create or refresh the user and open a session, in one transaction.
+    fn upsert_user_and_session(
+        &self,
+        user: &super::auth::Me,
+        token: &str,
+        expires_at: chrono::DateTime<Utc>,
+    ) -> Result<(), StoreError>;
+
+    /// End one session. Signing out is not signing in everywhere else.
+    fn delete_session(&self, token: &str) -> Result<(), StoreError>;
+
+    /// The user a live session token belongs to. `None` once it has expired.
+    fn session_user(
+        &self,
+        token: &str,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<Option<super::auth::Me>, StoreError>;
+
+    /// Forget a person, their sessions and every task they own.
+    fn delete_user(&self, user: &str) -> Result<(), StoreError>;
+
+    /// How many captures this user has run today, for the daily Jev cap.
+    fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError>;
 }
 
-/// Tasks held in memory. The HTTP tests use this so they never touch a disk.
+/// Tasks held in memory, with their owner. The HTTP tests use this so they never
+/// touch a disk, and it has to model ownership exactly as the SQL store does or the
+/// tests would not be testing the scoping that matters.
 #[derive(Default)]
 pub struct MemoryStore {
-    tasks: Mutex<Vec<Task>>,
+    tasks: Mutex<Vec<(String, Task)>>,
+    users: Mutex<Vec<super::auth::Me>>,
+    sessions: Mutex<Vec<(String, String, chrono::DateTime<Utc>)>>,
 }
 
 impl MemoryStore {
@@ -134,30 +193,66 @@ impl MemoryStore {
 /// Forwards to whichever store was chosen. This is how `App` stays generic
 /// over "SQLite or memory" without naming either.
 impl<S: Store + ?Sized> Store for Box<S> {
-    fn tasks(&self) -> Result<Vec<Task>, StoreError> {
-        (**self).tasks()
+    fn tasks(&self, user: &str) -> Result<Vec<Task>, StoreError> {
+        (**self).tasks(user)
     }
 
-    fn put(&self, task: Task) -> Result<(), StoreError> {
-        (**self).put(task)
+    fn put(&self, user: &str, task: Task) -> Result<(), StoreError> {
+        (**self).put(user, task)
     }
 
-    fn delete(&self, id: &TaskId) -> Result<bool, StoreError> {
-        (**self).delete(id)
+    fn delete(&self, user: &str, id: &TaskId) -> Result<bool, StoreError> {
+        (**self).delete(user, id)
     }
 
-    fn set_order(&self, ids: &[TaskId]) -> Result<(), StoreError> {
-        (**self).set_order(ids)
+    fn set_order(&self, user: &str, ids: &[TaskId]) -> Result<(), StoreError> {
+        (**self).set_order(user, ids)
     }
 
-    fn find_by_uid(&self, uid: &str) -> Result<Option<Task>, StoreError> {
-        (**self).find_by_uid(uid)
+    fn find_by_uid(&self, user: &str, uid: &str) -> Result<Option<Task>, StoreError> {
+        (**self).find_by_uid(user, uid)
+    }
+
+    fn upsert_user_and_session(
+        &self,
+        user: &super::auth::Me,
+        token: &str,
+        expires_at: chrono::DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        (**self).upsert_user_and_session(user, token, expires_at)
+    }
+
+    fn delete_session(&self, token: &str) -> Result<(), StoreError> {
+        (**self).delete_session(token)
+    }
+
+    fn session_user(
+        &self,
+        token: &str,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<Option<super::auth::Me>, StoreError> {
+        (**self).session_user(token, now)
+    }
+
+    fn delete_user(&self, user: &str) -> Result<(), StoreError> {
+        (**self).delete_user(user)
+    }
+
+    fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
+        (**self).captures_today(user, day)
     }
 }
 
 impl Store for MemoryStore {
-    fn tasks(&self) -> Result<Vec<Task>, StoreError> {
-        let mut stored = self.tasks.lock().expect("memory store mutex").clone();
+    fn tasks(&self, user: &str) -> Result<Vec<Task>, StoreError> {
+        let mut stored: Vec<Task> = self
+            .tasks
+            .lock()
+            .expect("memory store mutex")
+            .iter()
+            .filter(|(owner, _)| owner == user)
+            .map(|(_, task)| task.clone())
+            .collect();
         stored.sort_by(|a, b| {
             a.order
                 .cmp(&b.order)
@@ -167,11 +262,13 @@ impl Store for MemoryStore {
         Ok(stored)
     }
 
-    fn put(&self, task: Task) -> Result<(), StoreError> {
+    fn put(&self, user: &str, task: Task) -> Result<(), StoreError> {
         let mut stored = self.tasks.lock().expect("memory store mutex");
         if let Some(uid) = task.external_uid.as_deref()
             && let Some(clash) = stored
                 .iter()
+                .filter(|(owner, _)| owner == user)
+                .map(|(_, other)| other)
                 .find(|other| other.id != task.id && other.external_uid.as_deref() == Some(uid))
         {
             return Err(StoreError::Conflict(format!(
@@ -179,38 +276,127 @@ impl Store for MemoryStore {
                 task.id.0, clash.id.0
             )));
         }
-        match stored.iter_mut().find(|other| other.id == task.id) {
-            Some(existing) => *existing = task,
-            None => stored.push(task),
+        match stored
+            .iter_mut()
+            .find(|(owner, other)| owner == user && other.id == task.id)
+        {
+            Some((_, existing)) => *existing = task,
+            None => stored.push((user.to_owned(), task)),
         }
         Ok(())
     }
 
-    fn delete(&self, id: &TaskId) -> Result<bool, StoreError> {
+    fn delete(&self, user: &str, id: &TaskId) -> Result<bool, StoreError> {
         let mut stored = self.tasks.lock().expect("memory store mutex");
         let before = stored.len();
-        stored.retain(|task| &task.id != id);
+        stored.retain(|(owner, task)| !(owner == user && &task.id == id));
         Ok(stored.len() != before)
     }
 
-    fn set_order(&self, ids: &[TaskId]) -> Result<(), StoreError> {
+    fn set_order(&self, user: &str, ids: &[TaskId]) -> Result<(), StoreError> {
         let mut stored = self.tasks.lock().expect("memory store mutex");
         for (position, id) in ids.iter().enumerate() {
-            if let Some(task) = stored.iter_mut().find(|task| &task.id == id) {
+            if let Some((_, task)) = stored
+                .iter_mut()
+                .find(|(owner, task)| owner == user && &task.id == id)
+            {
                 task.order = position as i64;
             }
         }
         Ok(())
     }
 
-    fn find_by_uid(&self, uid: &str) -> Result<Option<Task>, StoreError> {
+    fn find_by_uid(&self, user: &str, uid: &str) -> Result<Option<Task>, StoreError> {
         Ok(self
             .tasks
             .lock()
             .expect("memory store mutex")
             .iter()
-            .find(|task| task.external_uid.as_deref() == Some(uid))
+            .find(|(owner, task)| owner == user && task.external_uid.as_deref() == Some(uid))
+            .map(|(_, task)| task.clone()))
+    }
+
+    fn upsert_user_and_session(
+        &self,
+        user: &super::auth::Me,
+        token: &str,
+        expires_at: chrono::DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut users = self.users.lock().expect("memory store mutex");
+        match users.iter_mut().find(|held| held.id == user.id) {
+            Some(existing) => *existing = user.clone(),
+            None => users.push(user.clone()),
+        }
+        drop(users);
+        self.sessions.lock().expect("memory store mutex").push((
+            token.to_owned(),
+            user.id.clone(),
+            expires_at,
+        ));
+        Ok(())
+    }
+
+    fn delete_session(&self, token: &str) -> Result<(), StoreError> {
+        self.sessions
+            .lock()
+            .expect("memory store mutex")
+            .retain(|(held, _, _)| held != token);
+        Ok(())
+    }
+
+    fn session_user(
+        &self,
+        token: &str,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<Option<super::auth::Me>, StoreError> {
+        let sessions = self.sessions.lock().expect("memory store mutex");
+        let Some((_, user_id, _expires_at)) = sessions
+            .iter()
+            .find(|(held, _, expires_at)| held == token && *expires_at > now)
+        else {
+            return Ok(None);
+        };
+        let user_id = user_id.clone();
+        drop(sessions);
+        Ok(self
+            .users
+            .lock()
+            .expect("memory store mutex")
+            .iter()
+            .find(|user| user.id == user_id)
             .cloned())
+    }
+
+    fn delete_user(&self, user: &str) -> Result<(), StoreError> {
+        self.tasks
+            .lock()
+            .expect("memory store mutex")
+            .retain(|(owner, _)| owner != user);
+        self.users
+            .lock()
+            .expect("memory store mutex")
+            .retain(|held| held.id != user);
+        self.sessions
+            .lock()
+            .expect("memory store mutex")
+            .retain(|(_, owner, _)| owner != user);
+        Ok(())
+    }
+
+    fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
+        // Captures are counted from the tasks they created, which is what the memory
+        // store has to work with. The SQL store counts them properly.
+        Ok(self
+            .tasks
+            .lock()
+            .expect("memory store mutex")
+            .iter()
+            .filter(|(owner, task)| {
+                owner == user
+                    && task.source == todo_core::Source::Text
+                    && task.created.with_timezone(&chrono_tz::UTC).date_naive() == day
+            })
+            .count() as u32)
     }
 }
 
@@ -292,15 +478,15 @@ impl SqliteStore {
 }
 
 impl Store for SqliteStore {
-    fn tasks(&self) -> Result<Vec<Task>, StoreError> {
+    fn tasks(&self, user: &str) -> Result<Vec<Task>, StoreError> {
         let conn = self.conn.lock().expect("db mutex");
         let mut stmt = conn
             .prepare(&format!(
-                "SELECT {TASK_COLUMNS} FROM v2_tasks \
+                "SELECT {TASK_COLUMNS} FROM v2_tasks WHERE user_id = ?1 \
                  ORDER BY \"order\" ASC, created ASC, id ASC"
             ))
             .map_err(backend)?;
-        let rows = stmt.query_map([], read_task).map_err(backend)?;
+        let rows = stmt.query_map(params![user], read_task).map_err(backend)?;
 
         let mut tasks = Vec::new();
         for row in rows {
@@ -309,13 +495,13 @@ impl Store for SqliteStore {
         Ok(tasks)
     }
 
-    fn put(&self, task: Task) -> Result<(), StoreError> {
+    fn put(&self, user: &str, task: Task) -> Result<(), StoreError> {
         let (when_kind, when_time) = when_to_parts(task.when);
         let conn = self.conn.lock().expect("db mutex");
         conn.execute(
             &format!(
-                "INSERT INTO v2_tasks ({TASK_COLUMNS}) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
+                "INSERT INTO v2_tasks ({TASK_COLUMNS}, user_id) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
                  ON CONFLICT(id) DO UPDATE SET \
                      title = excluded.title, \
                      duration_min = excluded.duration_min, \
@@ -327,7 +513,8 @@ impl Store for SqliteStore {
                      priority = excluded.priority, \
                      source = excluded.source, \
                      created = excluded.created, \
-                     external_uid = excluded.external_uid"
+                     external_uid = excluded.external_uid, \
+                     user_id = excluded.user_id"
             ),
             params![
                 task.id.0,
@@ -342,49 +529,158 @@ impl Store for SqliteStore {
                 source_to_stored(task.source),
                 format_ts(task.created),
                 task.external_uid,
+                user,
             ],
         )
         .map_err(conflict)?;
         Ok(())
     }
 
-    fn delete(&self, id: &TaskId) -> Result<bool, StoreError> {
+    fn delete(&self, user: &str, id: &TaskId) -> Result<bool, StoreError> {
         let removed = self
             .conn
             .lock()
             .expect("db mutex")
-            .execute("DELETE FROM v2_tasks WHERE id = ?1", params![id.0])
+            .execute(
+                "DELETE FROM v2_tasks WHERE id = ?1 AND user_id = ?2",
+                params![id.0, user],
+            )
             .map_err(backend)?;
         Ok(removed > 0)
     }
 
-    fn set_order(&self, ids: &[TaskId]) -> Result<(), StoreError> {
+    fn set_order(&self, user: &str, ids: &[TaskId]) -> Result<(), StoreError> {
         let mut conn = self.conn.lock().expect("db mutex");
         let tx = conn.transaction().map_err(backend)?;
         {
             let mut stmt = tx
-                .prepare("UPDATE v2_tasks SET \"order\" = ?2 WHERE id = ?1")
+                .prepare("UPDATE v2_tasks SET \"order\" = ?3 WHERE id = ?1 AND user_id = ?2")
                 .map_err(backend)?;
             for (position, id) in ids.iter().enumerate() {
-                stmt.execute(params![id.0, position as i64])
+                stmt.execute(params![id.0, user, position as i64])
                     .map_err(backend)?;
             }
         }
         tx.commit().map_err(backend)
     }
 
-    fn find_by_uid(&self, uid: &str) -> Result<Option<Task>, StoreError> {
+    fn find_by_uid(&self, user: &str, uid: &str) -> Result<Option<Task>, StoreError> {
         let conn = self.conn.lock().expect("db mutex");
         let mut stmt = conn
             .prepare(&format!(
-                "SELECT {TASK_COLUMNS} FROM v2_tasks WHERE external_uid = ?1"
+                "SELECT {TASK_COLUMNS} FROM v2_tasks WHERE external_uid = ?1 AND user_id = ?2"
             ))
             .map_err(backend)?;
-        let mut rows = stmt.query(params![uid]).map_err(backend)?;
+        let mut rows = stmt.query(params![uid, user]).map_err(backend)?;
         let Some(row) = rows.next().map_err(backend)? else {
             return Ok(None);
         };
         Ok(Some(read_task(row).map_err(backend)?))
+    }
+
+    fn upsert_user_and_session(
+        &self,
+        user: &super::auth::Me,
+        token: &str,
+        expires_at: chrono::DateTime<Utc>,
+    ) -> Result<(), StoreError> {
+        let mut conn = self.conn.lock().expect("db mutex");
+        let tx = conn.transaction().map_err(backend)?;
+        // First sign-in creates the user, later ones refresh the name and picture, so
+        // a rename at Google reaches the app.
+        tx.execute(
+            "INSERT INTO v2_users (id, email, name, picture, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5) \
+             ON CONFLICT(id) DO UPDATE SET \
+                 email = excluded.email, name = excluded.name, picture = excluded.picture",
+            params![
+                user.id,
+                user.email,
+                user.name,
+                user.picture,
+                format_ts(Utc::now())
+            ],
+        )
+        .map_err(backend)?;
+        tx.execute(
+            "INSERT INTO v2_sessions (token, user_id, expires_at, created_at) \
+             VALUES (?1, ?2, ?3, ?4)",
+            params![token, user.id, format_ts(expires_at), format_ts(Utc::now())],
+        )
+        .map_err(backend)?;
+        tx.commit().map_err(backend)
+    }
+
+    fn delete_session(&self, token: &str) -> Result<(), StoreError> {
+        self.conn
+            .lock()
+            .expect("db mutex")
+            .execute("DELETE FROM v2_sessions WHERE token = ?1", params![token])
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    fn session_user(
+        &self,
+        token: &str,
+        now: chrono::DateTime<Utc>,
+    ) -> Result<Option<super::auth::Me>, StoreError> {
+        let conn = self.conn.lock().expect("db mutex");
+        let mut stmt = conn
+            .prepare(
+                "SELECT users.id, users.email, users.name, users.picture \
+                 FROM v2_sessions JOIN v2_users ON v2_users.id = v2_sessions.user_id \
+                 WHERE v2_sessions.token = ?1 AND v2_sessions.expires_at > ?2",
+            )
+            .map_err(backend)?;
+        let mut rows = stmt
+            .query(params![token, format_ts(now)])
+            .map_err(backend)?;
+        let Some(row) = rows.next().map_err(backend)? else {
+            return Ok(None);
+        };
+        Ok(Some(super::auth::Me {
+            id: row.get(0).map_err(backend)?,
+            email: row.get(1).map_err(backend)?,
+            name: row.get(2).map_err(backend)?,
+            picture: row.get(3).map_err(backend)?,
+        }))
+    }
+
+    fn delete_user(&self, user: &str) -> Result<(), StoreError> {
+        let mut conn = self.conn.lock().expect("db mutex");
+        let tx = conn.transaction().map_err(backend)?;
+        // Tasks go first: SQLite cannot cascade here because user_id is a column
+        // added by migration with a default, not a declared constraint.
+        tx.execute("DELETE FROM v2_tasks WHERE user_id = ?1", params![user])
+            .map_err(backend)?;
+        tx.execute("DELETE FROM v2_sessions WHERE user_id = ?1", params![user])
+            .map_err(backend)?;
+        tx.execute("DELETE FROM v2_users WHERE id = ?1", params![user])
+            .map_err(backend)?;
+        tx.commit().map_err(backend)
+    }
+
+    fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
+        let conn = self.conn.lock().expect("db mutex");
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM v2_tasks \
+                 WHERE user_id = ?1 AND created >= ?2 AND created < ?3",
+                params![
+                    user,
+                    format_ts(day.and_time(chrono::NaiveTime::MIN).and_utc()),
+                    format_ts(
+                        day.succ_opt()
+                            .unwrap()
+                            .and_time(chrono::NaiveTime::MIN)
+                            .and_utc()
+                    ),
+                ],
+                |row| row.get(0),
+            )
+            .map_err(backend)?;
+        Ok(count as u32)
     }
 }
 
@@ -557,6 +853,11 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
+    /// The user the contract suite writes as. Scoping is part of the contract now, so
+    /// the tests have to name an owner like a real caller does.
+    const USER: &str = "alice";
+    const OTHER: &str = "bob";
+
     fn at(hour: u32) -> DateTime<Utc> {
         Utc.with_ymd_and_hms(2026, 10, 16, hour, 0, 0).unwrap()
     }
@@ -581,23 +882,52 @@ mod tests {
     /// about behaviour rather than about where a row happened to sort.
     fn read(store: &dyn Store, id: &TaskId) -> Task {
         store
-            .tasks()
+            .tasks(USER)
             .expect("read tasks")
             .into_iter()
             .find(|task| &task.id == id)
             .unwrap_or_else(|| panic!("no stored task {id:?}"))
     }
 
+    /// Two people must never see each other's tasks. This is the promise the whole
+    /// user_id column exists for, and it is the one a missing filter would break.
+    fn users_are_isolated(store: &dyn Store) {
+        store.put(USER, task("mine", 0)).unwrap();
+        store.put(OTHER, task("theirs", 0)).unwrap();
+
+        let mine = store.tasks(USER).unwrap();
+        assert_eq!(
+            mine.len(),
+            1,
+            "alice should see only her own task, saw {:?}",
+            mine.iter().map(|t| &t.title).collect::<Vec<_>>()
+        );
+        assert_eq!(mine[0].id, TaskId("mine".into()));
+
+        let theirs = store.tasks(OTHER).unwrap();
+        assert_eq!(theirs.len(), 1);
+        assert_eq!(theirs[0].id, TaskId("theirs".into()));
+
+        // Another person's task must not be reachable by its id, either.
+        assert!(
+            store.find_by_uid(USER, "theirs-uid").unwrap().is_none(),
+            "alice reached bob's task by uid"
+        );
+
+        // And deleting only removes the caller's own.
+        store.delete(OTHER, &TaskId("mine".into())).unwrap();
+        assert_eq!(store.tasks(USER).unwrap().len(), 1, "alice lost her task");
+    }
     /// The suite both stores must pass. Everything here goes through the
     /// [`Store`] trait, so a store that passes it behaves like the other one.
     fn store_contract(store: &dyn Store) {
         // -- an empty store has nothing in it
-        assert_eq!(store.tasks().unwrap().len(), 0, "a new store is empty");
+        assert_eq!(store.tasks(USER).unwrap().len(), 0, "a new store is empty");
 
         // -- put then read back
-        store.put(task("t1", 0)).unwrap();
-        store.put(task("t2", 1)).unwrap();
-        let stored = store.tasks().unwrap();
+        store.put(USER, task("t1", 0)).unwrap();
+        store.put(USER, task("t2", 1)).unwrap();
+        let stored = store.tasks(USER).unwrap();
         assert_eq!(stored.len(), 2);
         assert_eq!(stored[0].id, TaskId("t1".into()));
         assert_eq!(stored[1].id, TaskId("t2".into()));
@@ -614,7 +944,7 @@ mod tests {
         original.source = Source::Calendar;
         original.created = at(8);
         original.external_uid = Some("abc-123@rambl".into());
-        store.put(original.clone()).unwrap();
+        store.put(USER, original.clone()).unwrap();
         assert_eq!(read(store, &original.id), original);
 
         // -- each When variant survives
@@ -624,9 +954,9 @@ mod tests {
         {
             let mut pinned = task(&format!("w{index}"), 100 + index as i64);
             pinned.when = when;
-            store.put(pinned.clone()).unwrap();
+            store.put(USER, pinned.clone()).unwrap();
             let read = store
-                .tasks()
+                .tasks(USER)
                 .unwrap()
                 .into_iter()
                 .find(|t| t.id == pinned.id)
@@ -638,61 +968,74 @@ mod tests {
         for (index, label) in LABELS.into_iter().enumerate() {
             let mut labelled = task(&format!("l{index}"), 200 + index as i64);
             labelled.label = label;
-            store.put(labelled.clone()).unwrap();
+            store.put(USER, labelled.clone()).unwrap();
             assert_eq!(read(store, &labelled.id).label, label);
         }
         for (index, priority) in PRIORITIES.into_iter().enumerate() {
             let mut ranked = task(&format!("p{index}"), 300 + index as i64);
             ranked.priority = priority;
-            store.put(ranked.clone()).unwrap();
+            store.put(USER, ranked.clone()).unwrap();
             assert_eq!(read(store, &ranked.id).priority, priority);
         }
         for (index, source) in SOURCES.into_iter().enumerate() {
             let mut sourced = task(&format!("s{index}"), 400 + index as i64);
             sourced.source = source;
-            store.put(sourced.clone()).unwrap();
+            store.put(USER, sourced.clone()).unwrap();
             assert_eq!(read(store, &sourced.id).source, source);
         }
 
         // -- put on a known id replaces, and does not duplicate
-        let before = store.tasks().unwrap().len();
+        let before = store.tasks(USER).unwrap().len();
         let mut edited = original.clone();
         edited.title = "Renamed".into();
         edited.done = false;
-        store.put(edited.clone()).unwrap();
-        let all = store.tasks().unwrap();
+        store.put(USER, edited.clone()).unwrap();
+        let all = store.tasks(USER).unwrap();
         assert_eq!(all.len(), before, "put must replace, never duplicate");
         assert_eq!(read(store, &edited.id).title, "Renamed");
         assert!(!read(store, &edited.id).done);
 
         // -- tasks come back sorted by order
-        let orders: Vec<i64> = store.tasks().unwrap().iter().map(|t| t.order).collect();
+        let orders: Vec<i64> = store.tasks(USER).unwrap().iter().map(|t| t.order).collect();
         let mut ascending = orders.clone();
         ascending.sort_unstable();
         assert_eq!(orders, ascending, "tasks must come back in order");
 
         // -- delete reports whether there was something to delete
-        let before_delete = store.tasks().unwrap().len();
-        assert!(store.delete(&TaskId("t1".into())).unwrap());
-        assert!(!store.delete(&TaskId("t1".into())).unwrap(), "gone already");
-        assert!(!store.delete(&TaskId("never-existed".into())).unwrap());
-        assert_eq!(store.tasks().unwrap().len(), before_delete - 1);
+        let before_delete = store.tasks(USER).unwrap().len();
+        assert!(store.delete(USER, &TaskId("t1".into())).unwrap());
         assert!(
-            !store.tasks().unwrap().iter().any(|t| t.id.0 == "t1"),
+            !store.delete(USER, &TaskId("t1".into())).unwrap(),
+            "gone already"
+        );
+        assert!(!store.delete(USER, &TaskId("never-existed".into())).unwrap());
+        assert_eq!(store.tasks(USER).unwrap().len(), before_delete - 1);
+        assert!(
+            !store.tasks(USER).unwrap().iter().any(|t| t.id.0 == "t1"),
             "the deleted task must not come back"
         );
 
         // -- set_order rewrites the order
-        let before: Vec<String> = store.tasks().unwrap().into_iter().map(|t| t.id.0).collect();
+        let before: Vec<String> = store
+            .tasks(USER)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id.0)
+            .collect();
         let mut reversed = before.clone();
         reversed.reverse();
         let reversed_ids: Vec<TaskId> = reversed.iter().cloned().map(TaskId).collect();
-        store.set_order(&reversed_ids).unwrap();
-        let after: Vec<String> = store.tasks().unwrap().into_iter().map(|t| t.id.0).collect();
+        store.set_order(USER, &reversed_ids).unwrap();
+        let after: Vec<String> = store
+            .tasks(USER)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id.0)
+            .collect();
         assert_eq!(after, reversed, "set_order is the new order");
 
         // -- set_order makes the positions 0, 1, ... in the order given
-        let positions: Vec<i64> = store.tasks().unwrap().iter().map(|t| t.order).collect();
+        let positions: Vec<i64> = store.tasks(USER).unwrap().iter().map(|t| t.order).collect();
         assert_eq!(
             positions,
             (0..positions.len() as i64).collect::<Vec<_>>(),
@@ -700,9 +1043,9 @@ mod tests {
         );
 
         // -- an id that is not stored is skipped, not invented
-        let count = store.tasks().unwrap().len();
-        store.set_order(&[TaskId("nope".into())]).unwrap();
-        let after_unknown = store.tasks().unwrap();
+        let count = store.tasks(USER).unwrap().len();
+        store.set_order(USER, &[TaskId("nope".into())]).unwrap();
+        let after_unknown = store.tasks(USER).unwrap();
         assert_eq!(
             after_unknown.len(),
             count,
@@ -714,42 +1057,54 @@ mod tests {
         );
 
         // -- a full order is the normal case and must be exact
-        let wanted: Vec<String> = store.tasks().unwrap().into_iter().map(|t| t.id.0).collect();
+        let wanted: Vec<String> = store
+            .tasks(USER)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id.0)
+            .collect();
         let wanted_ids: Vec<TaskId> = wanted.iter().cloned().map(TaskId).collect();
-        store.set_order(&wanted_ids).unwrap();
-        let restored: Vec<String> = store.tasks().unwrap().into_iter().map(|t| t.id.0).collect();
+        store.set_order(USER, &wanted_ids).unwrap();
+        let restored: Vec<String> = store
+            .tasks(USER)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id.0)
+            .collect();
         assert_eq!(restored, wanted, "set_order is the new order");
 
         // -- find_by_uid
         assert!(
             store
-                .find_by_uid("abc-123@rambl")
+                .find_by_uid(USER, "abc-123@rambl")
                 .unwrap()
                 .is_some_and(|t| t.id.0 == "t3")
         );
-        assert!(store.find_by_uid("never-imported").unwrap().is_none());
-        assert!(store.find_by_uid("").unwrap().is_none());
+        assert!(store.find_by_uid(USER, "never-imported").unwrap().is_none());
+        assert!(store.find_by_uid(USER, "").unwrap().is_none());
 
         // -- a task with no uid is not found by any uid
         assert!(
             store
-                .tasks()
+                .tasks(USER)
                 .unwrap()
                 .iter()
                 .filter(|t| t.external_uid.is_none())
                 .count()
                 > 0
         );
-        assert!(store.find_by_uid("no-such-uid").unwrap().is_none());
+        assert!(store.find_by_uid(USER, "no-such-uid").unwrap().is_none());
     }
 
     #[test]
     fn memory_store_passes_the_contract() {
+        users_are_isolated(&MemoryStore::new());
         store_contract(&MemoryStore::new());
     }
 
     #[test]
     fn sqlite_store_passes_the_contract() {
+        users_are_isolated(&SqliteStore::open_in_memory().unwrap());
         store_contract(&SqliteStore::open_in_memory().unwrap());
     }
 
@@ -762,13 +1117,13 @@ mod tests {
 
         {
             let store = SqliteStore::open(&path).unwrap();
-            store.put(task("t1", 0)).unwrap();
-            store.put(task("t2", 1)).unwrap();
+            store.put(USER, task("t1", 0)).unwrap();
+            store.put(USER, task("t2", 1)).unwrap();
         }
 
         // Fresh handle, same file: this is the restart case.
         let store = SqliteStore::open(&path).unwrap();
-        let stored = store.tasks().unwrap();
+        let stored = store.tasks(USER).unwrap();
         assert_eq!(stored.len(), 2);
         assert_eq!(stored[0].id, TaskId("t1".into()));
         assert_eq!(stored[1].id, TaskId("t2".into()));
@@ -782,12 +1137,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&path);
 
         let store = SqliteStore::open(&path).unwrap();
-        store.put(task("t1", 0)).unwrap();
+        store.put(USER, task("t1", 0)).unwrap();
         drop(store);
 
         // Second open runs migrate() again; it must be a no-op, not a rebuild.
         let store = SqliteStore::open(&path).unwrap();
-        assert_eq!(store.tasks().unwrap().len(), 1);
+        assert_eq!(store.tasks(USER).unwrap().len(), 1);
         assert_eq!(store.count(), 1);
 
         let _ = std::fs::remove_dir_all(&path);
@@ -821,9 +1176,18 @@ mod tests {
             .split(',')
             .map(|name| name.trim().trim_matches('"'))
             .collect();
+        // `user_id` is the one column on the table that is not a task field: it
+        // scopes every read and write rather than describing a task, so it is bound
+        // separately rather than read into a `Task`.
+        let mut expected = actual.clone();
+        expected.retain(|name| name != "user_id");
         assert_eq!(
-            listed, actual,
-            "TASK_COLUMNS must list exactly the table's columns, in order"
+            listed, expected,
+            "TASK_COLUMNS must list exactly the task columns, in order"
+        );
+        assert!(
+            actual.contains(&"user_id".to_owned()),
+            "tasks must be scoped to a user"
         );
     }
 
@@ -832,11 +1196,11 @@ mod tests {
         let store = SqliteStore::open_in_memory().unwrap();
         let mut first = task("t1", 0);
         first.external_uid = Some("shared".into());
-        store.put(first).unwrap();
+        store.put(USER, first).unwrap();
 
         let mut second = task("t2", 1);
         second.external_uid = Some("shared".into());
-        let error = store.put(second).unwrap_err();
+        let error = store.put(USER, second).unwrap_err();
         assert!(
             matches!(error, StoreError::Conflict(_)),
             "expected a conflict, got {error:?}"
@@ -849,12 +1213,15 @@ mod tests {
         let store = MemoryStore::new();
         let mut first = task("t1", 0);
         first.external_uid = Some("shared".into());
-        store.put(first).unwrap();
+        store.put(USER, first).unwrap();
 
         let mut second = task("t2", 1);
         second.external_uid = Some("shared".into());
-        assert!(matches!(store.put(second), Err(StoreError::Conflict(_))));
-        assert_eq!(store.tasks().unwrap().len(), 1);
+        assert!(matches!(
+            store.put(USER, second),
+            Err(StoreError::Conflict(_))
+        ));
+        assert_eq!(store.tasks(USER).unwrap().len(), 1);
     }
 
     #[test]
@@ -863,21 +1230,21 @@ mod tests {
         let mut imported = task("t1", 0);
         imported.external_uid = Some("evt-1".into());
         imported.when = When::At(at(14));
-        store.put(imported).unwrap();
+        store.put(USER, imported).unwrap();
 
         // The event moved to Friday: same UID, new time.
-        let existing = store.find_by_uid("evt-1").unwrap().expect("found");
+        let existing = store.find_by_uid(USER, "evt-1").unwrap().expect("found");
         let mut moved = existing.clone();
         moved.when = When::At(at(17));
-        store.put(moved).unwrap();
+        store.put(USER, moved).unwrap();
 
         assert_eq!(
-            store.tasks().unwrap().len(),
+            store.tasks(USER).unwrap().len(),
             1,
             "a re-import must update, not duplicate"
         );
         assert_eq!(
-            store.find_by_uid("evt-1").unwrap().unwrap().when,
+            store.find_by_uid(USER, "evt-1").unwrap().unwrap().when,
             When::At(at(17))
         );
     }
@@ -896,7 +1263,7 @@ mod tests {
             )
             .unwrap();
 
-        store.put(task("t1", 0)).unwrap();
+        store.put(USER, task("t1", 0)).unwrap();
 
         let conn = store.conn.lock().expect("db mutex");
         let v1: String = conn
@@ -916,13 +1283,13 @@ mod tests {
             .expect("db mutex")
             .execute_batch(
                 "INSERT INTO v2_tasks (id, title, duration_min, when_kind, when_time, \
-                                        done, \"order\", label, priority, source, created, external_uid) \
+                                        done, \"order\", label, priority, source, created, external_uid, user_id) \
                  VALUES ('odd', 'Odd', 30, 'whenever', 'not-a-date', 0, 0, \
-                         'mauve', 'enormous', 'telepathy', 'yesterday', NULL);",
+                         'mauve', 'enormous', 'telepathy', 'yesterday', NULL, 'alice');",
             )
             .unwrap();
 
-        let stored = store.tasks().unwrap();
+        let stored = store.tasks(USER).unwrap();
         assert_eq!(stored.len(), 1);
         assert_eq!(stored[0].when, When::Anytime);
         assert_eq!(stored[0].label, Label::Other);
