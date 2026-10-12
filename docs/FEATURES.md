@@ -120,7 +120,12 @@ c. Code: `crates/core/src/lib.rs:Placement, Plan`;
 ### 5. System colour scheme
 a. The page follows the operating system's light or dark setting.
 b. Change the system theme and reload the page.
-c. Code: `web/index.html`.
+c. Code: `web/theme.css` (`:root` and `@media (prefers-color-scheme: dark)`).
+
+### 6. Parchment theme
+a. The page is aged paper: warm palette, serif headings, a tiled paper texture that switches to a dark variant in dark mode.
+b. Look at the page background and the masthead in light and dark mode; with `web/assets/theme/*.svg` deleted it still reads as parchment.
+c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics: `web/assets/theme/` *(planned, drawn separately)*.
 
 ## IV. RAMBL, THE MASCOT
 
