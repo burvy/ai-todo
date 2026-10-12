@@ -1,0 +1,9 @@
+[package]
+name = "rambl-brain"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "What Rambl, the mascot, feels and does. Pure: no web, no Leptos, no server."
+
+[dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
