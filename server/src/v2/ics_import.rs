@@ -1,5 +1,4 @@
-//! Turning an exported `.ics` file into the busy blocks the scheduler reasons
-//! about.
+//! Reading an exported `.ics` calendar into imported events.
 //!
 //! Everything is converted to UTC, and getting that wrong is not a rounding
 //! error: Outlook writes `DTSTART;TZID=America/New_York:20261012T100000`, so
@@ -7,54 +6,28 @@
 //! UTC and every event shifts by four hours, which is far enough for the
 //! planner to book a two-hour block straight over the top of a lecture.
 
-use axum::{
-    Json,
-    body::to_bytes,
-    extract::{FromRequest, Multipart},
-    http::StatusCode,
-    response::{IntoResponse, Response},
-};
 use chrono::{DateTime, TimeZone, Utc};
 use icalendar::{CalendarDateTime, Component, DatePerhapsTime, Event};
-use serde::Serialize;
 
-use crate::db::BusyRow;
+use crate::v2::app::ImportedEvent;
 
 /// A calendar we could not read. A malformed upload is the caller's doing, so
-/// this is a 400 rather than a 500.
+/// the HTTP layer answers it with a 400.
 #[derive(Debug)]
 pub struct ImportError(pub String);
 
-impl IntoResponse for ImportError {
-    fn into_response(self) -> Response {
-        (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": self.0 })),
-        )
-            .into_response()
-    }
-}
-
-/// Parse the events of an `.ics` export into busy blocks, in UTC, oldest
-/// first.
+/// Parse the events of an `.ics` export, in UTC, oldest first. Each event keeps
+/// its iCalendar UID when it has one, since imports key on the UID.
 ///
 /// Events that cannot be placed are skipped rather than guessed at: a missing
 /// block is easy to spot in the planner, a wrongly-timed one silently ruins
 /// the schedule.
-pub fn parse_ics(text: &str) -> Result<Vec<BusyRow>, ImportError> {
-    Ok(parse_events(text)?
-        .into_iter()
-        .map(|(_, row)| row)
-        .collect())
-}
-
-/// Each kept event with its iCalendar UID, when it has one. v2 imports key on the UID.
-pub fn parse_events(text: &str) -> Result<Vec<(Option<String>, BusyRow)>, ImportError> {
+pub fn parse_ics(text: &str) -> Result<Vec<ImportedEvent>, ImportError> {
     let calendar: icalendar::Calendar = text
         .parse()
         .map_err(|error| ImportError(format!("that is not an iCalendar file: {error}")))?;
 
-    let mut busy: Vec<(Option<String>, BusyRow)> = calendar
+    let mut events: Vec<ImportedEvent> = calendar
         .events()
         .filter_map(|event| {
             if event
@@ -84,19 +57,17 @@ pub fn parse_events(text: &str) -> Result<Vec<(Option<String>, BusyRow)>, Import
                 .get("UID")
                 .map(|property| property.value().trim().to_string())
                 .filter(|uid| !uid.is_empty());
-            Some((
+            Some(ImportedEvent {
                 uid,
-                BusyRow {
-                    start,
-                    end,
-                    title: summary_of(event),
-                },
-            ))
+                title: summary_of(event),
+                start,
+                end,
+            })
         })
         .collect();
 
-    busy.sort_by_key(|(_, block)| block.start);
-    Ok(busy)
+    events.sort_by_key(|event| event.start);
+    Ok(events)
 }
 
 fn date_of(event: &Event, key: &str) -> Option<DatePerhapsTime> {
@@ -111,142 +82,6 @@ fn summary_of(event: &Event) -> String {
         .filter(|summary| !summary.is_empty())
         .unwrap_or("Busy")
         .to_string()
-}
-
-/// A pair of events, one imported and one already in the app, that overlap in
-/// time. This is what the import has to warn about before it overwrites.
-#[derive(Clone, Debug, Serialize)]
-pub struct Conflict {
-    pub start: DateTime<Utc>,
-    pub end: DateTime<Utc>,
-    /// The event from the uploaded file.
-    pub imported_title: String,
-    /// What is already in the app at that time.
-    pub existing_title: String,
-}
-
-/// Find imported events that overlap something already in the calendar.
-///
-/// Any overlap counts, not just identical times: a lecture that starts ten
-/// minutes before an existing meeting is just as much of a clash as one that
-/// matches it exactly, and the user needs to see both.
-pub fn find_conflicts(imported: &[BusyRow], existing: &[BusyRow]) -> Vec<Conflict> {
-    let mut conflicts = Vec::new();
-    for block in imported {
-        for current in existing {
-            if overlaps(block, current) {
-                conflicts.push(Conflict {
-                    start: block.start,
-                    end: block.end,
-                    imported_title: block.title.clone(),
-                    existing_title: current.title.clone(),
-                });
-            }
-        }
-    }
-    conflicts
-}
-
-/// Half-open intervals: back-to-back events (10:00–11:00 then 11:00–12:00) are
-/// not a clash, only real overlap is.
-fn overlaps(a: &BusyRow, b: &BusyRow) -> bool {
-    a.start < b.end && b.start < a.end
-}
-
-/// What an import boils down to: the file's text, and whether the caller has
-/// already accepted the conflicts we would otherwise warn about.
-#[derive(Debug)]
-pub struct ImportInput {
-    pub ics_text: String,
-    pub confirm: bool,
-}
-
-/// Largest upload we will read. A term's worth of calendar events is a few
-/// hundred KB; 10MB is generous and stops a hostile upload filling memory.
-const MAX_ICS_BYTES: usize = 10 * 1024 * 1024;
-
-/// Accept either `{"ics_text": "..."}` JSON or a `multipart/form-data` upload
-/// with a `file` field — which is what a file picker on the device produces,
-/// and the way a user actually gets an `.ics` out of Outlook.
-pub async fn read_import(request: axum::extract::Request) -> Result<ImportInput, ImportError> {
-    let content_type = request
-        .headers()
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-
-    if content_type.starts_with("multipart/form-data") {
-        return read_upload(request).await;
-    }
-
-    let body = to_bytes(request.into_body(), MAX_ICS_BYTES)
-        .await
-        .map_err(|error| ImportError(format!("could not read the body: {error}")))?;
-    let body: serde_json::Value = serde_json::from_slice(&body)
-        .map_err(|error| ImportError(format!("expected {{\"ics_text\": \"...\"}}: {error}")))?;
-
-    let ics_text = body
-        .get("ics_text")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| ImportError("expected an `ics_text` field".into()))?
-        .to_owned();
-    let confirm = body
-        .get("confirm")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-
-    Ok(ImportInput { ics_text, confirm })
-}
-
-async fn read_upload(request: axum::extract::Request) -> Result<ImportInput, ImportError> {
-    let mut multipart = Multipart::from_request(request, &())
-        .await
-        .map_err(|error| ImportError(format!("expected multipart/form-data: {error}")))?;
-
-    let mut text: Option<String> = None;
-    let mut filename = String::new();
-    let mut confirm = false;
-
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|error| ImportError(format!("could not read the upload: {error}")))?
-    {
-        let name = field.name().map(str::to_owned);
-        match name.as_deref() {
-            Some("file") => {
-                filename = field.file_name().unwrap_or_default().to_owned();
-                let bytes = field
-                    .bytes()
-                    .await
-                    .map_err(|error| ImportError(format!("could not read the file: {error}")))?;
-                text = Some(String::from_utf8_lossy(&bytes).into_owned());
-            }
-            Some("confirm") => {
-                let value = field
-                    .bytes()
-                    .await
-                    .map_err(|error| ImportError(format!("could not read confirm: {error}")))?;
-                confirm = matches!(
-                    String::from_utf8_lossy(&value).trim(),
-                    "true" | "1" | "yes" | "on"
-                );
-            }
-            _ => {}
-        }
-    }
-
-    let ics_text = text.ok_or_else(|| ImportError("the upload had no `file` field".into()))?;
-    if ics_text.trim().is_empty() {
-        return Err(ImportError(if filename.is_empty() {
-            "the uploaded file was empty".into()
-        } else {
-            format!("{filename} was empty")
-        }));
-    }
-
-    Ok(ImportInput { ics_text, confirm })
 }
 
 /// Convert any of the three iCalendar date forms to UTC.
@@ -305,7 +140,7 @@ fn duration_after(event: &Event, start: DateTime<Utc>) -> Option<DateTime<Utc>> 
 mod tests {
     use super::*;
 
-    const WEEK: &str = include_str!("../tests/fixtures/week.ics");
+    const WEEK: &str = include_str!("../../tests/fixtures/week.ics");
 
     #[test]
     fn the_demo_week_has_nine_events_spanning_the_work_week() {
