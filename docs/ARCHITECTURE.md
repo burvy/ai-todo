@@ -136,14 +136,18 @@ Plain and fast: a text box with a mic button (Web Speech API via `web-sys`), the
 
 ### 8.1 Rambo, the mascot
 
-The pen character (`art/illustrations/pen.svg`) is named **Rambo**. He lives in a small circle next to the text box and is the talk button: tap to send, hold to talk.
+The pen character (`art/illustrations/pen.svg`) is named **Rambo**. He lives in a small circle next to the text box.
 
-- **Drag:** he can be picked up and dragged anywhere.
-- **Fall:** dropped on empty space, he falls to the bottom of the window (short gravity animation, a small bounce), then skitters back to his circle.
+- **Writing pen:** while typing, Rambo's pen follows the caret in the capture box. Two seconds after typing stops, the pen flies home. When new tasks are created, the pen visits each new row, writing the title left-to-right (~600ms per row) with an underline SVG; the row's title is revealed as the pen writes.
+- **Grab to listen:** there is no Mic button. Pointer-down on Rambo (or Space/Enter on his focusable circle) starts speech recognition. Releasing without dragging captures the transcript. Keyboard: Space/Enter toggles listening.
+- **Drag:** pointer-based drag (not HTML5 drag). Dropped on empty space, Rambo sits dazed (Recovering state, ~600ms), then skitters back to his circle in a hopping run (Skittering state, ~900ms). Dropped on a task row, he asks what to do with it.
 - **Dropped on a task or event** (list row or week block): he stays there and asks, a bit annoyed, what you want, in a small speech bubble ("Okay, what about *Lab report*?") with the task's actions: Edit, Move, Done, Delete, and Never mind. Picking one, or Never mind, sends him home.
 - **Talking always works:** wherever he is, hold on him to talk. His empty circle stays a working talk button while he is away, and holding Space (focus outside a text field) talks too. Dragging him off his circle never disables voice.
-- **Testable:** his behaviour is a small state machine (`Home`, `Dragging`, `Falling`, `Returning`, `Asking(task)`) in `web/src/mascot.rs`, unit-tested without the DOM; the view only animates between states.
-- `prefers-reduced-motion`: no fall or skitter; he reappears in his circle.
+- **PenRig overlay:** the travelling pen is a fixed-position `<div>` (`web/src/mascot.rs:PenRig`), moved via CSS custom properties `--pen-x` and `--pen-y`. The `.mascot-home` circle's image hides when the pen is away.
+- **Testable:** his behaviour is a pure state machine (`Home`, `Dragging`, `Recovering`, `Skittering`, `Asking(task)`) in `web/src/mascot.rs`, unit-tested without the DOM. The pen's timing and nib math live in `web/src/pen.rs` (8 tests). The `PenFlight` enum (`Parked`, `WritingCaret`, `FlyingToRow`, `WritingRow`, `FlyingHome`) tracks the pen's writing animation independently.
+- **`prefers-reduced-motion`:** no pen movement; rows appear normally, Rambo reappears in his circle.
+- **Lobotomized mode:** listens but no personality animation.
+- **Touch:** `touch-action: none` on `.mascot-home` only; page swipe is unaffected.
 
 ## 9. Testing (the definition of done for every change)
 
