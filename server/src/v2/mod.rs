@@ -3,6 +3,7 @@
 
 pub mod app;
 pub mod auth;
+pub mod backup;
 pub mod http;
 pub mod ics_export;
 pub mod store;
@@ -21,11 +22,18 @@ use store::{SqliteStore, Store};
 /// A database that will not open is a startup failure, not something to recover
 /// from at runtime: serving reads against a store that quietly dropped every
 /// write would be worse than refusing to start.
+/// Starts the daily database backup. Call once from the server's `main`, never
+/// from code that tests run.
+pub fn start_backups() {
+    backup::BackupService::start(backup::db_path_from_env(), Arc::new(SystemClock));
+}
+
 pub fn app_from_env() -> Result<App<Box<dyn Store>>, String> {
     let store = SqliteStore::open_from_env().map_err(|error| {
         let path =
             std::env::var("RAMBL_DATA").unwrap_or_else(|_| store::DEFAULT_DATA_PATH.to_owned());
         format!("could not open the Rambl database at `{path}`: {error}")
     })?;
+
     Ok(App::new(Box::new(store), Arc::new(SystemClock)))
 }

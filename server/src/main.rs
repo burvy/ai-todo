@@ -1801,6 +1801,7 @@ fn new_state_with(db: Arc<Db>) -> AppState {
 
 #[tokio::main]
 async fn main() {
+    v2::start_backups();
     run_from_exe_folder();
     dotenvy::dotenv().ok();
     let port: u16 = std::env::var("PORT")

@@ -5,7 +5,7 @@
 Create `C:\Rambl`, copy `server.exe` there, and copy `.env.example` to `.env`.
 Fill in `TYPESAFE_API_KEY`; keep `PORT=3160` and
 `RAMBL_DEFAULT_TZ=America/New_York`. Leave `GOOGLE_CLIENT_ID` empty until Google
-sign-in is set up. Tasks are stored in `C:\Rambl\data\`, which updates never touch. Create a shortcut to `C:\Rambl\server.exe` in
+sign-in is set up. Tasks are stored in `C:\Rambl\data\`, which updates never touch. Backups are in C:\Rambl\data\backups. Create a shortcut to `C:\Rambl\server.exe` in
 `shell:startup`. The firewall, router, and Cloudflare forwarding are already
 configured.
 
