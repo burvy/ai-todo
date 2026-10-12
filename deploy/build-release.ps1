@@ -23,7 +23,7 @@ Copy-Item -Force (Join-Path $repoRoot 'target\release\server.exe') (Join-Path $s
 @'
 TYPESAFE_API_KEY=
 PORT=3160
-TZ_NAME=America/New_York
+RAMBL_DEFAULT_TZ=America/New_York
 GOOGLE_CLIENT_ID=
 '@ | Set-Content -Encoding utf8 (Join-Path $stage '.env.example')
 

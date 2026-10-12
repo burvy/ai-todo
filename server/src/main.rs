@@ -28,6 +28,7 @@ use chrono::{DateTime, Datelike, NaiveDateTime, NaiveTime, TimeZone, Timelike, U
 use chrono_tz::Tz;
 use db::{BusyRow, Db};
 use futures::future::join_all;
+use include_dir::{Dir, include_dir};
 use judge::v1::{choose, classify_intent, find_date_candidates, split_sentences, understand};
 use scheduler::{BusyBlock, Placement, UnschedulableReason, WorkingHours};
 use serde::{Deserialize, Serialize};
@@ -36,7 +37,6 @@ use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
-use include_dir::{include_dir, Dir};
 
 static WEB_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
 
@@ -1726,14 +1726,20 @@ fn app(state: AppState) -> Router {
         let file = if relative.is_empty() {
             WEB_DIST.get_file("index.html")
         } else {
-            WEB_DIST.get_file(relative).or_else(|| WEB_DIST.get_file("index.html"))
+            WEB_DIST
+                .get_file(relative)
+                .or_else(|| WEB_DIST.get_file("index.html"))
         };
         match file {
             Some(file) => {
-                let content_type = match Path::new(file.path()).extension().and_then(|ext| ext.to_str()) {
+                let content_type = match Path::new(file.path())
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                {
                     Some("js") => "text/javascript; charset=utf-8",
                     Some("css") => "text/css; charset=utf-8",
                     Some("svg") => "image/svg+xml",
+                    Some("wasm") => "application/wasm",
                     Some("json") => "application/json",
                     _ => "text/html; charset=utf-8",
                 };
