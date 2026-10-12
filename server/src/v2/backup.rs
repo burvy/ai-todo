@@ -2,18 +2,21 @@
 //!
 //! At startup and every 24 hours, the database is copied with `VACUUM INTO`
 //! to `data/backups/rambl-YYYY-MM-DD.db`. Backups older than 14 days are deleted.
+//! Once the backup is safely written, anonymous accounts idle for 30 days are deleted.
 //! Failures are logged and never crash the server.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Duration as Span, Local, Utc};
 use rusqlite::Connection;
 use tokio::sync::Mutex;
 use tokio::time;
 
 use todo_core::Clock;
+
+use super::store::Store;
 
 /// Where backups live, relative to the data directory.
 const BACKUP_DIR: &str = "backups";
@@ -23,9 +26,14 @@ fn backup_filename(date: chrono::NaiveDate) -> String {
     format!("rambl-{}.db", date.format("%Y-%m-%d"))
 }
 
-/// The backup service. Holds the database path and a clock for testing.
+/// An anonymous account unused for this long is deleted with its tasks.
+const ANONYMOUS_IDLE_LIMIT: Span = Span::days(30);
+
+/// The backup service. Holds the database path, the store whose idle anonymous
+/// accounts it clears, and a clock for testing.
 pub struct BackupService {
     db_path: PathBuf,
+    store: Arc<dyn Store>,
     clock: Arc<dyn Clock>,
     state: Mutex<BackupState>,
 }
@@ -37,10 +45,11 @@ struct BackupState {
 
 impl BackupService {
     /// Start the service. `db_path` is the path to the SQLite database to back up.
-    pub fn start(db_path: PathBuf, clock: Arc<dyn Clock>) -> Arc<Self> {
+    pub fn start(db_path: PathBuf, store: Arc<dyn Store>, clock: Arc<dyn Clock>) -> Arc<Self> {
         let state = Mutex::new(BackupState { last_run: None });
         let service = Arc::new(Self {
             db_path,
+            store,
             clock,
             state,
         });
@@ -60,16 +69,17 @@ impl BackupService {
         });
     }
 
-    /// Run one backup cycle: copy the database and clean up old backups.
+    /// Run one cycle: copy the database, clean up old backups, then expire idle
+    /// anonymous accounts.
     async fn run_backup(service: &Arc<Self>) {
         let db_path = service.db_path.clone();
+        let store = service.store.clone();
         let clock = service.clock.clone();
         let now = clock.now();
 
-        let result = tokio::task::spawn_blocking(move || {
-            run_backup_sync(&db_path, now.with_timezone(&Local))
-        })
-        .await;
+        let result =
+            tokio::task::spawn_blocking(move || run_cycle_sync(&db_path, store.as_ref(), now))
+                .await;
 
         match result {
             Ok(Ok(())) => {
@@ -84,6 +94,22 @@ impl BackupService {
             }
         }
     }
+}
+
+/// One cycle, in order: backup first, expiry only if the backup succeeded, so an
+/// account is never deleted without a copy of the database holding it.
+fn run_cycle_sync(db_path: &Path, store: &dyn Store, now: DateTime<Utc>) -> Result<(), String> {
+    run_backup_sync(db_path, now.with_timezone(&Local))?;
+    expire_idle_anonymous(store, now)?;
+    Ok(())
+}
+
+/// Delete anonymous accounts not seen for [`ANONYMOUS_IDLE_LIMIT`], with their tasks.
+/// Signed-in accounts are never expired. Returns how many accounts were deleted.
+fn expire_idle_anonymous(store: &dyn Store, now: DateTime<Utc>) -> Result<usize, String> {
+    store
+        .expire_anonymous(now - ANONYMOUS_IDLE_LIMIT)
+        .map_err(|error| format!("expiring idle anonymous accounts: {error}"))
 }
 
 /// Execute the backup synchronously. Returns an error description, never panics.
@@ -149,6 +175,7 @@ pub fn db_path_from_env() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::v2::store::SqliteStore;
     use chrono::NaiveDate;
     use std::fs;
     use tempfile::tempdir;
@@ -241,5 +268,82 @@ mod tests {
     fn backup_filename_format() {
         let date = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
         assert_eq!(backup_filename(date), "rambl-2026-10-12.db");
+    }
+
+    fn anon_id(n: u32) -> String {
+        format!("anon_{n:032x}")
+    }
+
+    /// A file database holding one idle and one recent anonymous account, each with a task.
+    fn store_with_idle_and_recent(dir: &Path, now: DateTime<Utc>) -> (PathBuf, SqliteStore) {
+        let path = dir.join("rambl.db");
+        let store = SqliteStore::open(&path).unwrap();
+        for (id, seen) in [
+            (anon_id(1), now - Span::days(31)),
+            (anon_id(2), now - Span::days(2)),
+        ] {
+            store.ensure_anonymous(&id, seen).unwrap();
+            store.put(&id, sample_task(&seen)).unwrap();
+        }
+        (path, store)
+    }
+
+    fn sample_task(at: &DateTime<Utc>) -> todo_core::Task {
+        todo_core::Task {
+            id: todo_core::TaskId(format!("t{}", at.timestamp())),
+            title: "Task".into(),
+            duration_min: 30,
+            when: todo_core::When::Anytime,
+            done: false,
+            order: 0,
+            label: todo_core::Label::Other,
+            priority: todo_core::Priority::Low,
+            source: todo_core::Source::Text,
+            created: *at,
+            updated_at: *at,
+            external_uid: None,
+        }
+    }
+
+    #[test]
+    fn a_cycle_backs_up_first_then_deletes_idle_anonymous_accounts() {
+        let dir = tempdir().unwrap();
+        let now = Utc::now();
+        let (path, store) = store_with_idle_and_recent(dir.path(), now);
+
+        run_cycle_sync(&path, &store, now).unwrap();
+
+        assert!(
+            !store.anonymous_exists(&anon_id(1)).unwrap(),
+            "idle account kept"
+        );
+        assert!(store.tasks(&anon_id(1)).unwrap().is_empty());
+        assert!(
+            store.anonymous_exists(&anon_id(2)).unwrap(),
+            "recent account lost"
+        );
+        // The backup was taken before the deletion, so it still holds the idle account.
+        let backup = path
+            .parent()
+            .unwrap()
+            .join(BACKUP_DIR)
+            .join(backup_filename(now.with_timezone(&Local).date_naive()));
+        let copy = SqliteStore::open(&backup).unwrap();
+        assert!(copy.anonymous_exists(&anon_id(1)).unwrap());
+    }
+
+    #[test]
+    fn nothing_is_deleted_when_the_backup_fails() {
+        let dir = tempdir().unwrap();
+        let now = Utc::now();
+        let (path, store) = store_with_idle_and_recent(dir.path(), now);
+        // A file where the backup folder should be makes the backup fail.
+        fs::write(dir.path().join(BACKUP_DIR), b"not a folder").unwrap();
+
+        assert!(run_cycle_sync(&path, &store, now).is_err());
+        assert!(
+            store.anonymous_exists(&anon_id(1)).unwrap(),
+            "an account must not be deleted without a backup"
+        );
     }
 }

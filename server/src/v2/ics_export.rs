@@ -66,6 +66,7 @@ mod tests {
             priority: Priority::Low,
             source: Source::Text,
             created: start,
+            updated_at: start,
             external_uid: None,
         };
         Snapshot {

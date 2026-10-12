@@ -16,10 +16,20 @@ use todo_core::SystemClock;
 use app::App;
 use store::{SqliteStore, Store};
 
-/// Starts the daily database backup. Call once from the server's `main`, never
-/// from code that tests run.
-pub fn start_backups() {
-    backup::BackupService::start(backup::db_path_from_env(), Arc::new(SystemClock));
+/// Starts the daily database backup and the expiry of idle anonymous accounts that
+/// follows it. Call once from the server's `main`, never from code that tests run.
+///
+/// The service opens its own handle on the database, as the admin console does; the
+/// database is already migrated by [`app_from_env`], so this open applies nothing.
+pub fn start_backups() -> Result<(), String> {
+    let store = SqliteStore::open_from_env()
+        .map_err(|error| format!("could not open the database for backups: {error}"))?;
+    backup::BackupService::start(
+        backup::db_path_from_env(),
+        Arc::new(store),
+        Arc::new(SystemClock),
+    );
+    Ok(())
 }
 
 /// The production app: SQLite at `RAMBL_DATA`, or `data/rambl.db` when that is unset.
