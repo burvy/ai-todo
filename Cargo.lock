@@ -2121,6 +2121,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "rambl-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "capture",
+ "chrono",
+ "chrono-tz",
+ "dotenvy",
+ "futures",
+ "http-body-util",
+ "icalendar",
+ "include_dir",
+ "judge",
+ "reqwest",
+ "rusqlite",
+ "scheduler",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "todo-core",
+ "tokio",
+ "tower",
+ "tower-http",
+ "uuid",
+]
+
+[[package]]
 name = "rambl-web"
 version = "0.1.0"
 dependencies = [
@@ -2579,34 +2607,6 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
-]
-
-[[package]]
-name = "server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "capture",
- "chrono",
- "chrono-tz",
- "dotenvy",
- "futures",
- "http-body-util",
- "icalendar",
- "include_dir",
- "judge",
- "reqwest",
- "rusqlite",
- "scheduler",
- "serde",
- "serde_json",
- "tempfile",
- "todo-core",
- "tokio",
- "tower",
- "tower-http",
- "uuid",
 ]
 
 [[package]]

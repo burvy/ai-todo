@@ -106,7 +106,9 @@ Task edits use an `updated_at` field and last-write-wins per task. A reorder con
 | Variable | Default | Meaning |
 |---|---|---|
 | `RAMBL_DATA` | `data/rambl.db` | The v2 SQLite file. |
-| `RAMBL_DEFAULT_TZ` | `America/New_York` | Zone for requests with no `X-Rambl-TZ`. `TZ_NAME` is read behind it so `.env` files written for v1 keep working. |
+| (config file) | `rambl.env` | Read from the working folder (the exe's folder on a server). Real environment variables win. |
+| `RAMBL_DEFAULT_TZ` | `America/New_York` | Zone for requests with no `X-Rambl-TZ`. `TZ_NAME` is read behind it. |
+| `RAMBL_PORT` | `3160` | HTTP port. `PORT` is read when it is unset. |
 | `GOOGLE_CLIENT_ID` | unset | The OAuth client ID tokens must be minted for. Unset means local mode: one user, no sign-in. |
 | `RAMBL_JEV_DAILY_CAP` | `200` | Captures per user per day before capture falls back to `FakeJudge`. |
 | `RAMBL_JEV_DAILY_CAP_ANON` | `30` | Captures per anonymous user per day before capture falls back to `FakeJudge` with `jev_fallback: true`. |

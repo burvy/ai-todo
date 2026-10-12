@@ -55,18 +55,18 @@ async fn main() {
     v2::start_backups();
     v2::admin::start_console(v2::store::data_path_from_env());
     run_from_exe_folder();
-    dotenvy::dotenv().ok();
-    let port: u16 = std::env::var("PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(8080);
+    // Real environment variables win over the file, so a shell or service can override it.
+    dotenvy::from_filename(CONFIG_FILE).ok();
+    let port = port_from_env();
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => listener,
         Err(e) => fatal(&format!("could not listen on port {port}: {e}")),
     };
     if std::env::var("TYPESAFE_API_KEY").is_err() {
-        println!("note: TYPESAFE_API_KEY is not set (put it in .env next to the exe); Jev is off");
+        println!(
+            "note: TYPESAFE_API_KEY is not set (put it in {CONFIG_FILE} next to the exe); Jev is off"
+        );
     }
     let store = v2::app_from_env().unwrap_or_else(|problem| fatal(&problem));
     println!("Rambl is running on http://localhost:{port} (close this window to stop it)");
@@ -76,14 +76,57 @@ async fn main() {
     }
 }
 
-/// A double-clicked exe starts in some other folder; work from the exe's own
-/// folder when it holds the release layout, so `data/` and `.env` next to it are
-/// found. `cargo run` (no `.env.example` beside the exe) is unaffected.
+/// The settings file, read from the working folder. Its own name, not `.env`, so it cannot
+/// be mistaken for another server's file in a shared folder.
+const CONFIG_FILE: &str = "rambl.env";
+
+/// The port: `RAMBL_PORT`, else `PORT`, else 3160.
+fn port_from_env() -> u16 {
+    port_from(std::env::var("RAMBL_PORT").ok(), std::env::var("PORT").ok())
+}
+
+/// The port from the two variables' values. A value that is not a port number is
+/// ignored, as if it were unset.
+fn port_from(rambl_port: Option<String>, port: Option<String>) -> u16 {
+    [rambl_port, port]
+        .into_iter()
+        .flatten()
+        .find_map(|value| value.trim().parse().ok())
+        .unwrap_or(DEFAULT_PORT)
+}
+
+const DEFAULT_PORT: u16 = 3160;
+
+#[cfg(test)]
+mod port_tests {
+    use super::port_from;
+
+    fn text(value: &str) -> Option<String> {
+        Some(value.to_owned())
+    }
+
+    #[test]
+    fn rambl_port_wins_then_port_then_the_default() {
+        assert_eq!(port_from(text("3170"), text("8080")), 3170);
+        assert_eq!(port_from(None, text("8080")), 8080);
+        assert_eq!(port_from(None, None), 3160);
+    }
+
+    #[test]
+    fn a_value_that_is_not_a_port_is_ignored() {
+        assert_eq!(port_from(text("not-a-port"), text("8080")), 8080);
+        assert_eq!(port_from(text(""), None), 3160);
+    }
+}
+
+/// A double-clicked exe starts in some other folder; work from the exe's own folder when
+/// it holds the release layout, so `data/` and `rambl.env` next to it are found.
+/// `cargo run` (no `rambl.env.example` beside the exe) is unaffected.
 fn run_from_exe_folder() {
     if let Some(dir) = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
-        && dir.join(".env.example").is_file()
+        && dir.join("rambl.env.example").is_file()
     {
         let _ = std::env::set_current_dir(dir);
     }
