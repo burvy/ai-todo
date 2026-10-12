@@ -164,8 +164,8 @@ mod tests {
             Settings {
                 start_hour: 99,
                 end_hour: 0,
-                days: 0
-                , mode: RamblMode::Interactive
+                days: 0,
+                mode: RamblMode::Interactive
             }
             .clamped(),
             Settings {

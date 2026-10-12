@@ -103,8 +103,7 @@ pub fn Controller(
             } else if current.tasks.is_empty() {
                 Some(Event::ListEmpty)
             } else if current.tasks.iter().any(|task| {
-                !task.done
-                    && matches!(task.when, When::DueBy(deadline) if deadline < now)
+                !task.done && matches!(task.when, When::DueBy(deadline) if deadline < now)
             }) {
                 Some(Event::TaskOverdue)
             } else {
@@ -121,7 +120,9 @@ pub fn Controller(
         let rng = rng.clone();
         Interval::new(5000, move || {
             if mode.get_untracked() != crate::settings::RamblMode::Lobotomized
-                && !window().document().is_some_and(|document| document.hidden())
+                && !window()
+                    .document()
+                    .is_some_and(|document| document.hidden())
             {
                 step(&brain, &rng, Some(Event::Tick), set_speech, set_pose);
             }
