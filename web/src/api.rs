@@ -1,4 +1,5 @@
 use gloo_net::http::Request;
+#[cfg(target_arch = "wasm32")]
 use js_sys;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -6,10 +7,10 @@ use std::fmt;
 use todo_core::{ApiError as CoreApiError, Snapshot, TaskDraft, TaskId, When};
 use uuid::Uuid;
 
-fn remember_anon(response: &gloo_net::http::Response) {
+fn remember_anon(_response: &gloo_net::http::Response) {
     #[cfg(target_arch = "wasm32")]
     {
-        if let Some(id) = response.headers().get("x-rambl-anon") {
+        if let Some(id) = _response.headers().get("x-rambl-anon") {
             if let Some(window) = web_sys::window()
                 && let Ok(Some(storage)) = window.local_storage()
             {
