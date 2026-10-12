@@ -1,7 +1,7 @@
 //! Thin HTTP handlers for `/api/v1`. They read the time zone header, lock the `App`
 //! for the whole call, and map errors. No business rules live here.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::{
@@ -49,6 +49,7 @@ pub struct Shared {
     /// Captures per anonymous user per day before capture falls back to
     /// [`judge::FakeJudge`] with `jev_fallback: true`.
     anon_jev_daily_cap: u32,
+    jev_ip_counts: Mutex<HashMap<(String, NaiveDate), u32>>,
 }
 
 /// The signed-in user.
@@ -64,15 +65,14 @@ impl CurrentUser {
         if shared.local {
             return Ok(auth::LOCAL_USER.to_owned());
         }
-        if let Some(anon_id) = headers.get(&ANON_HEADER).and_then(|v| v.to_str().ok()) {
-            if valid_anon_id(anon_id)
-                && issued_anon_ids()
-                    .lock()
-                    .expect("anonymous id mutex")
-                    .contains(anon_id)
-            {
-                return Ok(anon_id.to_owned());
-            }
+        if let Some(anon_id) = headers.get(&ANON_HEADER).and_then(|v| v.to_str().ok())
+            && valid_anon_id(anon_id)
+            && issued_anon_ids()
+                .lock()
+                .expect("anonymous id mutex")
+                .contains(anon_id)
+        {
+            return Ok(anon_id.to_owned());
         }
         // Check for authorization header
         let token = auth::bearer(headers)
@@ -293,6 +293,7 @@ fn build_router(
             local,
             jev_daily_cap,
             anon_jev_daily_cap,
+            jev_ip_counts: Mutex::new(HashMap::new()),
         }))
         .layer(middleware::from_fn(assign_anonymous_id))
 }
@@ -538,7 +539,17 @@ async fn capture(
                 })
             })?
     };
-    let jev_fallback = over_jev_cap(&shared, &user, now, plan);
+    let client_ip = headers
+        .get("cf-connecting-ip")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("unknown")
+        .to_owned();
+    let jev_fallback = over_jev_cap(&shared, &user, &client_ip, now, plan);
+    if !jev_fallback {
+        let day = now.with_timezone(&chrono_tz::UTC).date_naive();
+        let mut counts = shared.jev_ip_counts.lock().expect("Jev IP count mutex");
+        *counts.entry((client_ip, day)).or_default() += 1;
+    }
     let drafts = if jev_fallback {
         capture_text(&judge::FakeJudge, &text, source, &ctx)
             .await
@@ -558,7 +569,13 @@ async fn capture(
 }
 
 /// Has this user already spent their daily Jev allowance today?
-fn over_jev_cap(shared: &Shared, user: &str, now: DateTime<Utc>, plan: auth::Plan) -> bool {
+fn over_jev_cap(
+    shared: &Shared,
+    user: &str,
+    client_ip: &str,
+    now: DateTime<Utc>,
+    plan: auth::Plan,
+) -> bool {
     let today = now.with_timezone(&chrono_tz::UTC).date_naive();
     let used = shared
         .app
@@ -566,11 +583,20 @@ fn over_jev_cap(shared: &Shared, user: &str, now: DateTime<Utc>, plan: auth::Pla
         .expect("app mutex")
         .captures_today(user, today)
         .unwrap_or(0);
-    used >= match plan {
+    let user_cap = match plan {
         auth::Plan::Anon => shared.anon_jev_daily_cap,
         auth::Plan::Free => shared.jev_daily_cap,
         auth::Plan::Paid => paid_jev_daily_cap_from_env(),
-    }
+    };
+    let ip_key = (client_ip.to_owned(), today);
+    let ip_used = shared
+        .jev_ip_counts
+        .lock()
+        .expect("Jev IP count mutex")
+        .get(&ip_key)
+        .copied()
+        .unwrap_or(0);
+    used >= user_cap || ip_used >= user_cap
 }
 
 fn paid_jev_daily_cap_from_env() -> u32 {

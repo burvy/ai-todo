@@ -1,4 +1,5 @@
 //! Commands for the local administration console.
+#![allow(dead_code)]
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
