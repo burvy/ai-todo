@@ -105,6 +105,7 @@ pub fn SettingsPanel(
                     <option value="lobotomized" selected=move || settings.get().mode == RamblMode::Lobotomized>"Lobotomized"</option>
                 </select>
             </label>
+            <crate::account::AccountSection />
             <p class="version">
                 "Rambl "
                 {env!("CARGO_PKG_VERSION")}

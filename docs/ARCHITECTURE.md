@@ -81,6 +81,7 @@ Anonymous users do not sign in. *(planned)* Their account and tasks are deleted 
 
 | Method and path | Body | Returns |
 |---|---|---|
+| `GET /api/v1/config` | none | `{google_client_id}`, the client id from `GOOGLE_CLIENT_ID`, or null. When null the page shows no sign-in. |
 | `POST /api/v1/auth/google` | `{credential}` (a Google ID token) | `{token, user}`. The token is checked against Google's `tokeninfo`; the audience must equal `GOOGLE_CLIENT_ID` and `email_verified` must be true. Sessions last 90 days. |
 | `POST /api/v1/auth/signout` | none | 204. Ends this session only. |
 | `GET /api/v1/me` | none | `{id, email, name, picture}` |

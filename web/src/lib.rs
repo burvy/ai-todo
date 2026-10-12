@@ -5,6 +5,7 @@ use todo_core::Snapshot;
 use todo_core::{Label, Priority, Source, TaskDraft, TaskId, When};
 use wasm_bindgen::JsCast;
 
+pub mod account;
 pub mod api;
 pub mod brain;
 pub mod mascot;
@@ -37,6 +38,7 @@ pub fn App() -> impl IntoView {
         });
     });
 
+    account::start();
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
 
@@ -53,6 +55,7 @@ pub fn App() -> impl IntoView {
     view! {
         <header>
             <h1>"Rambl"</h1>
+            <account::HeaderLink />
             <CaptureBox
                 set_snapshot=set_snapshot
                 set_error=set_error
