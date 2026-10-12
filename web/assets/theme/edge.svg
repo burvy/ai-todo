@@ -1,0 +1,7 @@
+<!-- PLACEHOLDER: replace me, see web/assets/theme/README.md -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 24" width="512" height="24" preserveAspectRatio="none">
+  <rect width="512" height="24" fill="#d6c6a6"/>
+  <path d="M0 12 q32 -6 64 0 t128 0 t128 0 t128 0 t64 0" stroke="#bfa57a" stroke-width="2" fill="none" opacity="0.6"/>
+  <path d="M0 18 q32 -4 64 0 t128 0 t128 0 t128 0 t64 0" stroke="#a6895a" stroke-width="1.5" fill="none" opacity="0.5"/>
+  <rect x="0" y="22" width="512" height="2" fill="#8f7852" opacity="0.3"/>
+</svg>

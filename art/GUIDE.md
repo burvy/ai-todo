@@ -6,7 +6,7 @@ This folder is the source of art for the v2 front end (Leptos, see `docs/ARCHITE
 
 ## Inventory
 
-| File | What it is | Where used today (v1) | Format and size the app needs | Current origin |
+| File | What it is | Where used today (v2 / Leptos) | Format and size | Current origin |
 |------|------------|-----------------------|-------------------------------|----------------|
 | `icons/favicon.svg` | browser tab icon: the ✎ pen glyph as text | `<link rel="icon">` in `static/index.html` | SVG, viewBox 0 0 64 64, legible at 16×16 | placeholder, code (a Unicode glyph) |
 | `icons/gear.svg` | settings gear | gear button by "To do", `index.html` | SVG, viewBox 0 0 24 24, shown at 20×20, `currentColor` fill | placeholder, AI |
@@ -71,7 +71,21 @@ To use burvy's own handwriting in place of Caveat:
 
 ## Replace a file: checklist
 
+## Rambo design placeholder (v2 / Leptos)
+
+The pen mascot (`illustrations/pen.svg`) is Rambo. It is the writing pen, not just an icon. In v1 (`static/app.js`) it sits at the caret, writes as you type (linger ~2 s, then goes home), flies up to write new task titles (WRITE_MS = 600 ms per title, pen-underline under each new title, reduced-motion respected), and blinks/fidgets between actions. For v2, the brain (`crates/rambl-brain`) decides moods (idle, working, cheerful, sleepy, teasing); the pen (`web/src/mascot.rs`, `brain.rs`) is its body. Until the full animation is ported:
+- Replace the pen drawing as a whole by drawing a 64×112 pen on paper, scanning at 600 dpi, vectorizing (Trace Bitmap, Brightness cutoff), simplifying, and exporting Plain SVG with the six class names preserved.
+- Keep the class names (`pen-barrel`, `pen-cap`, `pen-nib`, `pen-lead`, `pen-gloss`, `eye-white`, `eye-black`, `brow`) so blinking, looking, and brows continue to work via CSS.
+- Keep the viewBox `0 0 64 112`.
+- All files in this folder remain placeholders; update the inventory row from "placeholder" to "hand-made by <name>, <date>" when replaced.
+
 - [ ] **Same file name** and path as the placeholder it replaces.
+- [ ] **Same viewBox** for SVG (the inventory lists them), or the **same pixel size** for PNG/JPG.
+- [ ] SVG saved as plain SVG. It opens in a browser, contains no embedded bitmaps, and uses `currentColor` where the inventory says so.
+- [ ] The pen mascot keeps its class names (`eye-white`, `eye-black`, `brow` and the rest) so blinking and looking still work.
+- [ ] Sounds are under 1.5 s and under 100 KB.
+- [ ] Viewed in the app in **light and dark** mode (settings gear › desk), on a phone width as well as a desktop.
+- [ ] Update this inventory: change "placeholder" to "hand-made by <name>, <date>" for that row.
 - [ ] **Same viewBox** for SVG (the inventory lists them), or the **same pixel size** for PNG/JPG.
 - [ ] SVG saved as plain SVG. It opens in a browser, contains no embedded bitmaps, and uses `currentColor` where the inventory says so.
 - [ ] The pen mascot keeps its class names (`eye-white`, `eye-black`, `brow` and the rest) so blinking and looking still work.
