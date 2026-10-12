@@ -86,7 +86,7 @@ fn placement_style(
     let start = f32::from(start_minutes) - f32::from(planner_start_hour) * 60.0;
     let end = f32::from(end_minutes) - f32::from(planner_start_hour) * 60.0;
     let top = start.max(0.0) / 60.0 * hour_px;
-    let max_bottom = f32::from(planner_end_hour - planner_start_hour) * hour_px;
+    let max_bottom = (i32::from(planner_end_hour) - i32::from(planner_start_hour)) as f32 * hour_px;
     let bottom = (end / 60.0 * hour_px).min(max_bottom);
     let height = (bottom - top).max(0.0);
     (top, height)
@@ -167,7 +167,11 @@ fn PlacementBlock(
             let local_start = ctx.local(placement.start);
             let local_end = ctx.local(placement.end);
             let start_min = local_start.hour() as u16 * 60 + local_start.minute() as u16;
-            let end_min = local_end.hour() as u16 * 60 + local_end.minute() as u16;
+            let end_min = if local_end.date_naive() > local_start.date_naive() {
+                s.end_hour as u16 * 60
+            } else {
+                local_end.hour() as u16 * 60 + local_end.minute() as u16
+            };
             let (top, height) = placement_style(start_min, end_min, s.start_hour, HOUR_PX, s.end_hour);
             format!("top: {}px; height: {}px;", top, height)
         }
@@ -302,5 +306,13 @@ mod tests {
         let (top, height) = placement_style(17 * 60, 19 * 60, 8, HOUR_PX, 18);
         assert!((top - 9.0 * HOUR_PX).abs() < 0.01);
         assert!((height - 1.0 * HOUR_PX).abs() < 0.01);
+    }
+
+    #[test]
+    fn placement_style_midnight_crossing_clipped_to_end() {
+        // Task starts at 23:30 and ends at 01:30 next day; planner ends 24:00 (18 not used here, planner 8-24)
+        let (top, height) = placement_style(23 * 60 + 30, 25 * 60 + 30, 8, HOUR_PX, 24);
+        assert!((top - 15.5 * HOUR_PX).abs() < 0.01); // 23:30 = 15h30 after 8:00
+        assert!((height - 0.5 * HOUR_PX).abs() < 0.01); // 30 min until 24:00
     }
 }
