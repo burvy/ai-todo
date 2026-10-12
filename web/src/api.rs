@@ -6,13 +6,15 @@ use std::fmt;
 use todo_core::{ApiError as CoreApiError, Snapshot, TaskDraft, TaskId, When};
 use uuid::Uuid;
 
-#[cfg(target_arch = "wasm32")]
 fn remember_anon(response: &gloo_net::http::Response) {
-    if let Some(id) = response.headers().get("x-rambl-anon") {
-        if let Some(window) = web_sys::window()
-            && let Ok(Some(storage)) = window.local_storage()
-        {
-            let _ = storage.set_item("rambl_anon_id", &id);
+    #[cfg(target_arch = "wasm32")]
+    {
+        if let Some(id) = response.headers().get("x-rambl-anon") {
+            if let Some(window) = web_sys::window()
+                && let Ok(Some(storage)) = window.local_storage()
+            {
+                let _ = storage.set_item("rambl_anon_id", &id);
+            }
         }
     }
 }
