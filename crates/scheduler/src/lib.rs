@@ -419,4 +419,101 @@ mod tests {
             Utc.with_ymd_and_hms(2026, 3, 9, 13, 0, 0).unwrap()
         );
     }
+
+    struct Generator(u64);
+
+    impl Generator {
+        fn next(&mut self, bound: u64) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            self.0 % bound
+        }
+    }
+
+    fn generated_tasks(seed: u64) -> Vec<todo_core::Task> {
+        let mut generator = Generator(seed);
+        (0..24)
+            .map(|index| {
+                let duration = (generator.next(120) + 1) as u16;
+                let when = match generator.next(3) {
+                    0 => When::At(
+                        Utc.with_ymd_and_hms(2026, 1, 5, 8, 0, 0).unwrap()
+                            + Duration::minutes((generator.next(480) + 30) as i64),
+                    ),
+                    1 => When::DueBy(
+                        Utc.with_ymd_and_hms(2026, 1, 5, 12, 0, 0).unwrap()
+                            + Duration::minutes(generator.next(600) as i64),
+                    ),
+                    _ => When::Anytime,
+                };
+                task(&format!("task-{index}"), duration, when, index)
+            })
+            .collect()
+    }
+
+    fn overlaps(left: &todo_core::Placement, right: &todo_core::Placement) -> bool {
+        left.start < right.end && right.start < left.end
+    }
+
+    #[test]
+    fn generated_plans_preserve_scheduler_invariants() {
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        let context = ctx(
+            Utc.with_ymd_and_hms(2026, 1, 5, 7, 0, 0).unwrap(),
+            chrono_tz::UTC,
+        );
+
+        for seed in 0..128 {
+            let tasks = generated_tasks(seed);
+            let first = plan(&tasks, &hours, &context);
+            assert_eq!(first, plan(&tasks, &hours, &context));
+
+            let by_id: HashMap<_, _> = tasks.iter().map(|task| (&task.id, task)).collect();
+            let placed_ids: std::collections::HashSet<_> = first
+                .placements
+                .iter()
+                .map(|placement| &placement.task)
+                .collect();
+            let unplaced_ids: std::collections::HashSet<_> = first.unplaced.iter().collect();
+            assert!(placed_ids.is_disjoint(&unplaced_ids));
+            assert_eq!(placed_ids.len() + unplaced_ids.len(), tasks.len());
+
+            for placement in &first.placements {
+                let task = by_id[&placement.task];
+                assert!(placement.end > placement.start);
+                if let When::At(start) = task.when {
+                    assert_eq!(placement.start, start);
+                    assert_eq!(
+                        placement.end,
+                        start + Duration::minutes(i64::from(task.duration_min))
+                    );
+                } else {
+                    let local_start = placement.start.with_timezone(&hours.timezone);
+                    let local_end = placement.end.with_timezone(&hours.timezone);
+                    assert_eq!(local_start.date_naive(), local_end.date_naive());
+                    let windows = &hours.days[&local_start.weekday()];
+                    assert!(windows.iter().any(|window| {
+                        local_start.time() >= window.start && local_end.time() <= window.end
+                    }));
+                }
+            }
+
+            for (index, left) in first.placements.iter().enumerate() {
+                for right in first.placements.iter().skip(index + 1) {
+                    if overlaps(left, right) {
+                        assert!(
+                            matches!(by_id[&left.task].when, When::At(_))
+                                && matches!(by_id[&right.task].when, When::At(_))
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
