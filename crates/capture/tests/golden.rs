@@ -65,7 +65,10 @@ async fn rambles_match_the_golden_output() {
         std::fs::write(EXPECTED, &actual).expect("write expected file");
         return;
     }
-    let expected = std::fs::read_to_string(EXPECTED).expect("expected file exists");
+    // Checkouts on Windows may turn line endings into CRLF; compare with LF only.
+    let expected = std::fs::read_to_string(EXPECTED)
+        .expect("expected file exists")
+        .replace("\r\n", "\n");
     assert_eq!(actual, expected);
 }
 
