@@ -52,23 +52,25 @@ async fn embedded_web(uri: axum::http::Uri) -> Response {
 
 #[tokio::main]
 async fn main() {
-    v2::start_backups();
-    v2::admin::start_console(v2::store::data_path_from_env());
+    // Order matters: find the folder and settings first, then open (and migrate) the
+    // database once, and only then start the tasks that open their own connections.
     run_from_exe_folder();
     // Real environment variables win over the file, so a shell or service can override it.
     dotenvy::from_filename(CONFIG_FILE).ok();
-    let port = port_from_env();
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = match tokio::net::TcpListener::bind(addr).await {
-        Ok(listener) => listener,
-        Err(e) => fatal(&format!("could not listen on port {port}: {e}")),
-    };
     if std::env::var("TYPESAFE_API_KEY").is_err() {
         println!(
             "note: TYPESAFE_API_KEY is not set (put it in {CONFIG_FILE} next to the exe); Jev is off"
         );
     }
     let store = v2::app_from_env().unwrap_or_else(|problem| fatal(&problem));
+    v2::start_backups();
+    v2::admin::start_console(v2::store::data_path_from_env());
+    let port = port_from_env();
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => listener,
+        Err(e) => fatal(&format!("could not listen on port {port}: {e}")),
+    };
     println!("Rambl is running on http://localhost:{port} (close this window to stop it)");
     let service = app(store).into_make_service_with_connect_info::<SocketAddr>();
     if let Err(e) = axum::serve(listener, service).await {
