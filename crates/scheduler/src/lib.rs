@@ -37,6 +37,9 @@ impl Default for WorkingHours {
 }
 
 /// Place fixed tasks exactly and fill flexible tasks in list order.
+///
+/// Overdue tasks — `DueBy` whose deadline has already passed — are placed first,
+/// starting from now, so the user gets a chance to catch up.
 pub fn plan(
     tasks: &[todo_core::Task],
     hours: &WorkingHours,
@@ -44,6 +47,7 @@ pub fn plan(
 ) -> todo_core::Plan {
     let mut occupied = Vec::new();
     let mut placements = Vec::new();
+    let mut overdue = Vec::new();
     let mut flexible = Vec::new();
 
     for (index, task) in tasks.iter().enumerate() {
@@ -60,12 +64,38 @@ pub fn plan(
                 });
                 occupied.push((start, end));
             }
+            When::DueBy(deadline) if deadline < ctx.now => overdue.push(index),
             When::DueBy(_) | When::Anytime => flexible.push(index),
         }
     }
+    overdue.sort_by_key(|&index| (tasks[index].order, index));
     flexible.sort_by_key(|&index| (tasks[index].order, index));
 
     let mut unplaced = Vec::new();
+
+    // Overdue tasks go first: they lose their deadline constraint and are placed
+    // from now into the next free slot, just like Anytime tasks.
+    for index in overdue {
+        let task = &tasks[index];
+        let Some(start) = next_slot(
+            ctx.now,
+            i64::from(task.duration_min),
+            None,
+            hours,
+            &occupied,
+        ) else {
+            unplaced.push(task.id.clone());
+            continue;
+        };
+        let end = start + Duration::minutes(i64::from(task.duration_min));
+        placements.push(todo_core::Placement {
+            task: task.id.clone(),
+            start,
+            end,
+        });
+        occupied.push((start, end));
+    }
+
     for index in flexible {
         let task = &tasks[index];
         let deadline = match task.when {
@@ -321,6 +351,143 @@ mod tests {
 
     fn overlaps(left: &todo_core::Placement, right: &todo_core::Placement) -> bool {
         left.start < right.end && right.start < left.end
+    }
+
+    // — Overdue tests —
+
+    #[test]
+    fn overdue_task_placed_before_normal_flexible() {
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        // Now is 10:00. Overdue task was due at 09:00 (in the past).
+        // Normal task is Anytime.
+        let now = Utc.with_ymd_and_hms(2026, 1, 5, 10, 0, 0).unwrap();
+        let overdue_due = Utc.with_ymd_and_hms(2026, 1, 5, 9, 0, 0).unwrap();
+        let result = plan(
+            &[
+                task("normal", 60, When::Anytime, 0),
+                task("overdue", 60, When::DueBy(overdue_due), 1),
+            ],
+            &hours,
+            &ctx(now, chrono_tz::UTC),
+        );
+        // Overdue is placed first, so it gets the earlier slot.
+        let overdue_start = result
+            .placements
+            .iter()
+            .find(|p| p.task.0 == "overdue")
+            .unwrap()
+            .start;
+        let normal_start = result
+            .placements
+            .iter()
+            .find(|p| p.task.0 == "normal")
+            .unwrap()
+            .start;
+        assert!(
+            overdue_start <= normal_start,
+            "overdue ({:?}) should not start after normal ({:?})",
+            overdue_start,
+            normal_start
+        );
+    }
+
+    #[test]
+    fn overdue_task_never_placed_in_the_past() {
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        let now = Utc.with_ymd_and_hms(2026, 1, 5, 10, 0, 0).unwrap();
+        let overdue_due = Utc.with_ymd_and_hms(2026, 1, 5, 9, 0, 0).unwrap();
+        let result = plan(
+            &[task("overdue", 60, When::DueBy(overdue_due), 0)],
+            &hours,
+            &ctx(now, chrono_tz::UTC),
+        );
+        assert!(
+            result.placements[0].start >= now,
+            "overdue task must not start before now"
+        );
+    }
+
+    #[test]
+    fn overdue_task_avoids_fixed_event() {
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        let now = Utc.with_ymd_and_hms(2026, 1, 5, 10, 0, 0).unwrap();
+        let overdue_due = Utc.with_ymd_and_hms(2026, 1, 5, 9, 0, 0).unwrap();
+        // Fixed event at 10:00-11:00.
+        let fixed_at = Utc.with_ymd_and_hms(2026, 1, 5, 10, 0, 0).unwrap();
+        let result = plan(
+            &[
+                task("fixed", 60, When::At(fixed_at), 0),
+                task("overdue", 60, When::DueBy(overdue_due), 1),
+            ],
+            &hours,
+            &ctx(now, chrono_tz::UTC),
+        );
+        let overdue_start = result
+            .placements
+            .iter()
+            .find(|p| p.task.0 == "overdue")
+            .unwrap()
+            .start;
+        // Should be placed after the fixed event at 11:00.
+        assert_eq!(
+            overdue_start,
+            Utc.with_ymd_and_hms(2026, 1, 5, 11, 0, 0).unwrap(),
+            "overdue should skip the fixed event"
+        );
+    }
+
+    #[test]
+    fn overdue_placement_is_deterministic() {
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        let now = Utc.with_ymd_and_hms(2026, 1, 5, 10, 0, 0).unwrap();
+        let overdue_due = Utc.with_ymd_and_hms(2026, 1, 5, 9, 0, 0).unwrap();
+        let tasks = vec![
+            task("overdue-1", 30, When::DueBy(overdue_due), 0),
+            task("overdue-2", 30, When::DueBy(overdue_due), 1),
+            task("normal", 60, When::Anytime, 2),
+        ];
+        let first = plan(&tasks, &hours, &ctx(now, chrono_tz::UTC));
+        let second = plan(&tasks, &hours, &ctx(now, chrono_tz::UTC));
+        assert_eq!(first, second, "overdue placement must be deterministic");
+    }
+
+    #[test]
+    fn overdue_respects_working_hours_on_new_day() {
+        // Now is after working hours; overdue should land the next working day.
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(9, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+        );
+        let now = Utc.with_ymd_and_hms(2026, 1, 5, 20, 0, 0).unwrap();
+        let overdue_due = Utc.with_ymd_and_hms(2026, 1, 5, 12, 0, 0).unwrap();
+        let result = plan(
+            &[task("overdue", 60, When::DueBy(overdue_due), 0)],
+            &hours,
+            &ctx(now, chrono_tz::UTC),
+        );
+        // Next working day starts at 09:00.
+        assert_eq!(
+            result.placements[0].start,
+            Utc.with_ymd_and_hms(2026, 1, 6, 9, 0, 0).unwrap(),
+            "overdue should land on the next working day"
+        );
     }
 
     #[test]
