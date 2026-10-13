@@ -83,8 +83,9 @@ pub fn transition(state: &State, event: Event) -> State {
         // Asking: choose or return goes home.
         (State::Asking { .. }, Event::Choose | Event::Return) => State::Home,
 
-        // Writing caret: fly home when done.
+        // Writing caret: fly home when done, or fly to a row (after Add).
         (State::WritingCaret, Event::FlyHome) => State::Flying,
+        (State::WritingCaret, Event::WriteRow) => State::Flying,
 
         // Flying to a row: arrive and write.
         (State::Flying, Event::WriteRow) => State::WritingRow,
@@ -278,16 +279,19 @@ mod tests {
     }
 
     #[test]
-    fn submit_while_writing_caret_flys_home_not_stuck() {
-        // When the user presses Add while Rambo is at the caret, FlyHome
-        // transitions to Flying, then another FlyHome brings him to Home.
-        // He must never stay stuck in WritingCaret.
-        let state = transition(&State::WritingCaret, Event::FlyHome);
+    fn submit_while_writing_caret_writes_row_not_stuck() {
+        // When the user presses Add while Rambo is at the caret, the pen queue
+        // starts writing the new row directly from WritingCaret. He must never
+        // stay stuck in WritingCaret.
+        let state = transition(&State::WritingCaret, Event::WriteRow);
         assert_eq!(state, State::Flying);
+        // After flying to the row, he writes it
+        let state = State::WritingRow;
+        // When done, fly home
         let state = transition(&state, Event::FlyHome);
-        assert_eq!(state, State::Home);
-        // From Home, the pen queue can start writing the new row
-        let state = transition(&state, Event::WriteRow);
         assert_eq!(state, State::Flying);
+        // And arrives home
+        let state = State::Home;
+        assert_eq!(state, State::Home);
     }
 }
