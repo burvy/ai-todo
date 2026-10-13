@@ -11,9 +11,11 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
-use todo_core::{Label, Priority, Source, Task, TaskId, When};
+use todo_core::{
+    ExceptionKind, Label, Priority, Series, SeriesException, SeriesId, Source, Task, TaskId, When,
+};
 
 fn parse_plan(value: &str) -> super::auth::Plan {
     match value {
@@ -38,7 +40,7 @@ pub fn data_path_from_env() -> std::path::PathBuf {
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
@@ -50,6 +52,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_5,
     MIGRATION_6,
     MIGRATION_7,
+    MIGRATION_8,
 ];
 
 const MIGRATION_1: &str = "
@@ -152,6 +155,41 @@ UPDATE v2_users SET last_activity_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'
 
 const MIGRATION_7: &str = "ALTER TABLE v2_tasks ADD COLUMN due_tz TEXT;";
 
+/// Weekly series (ARCHITECTURE.md 7.1). The rows never list the weeks; the
+/// server expands occurrences at snapshot time. `weekdays` holds the
+/// `chrono::Weekday` numbers Monday=1..Sunday=7 as digits (`"124"` = Mon/Tue/Thu).
+/// A deviation from the rule lives in `v2_series_exceptions`, one per local
+/// date: `done` / `skipped` / `moved`, with the moved target as the same JSON
+/// a task's `When` uses on the wire.
+const MIGRATION_8: &str = "
+CREATE TABLE IF NOT EXISTS v2_series (
+    id           TEXT PRIMARY KEY,
+    user_id      TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    duration_min INTEGER NOT NULL,
+    weekdays     TEXT NOT NULL,
+    until        TEXT,
+    start_day    TEXT NOT NULL,
+    time_of_day  TEXT,
+    zone         TEXT NOT NULL,
+    external_uid TEXT,
+    created      TEXT NOT NULL,
+    \"order\"      INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS v2_series_user_idx ON v2_series (user_id);
+CREATE TABLE IF NOT EXISTS v2_series_exceptions (
+    series_id  TEXT NOT NULL,
+    user_id    TEXT NOT NULL,
+    date       TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('done', 'skipped', 'moved')),
+    moved_when TEXT,
+    moved_tz   TEXT,
+    PRIMARY KEY (user_id, series_id, date)
+);
+CREATE INDEX IF NOT EXISTS v2_series_exceptions_series_idx
+    ON v2_series_exceptions (user_id, series_id);
+";
+
 /// Every column of `v2_tasks`, in one list.
 ///
 /// Reads and writes are built from this string, so a field added here cannot
@@ -219,6 +257,37 @@ pub trait Store: Send + Sync {
     ///
     /// This is how a re-import updates instead of duplicating.
     fn find_by_uid(&self, user: &str, uid: &str) -> Result<Option<Task>, StoreError>;
+
+    /// Every series belonging to this user, in display order.
+    fn series(&self, user: &str) -> Result<Vec<Series>, StoreError>;
+
+    /// Store `series` under its own id for this user, replacing any series
+    /// already there. An upsert, like [`Store::put`].
+    fn put_series(&self, user: &str, series: Series) -> Result<(), StoreError>;
+
+    /// Forget this user's series with that id, and its exceptions with it.
+    /// Reports whether there was one.
+    fn delete_series(&self, user: &str, id: &SeriesId) -> Result<bool, StoreError>;
+
+    /// Every exception this user has recorded on this series.
+    fn exceptions(&self, user: &str, id: &SeriesId) -> Result<Vec<SeriesException>, StoreError>;
+
+    /// Record (or replace) one occurrence's exception on this user's series.
+    fn put_exception(
+        &self,
+        user: &str,
+        id: &SeriesId,
+        exception: SeriesException,
+    ) -> Result<(), StoreError>;
+
+    /// Forget one occurrence's exception, so the day falls back to the rule.
+    /// Reports whether there was one.
+    fn delete_exception(
+        &self,
+        user: &str,
+        id: &SeriesId,
+        date: NaiveDate,
+    ) -> Result<bool, StoreError>;
 
     /// Create or refresh the user and open a session, in one transaction.
     fn upsert_user_and_session(
@@ -313,6 +382,8 @@ pub struct Usage {
 #[cfg(test)]
 pub struct MemoryStore {
     tasks: Mutex<Vec<(String, Task)>>,
+    series: Mutex<Vec<(String, Series)>>,
+    exceptions: Mutex<Vec<(String, SeriesId, SeriesException)>>,
     users: Mutex<Vec<super::auth::Me>>,
     sessions: Mutex<Vec<(String, String, chrono::DateTime<Utc>)>>,
     captures: Mutex<Vec<(String, String, NaiveDate)>>,
@@ -350,6 +421,40 @@ impl<S: Store + ?Sized> Store for Box<S> {
 
     fn find_by_uid(&self, user: &str, uid: &str) -> Result<Option<Task>, StoreError> {
         (**self).find_by_uid(user, uid)
+    }
+
+    fn series(&self, user: &str) -> Result<Vec<Series>, StoreError> {
+        (**self).series(user)
+    }
+
+    fn put_series(&self, user: &str, series: Series) -> Result<(), StoreError> {
+        (**self).put_series(user, series)
+    }
+
+    fn delete_series(&self, user: &str, id: &SeriesId) -> Result<bool, StoreError> {
+        (**self).delete_series(user, id)
+    }
+
+    fn exceptions(&self, user: &str, id: &SeriesId) -> Result<Vec<SeriesException>, StoreError> {
+        (**self).exceptions(user, id)
+    }
+
+    fn put_exception(
+        &self,
+        user: &str,
+        id: &SeriesId,
+        exception: SeriesException,
+    ) -> Result<(), StoreError> {
+        (**self).put_exception(user, id, exception)
+    }
+
+    fn delete_exception(
+        &self,
+        user: &str,
+        id: &SeriesId,
+        date: NaiveDate,
+    ) -> Result<bool, StoreError> {
+        (**self).delete_exception(user, id, date)
     }
 
     fn upsert_user_and_session(
@@ -598,6 +703,102 @@ impl Store for MemoryStore {
             .map(|(_, task)| task.clone()))
     }
 
+    fn series(&self, user: &str) -> Result<Vec<Series>, StoreError> {
+        let mut held: Vec<Series> = self
+            .series
+            .lock()
+            .expect("memory store mutex")
+            .iter()
+            .filter(|(owner, _)| owner == user)
+            .map(|(_, series)| series.clone())
+            .collect();
+        held.sort_by(|a, b| {
+            a.order
+                .cmp(&b.order)
+                .then_with(|| a.created.cmp(&b.created))
+                .then_with(|| a.id.0.cmp(&b.id.0))
+        });
+        Ok(held)
+    }
+
+    fn put_series(&self, user: &str, series: Series) -> Result<(), StoreError> {
+        let mut held = self.series.lock().expect("memory store mutex");
+        if held
+            .iter()
+            .any(|(owner, other)| owner != user && other.id == series.id)
+        {
+            return Err(StoreError::Conflict(format!(
+                "series id {} belongs to another user",
+                series.id.0
+            )));
+        }
+        match held
+            .iter_mut()
+            .find(|(owner, other)| owner == user && other.id == series.id)
+        {
+            Some((_, existing)) => *existing = series,
+            None => held.push((user.to_owned(), series)),
+        }
+        Ok(())
+    }
+
+    fn delete_series(&self, user: &str, id: &SeriesId) -> Result<bool, StoreError> {
+        let mut held = self.series.lock().expect("memory store mutex");
+        let before = held.len();
+        held.retain(|(owner, series)| !(owner == user && &series.id == id));
+        let removed = held.len() != before;
+        if removed {
+            self.exceptions
+                .lock()
+                .expect("memory store mutex")
+                .retain(|(owner, series, _)| !(owner == user && series == id));
+        }
+        Ok(removed)
+    }
+
+    fn exceptions(&self, user: &str, id: &SeriesId) -> Result<Vec<SeriesException>, StoreError> {
+        let mut held: Vec<SeriesException> = self
+            .exceptions
+            .lock()
+            .expect("memory store mutex")
+            .iter()
+            .filter(|(owner, series, _)| owner == user && series == id)
+            .map(|(_, _, exception)| exception.clone())
+            .collect();
+        held.sort_by_key(|exception| exception.date);
+        Ok(held)
+    }
+
+    fn put_exception(
+        &self,
+        user: &str,
+        id: &SeriesId,
+        exception: SeriesException,
+    ) -> Result<(), StoreError> {
+        let mut held = self.exceptions.lock().expect("memory store mutex");
+        match held.iter_mut().find(|(owner, series, held)| {
+            owner == user && series == id && held.date == exception.date
+        }) {
+            Some((_, _, existing)) => *existing = exception,
+            None => held.push((user.to_owned(), id.clone(), exception)),
+        }
+        Ok(())
+    }
+
+    fn delete_exception(
+        &self,
+        user: &str,
+        id: &SeriesId,
+        date: NaiveDate,
+    ) -> Result<bool, StoreError> {
+        let mut held = self.exceptions.lock().expect("memory store mutex");
+        let before = held.len();
+        held.retain(|(owner, series, exception)| {
+            !(owner == user && series == id && exception.date == date)
+        });
+        Ok(held.len() != before)
+    }
+
     fn upsert_user_and_session(
         &self,
         user: &super::auth::Me,
@@ -659,6 +860,14 @@ impl Store for MemoryStore {
             .lock()
             .expect("memory store mutex")
             .retain(|(owner, _)| owner != user);
+        self.series
+            .lock()
+            .expect("memory store mutex")
+            .retain(|(owner, _)| owner != user);
+        self.exceptions
+            .lock()
+            .expect("memory store mutex")
+            .retain(|(owner, _, _)| owner != user);
         self.users
             .lock()
             .expect("memory store mutex")
@@ -786,6 +995,29 @@ impl Store for MemoryStore {
             }
         });
         stored.extend(moved.into_iter().map(|task| (user.to_owned(), task)));
+        drop(stored);
+        let mut series = self.series.lock().expect("memory store mutex");
+        let moved_series: Vec<Series> = series
+            .iter()
+            .filter(|(owner, _)| owner == anonymous)
+            .map(|(_, held)| held.clone())
+            .collect();
+        series.retain(|(owner, _)| owner != anonymous);
+        drop(series);
+        let mut exceptions = self.exceptions.lock().expect("memory store mutex");
+        let moved_exceptions: Vec<(SeriesId, SeriesException)> = exceptions
+            .iter()
+            .filter(|(owner, _, _)| owner == anonymous)
+            .map(|(_, series, exception)| (series.clone(), exception.clone()))
+            .collect();
+        exceptions.retain(|(owner, _, _)| owner != anonymous);
+        drop(exceptions);
+        for held in moved_series {
+            self.put_series(user, held)?;
+        }
+        for (id, exception) in moved_exceptions {
+            self.put_exception(user, &id, exception)?;
+        }
         Ok(())
     }
 }
@@ -986,6 +1218,156 @@ impl Store for SqliteStore {
         Ok(Some(read_task(row).map_err(backend)?))
     }
 
+    fn series(&self, user: &str) -> Result<Vec<Series>, StoreError> {
+        let conn = self.conn.lock().expect("db mutex");
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, title, duration_min, weekdays, until, start_day, time_of_day, zone, \
+                 external_uid, created, \"order\" FROM v2_series WHERE user_id = ?1 \
+                 ORDER BY \"order\" ASC, created ASC, id ASC",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map(params![user], read_series)
+            .map_err(backend)?;
+        let mut held = Vec::new();
+        for row in rows {
+            held.push(row.map_err(backend)?);
+        }
+        Ok(held)
+    }
+
+    fn put_series(&self, user: &str, series: Series) -> Result<(), StoreError> {
+        let conn = self.conn.lock().expect("db mutex");
+        // Same ownership rule as `put`: an id held by someone else is refused,
+        // never taken over.
+        let written = conn
+            .execute(
+                "INSERT INTO v2_series (id, user_id, title, duration_min, weekdays, until, \
+                 start_day, time_of_day, zone, external_uid, created, \"order\") \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
+                 ON CONFLICT(id) DO UPDATE SET \
+                     title = excluded.title, \
+                     duration_min = excluded.duration_min, \
+                     weekdays = excluded.weekdays, \
+                     until = excluded.until, \
+                     start_day = excluded.start_day, \
+                     time_of_day = excluded.time_of_day, \
+                     zone = excluded.zone, \
+                     external_uid = excluded.external_uid, \
+                     created = excluded.created, \
+                     \"order\" = excluded.\"order\" \
+                 WHERE v2_series.user_id = excluded.user_id",
+                params![
+                    series.id.0,
+                    user,
+                    series.title,
+                    i64::from(series.duration_min),
+                    weekdays_to_stored(&series.rule.weekdays),
+                    series.rule.until.map(|day| day.to_string()),
+                    series.start_day.to_string(),
+                    series.time_of_day.map(format_time_of_day),
+                    series.zone,
+                    series.external_uid,
+                    format_ts(series.created),
+                    series.order,
+                ],
+            )
+            .map_err(conflict)?;
+        if written == 0 {
+            return Err(StoreError::Conflict(format!(
+                "series id {} belongs to another user",
+                series.id.0
+            )));
+        }
+        Ok(())
+    }
+
+    fn delete_series(&self, user: &str, id: &SeriesId) -> Result<bool, StoreError> {
+        let mut conn = self.conn.lock().expect("db mutex");
+        let tx = conn.transaction().map_err(backend)?;
+        let removed = tx
+            .execute(
+                "DELETE FROM v2_series WHERE id = ?1 AND user_id = ?2",
+                params![id.0, user],
+            )
+            .map_err(backend)?;
+        tx.execute(
+            "DELETE FROM v2_series_exceptions WHERE series_id = ?1 AND user_id = ?2",
+            params![id.0, user],
+        )
+        .map_err(backend)?;
+        tx.commit().map_err(backend)?;
+        Ok(removed > 0)
+    }
+
+    fn exceptions(&self, user: &str, id: &SeriesId) -> Result<Vec<SeriesException>, StoreError> {
+        let conn = self.conn.lock().expect("db mutex");
+        let mut stmt = conn
+            .prepare(
+                "SELECT date, kind, moved_when, moved_tz FROM v2_series_exceptions \
+                 WHERE user_id = ?1 AND series_id = ?2 ORDER BY date ASC",
+            )
+            .map_err(backend)?;
+        let rows = stmt
+            .query_map(params![user, id.0], read_exception)
+            .map_err(backend)?;
+        let mut held = Vec::new();
+        for row in rows {
+            held.push(row.map_err(backend)?);
+        }
+        Ok(held)
+    }
+
+    fn put_exception(
+        &self,
+        user: &str,
+        id: &SeriesId,
+        exception: SeriesException,
+    ) -> Result<(), StoreError> {
+        let (kind, moved_when, moved_tz) = exception_to_parts(&exception.kind);
+        self.conn
+            .lock()
+            .expect("db mutex")
+            .execute(
+                "INSERT INTO v2_series_exceptions (series_id, user_id, date, kind, moved_when, moved_tz) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT(user_id, series_id, date) DO UPDATE SET \
+                     kind = excluded.kind, \
+                     moved_when = excluded.moved_when, \
+                     moved_tz = excluded.moved_tz",
+                params![
+                    id.0,
+                    user,
+                    exception.date.to_string(),
+                    kind,
+                    moved_when,
+                    moved_tz,
+                ],
+            )
+            .map_err(backend)?;
+        Ok(())
+    }
+
+    fn delete_exception(
+        &self,
+        user: &str,
+        id: &SeriesId,
+        date: NaiveDate,
+    ) -> Result<bool, StoreError> {
+        let removed = self
+            .conn
+            .lock()
+            .expect("db mutex")
+            .execute(
+                "DELETE FROM v2_series_exceptions \
+                 WHERE user_id = ?1 AND series_id = ?2 AND date = ?3",
+                params![user, id.0, date.to_string()],
+            )
+            .map_err(backend)?;
+        Ok(removed > 0)
+    }
+
     fn upsert_user_and_session(
         &self,
         user: &super::auth::Me,
@@ -1064,6 +1446,13 @@ impl Store for SqliteStore {
         // added by migration with a default, not a declared constraint.
         tx.execute("DELETE FROM v2_tasks WHERE user_id = ?1", params![user])
             .map_err(backend)?;
+        tx.execute("DELETE FROM v2_series WHERE user_id = ?1", params![user])
+            .map_err(backend)?;
+        tx.execute(
+            "DELETE FROM v2_series_exceptions WHERE user_id = ?1",
+            params![user],
+        )
+        .map_err(backend)?;
         tx.execute("DELETE FROM v2_sessions WHERE user_id = ?1", params![user])
             .map_err(backend)?;
         tx.execute("DELETE FROM v2_users WHERE id = ?1", params![user])
@@ -1268,6 +1657,16 @@ impl Store for SqliteStore {
             params![user, anonymous],
         )
         .map_err(backend)?;
+        tx.execute(
+            "UPDATE v2_series SET user_id = ?1 WHERE user_id = ?2",
+            params![user, anonymous],
+        )
+        .map_err(backend)?;
+        tx.execute(
+            "UPDATE v2_series_exceptions SET user_id = ?1 WHERE user_id = ?2",
+            params![user, anonymous],
+        )
+        .map_err(backend)?;
         // The anonymous id ends here: a copy of it held elsewhere must stop working.
         tx.execute(
             "DELETE FROM v2_users WHERE id = ?1 AND plan = 'anon'",
@@ -1438,6 +1837,115 @@ fn backend(error: rusqlite::Error) -> StoreError {
     StoreError::Backend(error.to_string())
 }
 
+// ---- series (ARCHITECTURE.md 7.1) ----
+
+fn read_series(row: &rusqlite::Row<'_>) -> Result<Series, rusqlite::Error> {
+    let weekdays: String = row.get(3)?;
+    let until: Option<String> = row.get(4)?;
+    let start_day: String = row.get(5)?;
+    let time_of_day: Option<String> = row.get(6)?;
+    let created: String = row.get(9)?;
+    Ok(Series {
+        id: SeriesId(row.get(0)?),
+        title: row.get(1)?,
+        duration_min: row.get::<_, i64>(2)? as u16,
+        rule: todo_core::Recurrence {
+            weekdays: weekdays_from_stored(&weekdays),
+            until: until.and_then(|day| NaiveDate::parse_from_str(&day, "%Y-%m-%d").ok()),
+        },
+        start_day: NaiveDate::parse_from_str(&start_day, "%Y-%m-%d")
+            .unwrap_or_else(|_| Utc::now().date_naive()),
+        time_of_day: time_of_day.and_then(|text| parse_time_of_day(&text)),
+        zone: row.get(7)?,
+        external_uid: row.get(8)?,
+        created: parse_ts(&created).unwrap_or_else(Utc::now),
+        order: row.get(10)?,
+    })
+}
+
+/// Weekdays as the digits Monday=1..Sunday=7 (`"124"` = Mon/Tue/Thu).
+fn weekdays_to_stored(weekdays: &[chrono::Weekday]) -> String {
+    weekdays
+        .iter()
+        .map(|day| {
+            char::from(b'0' + u8::try_from(day.number_from_monday()).expect("Monday=1..Sunday=7"))
+        })
+        .collect()
+}
+
+/// Digits back to weekdays. Unknown digits (a hand-edit) are skipped, never a
+/// load failure.
+fn weekdays_from_stored(text: &str) -> Vec<chrono::Weekday> {
+    const DAYS: [chrono::Weekday; 7] = [
+        chrono::Weekday::Mon,
+        chrono::Weekday::Tue,
+        chrono::Weekday::Wed,
+        chrono::Weekday::Thu,
+        chrono::Weekday::Fri,
+        chrono::Weekday::Sat,
+        chrono::Weekday::Sun,
+    ];
+    text.chars()
+        .filter_map(|digit| digit.to_digit(10))
+        .filter(|n| (1..=7).contains(n))
+        .filter_map(|n| DAYS.get(usize::try_from(n - 1).ok()?).copied())
+        .collect()
+}
+
+/// `HH:MM`, the wall-clock time every occurrence of a series shares.
+fn format_time_of_day(time: NaiveTime) -> String {
+    time.format("%H:%M").to_string()
+}
+
+fn parse_time_of_day(text: &str) -> Option<NaiveTime> {
+    NaiveTime::parse_from_str(text, "%H:%M").ok()
+}
+
+/// The columns that hold one exception.
+fn exception_to_parts(kind: &ExceptionKind) -> (&'static str, Option<String>, Option<String>) {
+    match kind {
+        ExceptionKind::Done => ("done", None, None),
+        ExceptionKind::Skipped => ("skipped", None, None),
+        ExceptionKind::Moved { to, to_tz } => {
+            ("moved", serde_json::to_string(to).ok(), to_tz.clone())
+        }
+    }
+}
+
+/// `None` for a kind that will not parse: read as "no exception" rather than
+/// failing the load, the same way `when_from_parts` degrades.
+fn exception_from_parts(
+    kind: &str,
+    moved_when: Option<String>,
+    moved_tz: Option<String>,
+) -> Option<ExceptionKind> {
+    match kind {
+        "done" => Some(ExceptionKind::Done),
+        "skipped" => Some(ExceptionKind::Skipped),
+        "moved" => moved_when
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .map(|to| ExceptionKind::Moved {
+                to,
+                to_tz: moved_tz,
+            }),
+        _ => None,
+    }
+}
+
+fn read_exception(row: &rusqlite::Row<'_>) -> Result<SeriesException, rusqlite::Error> {
+    let date: String = row.get(0)?;
+    let kind: String = row.get(1)?;
+    let moved_when: Option<String> = row.get(2)?;
+    let moved_tz: Option<String> = row.get(3)?;
+    Ok(SeriesException {
+        date: NaiveDate::parse_from_str(&date, "%Y-%m-%d")
+            .unwrap_or_else(|_| Utc::now().date_naive()),
+        // A moved row whose `When` will not parse degrades to skipped: the day
+        // stays out of the way instead of failing the load.
+        kind: exception_from_parts(&kind, moved_when, moved_tz).unwrap_or(ExceptionKind::Skipped),
+    })
+}
+
 /// A uniqueness violation is a conflict the caller can act on; anything else
 /// is the database misbehaving.
 fn conflict(error: rusqlite::Error) -> StoreError {
@@ -1543,6 +2051,7 @@ fn source_from_stored(text: &str) -> Source {
         "pdf" => Source::Pdf,
         "email" => Source::Email,
         "calendar" => Source::Calendar,
+        "series" => Source::Series,
         _ => Source::Text,
     }
 }

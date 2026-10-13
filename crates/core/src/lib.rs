@@ -5,7 +5,9 @@ pub mod clock;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc, Weekday};
+use chrono::{
+    DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc, Weekday,
+};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
@@ -260,6 +262,9 @@ pub struct Occurrence {
     pub date: NaiveDate,
     pub when: When,
     pub status: OccurrenceStatus,
+    /// For a moved `DueBy` target: the zone the move was made in, like
+    /// `due_tz` on a task. `None` for everything else.
+    pub due_tz: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -396,8 +401,9 @@ mod tests {
 
     #[test]
     fn a_weekday_serializes_as_chrono_spells_it() {
-        let json = serde_json::to_string(&Recurrence::new([Weekday::Mon, Weekday::Thu], None).unwrap())
-            .unwrap();
+        let json =
+            serde_json::to_string(&Recurrence::new([Weekday::Mon, Weekday::Thu], None).unwrap())
+                .unwrap();
         assert_eq!(json, r#"{"weekdays":["Mon","Thu"],"until":null}"#);
     }
 
@@ -421,20 +427,16 @@ mod tests {
         let start = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(); // Monday
         let rule = Recurrence::new([Weekday::Mon, Weekday::Thu], None).unwrap();
         assert!(rule.covers(start, start));
-        assert!(rule
-            .covers(start, NaiveDate::from_ymd_opt(2026, 10, 15).unwrap())); // Thursday
-        assert!(!rule
-            .covers(start, NaiveDate::from_ymd_opt(2026, 10, 13).unwrap())); // Tuesday
-        assert!(!rule
-            .covers(start, NaiveDate::from_ymd_opt(2026, 10, 11).unwrap())); // before start_day
+        assert!(rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, 15).unwrap())); // Thursday
+        assert!(!rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, 13).unwrap())); // Tuesday
+        assert!(!rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, 11).unwrap())); // before start_day
         let bounded = Recurrence::new(
             [Weekday::Mon],
             Some(NaiveDate::from_ymd_opt(2026, 10, 12).unwrap()),
         )
         .unwrap();
         assert!(bounded.covers(start, start));
-        assert!(!bounded
-            .covers(start, NaiveDate::from_ymd_opt(2026, 10, 19).unwrap())); // after until
+        assert!(!bounded.covers(start, NaiveDate::from_ymd_opt(2026, 10, 19).unwrap())); // after until
     }
 
     #[test]
@@ -447,7 +449,10 @@ mod tests {
             },
         };
         let json = serde_json::to_string(&exception).unwrap();
-        assert_eq!(serde_json::from_str::<SeriesException>(&json).unwrap(), exception);
+        assert_eq!(
+            serde_json::from_str::<SeriesException>(&json).unwrap(),
+            exception
+        );
     }
 
     #[test]
