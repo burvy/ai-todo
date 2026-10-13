@@ -372,11 +372,7 @@ pub trait Store: Send + Sync {
 
     /// Accounts ranked by Jev spend, most first. [`UsageOrder`] is the seam: a new
     /// ordering is a new variant, not a new query shape per caller.
-    fn usage_ranking(
-        &self,
-        order: UsageOrder,
-        top: usize,
-    ) -> Result<Vec<UsageRow>, StoreError>;
+    fn usage_ranking(&self, order: UsageOrder, top: usize) -> Result<Vec<UsageRow>, StoreError>;
 
     /// Whether this user's account has been paused, which is a block on the user id.
     /// An address block is a different thing and is not what this asks about.
@@ -1046,7 +1042,7 @@ impl Store for MemoryStore {
                 let captures = self.captures.lock().expect("memory store mutex");
                 let mut counted: std::collections::HashMap<&str, u32> =
                     std::collections::HashMap::new();
-                for (user, _, when) in captures.iter().filter(|(_, _, when)| *when == day) {
+                for (user, _, _when) in captures.iter().filter(|(_, _, _when)| *_when == day) {
                     *counted.entry(user.as_str()).or_default() += 1;
                 }
                 counted
