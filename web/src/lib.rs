@@ -701,7 +701,7 @@ fn Rambo(
                                     set_state_clone.set(mascot::State::Home);
                                 });
                             }
-                        }>"Delete"</button>
+                        }>"×"</button>
                         <button type="button" on:click=move |_| set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Return))>"Never mind"</button>
                     </span>
                 }.into_any(),
@@ -1261,11 +1261,11 @@ fn TaskList(
                         </span>
                         <span class="pen-underline"><img src="assets/pen-underline.svg" alt="" /></span>
                         <button
-                            class="delete"
+                            class="delete-mark"
                             type="button"
                             on:click=delete_task
                             aria-label=format!("Delete {}", task_title)
-                        >"Delete"</button>
+                        >"×"</button>
                     </li>
                         }
 
@@ -1377,7 +1377,7 @@ fn TaskList(
                                             });
                                         }
                                     }
-                                >"Delete"</button>
+                                >"×"</button>
                                 <button type="button" on:click=move |_| set_editing_task.set(None)>"Cancel"</button>
                                 <button
                                     type="button"
@@ -1648,6 +1648,13 @@ mod pane_tests {
 
     #[test]
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// Hook exposed for Chuan's Rambo scribble-out animation before removal.
+pub fn on_delete_requested(task_id: todo_core::TaskId) {
+    // Placeholder: the row's delete event handler will call the existing
+    // delete API; this function is the public hook for pre-delete effects.
+    let _ = task_id;
+}
+
 pub enum SwipeAction { Delete, SnapBack }
 
 pub fn swipe_action(delta_x: f64, threshold: f64) -> SwipeAction {

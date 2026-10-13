@@ -886,3 +886,10 @@ li.task-row:hover .delete { opacity: 1; pointer-events: auto; }
 @media (max-width: 720px) { .delete { opacity: 1; pointer-events: auto; font-size: .75rem; } }
 .swipe-deleted { transform: translateX(110%); transition: transform .22s ease-out; }
 .swipe-snapped { transform: translateX(0); transition: transform .18s ease-out; }
+
+/* Section 4 refined */
+.delete-mark { opacity: 0; pointer-events: none; transition: opacity .15s ease; position: absolute; right: .4em; top: 50%; transform: translateY(-50%); font-size: .7rem; line-height: 1; padding: .1em .25em; border: none; background: transparent; color: #2B2A28; cursor: pointer; }
+li.task-row:hover .delete-mark { opacity: 1; pointer-events: auto; }
+@media (max-width: 720px) { .delete-mark { opacity: .35; pointer-events: auto; font-size: .65rem; } }
+.swipe-deleted { transform: translateX(110%); transition: transform .25s ease-out; opacity: 0; }
+.swipe-snapped { transform: translateX(0); transition: transform .2s ease-out; opacity: 1; }
