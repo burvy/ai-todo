@@ -6,7 +6,8 @@ use std::sync::{Arc, Mutex};
 
 use axum::{
     Json, Router,
-    extract::{ConnectInfo, FromRequest, Multipart, Query, State},
+    extract::{ConnectInfo, FromRequest, Multipart, Query, State, Request},
+    body::to_bytes,
     http::{HeaderMap, HeaderValue, StatusCode, header::HeaderName},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
@@ -26,9 +27,14 @@ use capture::{Revision, capture_text};
 use chrono::{DateTime, NaiveDate, Utc};
 use judge::AnyJudge;
 use todo_core::{LocalContext, Source, TaskId};
+use uuid::Uuid;
 
 const TZ_HEADER: HeaderName = HeaderName::from_static("x-rambl-tz");
 const ANON_HEADER: HeaderName = HeaderName::from_static("x-rambl-anon");
+
+// Limits for JSON import
+const IMPORT_MAX_BODY: usize = 2 * 1024 * 1024; // 2 MiB
+const IMPORT_MAX_TASKS: usize = 5000;
 /// The state every handler shares: the app (locked for each call), the judge, and how
 /// a request is turned into a user.
 pub struct Shared {
@@ -833,24 +839,58 @@ async fn remove(
 }
 
 /// `POST /api/v1/import`: a multipart `file` holding an .ics calendar.
+/// `POST /api/v1/import`: either a multipart `file` with an .ics calendar **or** a
+/// JSON body identical to `GET /api/v1/export` (`{ "tasks": [...] }`).
+/// All imported tasks get fresh IDs and belong to the caller.
 async fn import(
     State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
-    mut multipart: Multipart,
+    mut request: Request,
 ) -> Result<Json<ImportResult>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let mut ics_text = None;
-    while let Some(field) = multipart.next_field().await.map_err(bad_request)? {
-        if field.name() == Some("file") {
-            ics_text = Some(field.text().await.map_err(bad_request)?);
+    // Determine request type by Content-Type.
+    let ct = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if ct.starts_with("multipart/form-data") {
+        // Existing .ics import.
+        let mut multipart = Multipart::from_request(&mut request).await.map_err(bad_request)?;
+        let mut ics_text = None;
+        while let Some(field) = multipart.next_field().await.map_err(bad_request)? {
+            if field.name() == Some("file") {
+                ics_text = Some(field.text().await.map_err(bad_request)?);
+            }
         }
+        let ics_text = ics_text.ok_or_else(|| bad_request("send the calendar as multipart field `file`"))?;
+        let events = ics_import::parse_ics(&ics_text).map_err(|e| bad_request(e.0))?;
+        let mut app = shared.app.lock().unwrap();
+        return Ok(Json(app.import(events, &user, tz)?));
     }
-    let ics_text =
-        ics_text.ok_or_else(|| bad_request("send the calendar as multipart field `file`"))?;
-    let events = ics_import::parse_ics(&ics_text).map_err(|error| bad_request(error.0))?;
+    // JSON payload path.
+    let bytes = to_bytes(request.body_mut()).await.map_err(|e| bad_request(e.to_string()))?;
+    if bytes.len() > IMPORT_MAX_BODY {
+        return Err(bad_request("request body too large"));
+    }
+    #[derive(Deserialize)]
+    struct ExportOut { tasks: Vec<Task> }
+    let export: ExportOut = serde_json::from_slice(&bytes).map_err(|e| bad_request(e.to_string()))?;
+    if export.tasks.len() > IMPORT_MAX_TASKS {
+        return Err(bad_request("too many tasks"));
+    }
     let mut app = shared.app.lock().unwrap();
-    Ok(Json(app.import(events, &user, tz)?))
+    let now = app.now();
+    let mut created = Vec::new();
+    for mut task in export.tasks {
+        task.id = TaskId(format!("t{}", Uuid::new_v4().simple()));
+        task.created = now;
+        task.updated_at = now;
+        app.store().put(&user, task.clone()).map_err(|e| HttpError(ApiError { code: ErrorCode::Internal, message: format!("store error: {}", e).into() }))?;
+        created.push(task.id.clone());
+    }
+    let snapshot = app.snapshot(&user, tz)?;
+    Ok(Json(ImportResult { created, updated: Vec::new(), snapshot }))
 }
 
 fn bad_request(message: impl std::fmt::Display) -> HttpError {
