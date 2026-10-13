@@ -617,6 +617,14 @@ button {
   color: var(--ink-faint);
 }
 
+/* A time the clocks skipped: the edit dialog's own complaint, not a server error. */
+.time-error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--danger);
+}
+
 /* --- Settings, account and notices --- */
 
 .settings {

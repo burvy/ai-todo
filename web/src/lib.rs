@@ -837,6 +837,24 @@ fn parse_edited_due(value: &str, task: &todo_core::Task) -> Option<When> {
     due.map(When::DueBy)
 }
 
+/// The `when` a save sends, or the message to show when the typed clock time names no
+/// instant. A wall-clock time inside a spring-forward gap — 02:30 on the day the clocks
+/// jump from 02:00 to 03:00 — never happened, so both parsers give up on it; the dialog
+/// has to say that and stay open, because a Save that quietly does nothing looks broken.
+/// `deadline` is the edited task, which carries the zone its due time is read in.
+fn typed_when(
+    kind: EditWhen,
+    value: &str,
+    deadline: Option<&todo_core::Task>,
+) -> Result<When, &'static str> {
+    let when = match kind {
+        EditWhen::Anytime => Some(When::Anytime),
+        EditWhen::DueBy => deadline.and_then(|task| parse_edited_due(value, task)),
+        EditWhen::At => parse_local_input(value).map(When::At),
+    };
+    when.ok_or("That time does not exist on this day (clocks change)")
+}
+
 fn is_overdue_at(task: &todo_core::Task, now: DateTime<Utc>) -> bool {
     !task.done && matches!(task.when, When::DueBy(deadline) if deadline < now)
 }
@@ -874,6 +892,7 @@ fn TaskList(
     let (edit_duration, set_edit_duration) = signal(String::new());
     let (edit_when, set_edit_when) = signal(EditWhen::Anytime);
     let (edit_datetime, set_edit_datetime) = signal(String::new());
+    let (edit_time_error, set_edit_time_error) = signal::<Option<&'static str>>(None);
     let labels = move || {
         let tasks = snapshot.get().tasks;
         [
@@ -1139,6 +1158,7 @@ fn TaskList(
                                         }
                                     }
                                     set_editing_task.set(Some(task.id.clone()));
+                                    set_edit_time_error.set(None);
                                 }
                             }
                         >
@@ -1221,7 +1241,10 @@ fn TaskList(
                                 <input
                                     type="datetime-local"
                                     prop:value=edit_datetime
-                                    on:input=move |event| set_edit_datetime.set(event_target_value(&event))
+                                    on:input=move |event| {
+                                        set_edit_datetime.set(event_target_value(&event));
+                                        set_edit_time_error.set(None);
+                                    }
                                 />
                                 {move || match due_zone.as_deref() {
                                     Some(zone) if edit_when.get() == EditWhen::DueBy => Some(view! {
@@ -1229,6 +1252,9 @@ fn TaskList(
                                     }),
                                     _ => None,
                                 }}
+                                {move || edit_time_error.get().map(|message| view! {
+                                    <p class="time-error" role="alert">{message}</p>
+                                })}
                             </fieldset>
                             <div class="dialog-actions">
                                 <button
@@ -1270,28 +1296,28 @@ fn TaskList(
                                     on:click={
                                         let task_id = task_id.clone();
                                         move |_| {
+                                            let task_id = task_id.clone();
                                             let title = edit_title.get_untracked().trim().to_string();
                                             let duration = edit_duration.get_untracked().parse::<u16>().ok();
-                                            let when = match edit_when.get_untracked() {
-                                                EditWhen::Anytime => Some(When::Anytime),
-                                                EditWhen::DueBy => snapshot
-                                                    .with_untracked(|s| {
-                                                        held(s, &task_id.0).and_then(|held| {
-                                                            parse_edited_due(
-                                                                &edit_datetime.get_untracked(),
-                                                                held,
-                                                            )
-                                                        })
-                                                    }),
-                                                EditWhen::At => parse_local_input(
-                                                    &edit_datetime.get_untracked(),
-                                                )
-                                                .map(When::At),
+                                            let deadline = snapshot
+                                                .with_untracked(|s| held(s, &task_id.0).cloned());
+                                            let when = match typed_when(
+                                                edit_when.get_untracked(),
+                                                &edit_datetime.get_untracked(),
+                                                deadline.as_ref(),
+                                            ) {
+                                                Ok(when) => when,
+                                                Err(message) => {
+                                                    // A clock time that names no instant
+                                                    // cannot be saved: say so here and
+                                                    // leave the dialog open to fix it.
+                                                    set_edit_time_error.set(Some(message));
+                                                    return;
+                                                }
                                             };
-                                            if title.is_empty() || duration.is_none() || when.is_none() {
+                                            if title.is_empty() || duration.is_none() {
                                                 return;
                                             }
-                                            let task_id = task_id.clone();
                                             let Some(seen) = snapshot.with_untracked(|s| held(s, &task_id.0).map(|task| task.updated_at)) else {
                                                 return;
                                             };
@@ -1299,7 +1325,7 @@ fn TaskList(
                                             let body = api::PatchTaskBody::new()
                                                 .title(title)
                                                 .duration_min(duration.unwrap_or(1))
-                                                .when(when.unwrap_or(When::Anytime))
+                                                .when(when)
                                                 .updated_at(seen);
                                             wasm_bindgen_futures::spawn_local(async move {
                                                 if patch_and_show(&task_id, body, sink).await {
@@ -1483,6 +1509,32 @@ mod tests {
             due_input_value(deadline, chrono_tz::America::Los_Angeles),
             "2026-10-16T14:00"
         );
+    }
+
+    /// A time inside a spring-forward gap names no instant, so the dialog refuses it
+    /// with a message and stays open, rather than a Save that does nothing quietly.
+    #[test]
+    fn a_time_in_the_spring_forward_gap_is_refused_with_a_message() {
+        let mut task = api::fixture_snapshot().tasks[0].clone();
+        task.when = When::DueBy(Utc.with_ymd_and_hms(2027, 3, 13, 7, 0, 0).unwrap());
+        task.due_tz = Some("America/New_York".into());
+
+        // 02:30 on 2027-03-14 New York: the clocks jump 02:00 to 03:00 that day.
+        assert_eq!(
+            typed_when(EditWhen::DueBy, "2027-03-14T02:30", Some(&task)),
+            Err("That time does not exist on this day (clocks change)")
+        );
+        // An empty field is no instant either, and gets the same refusal.
+        assert!(typed_when(EditWhen::DueBy, "", Some(&task)).is_err());
+
+        // An ordinary time in that zone saves, and "Anytime" never looks at the field.
+        assert_eq!(
+            typed_when(EditWhen::DueBy, "2027-03-14T09:30", Some(&task)),
+            Ok(When::DueBy(
+                Utc.with_ymd_and_hms(2027, 3, 14, 13, 30, 0).unwrap()
+            ))
+        );
+        assert_eq!(typed_when(EditWhen::Anytime, "", None), Ok(When::Anytime));
     }
 
     /// A task from before `due_tz` existed has no zone: the edit dialog falls back

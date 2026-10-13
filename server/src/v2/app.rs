@@ -38,6 +38,18 @@ fn due_zone(when: When, tz: Tz) -> Option<String> {
     }
 }
 
+/// Moves a task to a new `when`, re-anchoring a deadline's `due_tz` only when the
+/// instant actually changes (docs/ARCHITECTURE.md 4.1). Every edit path goes through
+/// here, so a save that restates the instant the task already has — the edit dialog
+/// always sends `when`, and a revision that repeats the same day — keeps the zone the
+/// deadline was set in.
+fn set_when(task: &mut Task, when: When, tz: Tz) {
+    if when != task.when {
+        task.when = when;
+        task.due_tz = due_zone(when, tz);
+    }
+}
+
 /// The fields a client may change with PATCH. Absent fields stay as they are.
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
 pub struct Patch {
@@ -206,16 +218,7 @@ impl<S: Store> App<S> {
             task.duration_min = minutes;
         }
         if let Some(when) = patch.when {
-            // A deadline remembers the zone it was set in (docs/ARCHITECTURE.md 4.1):
-            // editing the instant re-anchors a deadline to the zone the edit was
-            // made in, and anything that is no longer a deadline has no zone to
-            // remember. The web dialog always sends `when`, so a patch that leaves
-            // the instant alone (a title-only save from another zone) must not
-            // re-stamp the zone.
-            if when != task.when {
-                task.when = when;
-                task.due_tz = due_zone(when, tz);
-            }
+            set_when(task, when, tz);
         }
         if let Some(done) = patch.done {
             task.done = done;
@@ -364,14 +367,10 @@ impl<S: Store> App<S> {
         let task = Self::held(&mut tasks, id)?;
         check_fresh(task, seen)?;
         match (revision.day, revision.time) {
-            (Some(day), Some(time)) => {
-                task.when = When::At(ctx.at(day, time));
-                task.due_tz = None;
-            }
+            (Some(day), Some(time)) => set_when(task, When::At(ctx.at(day, time)), tz),
             (Some(day), None) => {
                 let end_of_day = NaiveTime::from_hms_opt(17, 0, 0).expect("17:00 is valid");
-                task.when = When::DueBy(ctx.at(day, end_of_day));
-                task.due_tz = Some(tz.name().to_owned());
+                set_when(task, When::DueBy(ctx.at(day, end_of_day)), tz);
             }
             _ => {}
         }
@@ -965,6 +964,80 @@ mod tests {
         let task = app.find(USER, &id).unwrap();
         assert_eq!(task.when, When::DueBy(due + chrono::Duration::hours(2)));
         assert_eq!(task.due_tz.as_deref(), Some("America/Los_Angeles"));
+    }
+
+    /// A revision re-stamps a deadline's zone the way an edit does: repeating the day
+    /// the task already has leaves the instant alone, and the zone with it. Toronto and
+    /// New York share their offset in October, so both revisions name 17:00 Friday at
+    /// the same instant and the zone may only change when that instant really moves.
+    #[test]
+    fn a_revision_only_re_anchors_the_due_zone_when_it_moves_the_instant() {
+        const TORONTO: Tz = chrono_tz::America::Toronto;
+        let clock = Arc::new(FixedClock(
+            Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+        ));
+        let mut app = App::new(MemoryStore::new(), clock);
+        let due = Utc.with_ymd_and_hms(2026, 10, 16, 21, 0, 0).unwrap();
+        let mut draft = draft("Deadline");
+        draft.when = When::DueBy(due);
+        let created = app.create(draft, USER, TORONTO).expect("create");
+        let id = created.tasks[0].id.0.clone();
+        assert_eq!(
+            app.find(USER, &id).unwrap().due_tz.as_deref(),
+            Some("America/Toronto")
+        );
+
+        // "Keep it due Friday", asked from New York: the same instant, so the zone the
+        // deadline was set in stays put.
+        let same_day = Revision {
+            day: NaiveDate::from_ymd_opt(2026, 10, 16),
+            ..Revision::default()
+        };
+        app.apply_revision(&id, &same_day, None, USER, NEW_YORK)
+            .expect("revised");
+        let task = app.find(USER, &id).unwrap();
+        assert_eq!(task.when, When::DueBy(due), "the instant did not move");
+        assert_eq!(task.due_tz.as_deref(), Some("America/Toronto"));
+
+        // Friday 17:00 from Los Angeles is a different instant, so the deadline takes
+        // the zone of the revision that moved it.
+        app.apply_revision(&id, &same_day, None, USER, chrono_tz::America::Los_Angeles)
+            .expect("revised");
+        let task = app.find(USER, &id).unwrap();
+        assert_eq!(
+            task.when,
+            When::DueBy(Utc.with_ymd_and_hms(2026, 10, 17, 0, 0, 0).unwrap())
+        );
+        assert_eq!(task.due_tz.as_deref(), Some("America/Los_Angeles"));
+    }
+
+    /// A revision that pins a deadline to a clock time makes it an `At` task, which has
+    /// no zone of its own.
+    #[test]
+    fn a_revision_that_pins_a_deadline_clears_its_zone() {
+        let clock = Arc::new(FixedClock(
+            Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+        ));
+        let mut app = App::new(MemoryStore::new(), clock);
+        let due = Utc.with_ymd_and_hms(2026, 10, 16, 21, 0, 0).unwrap();
+        let mut draft = draft("Deadline");
+        draft.when = When::DueBy(due);
+        let created = app.create(draft, USER, NEW_YORK).expect("create");
+        let id = created.tasks[0].id.0.clone();
+
+        let pinned = Revision {
+            day: NaiveDate::from_ymd_opt(2026, 10, 16),
+            time: NaiveTime::from_hms_opt(9, 0, 0),
+            ..Revision::default()
+        };
+        app.apply_revision(&id, &pinned, None, USER, NEW_YORK)
+            .expect("revised");
+        let task = app.find(USER, &id).unwrap();
+        assert_eq!(
+            task.when,
+            When::At(Utc.with_ymd_and_hms(2026, 10, 16, 13, 0, 0).unwrap())
+        );
+        assert_eq!(task.due_tz, None);
     }
 
     /// Newest first (docs/ARCHITECTURE.md 4.1): each new task takes a smaller
