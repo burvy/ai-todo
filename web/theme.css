@@ -1052,3 +1052,10 @@ a {
     display: none !important;
   }
 }
+/* Section 4 row delete (Angela): hover mark on desktop, faint x + swipe right on phone */
+li.task-row { position: relative; touch-action: pan-y; }
+.delete-mark { opacity: 0; pointer-events: none; transition: opacity .15s ease; position: absolute; right: .4em; top: 50%; transform: translateY(-50%); font-size: .7rem; line-height: 1; padding: .1em .25em; border: none; background: transparent; color: var(--ink-soft, #5D4732); cursor: pointer; }
+li.task-row:hover .delete-mark { opacity: 1; pointer-events: auto; }
+@media (max-width: 720px) { .delete-mark { opacity: .35; pointer-events: auto; font-size: .65rem; } }
+.swipe-deleted { transform: translateX(110%); transition: transform .25s ease-out; opacity: 0; }
+.swipe-snapped { transform: translateX(0); transition: transform .2s ease-out; opacity: 1; }
