@@ -102,7 +102,11 @@ pub(crate) struct EditSink {
 /// A refused edit (the task changed on another device, or the network failed) is not an
 /// error to hide: the list is reloaded so the next click starts from the server's copy,
 /// and a short note says why nothing happened.
-pub(crate) async fn patch_and_show(id: &todo_core::TaskId, body: api::PatchTaskBody, sink: EditSink) -> bool {
+pub(crate) async fn patch_and_show(
+    id: &todo_core::TaskId,
+    body: api::PatchTaskBody,
+    sink: EditSink,
+) -> bool {
     match api::patch_task(id, body).await {
         Ok(snapshot) => {
             // A note about an earlier refusal must not outlive the retry that worked.
@@ -159,9 +163,11 @@ pub fn App() -> impl IntoView {
 
     window_event_listener(leptos::ev::keydown, move |event| {
         if event.key() == " "
-            && !matches!(event.target(), Some(target) if 
-                target.dyn_ref::<web_sys::HtmlInputElement>().is_some()
-                || target.dyn_ref::<web_sys::HtmlTextAreaElement>().is_some())
+            && !matches!(
+                event.target(),
+                Some(target) if target.dyn_ref::<web_sys::HtmlInputElement>().is_some()
+                    || target.dyn_ref::<web_sys::HtmlTextAreaElement>().is_some()
+            )
         {
             set_talking.set(true);
         }
@@ -557,6 +563,8 @@ fn Rambo(
             type="button"
             tabindex="0"
             aria-label="Grab Rambo to listen"
+            // Which pen he writes with: the gear menu sets it, remembered per device.
+            data-pen=move || view_settings.get().pen.slug()
             style:--pen-x=move || format!("{:.1}px", pen_pos.get().0)
             style:--pen-y=move || format!("{:.1}px", pen_pos.get().1)
             on:pointerdown=move |ev| {

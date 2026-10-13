@@ -1,7 +1,7 @@
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RamblMode {
     #[default]
     Interactive,
@@ -10,7 +10,7 @@ pub enum RamblMode {
 }
 
 /// The pen Rambo writes with (DESIGN-DECISIONS). The choice is per device.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Pen {
     #[default]
     FountainPen,
@@ -30,10 +30,21 @@ impl Pen {
             Pen::Marker => "Marker",
         }
     }
+
+    /// CSS/BEM-safe name: `data-pen` on Rambo, class names on his art.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Pen::FountainPen => "fountain-pen",
+            Pen::Pencil => "pencil",
+            Pen::Ballpoint => "ballpoint",
+            Pen::Quill => "quill",
+            Pen::Marker => "marker",
+        }
+    }
 }
 
 /// Light is the default; System follows the OS until the user picks.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
     #[default]
     System,
@@ -134,14 +145,24 @@ pub fn GearMenu(
     // The stored choice wins over the OS from the first paint on.
     Effect::new(move |_| apply_theme(settings.get().theme));
 
-    let set_theme = move |theme: Theme| update(Settings { theme, ..settings.get() });
+    let set_theme = move |theme: Theme| {
+        update(Settings {
+            theme,
+            ..settings.get()
+        })
+    };
     let toggle_sounds = move || {
         update(Settings {
             sounds: !settings.get().sounds,
             ..settings.get()
         })
     };
-    let set_pen = move |pen: Pen| update(Settings { pen, ..settings.get() });
+    let set_pen = move |pen: Pen| {
+        update(Settings {
+            pen,
+            ..settings.get()
+        })
+    };
 
     let close = move |_| set_open.set(false);
 
@@ -151,7 +172,7 @@ pub fn GearMenu(
                 type="button"
                 class="gear"
                 aria-haspopup="menu"
-                aria-expanded=move || open.get().then_some("true").unwrap_or("false")
+                aria-expanded=move || if open.get() { "true" } else { "false" }
                 on:click=move |_| set_open.update(|open| *open = !*open)
             >
                 <svg
@@ -421,5 +442,22 @@ mod tests {
         };
         let json = serde_json::to_string(&stored).unwrap();
         assert_eq!(Settings::parse_or_default(&json), stored);
+    }
+
+    #[test]
+    fn pen_names_are_css_safe_and_unique() {
+        let slugs = [
+            Pen::FountainPen,
+            Pen::Pencil,
+            Pen::Ballpoint,
+            Pen::Quill,
+            Pen::Marker,
+        ]
+        .map(Pen::slug);
+        for slug in slugs {
+            assert!(!slug.is_empty());
+            assert!(slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
+            assert_eq!(slugs.iter().filter(|s| **s == slug).count(), 1);
+        }
     }
 }

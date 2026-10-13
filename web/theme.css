@@ -725,6 +725,56 @@ a {
   pointer-events: none;
 }
 
+/* --- Deleting a row (Angela, #197): a mark in the margin --- */
+/* Desktop: the x appears beside the row on hover. Phone: it sits faint in
+   the margin at all times, and a swipe right scribbles the row out. */
+li.task-row {
+  position: relative;
+  touch-action: pan-y;
+}
+
+.delete-mark {
+  position: absolute;
+  right: 0.4em;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 0.1em 0.25em;
+  font-size: var(--text-xs);
+  line-height: 1;
+  color: var(--ink-soft);
+  background: transparent;
+  border: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease);
+  cursor: pointer;
+}
+
+li.task-row:hover .delete-mark {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (max-width: 700px) {
+  .delete-mark {
+    opacity: 0.35;
+    pointer-events: auto;
+  }
+}
+
+/* The scribble-out exit and the snap-back when the swipe stops short. */
+.swipe-deleted {
+  transform: translateX(110%);
+  transition: transform 0.25s ease-out, opacity 0.25s ease-out;
+  opacity: 0;
+}
+
+.swipe-snapped {
+  transform: translateX(0);
+  transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+  opacity: 1;
+}
+
 /* --- Task list --- */
 
 .label-filters {
@@ -767,20 +817,6 @@ a {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--danger);
-}
-
-.delete {
-  flex: 0 0 auto;
-  min-width: var(--tap);
-  min-height: var(--tap);
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--text-sm);
-  color: var(--danger);
-}
-
-.delete:hover {
-  color: var(--danger);
-  font-weight: 700;
 }
 
 .task-editor {
@@ -1128,18 +1164,22 @@ a {
   }
 }
 
-/* Pen writing row animation: title reveals letter by letter */
+/* Pen writing row animation: the title reveals left to right. The reveal is
+   a clip-path wipe, not a shrinking box: a long title wraps onto the next
+   ruled line both while Rambo is writing and after he is done. */
 .pen-title {
-  display: inline-block;
-  white-space: nowrap;
+  clip-path: inset(0 0 0 0);
+  transition: clip-path 0.6s linear;
+  display: inline;
 }
 
 .pen-pending .pen-title {
-  visibility: hidden;
+  clip-path: inset(0 100% 0 0);
 }
 
 .pen-writing .pen-title {
-  visibility: visible;
+  clip-path: inset(0 0 0 0);
+}
 }
 
 
@@ -1166,17 +1206,11 @@ a {
 
   .pen-title {
     transition: none !important;
-    max-width: 100% !important;
+    clip-path: inset(0 0 0 0) !important;
   }
 
   .pen-underline {
     display: none !important;
   }
 }
-/* Section 4 row delete (Angela): hover mark on desktop, faint x + swipe right on phone */
-li.task-row { position: relative; touch-action: pan-y; }
-.delete-mark { opacity: 0; pointer-events: none; transition: opacity .15s ease; position: absolute; right: .4em; top: 50%; transform: translateY(-50%); font-size: .7rem; line-height: 1; padding: .1em .25em; border: none; background: transparent; color: var(--ink-soft, #5D4732); cursor: pointer; }
-li.task-row:hover .delete-mark { opacity: 1; pointer-events: auto; }
-@media (max-width: 720px) { .delete-mark { opacity: .35; pointer-events: auto; font-size: .65rem; } }
-.swipe-deleted { transform: translateX(110%); transition: transform .25s ease-out; opacity: 0; }
-.swipe-snapped { transform: translateX(0); transition: transform .2s ease-out; opacity: 1; }
+
