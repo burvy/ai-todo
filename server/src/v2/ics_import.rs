@@ -6,68 +6,100 @@
 //! UTC and every event shifts by four hours, which is far enough for the
 //! planner to book a two-hour block straight over the top of a lecture.
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, TimeZone, Utc, Weekday};
+use chrono_tz::Tz;
 use icalendar::{CalendarDateTime, Component, DatePerhapsTime, Event};
 
-use crate::v2::app::ImportedEvent;
+use crate::v2::app::{ImportedEvent, ImportedSeries};
 
 /// A calendar we could not read. A malformed upload is the caller's doing, so
 /// the HTTP layer answers it with a 400.
 #[derive(Debug)]
 pub struct ImportError(pub String);
 
-/// Parse the events of an `.ics` export, in UTC, oldest first. Each event keeps
-/// its iCalendar UID when it has one, since imports key on the UID.
+/// One calendar export, read: the one-shot events, the weekly series it describes, and
+/// a note for every rule we chose not to follow.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ParsedCalendar {
+    /// Events to import as single tasks, oldest first.
+    pub events: Vec<ImportedEvent>,
+    /// Weekly recurrences to import as series (docs/ARCHITECTURE.md 7.1).
+    pub series: Vec<ImportedSeries>,
+    /// One line per rule we could not follow, naming the event and why. That event is
+    /// still imported, as one task, so the day is not silently lost.
+    pub unmapped: Vec<String>,
+}
+
+/// Parse an `.ics` export: one-shot events, the weekly recurrences among them, and a
+/// note for every rule that is not one we follow.
 ///
 /// Events that cannot be placed are skipped rather than guessed at: a missing
 /// block is easy to spot in the planner, a wrongly-timed one silently ruins
 /// the schedule.
-pub fn parse_ics(text: &str) -> Result<Vec<ImportedEvent>, ImportError> {
+pub fn parse_calendar(text: &str) -> Result<ParsedCalendar, ImportError> {
     let calendar: icalendar::Calendar = text
         .parse()
         .map_err(|error| ImportError(format!("that is not an iCalendar file: {error}")))?;
 
-    let mut events: Vec<ImportedEvent> = calendar
-        .events()
-        .filter_map(|event| {
-            if event
+    let mut parsed = ParsedCalendar::default();
+    for event in calendar.events() {
+        if event
+            .properties()
+            .get("STATUS")
+            .is_some_and(|value| value.value().eq_ignore_ascii_case("CANCELLED"))
+            || event
                 .properties()
-                .get("STATUS")
-                .is_some_and(|value| value.value().eq_ignore_ascii_case("CANCELLED"))
-                || event
-                    .properties()
-                    .get("TRANSP")
-                    .is_some_and(|value| value.value().eq_ignore_ascii_case("TRANSPARENT"))
-            {
-                return None;
-            }
-            let start = to_utc(&date_of(event, "DTSTART")?)?;
-            // `DTEND` is the norm, but `DURATION` is legal and Google uses it.
-            // A missing `DTEND` must not drop the event, so no `?` here. With neither
-            // `DTEND` nor `DURATION`, the event gets 30 minutes, never zero length.
-            let end = date_of(event, "DTEND")
-                .and_then(|value| to_utc(&value))
-                .or_else(|| duration_after(event, start))
-                .unwrap_or(start + chrono::Duration::minutes(30));
-            if end < start {
-                return None;
-            }
-            let uid = event
-                .properties()
-                .get("UID")
-                .map(|property| property.value().trim().to_string())
-                .filter(|uid| !uid.is_empty());
-            Some(ImportedEvent {
+                .get("TRANSP")
+                .is_some_and(|value| value.value().eq_ignore_ascii_case("TRANSPARENT"))
+        {
+            continue;
+        }
+        let start = date_of(event, "DTSTART").and_then(|value| to_utc(&value));
+        // `DTEND` is the norm, but `DURATION` is legal and Google uses it.
+        // A missing `DTEND` must not drop the event, so no `?` here. With neither
+        // `DTEND` nor `DURATION`, the event gets 30 minutes, never zero length.
+        let end = date_of(event, "DTEND")
+            .and_then(|value| to_utc(&value))
+            .or_else(|| start.and_then(|start| duration_after(event, start)))
+            .unwrap_or_else(|| start.unwrap_or_else(Utc::now) + chrono::Duration::minutes(30));
+        // No start, or an event that ends before it begins: nothing to import.
+        let Some(start) = start.filter(|start| end >= *start) else {
+            continue;
+        };
+        let uid = uid_of(event);
+        let title = summary_of(event);
+
+        match weekly_series(event, start) {
+            // A weekly rule becomes a series, never a task per date.
+            Ok(Some(series)) => parsed.series.push(ImportedSeries {
                 uid,
-                title: summary_of(event),
+                title,
+                duration_min: minutes_between(start, end),
+                ..series
+            }),
+            Ok(None) => parsed.events.push(ImportedEvent {
+                uid,
+                title,
                 start,
                 end,
-            })
-        })
-        .collect();
+            }),
+            // A rule we do not follow is not an error: the first instance is still
+            // worth having on the list, and the answer says why it is not a series.
+            Err(reason) => {
+                parsed.unmapped.push(format!("{title}: {reason}"));
+                parsed.events.push(ImportedEvent {
+                    uid,
+                    title,
+                    start,
+                    end,
+                });
+            }
+        }
+    }
 
-    events.sort_by_key(|event| event.start);
-    Ok(events)
+    parsed.events.sort_by_key(|event| event.start);
+    parsed.series.sort_by_key(|series| series.start_day);
+    Ok(parsed)
 }
 
 fn date_of(event: &Event, key: &str) -> Option<DatePerhapsTime> {
@@ -82,6 +114,235 @@ fn summary_of(event: &Event) -> String {
         .filter(|summary| !summary.is_empty())
         .unwrap_or("Busy")
         .to_string()
+}
+
+/// The two-letter weekday codes a `BYDAY` uses, in the order we store them.
+const RRULE_WEEKDAYS: [(&str, Weekday); 7] = [
+    ("MO", Weekday::Mon),
+    ("TU", Weekday::Tue),
+    ("WE", Weekday::Wed),
+    ("TH", Weekday::Thu),
+    ("FR", Weekday::Fri),
+    ("SA", Weekday::Sat),
+    ("SU", Weekday::Sun),
+];
+
+/// The parts of a weekly rule we follow. Anything else (`BYSETPOS`, `BYMONTH`,
+/// `BYMONTHDAY`, `BYWEEKNO`, …) names a rhythm this app cannot keep.
+const SUPPORTED_PARTS: [&str; 5] = ["FREQ", "BYDAY", "UNTIL", "COUNT", "WKST"];
+
+/// The series an event's weekly `RRULE` describes, or `None` when it has no rule. An
+/// `Err` is a rule we cannot follow, and says why: the caller imports the event's first
+/// instance instead and tells the user this rule was not followed.
+fn weekly_series(event: &Event, start: DateTime<Utc>) -> Result<Option<ImportedSeries>, String> {
+    let Some(rule) = event.properties().get("RRULE").map(|p| p.value()) else {
+        return Ok(None);
+    };
+    let zone = zone_of(event);
+    let start_local = start.with_timezone(&zone);
+    let start_day = start_local.date_naive();
+
+    let parts: Vec<(&str, &str)> = rule
+        .split(';')
+        .filter_map(|part| part.split_once('='))
+        .collect();
+    let part = |name: &str| {
+        parts
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| *value)
+    };
+    // The rhythm first: "every month" says more about why we cannot follow a rule
+    // than the parts we do not read do.
+    if !part("FREQ").is_some_and(|freq| freq.eq_ignore_ascii_case("WEEKLY")) {
+        return Err(format!(
+            "{} repeats, imported as one task",
+            part("FREQ").unwrap_or("this rule")
+        ));
+    }
+    if let Some(interval) = part("INTERVAL") {
+        return Err(format!(
+            "every {interval} weeks is not every week, imported as one task"
+        ));
+    }
+    if let Some((name, _)) = parts
+        .iter()
+        .find(|(name, _)| !SUPPORTED_PARTS.contains(&name.to_uppercase().as_str()))
+    {
+        return Err(format!("{name} is not supported, imported as one task"));
+    }
+
+    let weekdays = match part("BYDAY") {
+        // No BYDAY means the event's own weekday, which is the only one DTSTART can be.
+        None => vec![start_day.weekday()],
+        Some(list) => weekdays_of(list)?,
+    };
+    // A rule ends either by naming a date or by counting occurrences; the earlier of
+    // the two is the one that bites first.
+    let until = part("UNTIL").map(|raw| until_date(raw, zone)).transpose()?;
+    let counted = match part("COUNT").map(str::trim) {
+        None => None,
+        Some(raw) => {
+            let count: u32 = raw
+                .parse()
+                .map_err(|_| format!("COUNT={raw} is not a number, imported as one task"))?;
+            Some(last_occurrence(start_day, &weekdays, count))
+        }
+    };
+    let until = match (until, counted) {
+        (Some(named), Some(counted)) => Some(named.min(counted)),
+        (Some(named), None) => Some(named),
+        (None, Some(counted)) => Some(counted),
+        (None, None) => None,
+    };
+
+    Ok(Some(ImportedSeries {
+        uid: uid_of(event),
+        title: String::new(),
+        duration_min: 30,
+        weekdays,
+        until,
+        start_day,
+        // An all-day event (`VALUE=DATE`) has no time, so its occurrences float.
+        time_of_day: (date_of(event, "DTSTART")
+            .is_some_and(|value| matches!(value, DatePerhapsTime::DateTime(_))))
+        .then_some(start_local.time()),
+        zone: zone.name().to_owned(),
+        exdates: exdates_of(event, zone),
+    }))
+}
+
+/// The weekdays a `BYDAY` list names, sorted and without repeats.
+///
+/// `2FR` and `-1SU` pick a numbered day inside a month, which is a monthly rule wearing
+/// a weekly hat: an ordinal is not a weekday and the rule is not one we follow.
+fn weekdays_of(list: &str) -> Result<Vec<Weekday>, String> {
+    let mut days: Vec<Weekday> = Vec::new();
+    for token in list.split(',') {
+        let token = token.trim();
+        let code = token
+            .trim_start_matches(|c: char| c.is_ascii_digit() || c == '+' || c == '-')
+            .to_owned();
+        let ordinal = code.len() != token.len();
+        let weekday = RRULE_WEEKDAYS
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&code))
+            .map(|(_, day)| *day);
+        match weekday {
+            None => return Err(format!("BYDAY={token} is not a weekday")),
+            Some(_) if ordinal => return Err(format!("BYDAY={token} counts weeks")),
+            Some(day) if !days.contains(&day) => days.push(day),
+            Some(_) => {}
+        }
+    }
+    days.sort_by_key(|day| day.num_days_from_monday());
+    if days.is_empty() {
+        return Err("BYDAY names no day".into());
+    }
+    Ok(days)
+}
+
+/// `EXDATE` lists the occurrences an export takes back: the series' skipped days,
+/// keyed by the local date each one names.
+///
+/// `EXDATE` is a multi-property (RFC 5545 lets it repeat, and one line may carry
+/// several comma-separated dates), so the dates are read out of `multi_properties`.
+fn exdates_of(event: &Event, zone: Tz) -> Vec<NaiveDate> {
+    let mut dates: Vec<NaiveDate> = event
+        .multi_properties()
+        .get("EXDATE")
+        .into_iter()
+        .flatten()
+        .flat_map(|property| {
+            property
+                .value()
+                .split(',')
+                .map(str::trim)
+                .map(str::to_owned)
+        })
+        .filter_map(|raw| exdate_date(&raw, zone))
+        .collect();
+    dates.sort();
+    dates.dedup();
+    dates
+}
+
+/// The local date one excluded occurrence names. A `Z` on the value makes it an
+/// instant, read in the event's zone; without one it is already a local wall clock.
+fn exdate_date(raw: &str, zone: Tz) -> Option<NaiveDate> {
+    let body = raw.strip_suffix('Z').unwrap_or(raw);
+    let date_part = &body[..body.len().min(8)];
+    let date = NaiveDate::parse_from_str(date_part, "%Y%m%d").ok()?;
+    match raw.ends_with('Z') {
+        true => utc_instant(raw).map(|instant| instant.with_timezone(&zone).date_naive()),
+        false => Some(date),
+    }
+}
+
+/// The date an `UNTIL` names, read in the event's own zone.
+///
+/// Outlook writes the local 23:59:59 as UTC (`UNTIL=20261215T035959Z`), which in New
+/// York is still the 14th: reading the instant in the event's zone is what makes the
+/// last occurrence land on the day the user meant.
+fn until_date(raw: &str, zone: Tz) -> Result<NaiveDate, String> {
+    let raw = raw.trim();
+    let date_part = &raw[..raw.len().min(8)];
+    let date = NaiveDate::parse_from_str(date_part, "%Y%m%d")
+        .map_err(|_| format!("UNTIL={raw} is not a date, imported as one task"))?;
+    Ok(match utc_instant(raw) {
+        Some(instant) => instant.with_timezone(&zone).date_naive(),
+        None => date,
+    })
+}
+
+/// The UTC instant in an `UNTIL`, when it carries a time part.
+fn utc_instant(raw: &str) -> Option<DateTime<Utc>> {
+    let body = raw.strip_suffix('Z')?;
+    NaiveDateTime::parse_from_str(body, "%Y%m%dT%H%M%S")
+        .ok()
+        .map(|local| Utc.from_utc_datetime(&local))
+}
+
+/// The date of the `count`-th occurrence from `start_day`: how a rule that counts
+/// weeks instead of naming an end date is stored.
+fn last_occurrence(start_day: NaiveDate, weekdays: &[Weekday], count: u32) -> NaiveDate {
+    let mut left = count.max(1);
+    let mut date = start_day;
+    loop {
+        if weekdays.contains(&date.weekday()) {
+            left -= 1;
+            if left == 0 {
+                return date;
+            }
+        }
+        date += chrono::Duration::days(1);
+    }
+}
+
+/// The zone an event's times are written in: its `DTSTART` TZID, or UTC when it names
+/// none — which is also how a floating time is read.
+fn zone_of(event: &Event) -> Tz {
+    event
+        .properties()
+        .get("DTSTART")
+        .and_then(|property| property.params().get("TZID"))
+        .and_then(|tzid| tzid.value().parse().ok())
+        .unwrap_or(chrono_tz::UTC)
+}
+
+/// The iCalendar UID an import keys on, when the event has one.
+fn uid_of(event: &Event) -> Option<String> {
+    event
+        .properties()
+        .get("UID")
+        .map(|property| property.value().trim().to_string())
+        .filter(|uid| !uid.is_empty())
+}
+
+/// An event's length in minutes, inside the same limits as any task.
+fn minutes_between(start: DateTime<Utc>, end: DateTime<Utc>) -> u16 {
+    let minutes = (end - start).num_minutes();
+    minutes.clamp(5, 480) as u16
 }
 
 /// Convert any of the three iCalendar date forms to UTC.
@@ -141,6 +402,12 @@ mod tests {
     use super::*;
 
     const WEEK: &str = include_str!("../../tests/fixtures/week.ics");
+
+    /// The one-shot events of an export. The tests here are about dates, zones and
+    /// durations; [`parse_calendar`] is what the server calls, and it also reads rules.
+    fn parse_ics(text: &str) -> Result<Vec<ImportedEvent>, ImportError> {
+        parse_calendar(text).map(|calendar| calendar.events)
+    }
 
     #[test]
     fn the_demo_week_has_nine_events_spanning_the_work_week() {
@@ -401,27 +668,44 @@ mod tests {
     }
 
     #[test]
-    fn a_weekly_recurring_class_is_present_for_the_week() {
-        // A student's real calendar is mostly RRULEs: the same lecture every
-        // week. We do not expand recurrences, so it appears once.
+    fn a_weekly_recurring_class_becomes_a_series_for_the_week() {
+        // A student's real calendar is mostly RRULEs: the same lecture every week. It
+        // is one series, not a block for the one week the export happened to cover.
         let text = with_vtimezone(&[
             "BEGIN:VEVENT",
+            "UID:stat-201@example.com",
             "SUMMARY:STAT 201 Lecture",
             "DTSTART;TZID=America/New_York:20261013T090000",
             "DTEND;TZID=America/New_York:20261013T101500",
             "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215T035959Z",
             "END:VEVENT",
         ]);
-        let busy = parse_ics(&text).expect("parses");
+        let calendar = parse_calendar(&text).expect("parses");
+        assert!(
+            calendar.events.is_empty(),
+            "a weekly rule is not imported as a one-shot task"
+        );
+        assert_eq!(calendar.series.len(), 1);
+        let series = &calendar.series[0];
+        assert_eq!(series.uid.as_deref(), Some("stat-201@example.com"));
+        assert_eq!(series.title, "STAT 201 Lecture");
+        assert_eq!(series.weekdays, vec![Weekday::Tue]);
         assert_eq!(
-            busy.len(),
-            1,
-            "one block for the recurrence's first instance"
+            series.start_day,
+            NaiveDate::from_ymd_opt(2026, 10, 13).unwrap()
         );
         assert_eq!(
-            busy[0].start.to_rfc3339(),
-            "2026-10-13T13:00:00+00:00",
-            "the first occurrence should be used"
+            series.time_of_day,
+            Some(chrono::NaiveTime::from_hms_opt(9, 0, 0).unwrap()),
+            "09:00 is the time the series repeats at"
+        );
+        assert_eq!(series.zone, "America/New_York", "the event's own zone");
+        assert_eq!(series.duration_min, 75, "75 minutes of lecture");
+        // Outlook writes the local 23:59:59 as UTC, so 20261215T035959Z is still the
+        // 14th in New York: the last occurrence lands on the day the user meant.
+        assert_eq!(
+            series.until,
+            Some(NaiveDate::from_ymd_opt(2026, 12, 14).unwrap())
         );
     }
 
@@ -602,19 +886,166 @@ mod tests {
     }
 
     #[test]
-    fn weekly_rrule_appears_once_first_occurrence() {
-        // Current behaviour (recorded): we do NOT expand RRULE recurrences.
-        // The first instance is returned; expansion is planned, not done.
+    fn weekly_rrule_becomes_a_series_not_a_single_block() {
+        // The recorded old behaviour: one block for the first instance. Now the rule
+        // is kept whole, so every week follows it.
         let text = with_vtimezone(&[
             "BEGIN:VEVENT",
+            "UID:weekly-class@example.com",
             "SUMMARY:Weekly class",
             "DTSTART;TZID=America/New_York:20261013T090000",
             "DTEND;TZID=America/New_York:20261013T101500",
             "RRULE:FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215T035959Z",
             "END:VEVENT",
         ]);
-        let busy = parse_ics(&text).expect("parses");
-        assert_eq!(busy.len(), 1, "RRULE not expanded: only first instance");
-        assert_eq!(busy[0].start.to_rfc3339(), "2026-10-13T13:00:00+00:00");
+        let calendar = parse_calendar(&text).expect("parses");
+        assert!(calendar.events.is_empty(), "RRULE is no longer a one-shot");
+        assert_eq!(calendar.series.len(), 1);
+        assert_eq!(
+            calendar.series[0].weekdays,
+            vec![Weekday::Tue],
+            "it repeats on Tuesdays"
+        );
+    }
+
+    // ---- recurring rules (docs/ARCHITECTURE.md 7.1) ------------------------
+
+    /// A rule with no `BYDAY` repeats on the weekday it starts on.
+    #[test]
+    fn a_weekly_rule_without_byday_repeats_on_its_start_day() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Swim",
+            "DTSTART;TZID=America/New_York:20261014T070000",
+            "DTEND;TZID=America/New_York:20261014T080000",
+            "RRULE:FREQ=WEEKLY",
+            "END:VEVENT",
+        ]);
+        let calendar = parse_calendar(&text).expect("parses");
+        assert_eq!(calendar.series.len(), 1);
+        assert_eq!(calendar.series[0].weekdays, vec![Weekday::Wed]);
+        assert_eq!(calendar.series[0].until, None, "no end named: forever");
+    }
+
+    /// `COUNT` is how a rule says "this many times", which is stored as the date of
+    /// its last occurrence.
+    #[test]
+    fn a_count_is_stored_as_the_date_of_the_last_occurrence() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Bootcamp",
+            "DTSTART;TZID=America/New_York:20261013T090000",
+            "DTEND;TZID=America/New_York:20261013T120000",
+            "RRULE:FREQ=WEEKLY;BYDAY=TU,TH;COUNT=5",
+            "END:VEVENT",
+        ]);
+        let calendar = parse_calendar(&text).expect("parses");
+        let series = &calendar.series[0];
+        assert_eq!(series.weekdays, vec![Weekday::Tue, Weekday::Thu]);
+        // Tue 13, Thu 15, Tue 20, Thu 22, Tue 27 October.
+        assert_eq!(
+            series.until,
+            Some(NaiveDate::from_ymd_opt(2026, 10, 27).unwrap()),
+            "five occurrences of two days a week end on the fifth"
+        );
+    }
+
+    /// An `EXDATE` is an occurrence the export takes back, which the series keeps as a
+    /// skipped day.
+    #[test]
+    fn excluded_dates_come_back_as_skipped_days() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "UID:standup@example.com",
+            "SUMMARY:Standup",
+            "DTSTART;TZID=America/New_York:20261012T093000",
+            "DTEND;TZID=America/New_York:20261012T094500",
+            "RRULE:FREQ=WEEKLY;BYDAY=MO",
+            "EXDATE;TZID=America/New_York:20261019T093000",
+            "EXDATE;TZID=America/New_York:20261102T093000",
+            "END:VEVENT",
+        ]);
+        let calendar = parse_calendar(&text).expect("parses");
+        assert_eq!(
+            calendar.series[0].exdates,
+            vec![
+                NaiveDate::from_ymd_opt(2026, 10, 19).unwrap(),
+                NaiveDate::from_ymd_opt(2026, 11, 2).unwrap(),
+            ],
+            "both excluded Mondays are kept, in order"
+        );
+    }
+
+    /// A rule we cannot follow is imported as today's single task, and the answer says
+    /// why, so the client can tell the user their rule was not kept.
+    #[test]
+    fn rules_we_cannot_follow_are_imported_once_and_reported() {
+        for (rule, because) in [
+            ("FREQ=MONTHLY;BYMONTHDAY=1", "repeats"),
+            ("FREQ=DAILY;COUNT=10", "repeats"),
+            ("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO", "every 2 weeks"),
+            ("FREQ=WEEKLY;BYDAY=2FR", "counts weeks"),
+            (
+                "FREQ=WEEKLY;BYSETPOS=1;BYDAY=MO",
+                "BYSETPOS is not supported",
+            ),
+        ] {
+            let text = with_vtimezone(&[
+                "BEGIN:VEVENT",
+                "SUMMARY:Repeat",
+                "DTSTART;TZID=America/New_York:20261012T090000",
+                "DTEND;TZID=America/New_York:20261012T100000",
+                &format!("RRULE:{rule}"),
+                "END:VEVENT",
+            ]);
+            let calendar = parse_calendar(&text).expect("parses");
+            assert!(
+                calendar.series.is_empty(),
+                "{rule} must not become a series"
+            );
+            assert_eq!(
+                calendar.events.len(),
+                1,
+                "{rule} still imports its first week as a task"
+            );
+            assert_eq!(calendar.unmapped.len(), 1, "{rule} must be reported");
+            let note = &calendar.unmapped[0];
+            assert!(note.contains("Repeat"), "{note} should name the event");
+            assert!(note.contains(because), "{note} should say why: {because}");
+        }
+    }
+
+    /// An all-day weekly event has no time, so its occurrences float rather than being
+    /// pinned to midnight UTC.
+    #[test]
+    fn an_all_day_weekly_event_floats() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Laundry day",
+            "DTSTART;VALUE=DATE:20261012",
+            "DTEND;VALUE=DATE:20261013",
+            "RRULE:FREQ=WEEKLY;BYDAY=MO",
+            "END:VEVENT",
+        ]);
+        let calendar = parse_calendar(&text).expect("parses");
+        assert_eq!(calendar.series.len(), 1);
+        assert_eq!(calendar.series[0].time_of_day, None, "no time to pin");
+        assert_eq!(calendar.series[0].weekdays, vec![Weekday::Mon]);
+    }
+
+    /// An event with no rule is still one task, as before.
+    #[test]
+    fn an_event_without_a_rule_is_a_single_task() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:One off",
+            "DTSTART;TZID=America/New_York:20261012T100000",
+            "DTEND;TZID=America/New_York:20261012T110000",
+            "END:VEVENT",
+        ]);
+        let calendar = parse_calendar(&text).expect("parses");
+        assert_eq!(calendar.events.len(), 1);
+        assert!(calendar.series.is_empty());
+        assert!(calendar.unmapped.is_empty(), "nothing to report");
     }
 }
