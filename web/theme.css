@@ -338,23 +338,15 @@ button {
   border-color: var(--accent);
 }
 
-/* Rambo */
-.mascot-home {
-  flex: none;
-  width: var(--tap);
-  height: var(--tap);
-  padding: var(--space-1);
-  background-color: var(--paper-sunken);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-round);
-}
+/* ── Rambo: one mascot, one element, bottom-right home ── */
 
-.mascot-home img {
-  width: 100%;
-  height: 100%;
-}
-
-.mascot {
+/* The single Rambo button: fixed at bottom-right corner. All states
+   (dragging, writing, skittering) use CSS classes on this one element. */
+.rambo {
+  position: fixed;
+  bottom: calc(var(--tap) + var(--space-2) + env(safe-area-inset-bottom, 0px));
+  right: var(--gutter);
+  z-index: 50;
   display: inline-flex;
   width: var(--tap);
   height: var(--tap);
@@ -363,21 +355,86 @@ button {
   border: 1px solid var(--rule);
   border-radius: var(--radius-round);
   cursor: grab;
+  touch-action: none;
+  /* CSS variables for writing position — ignored at home */
+  --pen-x: 0px;
+  --pen-y: 0px;
 }
 
-.mascot img {
-  width: 100%;
-  height: 100%;
-}
-
-.mascot:active {
+.rambo:active {
   cursor: grabbing;
 }
 
+.rambo img {
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* Dragging: follow the pointer via CSS variables */
+.rambo.is-dragging {
+  transform: translate(var(--pen-x), var(--pen-y));
+  cursor: grabbing;
+}
+
+/* Recovering: dazed pause at drop point */
+.rambo.is-recovering {
+  transform: translate(var(--pen-x), var(--pen-y)) rotate(12deg);
+}
+
+/* Skittering: hop animation back to home */
+.rambo.is-skittering {
+  animation: rambo-skitter var(--dur-slow) ease-out forwards;
+}
+
+@keyframes rambo-skitter {
+  0% {
+    transform: translate(var(--pen-x), var(--pen-y)) rotate(12deg);
+  }
+  25% {
+    transform: translate(calc(var(--pen-x) * 0.75), calc(var(--pen-y) * 0.75 - 10px)) rotate(6deg);
+  }
+  50% {
+    transform: translate(calc(var(--pen-x) * 0.5), calc(var(--pen-y) * 0.5 - 15px)) rotate(-4deg);
+  }
+  75% {
+    transform: translate(calc(var(--pen-x) * 0.25), calc(var(--pen-y) * 0.25 - 8px)) rotate(2deg);
+  }
+  100% {
+    transform: translate(0, 0) rotate(0);
+  }
+}
+
+/* Flying: smooth transition to new position (for writing) */
+.rambo.is-flying {
+  transition: transform var(--dur-slow) ease;
+}
+
+/* Writing: shrunk and rotated like a pen at work */
+.rambo.is-flying.is-writing {
+  transform: translate(var(--pen-x), var(--pen-y)) rotate(34deg) scale(0.78);
+}
+
+/* Writing at caret (same as writing, but marked for future differentiation) */
+.rambo.is-flying.is-writing.is-caret {
+  transform: translate(var(--pen-x), var(--pen-y)) rotate(34deg) scale(0.78);
+}
+
+/* Asking: positioned at the task */
+.rambo.is-asking {
+  transform: translate(var(--pen-x), var(--pen-y));
+}
+
+/* Status text below Rambo */
 .mascot-status {
+  position: fixed;
+  bottom: calc(2 * var(--tap) + var(--space-2) + env(safe-area-inset-bottom, 0px));
+  right: var(--gutter);
+  z-index: 50;
   display: block;
   min-height: 1.2em;
   font-size: var(--text-sm);
+  max-width: 20rem;
 }
 
 .brain-line,
@@ -755,55 +812,16 @@ button {
       color var(--dur) var(--ease);
   }
 
-  .mascot-home {
+  .rambo {
     transition: transform var(--dur) var(--ease);
   }
 
-  .mascot-home:active {
+  .rambo:active {
     transform: translateY(1rem) rotate(8deg);
-  }
-
-  .mascot {
-    animation: mascot-home 0.35s ease-in-out;
-  }
-
-  .mascot.falling {
-    animation: mascot-fall var(--dur-slow) ease-in forwards;
-  }
-
-  .mascot.returning {
-    animation: mascot-return var(--dur-slow) ease-out forwards;
   }
 
   .mic.listening {
     animation: mic-pulse 1.2s ease-in-out infinite;
-  }
-
-  @keyframes mascot-home {
-    from {
-      transform: translateY(2rem);
-    }
-    to {
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes mascot-fall {
-    from {
-      transform: translateY(0);
-    }
-    to {
-      transform: translateY(60vh) rotate(12deg);
-    }
-  }
-
-  @keyframes mascot-return {
-    from {
-      transform: translateY(60vh) rotate(12deg);
-    }
-    to {
-      transform: translateY(0);
-    }
   }
 
   @keyframes mic-pulse {
@@ -813,47 +831,7 @@ button {
   }
 }
 
-/* ── Rambo pen CSS ── */
-
-.pen-rig {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 0;
-  height: 0;
-  pointer-events: none;
-  z-index: 100;
-}
-
-.pen-rig-pen {
-  position: absolute;
-  width: 30px;
-  height: 52px;
-  left: -15px;
-  top: -26px;
-  transform: translate(var(--pen-x), var(--pen-y));
-}
-
-.pen-rig.is-away.is-caret .pen-rig-pen {
-  transform: translate(var(--pen-x), var(--pen-y)) rotate(34deg) scale(0.78);
-}
-
-.pen-rig.is-away.is-flying .pen-rig-pen {
-  transition: transform var(--dur-slow) ease;
-}
-
-.pen-rig.is-away.is-writing .pen-rig-pen {
-  transform: translate(var(--pen-x), var(--pen-y)) rotate(34deg) scale(0.78);
-}
-
-.mascot-home.away img {
-  visibility: hidden;
-}
-
-.mascot-home {
-  touch-action: none;
-}
-
+/* Pen writing row animation: title reveals left to right */
 .pen-title {
   max-width: 100%;
   overflow: hidden;
@@ -886,13 +864,9 @@ button {
     transition: none;
   }
 
-  .mascot-home,
-  .mascot {
+  .rambo {
     animation: none;
-  }
-
-  .pen-rig-pen {
-    transition: none !important;
+    transition: none;
   }
 
   .pen-title {
