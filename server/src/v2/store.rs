@@ -666,6 +666,16 @@ impl Store for MemoryStore {
             .lock()
             .expect("memory store mutex")
             .retain(|(owner, _)| !gone.contains(owner));
+        // The series go with them: nothing cascades here either, so leaving them would
+        // keep a dead visitor's routines with nobody left who could see them.
+        self.series
+            .lock()
+            .expect("memory store mutex")
+            .retain(|(owner, _)| !gone.contains(owner));
+        self.exceptions
+            .lock()
+            .expect("memory store mutex")
+            .retain(|(owner, _, _)| !gone.contains(owner));
         self.users
             .lock()
             .expect("memory store mutex")
@@ -1722,6 +1732,19 @@ impl Store for SqliteStore {
         let tx = conn.transaction().map_err(backend)?;
         let cutoff = format_ts(cutoff);
         let stale = "SELECT id FROM v2_users WHERE plan = 'anon' AND last_activity_at <= ?1";
+        // The series' own rows go first, for the same reason the tasks do: nothing
+        // cascades here, so leaving them would keep a dead visitor's routines
+        // forever with nobody left who could see or delete them.
+        tx.execute(
+            &format!("DELETE FROM v2_series_exceptions WHERE user_id IN ({stale})"),
+            params![cutoff],
+        )
+        .map_err(backend)?;
+        tx.execute(
+            &format!("DELETE FROM v2_series WHERE user_id IN ({stale})"),
+            params![cutoff],
+        )
+        .map_err(backend)?;
         tx.execute(
             &format!("DELETE FROM v2_tasks WHERE user_id IN ({stale})"),
             params![cutoff],
@@ -2951,7 +2974,8 @@ mod tests {
         store.put(id, task("keep", 0)).unwrap();
     }
 
-    /// Idle anonymous accounts go, with their tasks, and nobody else does.
+    /// Idle anonymous accounts go, with their tasks and their series, and nobody else
+    /// does.
     fn idle_anonymous_accounts_expire(store: &dyn Store) {
         let now = at(12);
         let (just_inside, exactly_old, long_gone) = (anon_id(1), anon_id(2), anon_id(3));
@@ -2963,6 +2987,19 @@ mod tests {
             store.ensure_anonymous(id, last_seen).unwrap();
             store.put(id, task(&format!("{id}-1"), 0)).unwrap();
             store.put(id, task(&format!("{id}-2"), 1)).unwrap();
+            store
+                .put_series(id, series(&format!("{id}-series"), 0))
+                .unwrap();
+            store
+                .put_exception(
+                    id,
+                    &SeriesId(format!("{id}-series")),
+                    SeriesException {
+                        date: on((2026, 10, 12)),
+                        kind: ExceptionKind::Done,
+                    },
+                )
+                .unwrap();
         }
         sign_in(store, "carol");
 
@@ -2971,9 +3008,25 @@ mod tests {
         assert_eq!(removed, 2, "30 days and older go; 29 days 23 hours stays");
         assert!(store.anonymous_exists(&just_inside).unwrap());
         assert_eq!(store.tasks(&just_inside).unwrap().len(), 2);
+        assert_eq!(
+            store.series(&just_inside).unwrap().len(),
+            1,
+            "a live visitor keeps their series"
+        );
         for gone in [&exactly_old, &long_gone] {
             assert!(!store.anonymous_exists(gone).unwrap(), "{gone} survived");
             assert!(store.tasks(gone).unwrap().is_empty(), "{gone} kept tasks");
+            assert!(
+                store.series(gone).unwrap().is_empty(),
+                "{gone} kept a series that nobody can reach"
+            );
+            assert!(
+                store
+                    .exceptions(gone, &SeriesId(format!("{gone}-series")))
+                    .unwrap()
+                    .is_empty(),
+                "{gone} kept the exceptions of a series it no longer has"
+            );
         }
         assert_eq!(
             store.tasks("carol").unwrap().len(),
