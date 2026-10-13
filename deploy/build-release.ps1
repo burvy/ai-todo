@@ -18,9 +18,9 @@ cargo build --release -p rambl-server --manifest-path (Join-Path $repoRoot 'Carg
 if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
 
 # A fresh folder every time, so no local test data (data\) or old files ride along.
-if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
-New-Item -ItemType Directory -Force -Path $stage | Out-Null
-Copy-Item -Force (Join-Path $repoRoot 'target\release\rambl-server.exe') (Join-Path $stage 'rambl-server.exe')
+if (Test-Path $stage) { Remove-Item -Recurse -Force -ErrorAction Stop $stage }
+New-Item -ItemType Directory -Force -ErrorAction Stop -Path $stage | Out-Null
+Copy-Item -Force -ErrorAction Stop (Join-Path $repoRoot 'target\release\rambl-server.exe') (Join-Path $stage 'rambl-server.exe')
 @'
 TYPESAFE_API_KEY=
 RAMBL_PORT=3160
@@ -31,7 +31,7 @@ RAMBL_ADMIN_EMAILS=boss@example.com
 # networks, e.g. 10.0.0.1, 10.0.0.0/8
 RAMBL_TRUSTED_PROXIES=
 GOOGLE_CLIENT_ID=138340425604-qagdhrfblj66i5s9i9icq07lb32sd2g2.apps.googleusercontent.com
-'@ | Set-Content -Encoding utf8 (Join-Path $stage 'rambl.env.example')
+'@ | Set-Content -Encoding utf8 -ErrorAction Stop (Join-Path $stage 'rambl.env.example')
 
 Write-Host "Staged release at $stage"
 if (-not $env:NO_OPEN) { Start-Process explorer.exe $stage }
