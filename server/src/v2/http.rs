@@ -15,6 +15,7 @@ use axum::{
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use todo_core::{ApiError, ErrorCode, Snapshot, Task, TaskDraft};
+use uuid::Uuid;
 
 use super::admin_web;
 use super::app::{self, App, ImportResult, Patch};
@@ -26,6 +27,11 @@ use capture::{Revision, capture_text};
 use chrono::{DateTime, NaiveDate, Utc};
 use judge::AnyJudge;
 use todo_core::{LocalContext, Source, TaskId};
+
+/// Maximum body size for a JSON import (2 MiB).
+const IMPORT_MAX_BODY: usize = 2 * 1024 * 1024;
+/// Maximum number of tasks in one JSON import.
+const IMPORT_MAX_TASKS: usize = 500;
 
 const TZ_HEADER: HeaderName = HeaderName::from_static("x-rambl-tz");
 const ANON_HEADER: HeaderName = HeaderName::from_static("x-rambl-anon");
@@ -926,25 +932,125 @@ async fn clear_occurrence(
     Ok(Json(app.clear_occurrence(&id, date, &user, tz)?))
 }
 
-/// `POST /api/v1/import`: a multipart `file` holding an .ics calendar.
+/// `POST /api/v1/import`: either a multipart `file` with an .ics calendar or a
+/// JSON body matching `GET /api/v1/export` (`{ "tasks": [...] }`).
+///
+/// All imported tasks get fresh IDs and belong to the caller. Bad JSON or an
+/// invalid task returns 400 and writes nothing (all or nothing).
 async fn import(
     State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
-    mut multipart: Multipart,
+    request: axum::extract::Request,
 ) -> Result<Json<ImportResult>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let mut ics_text = None;
-    while let Some(field) = multipart.next_field().await.map_err(bad_request)? {
-        if field.name() == Some("file") {
-            ics_text = Some(field.text().await.map_err(bad_request)?);
+
+    // Decide based on Content-Type.
+    let ct = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if ct.starts_with("multipart/form-data") {
+        // Existing .ics import path.
+        let mut multipart = Multipart::from_request(request, &())
+            .await
+            .map_err(bad_request)?;
+        let mut ics_text = None;
+        while let Some(field) = multipart.next_field().await.map_err(bad_request)? {
+            if field.name() == Some("file") {
+                ics_text = Some(field.text().await.map_err(bad_request)?);
+            }
+        }
+        let ics_text =
+            ics_text.ok_or_else(|| bad_request("send the calendar as multipart field `file`"))?;
+        let events = ics_import::parse_ics(&ics_text).map_err(|error| bad_request(error.0))?;
+        let mut app = shared.app.lock().unwrap();
+        return Ok(Json(app.import(events, &user, tz)?));
+    }
+
+    // JSON import path: same shape as GET /api/v1/export.
+    let body = request.into_body();
+    let bytes = axum::body::to_bytes(body, IMPORT_MAX_BODY)
+        .await
+        .map_err(|e| bad_request(e.to_string()))?;
+    if bytes.len() > IMPORT_MAX_BODY {
+        return Err(bad_request(format!(
+            "request body too large (max {} bytes)",
+            IMPORT_MAX_BODY
+        )));
+    }
+
+    #[derive(Deserialize)]
+    struct ImportIn {
+        tasks: Vec<Task>,
+    }
+
+    let import_in: ImportIn =
+        serde_json::from_slice(&bytes).map_err(|e| bad_request(format!("invalid JSON: {}", e)))?;
+
+    if import_in.tasks.is_empty() {
+        return Err(bad_request("no tasks to import"));
+    }
+    if import_in.tasks.len() > IMPORT_MAX_TASKS {
+        return Err(bad_request(format!(
+            "too many tasks (max {})",
+            IMPORT_MAX_TASKS
+        )));
+    }
+
+    // Validate all tasks before writing any (all or nothing).
+    for (i, task) in import_in.tasks.iter().enumerate() {
+        if task.title.trim().is_empty() {
+            return Err(bad_request(format!("task {} has an empty title", i)));
+        }
+        if task.title.len() > 200 {
+            return Err(bad_request(format!("task {} title is too long", i)));
+        }
+        if task.duration_min < 1 || task.duration_min > 480 {
+            return Err(bad_request(format!(
+                "task {} duration_min must be 1..480, got {}",
+                i, task.duration_min
+            )));
         }
     }
-    let ics_text =
-        ics_text.ok_or_else(|| bad_request("send the calendar as multipart field `file`"))?;
-    let events = ics_import::parse_ics(&ics_text).map_err(|error| bad_request(error.0))?;
-    let mut app = shared.app.lock().unwrap();
-    Ok(Json(app.import(events, &user, tz)?))
+
+    // All valid — now write them.
+    let app = shared.app.lock().unwrap();
+    let now = app.now();
+    let tasks = app.store().tasks(&user).map_err(store_failed)?;
+    drop(app);
+    let min_order = tasks.iter().map(|t| t.order).min().unwrap_or(0);
+
+    let mut created = Vec::new();
+    for (offset, mut task) in import_in.tasks.into_iter().enumerate() {
+        // Assign fresh ID — never trust the file's id.
+        let new_id = TaskId(format!("t{}", Uuid::new_v4().simple()));
+        task.id = new_id.clone();
+        task.created = now;
+        task.updated_at = now;
+        // Newest-first ordering like new tasks.
+        task.order = min_order - 1 - offset as i64;
+        // Clear external_uid — this is not a calendar import.
+        task.external_uid = None;
+
+        let app = shared.app.lock().unwrap();
+        app.store().put(&user, task).map_err(|e| {
+            HttpError(ApiError {
+                code: ErrorCode::Internal,
+                message: format!("store error: {}", e),
+            })
+        })?;
+        created.push(new_id);
+    }
+
+    let app = shared.app.lock().unwrap();
+    let snapshot = app.snapshot(&user, tz)?;
+    Ok(Json(ImportResult {
+        created,
+        updated: Vec::new(),
+        snapshot,
+    }))
 }
 
 fn bad_request(message: impl std::fmt::Display) -> HttpError {
@@ -1663,6 +1769,191 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let snapshot: Snapshot = serde_json::from_value(body["snapshot"].clone()).unwrap();
         assert_invariant(&snapshot);
+    }
+
+    // ---- JSON import tests ----
+
+    /// Export from one user, import into another — the round trip creates fresh ids.
+    #[tokio::test]
+    async fn import_json_round_trip_export_then_import() {
+        let verifier = PerCredential(vec![
+            (
+                "sam-credential",
+                auth::TokenInfo::for_test("google-1", "sam@example.com"),
+            ),
+            (
+                "lee-credential",
+                auth::TokenInfo::for_test("google-2", "lee@example.com"),
+            ),
+        ]);
+        let router = super::router_with_verifier(
+            App::new(
+                Box::new(MemoryStore::default()) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(verifier),
+            false,
+            Caps::default(),
+            None,
+            TrustedProxies::default(),
+        );
+        let sam = sign_in_with(&router, "sam-credential").await;
+        let lee = sign_in_with(&router, "lee-credential").await;
+
+        // Sam creates a task and exports it.
+        let (status, _) = send_as(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(&draft_titled("Pick up dry cleaning")),
+            Some(&sam),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, export) = send_as(&router, "GET", "/api/v1/export", None, Some(&sam)).await;
+        assert_eq!(status, StatusCode::OK);
+        let export_json = serde_json::to_string(&export).unwrap();
+
+        // Lee imports Sam's export.
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/import")
+            .header("x-rambl-tz", "America/New_York")
+            .header("authorization", format!("Bearer {lee}"))
+            .header("content-type", "application/json")
+            .body(Body::from(export_json))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        // Lee now has the task with a fresh id.
+        assert_eq!(result["created"].as_array().unwrap().len(), 1);
+        let snapshot: Snapshot = serde_json::from_value(result["snapshot"].clone()).unwrap();
+        assert_eq!(snapshot.tasks.len(), 1);
+        assert_eq!(snapshot.tasks[0].title, "Pick up dry cleaning");
+        // The id is different from Sam's original.
+        let sam_export_tasks: Vec<&serde_json::Value> =
+            export["tasks"].as_array().unwrap().iter().collect();
+        let original_id = &sam_export_tasks[0]["id"];
+        assert_ne!(
+            snapshot.tasks[0].id.0,
+            original_id.as_str().unwrap(),
+            "imported task must get a fresh id"
+        );
+        assert_invariant(&snapshot);
+    }
+
+    /// Malformed JSON returns 400 and writes nothing.
+    #[tokio::test]
+    async fn import_json_malformed_file_returns_400() {
+        let router = router_at(sunday_night());
+        let (status, body, _) = send_raw(
+            &router,
+            "POST",
+            "/api/v1/import",
+            "application/json",
+            "not json at all",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("invalid JSON")
+        );
+
+        // Empty tasks array is also rejected.
+        let (status, _, _) = send_raw(
+            &router,
+            "POST",
+            "/api/v1/import",
+            "application/json",
+            r#"{"tasks":[]}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// A file with too many tasks is rejected.
+    #[tokio::test]
+    async fn import_json_oversized_task_count_returns_400() {
+        let router = router_at(sunday_night());
+        let tasks: Vec<String> = (0..IMPORT_MAX_TASKS + 1)
+            .map(|i| format!(r#"{{"id":"t{i}","title":"Task {i}","duration_min":30,"when":{{"kind":"anytime"}},"done":false,"order":0,"label":"Other","priority":"low","source":"text","created":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","external_uid":null}}"#))
+            .collect();
+        let body = format!(r#"{{"tasks":[{}]}}"#, tasks.join(","));
+        let (status, _, _) =
+            send_raw(&router, "POST", "/api/v1/import", "application/json", &body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// A file naming another user's id leaves that user untouched.
+    #[tokio::test]
+    async fn import_json_does_not_affect_other_users() {
+        let verifier = PerCredential(vec![
+            (
+                "sam-credential",
+                auth::TokenInfo::for_test("google-1", "sam@example.com"),
+            ),
+            (
+                "lee-credential",
+                auth::TokenInfo::for_test("google-2", "lee@example.com"),
+            ),
+        ]);
+        let router = super::router_with_verifier(
+            App::new(
+                Box::new(MemoryStore::default()) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(verifier),
+            false,
+            Caps::default(),
+            None,
+            TrustedProxies::default(),
+        );
+        let sam = sign_in_with(&router, "sam-credential").await;
+        let lee = sign_in_with(&router, "lee-credential").await;
+
+        // Lee has a task.
+        let (status, _) = send_as(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(&draft_titled("Lee's task")),
+            Some(&lee),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Sam imports a task with Lee's id — Sam should get a fresh id, Lee untouched.
+        let body = r#"{"tasks":[{"id":"tlee-fake","title":"Sam's import","duration_min":30,"when":{"kind":"anytime"},"done":false,"order":0,"label":"Other","priority":"low","source":"text","created":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","external_uid":null}]}"#;
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/import")
+            .header("x-rambl-tz", "America/New_York")
+            .header("authorization", format!("Bearer {sam}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_owned()))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Lee still has only their own task.
+        let (status, lee_export) =
+            send_as(&router, "GET", "/api/v1/export", None, Some(&lee)).await;
+        assert_eq!(status, StatusCode::OK);
+        let lee_titles: Vec<&str> = lee_export["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(lee_titles, vec!["Lee's task"]);
     }
 
     async fn send_raw(
