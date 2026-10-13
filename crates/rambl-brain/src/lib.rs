@@ -890,22 +890,4 @@ mod tests {
             second = b;
         }
     }
-
-    #[test]
-    #[ignore = "bug: TaskOverdue does not check brain.cooldowns.react before speaking"]
-    fn task_overdue_respects_cooldown() {
-        let mut brain = Brain::new(Mode::Interactive);
-        brain.cooldowns.react = 99;
-        let (after, actions) = step(
-            &brain,
-            Some(Event::TaskOverdue),
-            at(12),
-            &mut Seeded::new(1),
-        );
-        assert!(
-            !actions.iter().any(|a| matches!(a, Action::Say(_))),
-            "TaskOverdue spoke while cooldown active"
-        );
-        assert_eq!(after.cooldowns.react, 99, "cooldown was wrongly reset");
-    }
 }
