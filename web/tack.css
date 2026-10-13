@@ -1,0 +1,281 @@
+/* Tack board — done tasks become paper strips hanging from a pin.
+   Huang owns this file (web/src/tack.rs is its other half). Colours come from
+   theme.css tokens: the parchment names the redesign settles on, with
+   fallbacks to the tokens on main today so both render. Geometry constants
+   (pin y, strip width) mirror the Rust side; change both together. */
+
+:root {
+  --tack-strip-w: 140px;
+  --tack-strip-h: 32px;
+  --tack-pin-y: 12px;
+  /* Strips are written-on paper: slightly warmer than the page. */
+  --tack-paper: var(--wheat, var(--paper-raised, #ecd7af));
+  --tack-ink: var(--coffee, var(--ink, #5d4732));
+  --tack-rule: var(--chamoisee, var(--rule, #a7865d));
+  --tack-accent: var(--golden-brown, var(--accent, #9f682e));
+  --tack-danger: var(--danger, #a5342a);
+}
+
+/* The pane owns the board's coordinate space; on a phone the board is fixed
+   to the viewport instead, so it can pull up over the list. */
+:where(.tasks-pane) {
+  position: relative;
+}
+
+.tack-board {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  z-index: 2;
+  width: 176px;
+  min-height: 560px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--tack-paper) 46%, transparent);
+  border-left: 1px dashed var(--tack-rule);
+  touch-action: none;
+}
+
+/* Desktop reserves room for the board by indenting the list. */
+@media (min-width: 701px) {
+  :where(.tasks-pane) {
+    padding-right: 188px;
+  }
+}
+
+/* --- the pin --- */
+
+.tack-pin {
+  position: absolute;
+  left: 50%;
+  top: var(--tack-pin-y);
+  z-index: 60;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  transform: translate(-50%, -50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+/* A drawing pin: a domed head with a needle shadow, in the accent brown —
+   readable on parchment without shouting. */
+.tack-pin-head {
+  display: block;
+  width: 16px;
+  height: 16px;
+  margin: 14px auto 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 30%,
+      color-mix(in srgb, var(--tack-accent) 45%, white) 0 28%,
+      var(--tack-accent) 55%,
+      color-mix(in srgb, var(--tack-accent) 60%, black) 100%);
+  box-shadow: 0 2px 2px rgba(43, 35, 24, 0.35);
+}
+
+.tack-pin:focus-visible {
+  outline: 2px solid var(--tack-accent);
+  outline-offset: 2px;
+  border-radius: 50%;
+}
+
+/* --- the strips --- */
+
+.tack-strips {
+  position: absolute;
+  inset: 0;
+}
+
+.tack-strip {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--tack-strip-w);
+  height: var(--tack-strip-h);
+  /* The pin hole: rotation happens around the top centre of the strip. */
+  transform-origin: 50% 5px;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-2, 0.5rem) 0 0.65rem;
+  font-family: var(--font-hand, cursive);
+  font-size: 0.85rem;
+  color: var(--tack-ink);
+  background: var(--tack-paper);
+  /* Cut paper: square shoulders with a pin hole punched top-left of centre. */
+  border-radius: 1px;
+  box-shadow: 0 1px 2px rgba(43, 35, 24, 0.25);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  will-change: transform;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The pin hole itself. */
+.tack-strip::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 5px;
+  height: 5px;
+  margin-left: -2.5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--tack-ink) 55%, transparent);
+  box-shadow: inset 0 1px 1px rgba(43, 35, 24, 0.5);
+}
+
+.tack-strip-title {
+  color: inherit;
+  font: inherit;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* The hand-drawn strike-through the cut follows. */
+  text-decoration: line-through;
+  text-decoration-thickness: 2px;
+  text-decoration-color: color-mix(in srgb, var(--tack-danger) 70%, var(--tack-ink));
+  text-decoration-skip-ink: none;
+}
+
+/* A strip lying loose sits a touch heavier on the paper. */
+.tack-strip.aside {
+  box-shadow: 1px 2px 3px rgba(43, 35, 24, 0.3);
+  transform-origin: 50% 50%;
+  cursor: grab;
+}
+
+/* Strips in the pile under the pin: flat, slightly shrunken, quiet. */
+.tack-strip.stacked {
+  transform-origin: 50% 50%;
+  opacity: 0.92;
+}
+
+.tack-strip:focus-visible {
+  outline: 2px solid var(--tack-accent);
+  outline-offset: 1px;
+}
+
+/* Crumple: the paper balls up and fades. The keyframes own `transform`
+   while running, so the loop's inline placement gives way for the moment. */
+.tack-strip.crumpling {
+  animation: tack-crumple 360ms ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes tack-crumple {
+  20% {
+    transform: scale(0.9) rotate(-6deg);
+  }
+  100% {
+    transform: scale(0.2) rotate(24deg) translateY(6px);
+    opacity: 0;
+    filter: brightness(0.85);
+  }
+}
+
+/* --- the bin, on screen only while a strip is held --- */
+
+.tack-bin {
+  position: absolute;
+  right: 10px;
+  bottom: 12px;
+  z-index: 70;
+  width: 46px;
+  height: 54px;
+  border: 2px dashed var(--tack-rule);
+  border-top-left-radius: 4px;
+  border-top-right-radius: 4px;
+  background: color-mix(in srgb, var(--tack-paper) 60%, transparent);
+  opacity: 0.85;
+}
+
+.tack-bin::after {
+  content: "";
+  position: absolute;
+  left: -6px;
+  right: -6px;
+  top: -7px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--tack-rule);
+}
+
+/* --- phone: a pull-up strip along the bottom --- */
+
+.tack-tab {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  /* Collapsed, the board is just the tab above the capture bar; pulled up it
+     covers the lower half of the page. */
+  .tack-board {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: calc(var(--tap, 2.75rem) + var(--space-2, 0.5rem) + env(safe-area-inset-bottom, 0px));
+    z-index: 4;
+    width: auto;
+    min-height: 0;
+    height: 0;
+    border-left: none;
+    border-top: 1px dashed var(--tack-rule);
+    background: color-mix(in srgb, var(--tack-paper) 88%, transparent);
+    transition: height var(--dur, 200ms) ease;
+    overflow: visible;
+  }
+
+  .tack-board.open {
+    height: 46dvh;
+    overflow: hidden;
+    box-shadow: 0 -2px 6px rgba(43, 35, 24, 0.15);
+  }
+
+  .tack-tab {
+    display: inline-flex;
+    position: absolute;
+    top: -36px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    align-items: center;
+    gap: 0.35rem;
+    min-height: 32px;
+    padding: 0 var(--space-3, 0.75rem);
+    font-family: var(--font-hand, cursive);
+    color: var(--tack-ink);
+    background: var(--tack-paper);
+    border: 1px dashed var(--tack-rule);
+    border-bottom: none;
+    border-radius: 14px 14px 0 0;
+    cursor: pointer;
+  }
+
+  .tack-tab-count {
+    font-size: 0.75rem;
+    color: var(--tack-accent);
+  }
+
+  /* The pile and hanging strips share the wider board: keep the pin centred
+     on the page, strips keep their measured attach points. */
+  .tack-bin {
+    left: 12px;
+    right: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tack-strip.crumpling {
+    animation: none;
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  .tack-board {
+    transition: none;
+  }
+}
