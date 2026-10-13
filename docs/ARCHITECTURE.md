@@ -97,6 +97,7 @@ Anonymous users do not sign in. Their account and tasks are deleted after 30 day
 | `DELETE /api/v1/tasks/{id}` | none | `Snapshot` |
 | `POST /api/v1/import` | multipart `file` (.ics) | `{created: [id], updated: [id], snapshot}`. Events become tasks (`At`, `source: Calendar`); same UID updates the existing task. Cancelled and transparent events are skipped. Overlapping `At` tasks are allowed and drawn side by side. |
 | `GET /api/v1/calendar.ics` | none | iCalendar |
+| `GET /api/v1/export` | none | `{tasks: [Task]}` as an attachment download (`rambl-export-YYYY-MM-DD.json`, `Cache-Control: no-store`). The date is the caller's own, from the request zone, so it is the caller's claim rather than the server's clock. Every task the caller owns, with all fields; scoped to the caller like every read. A caller with no credentials is a fresh anonymous account, so the download is 200 with an empty list rather than 401. |
 | `GET /admin` | none | The admin page (HTML). 404 when `RAMBL_ADMIN_EMAILS` is unset, and for any signed-in user whose email is not in it. |
 | `GET /api/v1/admin/usage` | none | Today's captures by user (id, plan, captures) and by address, plus totals per `anon`/`free`/`paid` plan. 404 for anyone who is not an admin. |
 | `GET /api/v1/admin/blocks` | none | Everything currently blocked, `[{kind: "user"|"ip", value}]`. 404 for anyone who is not an admin. |
