@@ -231,6 +231,7 @@ h3 {
 /* --- Masthead: a heading written on the page, closed with a rule --- */
 
 header {
+  position: relative;
   display: grid;
   gap: var(--space-2);
   margin-bottom: var(--space-4);
@@ -326,9 +327,39 @@ button:hover {
   text-underline-offset: 4px;
 }
 
-/* Checkboxes and radios stay small (1.25rem): their 44px hit area comes from
-   the row or the label they sit in, not from the control itself. */
-input[type="checkbox"],
+/* Tick boxes are drawn on the paper, not browser widgets: a slightly
+   crooked square, and a tick in golden-brown ink when it is on. Radios
+   keep the browser's circle but take the accent colour. The 44px hit
+   area comes from the row or the label they sit in, not the control. */
+input[type="checkbox"] {
+  position: relative;
+  width: 1.35rem;
+  height: 1.35rem;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-bottom: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--rule-strong);
+  border-radius: 2px 4px 3px 5px / 4px 2px 5px 3px;
+  cursor: pointer;
+}
+
+input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 22%;
+  top: 38%;
+  width: 32%;
+  height: 46%;
+  border-right: 2.5px solid var(--accent);
+  border-bottom: 2.5px solid var(--accent);
+  transform: rotate(38deg);
+}
+
 input[type="radio"] {
   width: 1.25rem;
   height: 1.25rem;
@@ -352,7 +383,8 @@ a {
 /* The active tab or filter: underlined in golden brown, like a marked word. */
 .pane-switch button.active,
 .label-filters button.active,
-.duration-chips button.active {
+.duration-chips button.active,
+.gear-choices button.active {
   font-weight: 700;
   color: var(--accent);
   text-decoration: underline;
@@ -918,15 +950,11 @@ a {
 
 /* One text run: block layout, not flex, so the space in
    "Finish history paper — 60 min" survives between the inline children.
-   The run shrinks and ellipsizes instead of wrapping, so a long title
-   stays on one ruled line with the checkbox and Delete. */
+   A long title wraps onto the next ruled line; it is never cut short. */
 .task-open {
   display: block;
   flex: 1 1 0;
   min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   padding: var(--space-2) 0;
   cursor: pointer;
 }
@@ -1058,27 +1086,89 @@ a {
   color: var(--danger);
 }
 
-/* --- Settings, account and notices --- */
+/* --- The gear: every setting lives behind one small button, top right --- */
 
-.settings {
-  margin-bottom: var(--space-4);
-  padding: var(--space-2) var(--space-3);
-  border: none;
-  border-radius: 0;
-  background: none;
+/* Screen-reader text: visible to assistive tech, invisible on the paper. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
 }
 
-.settings summary {
-  display: flex;
+.gear-wrap {
+  position: absolute;
+  top: 0;
+  right: 0;
+}
+
+.gear {
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
+  min-width: var(--tap);
   min-height: var(--tap);
-  cursor: pointer;
-  font-family: var(--font-heading);
-  font-weight: 700;
-  letter-spacing: 0.05em;
+  padding: var(--space-1);
+  color: var(--ink-soft);
 }
 
-.settings label {
+/* The gear is an icon, not a word: underline on hover would look broken. */
+.gear:hover {
+  text-decoration: none;
+  color: var(--accent);
+}
+
+/* The menu is a loose sheet laid over the page, like the edit dialog. */
+.gear-menu {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 9;
+  width: min(20rem, calc(100vw - 2 * var(--gutter)));
+  max-height: calc(100dvh - 6rem);
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  background-color: var(--paper-raised);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--sheet-shadow);
+}
+
+.gear-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+}
+
+.gear-menu h3 {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+}
+
+.gear-menu h3:first-child {
+  margin-top: 0;
+}
+
+.gear-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.gear-choices button {
+  min-height: var(--tap);
+  padding: 0 var(--space-2);
+}
+
+.gear-menu label {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1087,15 +1177,36 @@ a {
   font-size: var(--text-sm);
 }
 
-.settings input,
-.settings select {
+.gear-menu input,
+.gear-menu select {
   max-width: 10rem;
 }
 
-.settings a {
-  display: inline-flex;
+.gear-menu a {
+  display: flex;
   align-items: center;
   min-height: var(--tap);
+}
+
+/* A full-width row: Import .ics, Download calendar. */
+.gear-item {
+  width: 100%;
+  min-height: var(--tap);
+  text-align: left;
+}
+
+/* The file input itself is never seen; its label opens it. */
+.gear-file {
+  display: none;
+}
+
+.gear-rule {
+  margin: var(--space-3) 0;
+  border-top: 1px solid var(--rule);
+}
+
+.gear-menu .version {
+  margin-top: var(--space-2);
 }
 
 .account {
@@ -1210,6 +1321,16 @@ a {
 
   .rambo:active {
     transform: translateY(1rem) rotate(8deg);
+  }
+
+  /* Pressed like a pen nib: the gear tilts while its menu is open. */
+  .gear {
+    transition: transform var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+
+  .gear[aria-expanded="true"] {
+    transform: rotate(24deg);
+    color: var(--accent);
   }
 
   .mic.listening {
