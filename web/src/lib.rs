@@ -154,6 +154,8 @@ pub fn App() -> impl IntoView {
     let capture_text = RwSignal::new(String::new());
     // Pen queue: task IDs the client just created, so the pen writes only those rows
     let pen_queue = RwSignal::new(Vec::<TaskId>::new());
+    // Capture form ref so Rambo can requestSubmit on release
+    let form_ref = NodeRef::<leptos::html::Form>::new();
 
     window_event_listener(leptos::ev::keydown, move |event| {
         if event.key() == " "
@@ -170,6 +172,7 @@ pub fn App() -> impl IntoView {
             <h1>"Rambl"</h1>
             <account::HeaderLink />
             <CaptureBox
+                form_ref
                 snapshot=snapshot
                 set_snapshot=set_snapshot
                 state=mascot_state
@@ -220,6 +223,7 @@ pub fn App() -> impl IntoView {
             set_brain_event
             pen_pos
             capture_text
+            form_ref
         />
     }
 }
@@ -268,6 +272,7 @@ fn track_pane(_main: NodeRef<leptos::html::Main>, _set_pane: WriteSignal<u8>) {}
 
 #[component]
 fn CaptureBox(
+    form_ref: NodeRef<leptos::html::Form>,
     snapshot: ReadSignal<Snapshot>,
     set_snapshot: WriteSignal<Snapshot>,
     state: ReadSignal<mascot::State>,
@@ -401,7 +406,7 @@ fn CaptureBox(
     };
 
     view! {
-        <form class="capture" on:submit=handle_submit>
+        <form node_ref=form_ref class="capture" on:submit=handle_submit>
             <input
                 node_ref=input_ref
                 prop:value=text
@@ -434,6 +439,8 @@ fn Rambo(
     pen_pos: RwSignal<(f64, f64)>,
     /// Transcript buffer: filled while listening, sent as capture on release
     capture_text: RwSignal<String>,
+    /// Capture form: Rambo calls requestSubmit on release
+    form_ref: NodeRef<leptos::html::Form>,
 ) -> impl IntoView {
     let start_return = move || {
         if mascot::prefers_reduced_motion() {
@@ -494,15 +501,20 @@ fn Rambo(
     let stop_speech_and_send = {
         let ss = speech_session.clone();
         let capture = capture_text;
+        let form = form_ref;
         move || {
             if let Some(session) = ss.borrow().as_ref() {
                 session.stop();
             }
             set_talking.set(false);
-            // Send the transcript as a capture so the CaptureBox can submit it
+            // Send the transcript as a capture and submit the form
             let text = transcript.borrow().clone();
             if !text.is_empty() {
-                capture.set(text);
+                capture.set(text.clone());
+                // Submit the capture form so the transcript creates a task
+                if let Some(form_el) = form.get() {
+                    let _ = form_el.request_submit();
+                }
             }
         }
     };
