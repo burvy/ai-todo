@@ -329,8 +329,16 @@ fn CaptureBox(
             let sel = input_el.selection_start().ok().flatten().unwrap_or(0);
             let caret_x = rect.left() + f64::from(sel) * 8.0;
             let caret_y = rect.top() + rect.height() / 2.0;
-            // pen_pos is now the absolute center position (not an offset)
-            pen_pos.set(pen::writing_pen_center(caret_x, caret_y));
+            let center = pen::writing_pen_center(caret_x, caret_y);
+            // Convert to offset from Rambo's home position
+            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                if let Some(rambo) = doc.query_selector(".rambo").ok().flatten() {
+                    let rrect = rambo.get_bounding_client_rect();
+                    let hx = rrect.left() + rrect.width() / 2.0;
+                    let hy = rrect.top() + rrect.height() / 2.0;
+                    pen_pos.set((center.0 - hx, center.1 - hy));
+                }
+            }
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -465,14 +473,16 @@ fn Rambo(
         .forget();
     };
 
+    let rambo_ref = NodeRef::<leptos::html::Button>::new();
+
     // Track whether pointer moved (to distinguish Release from Drop)
     let moved = std::rc::Rc::new(std::cell::RefCell::new(false));
     let moved_down = moved.clone();
     let moved_move = moved.clone();
     let moved_for_up = moved.clone();
 
-    // Grab state: track pointer and pen position at grab so drag follows the
-    // pointer exactly, even if the element's home position has shifted since mount.
+    // Grab state: track pointer position and pen offset at grab so drag follows
+    // the pointer exactly, even if the element's home position has shifted since mount.
     // This matches the v1 approach (penDrag.base + dx/dy).
     let grab_state = std::rc::Rc::new(std::cell::RefCell::new(None::<(f64, f64, f64, f64)>));
     let grab_state_down = grab_state.clone();
@@ -536,8 +546,6 @@ fn Rambo(
     let stop_speech_cancel = stop_speech_and_send.clone();
     let stop_speech_key = stop_speech_and_send.clone();
 
-    let rambo_ref = NodeRef::<leptos::html::Button>::new();
-
     view! {
         <button
             node_ref=rambo_ref
@@ -554,28 +562,11 @@ fn Rambo(
                 }
                 set_brain_event.set(Some(rambl_brain::Event::Poked));
                 *moved_down.borrow_mut() = false;
-                // When Rambo is grabbed from the nest (absolute), measure his screen
-                // position so the switch to fixed positioning doesn't jump.
-                let (px, py) = {
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        if let Some(btn) = rambo_ref.get() {
-                            let rect = btn.get_bounding_client_rect();
-                            (rect.left() + rect.width() / 2.0, rect.top() + rect.height() / 2.0)
-                        } else {
-                            pen_pos.get_untracked()
-                        }
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        let _ = rambo_ref;
-                        pen_pos.get_untracked()
-                    }
-                };
-                // Save grab state: pointer position and element center
+                // Save grab state: pointer position and current pen offset at grab
                 let gx = ev.client_x() as f64;
                 let gy = ev.client_y() as f64;
-                *grab_state_down.borrow_mut() = Some((gx, gy, px, py));
+                let (ox, oy) = pen_pos.get_untracked();
+                *grab_state_down.borrow_mut() = Some((gx, gy, ox, oy));
                 set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Grab));
                 set_talking.set(true);
                 start_speech_down();
@@ -586,10 +577,10 @@ fn Rambo(
             on:pointermove=move |ev| {
                 if matches!(state.get_untracked(), mascot::State::Dragging) {
                     *moved_move.borrow_mut() = true;
-                    if let Some((gx, gy, px, py)) = *grab_state_move.borrow() {
+                    if let Some((gx, gy, ox, oy)) = *grab_state_move.borrow() {
                         let dx = ev.client_x() as f64 - gx;
                         let dy = ev.client_y() as f64 - gy;
-                        pen_pos.set((px + dx, py + dy));
+                        pen_pos.set((ox + dx, oy + dy));
                     }
                 }
             }
@@ -607,10 +598,10 @@ fn Rambo(
                     return;
                 }
                 // Update pen position one last time using delta from grab
-                if let Some((gx, gy, px, py)) = *grab_state_up.borrow() {
+                if let Some((gx, gy, ox, oy)) = *grab_state_up.borrow() {
                     let dx = ev.client_x() as f64 - gx;
                     let dy = ev.client_y() as f64 - gy;
-                    pen_pos.set((px + dx, py + dy));
+                    pen_pos.set((ox + dx, oy + dy));
                 }
                 let client_x = ev.client_x() as f64;
                 let client_y = ev.client_y() as f64;
@@ -1026,17 +1017,21 @@ fn TaskList(
                                     row.class_list().add(&arr).ok();
                                 }
                                 let rect = row.get_bounding_client_rect();
-                                // pen_pos is now the absolute center position
-                                pen_pos.set(pen::writing_pen_center(
+                                let center = pen::writing_pen_center(
                                     rect.left() + 40.0,
                                     rect.top() + rect.height() / 2.0,
-                                ));
+                                );
+                                // Convert to offset from Rambo's home position
+                                if let Some(rambo) = doc.query_selector(".rambo").ok().flatten() {
+                                    let rrect = rambo.get_bounding_client_rect();
+                                    let hx = rrect.left() + rrect.width() / 2.0;
+                                    let hy = rrect.top() + rrect.height() / 2.0;
+                                    pen_pos.set((center.0 - hx, center.1 - hy));
+                                }
                             }
                         }
                         gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
                         set_state.set(mascot::State::WritingRow);
-                        // Letter-by-letter writing: wrap each character, reveal one by one,
-                        // and position Rambo's nib at the current character.
                         if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
                             if let Some(row) = doc
                                 .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
@@ -1053,69 +1048,10 @@ fn TaskList(
                                     add_arr.push(&"pen-writing".into());
                                     row.class_list().add(&add_arr).ok();
                                 }
-                                // Wrap each character in a span for letter-by-letter reveal
-                                if let Some(title_el) =
-                                    row.query_selector(".pen-title").ok().flatten()
-                                {
-                                    let text = title_el.text_content().unwrap_or_default();
-                                    let chars: Vec<char> = text.chars().collect();
-                                    if !chars.is_empty() {
-                                        // Replace title content with wrapped characters
-                                        let html: String = chars
-                                            .iter()
-                                            .map(|c| {
-                                                let escaped = match c {
-                                                    '&' => "&amp;".to_string(),
-                                                    '<' => "&lt;".to_string(),
-                                                    '>' => "&gt;".to_string(),
-                                                    '"' => "&quot;".to_string(),
-                                                    '\'' => "&#39;".to_string(),
-                                                    _ => c.to_string(),
-                                                };
-                                                format!(
-                                                    "<span class=\"pen-char\">{}</span>",
-                                                    escaped
-                                                )
-                                            })
-                                            .collect();
-                                        title_el.set_inner_html(&html);
-                                        // Reveal characters one by one and position nib
-                                        let char_spans: Vec<_> = (0..chars.len())
-                                            .map(|i| {
-                                                row.query_selector(&format!(
-                                                    ".pen-title .pen-char:nth-child({})",
-                                                    i + 1
-                                                ))
-                                                .ok()
-                                                .flatten()
-                                            })
-                                            .collect();
-                                        let title_rect = title_el.get_bounding_client_rect();
-                                        let char_count = chars.len();
-                                        let mut revealed = 0;
-                                        while revealed < char_count {
-                                            if let Some(span) = char_spans[revealed].clone() {
-                                                let _ = span.class_list().add_1("revealed");
-                                                // Position nib at this character
-                                                let span_rect = span.get_bounding_client_rect();
-                                                let nib_x =
-                                                    span_rect.left() + span_rect.width() / 2.0;
-                                                let nib_y =
-                                                    title_rect.top() + title_rect.height() / 2.0;
-                                                pen_pos.set(pen::writing_pen_center(nib_x, nib_y));
-                                            }
-                                            revealed += 1;
-                                            let pause = pen::WRITE_MS / (char_count as u32);
-                                            if pause > 0 {
-                                                gloo_timers::future::TimeoutFuture::new(pause)
-                                                    .await;
-                                            }
-                                        }
-                                    }
-                                }
                             }
                         }
-                        // Remove pen-writing class and clean up character spans
+                        gloo_timers::future::TimeoutFuture::new(pen::WRITE_MS).await;
+                        // Remove pen-writing class so the title becomes fully visible
                         if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
                             if let Some(row) = doc
                                 .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
@@ -1125,13 +1061,6 @@ fn TaskList(
                                 let remove_arr = Array::new();
                                 remove_arr.push(&"pen-writing".into());
                                 row.class_list().remove(&remove_arr).ok();
-                                // Restore plain text (unwrap character spans)
-                                if let Some(title_el) =
-                                    row.query_selector(".pen-title").ok().flatten()
-                                {
-                                    let text = title_el.text_content().unwrap_or_default();
-                                    title_el.set_inner_html(&text);
-                                }
                             }
                         }
                         // Fly home after this row

@@ -973,13 +973,6 @@ a {
   visibility: visible;
 }
 
-/* Individual characters, hidden until the nib reaches them */
-.pen-char {
-  visibility: hidden;
-}
-.pen-char.revealed {
-  visibility: visible;
-}
 
 .pen-underline {
   display: none;
