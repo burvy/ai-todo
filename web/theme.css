@@ -474,12 +474,14 @@ a {
 }
 
 /* The single Rambo button: rests in the nest, fixed when away.
-   All states (dragging, writing, skittering) use CSS classes on this one element. */
+   All states (dragging, writing, skittering) use CSS classes on this one element.
+   At home he sits in the nest, which is the last thing in the capture bar, so
+   he is anchored to the bar's right edge rather than to a spot of his own. */
 .rambo {
   position: absolute;
   top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  right: 2px;
+  transform: translateY(-50%);
   z-index: 50;
   display: inline-flex;
   width: calc(var(--tap) * 1.25 - 4px);
@@ -1370,7 +1372,9 @@ a {
   }
 
   .capture {
-    position: static;
+    /* The capture bar sits in the header on a wide desk, so it has to stay a
+       positioning context for Rambo, who is anchored to its right edge. */
+    position: relative;
     padding: 0;
     background-color: transparent;
     background-image: none;
