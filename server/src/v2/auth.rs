@@ -129,7 +129,11 @@ pub struct GoogleVerifier {
 impl GoogleVerifier {
     pub fn new(client_id: impl Into<String>) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            // A Google that never answers must not hold a sign-in open for ever.
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .unwrap_or_default(),
             client_id: client_id.into(),
         }
     }

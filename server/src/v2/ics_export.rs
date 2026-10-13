@@ -44,6 +44,7 @@ fn escape(text: &str) -> String {
     text.replace('\\', "\\\\")
         .replace(';', "\\;")
         .replace(',', "\\,")
+        .replace('\r', "")
         .replace('\n', "\\n")
 }
 
@@ -99,6 +100,15 @@ mod tests {
     fn summary_is_escaped() {
         let ics = build_ics(&snapshot_with("Lab, notes; draft"));
         assert!(ics.contains("SUMMARY:Lab\\, notes\\; draft\r\n"));
+    }
+
+    /// A bare carriage return in a title must not end the line: a reader would take
+    /// what follows as a new property.
+    #[test]
+    fn a_title_cannot_start_a_new_line_of_the_file() {
+        let ics = build_ics(&snapshot_with("Hi\rEND:VEVENT"));
+        assert_eq!(ics.matches("\rEND:VEVENT").count(), 0);
+        assert!(ics.contains("SUMMARY:HiEND:VEVENT\r\n"));
     }
 
     #[test]
