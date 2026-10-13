@@ -38,7 +38,7 @@ pub fn data_path_from_env() -> std::path::PathBuf {
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
@@ -50,6 +50,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_5,
     MIGRATION_6,
     MIGRATION_7,
+    MIGRATION_8,
 ];
 
 const MIGRATION_1: &str = "
@@ -151,6 +152,18 @@ UPDATE v2_users SET last_activity_at = strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now'
 ";
 
 const MIGRATION_7: &str = "ALTER TABLE v2_tasks ADD COLUMN due_tz TEXT;";
+
+/// How many Jev calls each account has ever made.
+///
+/// `v2_capture_counts` keeps one row per day and is pruned after 30 days, so it can
+/// answer "today" but not "all time". The admin console ranks by all time, so the
+/// running total is kept separately and never pruned.
+const MIGRATION_8: &str = "
+CREATE TABLE IF NOT EXISTS v2_usage_totals (
+    user_id TEXT PRIMARY KEY,
+    calls  INTEGER NOT NULL DEFAULT 0
+);
+";
 
 /// Every column of `v2_tasks`, in one list.
 ///
@@ -288,6 +301,22 @@ pub trait Store: Send + Sync {
     /// The busiest users and addresses today, most captures first.
     fn usage_today(&self, day: NaiveDate, top: usize) -> Result<Usage, StoreError>;
 
+    /// Accounts ranked by Jev spend, most first. [`UsageOrder`] is the seam: a new
+    /// ordering is a new variant, not a new query shape per caller.
+    fn usage_ranking(
+        &self,
+        order: UsageOrder,
+        top: usize,
+    ) -> Result<Vec<UsageRow>, StoreError>;
+
+    /// Whether this user's account has been paused, which is a block on the user id.
+    /// An address block is a different thing and is not what this asks about.
+    fn is_user_blocked(&self, user: &str) -> Result<bool, StoreError>;
+
+    /// Whether an account with this id exists at all, so `pause` can say "no such
+    /// account" instead of leaving a block on an id nobody holds.
+    fn account_exists(&self, user: &str) -> Result<bool, StoreError>;
+
     /// The signed-in user with this email, if there is one.
     fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError>;
 }
@@ -306,6 +335,26 @@ pub struct Usage {
     pub ips: Vec<(String, u32)>,
 }
 
+/// How to rank accounts by Jev spend. A new ordering is a new variant here, so every
+/// store answers it from one place.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UsageOrder {
+    /// Every call the account has ever made.
+    AllTime,
+    /// Calls made on this local day.
+    Day(NaiveDate),
+}
+
+/// One account's row in a spend ranking.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UsageRow {
+    pub user: String,
+    /// Empty for an account with no email, which is what an anonymous visitor has.
+    pub email: String,
+    pub plan: super::auth::Plan,
+    pub calls: u32,
+}
+
 /// Tasks held in memory, with their owner. The HTTP tests use this so they never
 /// touch a disk, and it has to model ownership exactly as the SQL store does or the
 /// tests would not be testing the scoping that matters.
@@ -316,6 +365,9 @@ pub struct MemoryStore {
     users: Mutex<Vec<super::auth::Me>>,
     sessions: Mutex<Vec<(String, String, chrono::DateTime<Utc>)>>,
     captures: Mutex<Vec<(String, String, NaiveDate)>>,
+    /// Every call each account has ever made, which the per-day captures cannot answer
+    /// for once they are pruned away.
+    usage_totals: Mutex<std::collections::HashMap<String, u32>>,
     anon_issued: Mutex<Vec<(String, NaiveDate)>>,
     blocks: Mutex<Vec<Block>>,
     /// When each anonymous user was last seen.
@@ -425,6 +477,15 @@ impl<S: Store + ?Sized> Store for Box<S> {
     }
     fn usage_today(&self, day: NaiveDate, top: usize) -> Result<Usage, StoreError> {
         (**self).usage_today(day, top)
+    }
+    fn usage_ranking(&self, order: UsageOrder, top: usize) -> Result<Vec<UsageRow>, StoreError> {
+        (**self).usage_ranking(order, top)
+    }
+    fn is_user_blocked(&self, user: &str) -> Result<bool, StoreError> {
+        (**self).is_user_blocked(user)
+    }
+    fn account_exists(&self, user: &str) -> Result<bool, StoreError> {
+        (**self).account_exists(user)
     }
     fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {
         (**self).user_id_for_email(email)
@@ -686,6 +747,14 @@ impl Store for MemoryStore {
             ip.to_owned(),
             day,
         ));
+        // The all-time total, which the per-day counts cannot answer for once they
+        // are pruned away.
+        *self
+            .usage_totals
+            .lock()
+            .expect("memory store mutex")
+            .entry(user.to_owned())
+            .or_default() += 1;
         Ok(())
     }
 
@@ -743,6 +812,64 @@ impl Store for MemoryStore {
             users: top_counts(today.clone().map(|(user, _, _)| user.as_str()), top),
             ips: top_counts(today.map(|(_, ip, _)| ip.as_str()), top),
         })
+    }
+
+    fn usage_ranking(&self, order: UsageOrder, top: usize) -> Result<Vec<UsageRow>, StoreError> {
+        let mut calls: Vec<(String, u32)> = match order {
+            UsageOrder::AllTime => self
+                .usage_totals
+                .lock()
+                .expect("memory store mutex")
+                .iter()
+                .map(|(user, calls)| (user.clone(), *calls))
+                .collect(),
+            UsageOrder::Day(day) => {
+                let captures = self.captures.lock().expect("memory store mutex");
+                let mut counted: std::collections::HashMap<&str, u32> =
+                    std::collections::HashMap::new();
+                for (user, _, when) in captures.iter().filter(|(_, _, when)| *when == day) {
+                    *counted.entry(user.as_str()).or_default() += 1;
+                }
+                counted
+                    .into_iter()
+                    .map(|(user, calls)| (user.to_owned(), calls))
+                    .collect()
+            }
+        };
+        // Most spend first, then by id, so equal spend has one order on every store.
+        calls.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        calls.truncate(top);
+        let users = self.users.lock().expect("memory store mutex");
+        calls
+            .into_iter()
+            .map(|(user, calls)| {
+                let account = users.iter().find(|held| held.id == user);
+                Ok(UsageRow {
+                    user,
+                    // An account with no email is an anonymous visitor, and says so.
+                    email: account.map(|held| held.email.clone()).unwrap_or_default(),
+                    plan: account.map_or(super::auth::Plan::Anon, |held| held.plan),
+                    calls,
+                })
+            })
+            .collect()
+    }
+
+    fn is_user_blocked(&self, user: &str) -> Result<bool, StoreError> {
+        Ok(self
+            .blocks
+            .lock()
+            .expect("memory store mutex")
+            .contains(&Block::User(user.to_owned())))
+    }
+
+    fn account_exists(&self, user: &str) -> Result<bool, StoreError> {
+        Ok(self
+            .users
+            .lock()
+            .expect("memory store mutex")
+            .iter()
+            .any(|held| held.id == user))
     }
 
     fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {
@@ -1093,6 +1220,14 @@ impl Store for SqliteStore {
             params![user, ip, day.to_string()],
         )
         .map_err(backend)?;
+        // The all-time total, which the per-day counts cannot answer for once they are
+        // pruned.
+        conn.execute(
+            "INSERT INTO v2_usage_totals (user_id, calls) VALUES (?1, 1)
+             ON CONFLICT (user_id) DO UPDATE SET calls = calls + 1",
+            params![user],
+        )
+        .map_err(backend)?;
         prune_before(&conn, day)
     }
 
@@ -1194,6 +1329,75 @@ impl Store for SqliteStore {
             users: top_users_today(&conn, "user_id", day, top)?,
             ips: top_users_today(&conn, "ip", day, top)?,
         })
+    }
+
+    fn usage_ranking(&self, order: UsageOrder, top: usize) -> Result<Vec<UsageRow>, StoreError> {
+        let conn = self.conn.lock().expect("db mutex");
+        // One query per ordering rather than one clever query: where the spend comes
+        // from differs, and the rest — the join to an account, the order, the limit —
+        // is the same. A new ordering adds a row here and nothing else.
+        let (sql, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = match order {
+            UsageOrder::AllTime => (
+                "SELECT totals.user_id, COALESCE(v2_users.email, ''), v2_users.plan, totals.calls \
+                 FROM v2_usage_totals totals \
+                 LEFT JOIN v2_users ON v2_users.id = totals.user_id \
+                 ORDER BY totals.calls DESC, totals.user_id ASC LIMIT ?1",
+                vec![Box::new(top as i64)],
+            ),
+            UsageOrder::Day(day) => (
+                "SELECT counts.user_id, COALESCE(v2_users.email, ''), v2_users.plan, \
+                        SUM(counts.n) \
+                 FROM v2_capture_counts counts \
+                 LEFT JOIN v2_users ON v2_users.id = counts.user_id \
+                 WHERE counts.day = ?2 \
+                 GROUP BY counts.user_id \
+                 ORDER BY SUM(counts.n) DESC, counts.user_id ASC LIMIT ?1",
+                vec![Box::new(top as i64), Box::new(day.to_string())],
+            ),
+        };
+        let mut stmt = conn.prepare(sql).map_err(backend)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(params.iter().map(|value| value.as_ref())),
+                |row| {
+                    Ok(UsageRow {
+                        user: row.get(0)?,
+                        email: row.get(1)?,
+                        plan: parse_plan(&row.get::<_, String>(2)?),
+                        calls: row.get::<_, i64>(3)? as u32,
+                    })
+                },
+            )
+            .map_err(backend)?;
+        rows.map(|row| row.map_err(backend)).collect()
+    }
+
+    fn is_user_blocked(&self, user: &str) -> Result<bool, StoreError> {
+        let found: bool = self
+            .conn
+            .lock()
+            .expect("db mutex")
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM v2_blocks WHERE kind = 'user' AND value = ?1)",
+                params![user],
+                |row| row.get(0),
+            )
+            .map_err(backend)?;
+        Ok(found)
+    }
+
+    fn account_exists(&self, user: &str) -> Result<bool, StoreError> {
+        let found: bool = self
+            .conn
+            .lock()
+            .expect("db mutex")
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM v2_users WHERE id = ?1)",
+                params![user],
+                |row| row.get(0),
+            )
+            .map_err(backend)?;
+        Ok(found)
     }
 
     fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {

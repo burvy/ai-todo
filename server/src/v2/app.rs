@@ -683,6 +683,19 @@ mod tests {
         ) -> Result<crate::v2::store::Usage, StoreError> {
             self.inner.usage_today(day, top)
         }
+        fn usage_ranking(
+            &self,
+            order: crate::v2::store::UsageOrder,
+            top: usize,
+        ) -> Result<Vec<crate::v2::store::UsageRow>, StoreError> {
+            self.inner.usage_ranking(order, top)
+        }
+        fn is_user_blocked(&self, user: &str) -> Result<bool, StoreError> {
+            self.inner.is_user_blocked(user)
+        }
+        fn account_exists(&self, user: &str) -> Result<bool, StoreError> {
+            self.inner.account_exists(user)
+        }
         fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {
             self.inner.user_id_for_email(email)
         }

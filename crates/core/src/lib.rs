@@ -159,6 +159,10 @@ pub enum ErrorCode {
     /// No valid session: 401. Separate from `BadRequest` because the fix is to sign
     /// in again, not to send a different request.
     Unauthorized,
+    /// This account is paused (403): the session is valid and the request is
+    /// well-formed, but the operator has stopped it using the app. Lift the pause
+    /// in the admin console (`unpause <email|id>`) or on the admin page.
+    Forbidden,
     /// A dependency (Jev, a database) is temporarily down: 503, try again later.
     Unavailable,
     Upstream,
