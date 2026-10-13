@@ -14,6 +14,7 @@ pub mod mascot;
 pub mod pen;
 pub mod settings;
 pub mod speech;
+pub mod tack;
 pub mod week;
 
 /// Load snapshot from API and return it, falling back to fixture on error
@@ -70,7 +71,9 @@ fn reorder_ids(snapshot: &Snapshot, dragged: &TaskId, target: &TaskId) -> Option
 }
 
 /// The body that flips `id` between done and not done, against the version held now.
-fn toggle_done_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBody> {
+// pub(crate): the tack board's restore gesture reuses this (Huang); Zhipu's
+// gear PR makes the same change.
+pub(crate) fn toggle_done_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBody> {
     let task = held(snapshot, id)?;
     Some(
         api::PatchTaskBody::new()
@@ -289,10 +292,11 @@ fn refused_note(error: &api::ApiError, reloaded: bool) -> &'static str {
 /// Where an edit's result goes: the list it replaces, the note that explains a refusal,
 /// and the view settings that say how many days the list covers.
 #[derive(Clone, Copy)]
-struct EditSink {
-    set_snapshot: WriteSignal<Snapshot>,
-    set_error: WriteSignal<Option<String>>,
-    view_settings: ReadSignal<settings::Settings>,
+// pub(crate) fields to match: the tack board's restore gesture builds one.
+pub(crate) struct EditSink {
+    pub(crate) set_snapshot: WriteSignal<Snapshot>,
+    pub(crate) set_error: WriteSignal<Option<String>>,
+    pub(crate) view_settings: ReadSignal<settings::Settings>,
 }
 
 /// Sends an edit and shows what the server now holds. Returns whether the edit applied.
@@ -300,7 +304,7 @@ struct EditSink {
 /// A refused edit (the task changed on another device, or the network failed) is not an
 /// error to hide: the list is reloaded so the next click starts from the server's copy,
 /// and a short note says why nothing happened.
-async fn patch_and_show(id: &todo_core::TaskId, body: api::PatchTaskBody, sink: EditSink) -> bool {
+pub(crate) async fn patch_and_show(id: &todo_core::TaskId, body: api::PatchTaskBody, sink: EditSink) -> bool {
     match api::patch_task(id, body).await {
         Ok(snapshot) => {
             // A note about an earlier refusal must not outlive the retry that worked.
@@ -332,6 +336,13 @@ pub fn App() -> impl IntoView {
     let (brain_speech, set_brain_speech) = signal::<Option<String>>(None);
     let (brain_pose, set_brain_pose) = signal("home".to_owned());
     let (brain_event, set_brain_event) = signal::<Option<rambl_brain::Event>>(None);
+    // LOCAL TEST WIRING (Huang): official mount lands with Zhipu's gear PR.
+    let (tack_cue, set_tack_cue) = signal::<Option<tack::Cue>>(None);
+    Effect::new(move |_| {
+        if tack_cue.get().is_some() {
+            set_tack_cue.set(None);
+        }
+    });
 
     // Load snapshot from API on mount
     Effect::new(move |_| {
@@ -404,6 +415,7 @@ pub fn App() -> impl IntoView {
             <div class="tasks-pane">
                 <ImportIcs set_snapshot set_error />
                 <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
+                <tack::TackBoard snapshot set_snapshot set_error view_settings set_cue=set_tack_cue />
             </div>
             <week::WeekGrid
                 snapshot=snapshot
