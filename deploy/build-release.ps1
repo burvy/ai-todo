@@ -24,6 +24,10 @@ Copy-Item -Force -ErrorAction Stop (Join-Path $repoRoot 'target\release\rambl-se
 @'
 TYPESAFE_API_KEY=
 RAMBL_PORT=3160
+# Address to listen on. Loopback by default, because the Cloudflare tunnel runs on this
+# machine. Set 0.0.0.0 to serve the LAN as well (or a specific address). Anything that
+# is not an IP address stops the server with a clear error.
+RAMBL_BIND=
 RAMBL_DEFAULT_TZ=America/New_York
 RAMBL_ADMIN_EMAILS=boss@example.com
 # Proxies whose CF-Connecting-IP names the real client. Leave empty when the tunnel
