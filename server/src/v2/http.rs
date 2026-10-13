@@ -3236,7 +3236,7 @@ mod tests {
                 "updated_at",
                 "when",
             ],
-            "the export must carry every field, in the order Task declares them"
+            "the export must carry every field, listed alphabetically (serde_json sorts object keys)"
         );
         assert_eq!(task["label"], "School");
         assert_eq!(task["priority"], "high");
