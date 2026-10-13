@@ -303,20 +303,41 @@ fn utc_instant(raw: &str) -> Option<DateTime<Utc>> {
         .map(|local| Utc.from_utc_datetime(&local))
 }
 
+/// The longest span a counted rule is allowed to reach: five years of days.
+///
+/// A `COUNT` in the billions (real exports carry it) would otherwise walk or
+/// overflow the date range. Capping the span keeps the arithmetic in range and
+/// the stored `until` sane, rather than dropping the rule or panicking.
+const RECURRING_HORIZON_DAYS: i64 = 5 * 366;
+
 /// The date of the `count`-th occurrence from `start_day`: how a rule that counts
 /// weeks instead of naming an end date is stored.
+///
+/// Done arithmetically, not by walking day by day: a `COUNT` of four billion
+/// would take the better part of a second and then overflow `NaiveDate`. The
+/// span is capped at [`RECURRING_HORIZON_DAYS`] so an absurd count is bounded.
 fn last_occurrence(start_day: NaiveDate, weekdays: &[Weekday], count: u32) -> NaiveDate {
-    let mut left = count.max(1);
-    let mut date = start_day;
-    loop {
-        if weekdays.contains(&date.weekday()) {
-            left -= 1;
-            if left == 0 {
-                return date;
-            }
-        }
-        date += chrono::Duration::days(1);
-    }
+    let start_wd = i64::from(start_day.weekday().num_days_from_monday());
+    let offsets: Vec<i64> = weekdays
+        .iter()
+        .map(|day| i64::from(day.num_days_from_monday()))
+        .collect();
+    let per_week = offsets.len() as i64;
+    // The weekdays that still fall inside the start day's own week.
+    let first_week: Vec<i64> = offsets.iter().copied().filter(|&o| o >= start_wd).collect();
+    let count = i64::from(count.max(1));
+    let day_offset = if count <= first_week.len() as i64 {
+        first_week[(count - 1) as usize] - start_wd
+    } else {
+        let remaining = count - first_week.len() as i64;
+        let full_weeks = (remaining - 1) / per_week;
+        let rem = (remaining - 1) % per_week;
+        (7 - start_wd) + full_weeks * 7 + offsets[rem as usize]
+    };
+    let capped = day_offset.min(RECURRING_HORIZON_DAYS);
+    start_day
+        .checked_add_days(chrono::Days::new(capped as u64))
+        .unwrap_or(start_day)
 }
 
 /// The zone an event's times are written in: its `DTSTART` TZID, or UTC when it names
@@ -372,6 +393,10 @@ fn to_utc(value: &DatePerhapsTime) -> Option<DateTime<Utc>> {
 }
 
 /// `DURATION` is the alternative to `DTEND`, written like `PT1H30M`.
+///
+/// An absurd duration (`P99999999999999W`) is refused with `None` rather than
+/// allowed to overflow: the caller then falls back to the 30-minute default, so
+/// a junk duration costs the event nothing.
 fn duration_after(event: &Event, start: DateTime<Utc>) -> Option<DateTime<Utc>> {
     let raw = event.properties().get("DURATION")?.value().trim();
     let mut seconds: i64 = 0;
@@ -381,20 +406,22 @@ fn duration_after(event: &Event, start: DateTime<Utc>) -> Option<DateTime<Utc>> 
             '0'..='9' => digits.push(character),
             'H' | 'M' | 'S' | 'D' | 'W' => {
                 let value = digits.parse::<i64>().ok()?;
-                seconds += value
-                    * match character {
-                        'H' => 3600,
-                        'M' => 60,
-                        'D' => 86_400,
-                        'W' => 604_800,
-                        _ => 1,
-                    };
+                let unit = match character {
+                    'H' => 3600,
+                    'M' => 60,
+                    'D' => 86_400,
+                    'W' => 604_800,
+                    _ => 1,
+                };
+                // Checked so a huge value cannot wrap; the event falls back to
+                // its default length instead.
+                seconds = seconds.checked_add(value.checked_mul(unit)?)?;
                 digits.clear();
             }
             _ => return None,
         }
     }
-    Some(start + chrono::Duration::seconds(seconds))
+    start.checked_add_signed(chrono::Duration::try_seconds(seconds)?)
 }
 
 #[cfg(test)]
@@ -499,6 +526,24 @@ mod tests {
             END:VEVENT\nEND:VCALENDAR\n";
         let busy = parse_ics(ics).expect("parses");
         assert_eq!(busy[0].end.to_rfc3339(), "2026-10-12T15:30:00+00:00");
+    }
+
+    /// A `DURATION` so large it overflows a date must not panic: the event falls
+    /// back to the 30-minute default, exactly as one with no duration at all.
+    #[test]
+    fn an_absurd_duration_falls_back_to_the_default_length() {
+        let ics = "BEGIN:VCALENDAR\nBEGIN:VEVENT\n\
+            SUMMARY:Forever\n\
+            DTSTART:20261012T140000Z\n\
+            DURATION:P99999999999999W\n\
+            END:VEVENT\nEND:VCALENDAR\n";
+        let busy = parse_ics(ics).expect("parses");
+        assert_eq!(busy.len(), 1, "the event must survive the absurd duration");
+        assert_eq!(
+            busy[0].end.to_rfc3339(),
+            "2026-10-12T14:30:00+00:00",
+            "a junk duration falls back to thirty minutes"
+        );
     }
 
     #[test]
@@ -948,6 +993,30 @@ mod tests {
             Some(NaiveDate::from_ymd_opt(2026, 10, 27).unwrap()),
             "five occurrences of two days a week end on the fifth"
         );
+    }
+
+    /// A `COUNT` of `u32::MAX` used to walk day by day until `NaiveDate` overflowed
+    /// and panicked. It is now computed arithmetically and capped, so it parses to a
+    /// bounded end date instead of taking ~0.8 s and crashing.
+    #[test]
+    fn a_huge_count_is_capped_rather_than_panicking() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "SUMMARY:Forever bootcamp",
+            "DTSTART;TZID=America/New_York:20261013T090000",
+            "DTEND;TZID=America/New_York:20261013T120000",
+            "RRULE:FREQ=WEEKLY;BYDAY=MO,WE;COUNT=4294967295",
+            "END:VEVENT",
+        ]);
+        let calendar = parse_calendar(&text).expect("parses");
+        assert_eq!(calendar.series.len(), 1);
+        let until = calendar.series[0].until.expect("a capped end date");
+        // Five years of days from the start day, not an overflowed date.
+        let expected = NaiveDate::from_ymd_opt(2026, 10, 13)
+            .unwrap()
+            .checked_add_days(chrono::Days::new((5 * 366) as u64))
+            .unwrap();
+        assert_eq!(until, expected, "the count is capped at five years of days");
     }
 
     /// An `EXDATE` is an occurrence the export takes back, which the series keeps as a

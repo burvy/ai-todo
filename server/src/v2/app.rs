@@ -452,9 +452,12 @@ impl<S: Store> App<S> {
         user: &str,
         ctx: &LocalContext,
     ) -> Result<Vec<SeriesId>, ApiError> {
-        let mut ids = Vec::new();
         let mut held = self.store.series(user).map_err(Self::storage_error)?;
         let mut next_order = held.iter().map(|series| series.order).min().unwrap_or(0) - 1;
+        // Build and validate every series before writing any of them. A rule that
+        // fails part-way through the file must not leave the earlier ones already
+        // stored: that is a half import answering a 400.
+        let mut staged: Vec<(Series, Vec<SeriesException>)> = Vec::with_capacity(imported.len());
         for series in imported {
             check_title(&series.title)?;
             check_duration(series.duration_min)?;
@@ -496,24 +499,32 @@ impl<S: Store> App<S> {
                     |held| held.order,
                 ),
             };
+            // Excluded dates are recorded as skipped occurrences, which is how an
+            // `EXDATE` stays excluded after a restart.
+            let exceptions = series
+                .exdates
+                .into_iter()
+                .map(|date| SeriesException {
+                    date,
+                    kind: ExceptionKind::Skipped,
+                })
+                .collect();
+            held.retain(|other| other.id != stored.id);
+            held.push(stored.clone());
+            staged.push((stored, exceptions));
+        }
+        // Everything validated: now write, so a bad rule cannot strand a partial import.
+        let mut ids = Vec::with_capacity(staged.len());
+        for (stored, exceptions) in staged {
             let id = stored.id.clone();
             self.store
-                .put_series(user, stored.clone())
+                .put_series(user, stored)
                 .map_err(Self::storage_error)?;
-            for date in series.exdates {
+            for exception in exceptions {
                 self.store
-                    .put_exception(
-                        user,
-                        &id,
-                        SeriesException {
-                            date,
-                            kind: ExceptionKind::Skipped,
-                        },
-                    )
+                    .put_exception(user, &id, exception)
                     .map_err(Self::storage_error)?;
             }
-            held.retain(|other| other.id != id);
-            held.push(stored);
             ids.push(id);
         }
         Ok(ids)
@@ -2274,6 +2285,44 @@ mod tests {
                 .map(|row| row.id.0.clone())
                 .collect::<Vec<String>>(),
             vec![format!("{}:2026-10-12", snapshot.series[0].id.0)],
+        );
+    }
+
+    /// A bad series part-way through an import must not strand the good ones
+    /// before it: everything is validated first, then written. Before the fix the
+    /// first series was already stored when the second failed, leaving a half
+    /// import behind a 400.
+    #[test]
+    fn a_bad_series_part_way_through_writes_nothing() {
+        let mut app = App::new(MemoryStore::new(), Arc::new(FixedClock(sunday_night())));
+        let good = ImportedSeries {
+            uid: Some("good@example.com".into()),
+            title: "Good lecture".into(),
+            duration_min: 60,
+            weekdays: vec![Weekday::Tue, Weekday::Thu],
+            until: None,
+            start_day: day(2026, 10, 13),
+            time_of_day: Some(NaiveTime::from_hms_opt(9, 0, 0).unwrap()),
+            zone: "America/New_York".into(),
+            exdates: Vec::new(),
+        };
+        // No weekday: a rule that can never fire, refused by `Recurrence::new`.
+        let bad = ImportedSeries {
+            uid: Some("bad@example.com".into()),
+            title: "Broken rule".into(),
+            weekdays: Vec::new(),
+            ..good.clone()
+        };
+        let calendar = ParsedCalendar {
+            events: Vec::new(),
+            series: vec![good, bad],
+            unmapped: Vec::new(),
+        };
+        let error = app.import(calendar, USER, NEW_YORK).unwrap_err();
+        assert_eq!(error.code, ErrorCode::BadRequest);
+        assert!(
+            app.store.series(USER).unwrap().is_empty(),
+            "a failed import must not leave the earlier series stored"
         );
     }
 }
