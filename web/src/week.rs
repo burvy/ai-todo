@@ -16,11 +16,18 @@ pub fn WeekGrid(
     let grid_ref = NodeRef::<leptos::html::Div>::new();
     let (now_minutes, set_now_minutes) = signal(current_minutes());
     set_interval(move || set_now_minutes.set(current_minutes()), 60_000).forget();
+    // The planner opens on the working morning, not in the middle of the
+    // night: about 08:00, or now if it is already later.
     Effect::new(move |_| {
-        let _ = settings.get();
-        if let Some(_grid) = grid_ref.get() {
+        let s = settings.get();
+        if let Some(grid) = grid_ref.get() {
             #[cfg(target_arch = "wasm32")]
-            _grid.set_scroll_top((js_sys::Date::new_0().get_hours() as f32 * HOUR_PX) as i32);
+            {
+                let target = planner_open_minutes(current_minutes(), s.start_hour, s.end_hour);
+                grid.set_scroll_top(now_line_top(target, s.start_hour, HOUR_PX) as i32);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            let _ = (grid, s);
         }
     });
     let days = move || (0..settings.get().days).collect::<Vec<_>>();
@@ -32,7 +39,9 @@ pub fn WeekGrid(
                 <div class="week" style=move || format!("--days: {}", settings.get().days)>
                     <For each=days key=|day| *day let:day>
                         <div class="day">
-                            <h3>{format!("Day {}", day + 1)}</h3>
+                            <h3 class="day-name" class:today=day == 0>
+                                {day_label(&planner_context(&snapshot.get().tz), i64::from(day))}
+                            </h3>
                             <div class="hours">
                                 {move || (day == 0).then(|| view! {
                                     <div
@@ -55,7 +64,11 @@ pub fn WeekGrid(
                                 <PlacementBlock placement snapshot settings set_mascot_state />
                             </For>
                                 <For each=hours key=|hour| *hour let:hour>
-                                    <div class="hour"><span>{format!("{hour:02}:00")}</span></div>
+                                    <div class="hour">
+                                        {(day == 0).then(|| view! {
+                                            <span>{format!("{hour:02}:00")}</span>
+                                        })}
+                                    </div>
                                 </For>
                             </div>
                         </div>
@@ -73,6 +86,26 @@ const HOUR_PX: f32 = 64.0;
 /// How far down the hour rows the current time sits. The rows start at start_hour.
 fn now_line_top(now_minutes: u16, start_hour: u8, hour_px: f32) -> f32 {
     (f32::from(now_minutes) - f32::from(start_hour) * 60.0).max(0.0) / 60.0 * hour_px
+}
+
+/// Where the planner opens: about 08:00, or the current time if that is
+/// already later — never in the middle of the night, never past the last
+/// full hour we draw.
+#[cfg(any(target_arch = "wasm32", test))]
+fn planner_open_minutes(now_minutes: u16, start_hour: u8, end_hour: u8) -> u16 {
+    const OPEN_AT: u16 = 8 * 60;
+    let top = u16::from(end_hour).saturating_sub(1) * 60;
+    OPEN_AT
+        .max(now_minutes)
+        .clamp(u16::from(start_hour) * 60, top)
+}
+
+/// The handwritten label on a day column: short weekday and date in the
+/// planner's zone, counted from today, so day 0 is "today".
+fn day_label(ctx: &LocalContext, day: i64) -> String {
+    (ctx.today() + chrono::Duration::days(day))
+        .format("%a %-d")
+        .to_string()
 }
 /// Placement top/height in pixels, clipped to planner bounds.
 /// start/end are minutes-since-midnight in planner zone.
@@ -322,6 +355,32 @@ mod tests {
     fn an_unknown_zone_name_falls_back_to_utc() {
         let context = planner_context("Not/AZone");
         assert_eq!(context.tz, chrono_tz::UTC);
+    }
+
+    #[test]
+    fn the_planner_opens_at_eight_or_now_never_the_night() {
+        // The brief: opens at about 08:00 — not 02:00.
+        assert_eq!(planner_open_minutes(2 * 60, 0, 24), 8 * 60);
+        // Later than eight: the clock wins.
+        assert_eq!(planner_open_minutes(12 * 60 + 37, 0, 24), 12 * 60 + 37);
+        // A working day that starts later clamps at its own first hour.
+        assert_eq!(planner_open_minutes(2 * 60, 9, 18), 9 * 60);
+        assert_eq!(planner_open_minutes(10 * 60, 9, 18), 10 * 60);
+        // The last full hour is as far down as it opens.
+        assert_eq!(planner_open_minutes(23 * 60 + 59, 0, 24), 23 * 60);
+    }
+
+    #[test]
+    fn the_days_read_as_weekdays_in_the_planner_zone() {
+        let ny = zone("America/New_York", at_utc(2026, 10, 12, 12, 0));
+        // 2026-10-12 is a Monday; day 0 shows the date, later days the count.
+        assert_eq!(day_label(&ny, 0), "Mon 12");
+        assert_eq!(day_label(&ny, 1), "Tue 13");
+        assert_eq!(day_label(&ny, 4), "Fri 16");
+        // The label is drawn in the planner's zone, not UTC: 23:30 UTC is
+        // still Sunday the 18th in New York.
+        let late = zone("America/New_York", at_utc(2026, 10, 18, 23, 30));
+        assert_eq!(day_label(&late, 0), "Sun 18");
     }
 
     #[test]
