@@ -327,7 +327,9 @@ fn CaptureBox(
         }
     };
 
-    let handle_input = move |_ev: leptos::ev::Event| {
+    let handle_input = move |ev: leptos::ev::Event| {
+        // Keep the typed text first; the pen choreography below may bail out early.
+        set_text.set(event_target_value(&ev));
         if mascot::pen_busy(&pen_flight.get_untracked()) {
             return;
         }
