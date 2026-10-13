@@ -452,9 +452,6 @@ fn Rambo(
     /// Capture form: Rambo calls requestSubmit on release
     form_ref: NodeRef<leptos::html::Form>,
 ) -> impl IntoView {
-    let start_return = move || {
-        start_return_with(false);
-    };
     let start_return_with = move |hard_drop: bool| {
         if mascot::prefers_reduced_motion() {
             set_state.set(mascot::State::Home);
@@ -498,6 +495,9 @@ fn Rambo(
             })
             .forget();
         }
+    };
+    let start_return = move || {
+        start_return_with(false);
     };
 
     let rambo_ref = NodeRef::<leptos::html::Button>::new();
