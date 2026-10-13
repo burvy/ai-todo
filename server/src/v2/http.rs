@@ -1,7 +1,7 @@
 //! Thin HTTP handlers for `/api/v1`. They read the time zone header, lock the `App`
 //! for the whole call, and map errors. No business rules live here.
 
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 
 use axum::{
@@ -44,6 +44,9 @@ pub struct Shared {
     google_client_id: Option<String>,
     /// Emails (lower-cased) allowed to use `/admin`; `None` turns the page off.
     admin_emails: Option<Vec<String>>,
+    /// The peers allowed to name the client with `CF-Connecting-IP`; see
+    /// [`TrustedProxies`].
+    trusted_proxies: TrustedProxies,
 }
 
 /// Daily limits. Past a Jev cap, capture still works but is judged by `FakeJudge`.
@@ -236,21 +239,31 @@ pub fn router(app: App<Box<dyn Store>>, judge: AnyJudge) -> Router {
         local,
         Caps::from_env(),
         admin_emails_from_env(),
+        TrustedProxies::from_env(),
     )
 }
 
 /// The router with a supplied verifier, so tests can sign in without a Google project
 /// and without touching the network.
 #[cfg(test)]
-pub fn router_with_verifier(
+fn router_with_verifier(
     app: App<Box<dyn Store>>,
     judge: AnyJudge,
     verifier: Box<dyn TokenVerifier>,
     local: bool,
     caps: Caps,
     admin_emails: Option<Vec<String>>,
+    trusted_proxies: TrustedProxies,
 ) -> Router {
-    build_router(app, judge, verifier, local, caps, admin_emails)
+    build_router(
+        app,
+        judge,
+        verifier,
+        local,
+        caps,
+        admin_emails,
+        trusted_proxies,
+    )
 }
 
 /// Captures per user per day before capture stops using Jev, for a signed-in user.
@@ -294,6 +307,7 @@ fn build_router(
     local: bool,
     caps: Caps,
     admin_emails: Option<Vec<String>>,
+    trusted_proxies: TrustedProxies,
 ) -> Router {
     let shared = Arc::new(Shared {
         app: Mutex::new(app),
@@ -305,6 +319,7 @@ fn build_router(
             .ok()
             .filter(|id| !id.is_empty()),
         admin_emails,
+        trusted_proxies,
     });
     Router::new()
         .route("/api/v1/config", get(config))
@@ -362,7 +377,11 @@ async fn assign_anonymous_id(
     let id = match presented {
         Some(id) if issued_anonymous_id(&shared, &id) => id,
         _ => {
-            let ip = client_ip(request.headers(), peer_ip(&request));
+            let ip = client_ip(
+                request.headers(),
+                peer_ip(&request),
+                &shared.trusted_proxies,
+            );
             match issue_anonymous_id(&shared, &ip) {
                 Ok(id) => id,
                 Err(refusal) => return refusal.into_response(),
@@ -401,14 +420,19 @@ fn issue_anonymous_id(shared: &Shared, ip: &str) -> Result<String, HttpError> {
     Ok(id)
 }
 
-/// The address a request came from. Cloudflare's `CF-Connecting-IP` when the site sits
-/// behind it, else the socket peer. Only the header is trusted without a check, so
-/// behind anything else a client could name its own address; the header must also be
-/// a real IP — the value lands on the admin page, so a string that is not an address
-/// is never stored.
-fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
-    headers
-        .get("cf-connecting-ip")
+/// The address a request came from.
+///
+/// Cloudflare's `CF-Connecting-IP` names the real client, but only a proxy we trust
+/// may say so: anyone who reaches the server on its own (the LAN, an open port)
+/// could put any address in that header and walk past the per-address limits and
+/// blocks. The header is therefore read only when the socket peer is a trusted
+/// proxy, and it must be a real address — the value lands on the admin page, so a
+/// string that is not an address is never stored.
+fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>, trusted: &TrustedProxies) -> String {
+    let behind_proxy = peer.is_some_and(|ip| trusted.trusts(ip));
+    behind_proxy
+        .then(|| headers.get("cf-connecting-ip"))
+        .flatten()
         .and_then(|value| value.to_str().ok())
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -416,6 +440,94 @@ fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
         .map(|ip| ip.to_string())
         .or_else(|| peer.map(|ip| ip.to_string()))
         .unwrap_or_else(|| "unknown".to_owned())
+}
+
+/// The socket peers allowed to name the client with `CF-Connecting-IP`.
+///
+/// Loopback is trusted without being configured: the Cloudflare tunnel runs on the
+/// same machine, so that is the only peer production has. `RAMBL_TRUSTED_PROXIES`
+/// adds any other proxy as a comma-separated list of addresses or networks.
+#[derive(Clone, Debug, Default)]
+struct TrustedProxies(Vec<IpNet>);
+
+impl TrustedProxies {
+    fn from_env() -> Self {
+        Self::from_list(std::env::var("RAMBL_TRUSTED_PROXIES").ok().as_deref())
+    }
+
+    /// The entries naming a real address or network. An entry that does not parse is
+    /// dropped, because being wrong here can only make us trust less.
+    fn from_list(list: Option<&str>) -> Self {
+        Self(
+            list.unwrap_or_default()
+                .split(',')
+                .filter_map(IpNet::parse)
+                .collect(),
+        )
+    }
+
+    fn trusts(&self, peer: IpAddr) -> bool {
+        peer.is_loopback() || self.0.iter().any(|network| network.contains(peer))
+    }
+}
+
+/// One address or network from `RAMBL_TRUSTED_PROXIES`: `10.0.0.1`, `10.0.0.0/8`.
+#[derive(Clone, Debug)]
+struct IpNet {
+    address: IpAddr,
+    /// How many leading bits of `address` must match.
+    prefix: u8,
+}
+
+impl IpNet {
+    /// `None` for anything that is not an address with a prefix it could have.
+    fn parse(text: &str) -> Option<Self> {
+        let text = text.trim();
+        let (address, prefix) = match text.split_once('/') {
+            Some((address, prefix)) => {
+                (address.parse::<IpAddr>().ok()?, prefix.parse::<u8>().ok()?)
+            }
+            None => {
+                let address: IpAddr = text.parse().ok()?;
+                return Some(Self {
+                    prefix: if address.is_ipv4() { 32 } else { 128 },
+                    address,
+                });
+            }
+        };
+        (prefix <= if address.is_ipv4() { 32 } else { 128 }).then_some(Self { address, prefix })
+    }
+
+    fn contains(&self, ip: IpAddr) -> bool {
+        match (self.address, ip) {
+            (IpAddr::V4(network), IpAddr::V4(ip)) => {
+                masked(IpAddr::V4(network), self.prefix) == masked(IpAddr::V4(ip), self.prefix)
+            }
+            (IpAddr::V6(network), IpAddr::V6(ip)) => {
+                masked(IpAddr::V6(network), self.prefix) == masked(IpAddr::V6(ip), self.prefix)
+            }
+            // An IPv4 peer is not in an IPv6 network, however the bits line up.
+            _ => false,
+        }
+    }
+}
+
+/// The address with everything past `prefix` cleared, so two addresses in one network
+/// compare equal. The mask is built at the address's own width: a shift by the whole
+/// width is out of range, and keeps nothing, which is what prefix 0 asks for anyway.
+fn masked(address: IpAddr, prefix: u8) -> IpAddr {
+    match address {
+        IpAddr::V4(ip) => {
+            let keep = u32::BITS - u32::from(prefix.min(32));
+            let mask = (!0u32).checked_shl(keep).unwrap_or(0);
+            IpAddr::V4(Ipv4Addr::from(u32::from(ip) & mask))
+        }
+        IpAddr::V6(ip) => {
+            let keep = u128::BITS - u32::from(prefix.min(128));
+            let mask = (!0u128).checked_shl(keep).unwrap_or(0);
+            IpAddr::V6(Ipv6Addr::from(u128::from(ip) & mask))
+        }
+    }
 }
 
 fn peer_ip(request: &axum::extract::Request) -> Option<IpAddr> {
@@ -788,7 +900,11 @@ async fn capture(
     request: axum::extract::Request,
 ) -> Result<Json<CaptureOut>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
-    let ip = client_ip(request.headers(), peer_ip(&request));
+    let ip = client_ip(
+        request.headers(),
+        peer_ip(&request),
+        &shared.trusted_proxies,
+    );
     let tz = zone(request.headers())?;
     let (text, source, anchor) = read_capture(request).await?;
     let now = anchor.unwrap_or_else(|| shared.app.lock().unwrap().now());
@@ -1947,6 +2063,7 @@ mod tests {
             false,
             Caps::default(),
             admins,
+            TrustedProxies::default(),
         )
     }
 
@@ -2208,12 +2325,14 @@ mod tests {
         let bearer = format!("Bearer {token}");
 
         let payload = "<img src=x onerror=alert(1)>";
-        let (status, _, _) = call(
+        // From the tunnel, so the peer is trusted and the value alone is refused.
+        let (status, _, _) = call_from(
             &router,
             "POST",
             "/api/v1/capture",
             Some(r#"{"text":"buy milk tomorrow"}"#),
             &[("authorization", &bearer), ("cf-connecting-ip", payload)],
+            Some(TUNNEL),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "the capture itself must not fail");
@@ -2325,6 +2444,7 @@ mod tests {
             false,
             Caps::default(),
             None,
+            TrustedProxies::default(),
         );
         let alex = sign_in(&second).await;
 
@@ -2448,6 +2568,7 @@ mod tests {
                 ..Caps::default()
             },
             None,
+            TrustedProxies::default(),
         );
         let token = sign_in(&router).await;
 
@@ -2498,6 +2619,19 @@ mod tests {
         body: Option<&str>,
         headers: &[(&str, &str)],
     ) -> (StatusCode, axum::http::HeaderMap, serde_json::Value) {
+        call_from(router, method, uri, body, headers, None).await
+    }
+
+    /// [`call`], with the socket the request really arrived on. The peer decides
+    /// whether `CF-Connecting-IP` is believed at all.
+    async fn call_from(
+        router: &Router,
+        method: &str,
+        uri: &str,
+        body: Option<&str>,
+        headers: &[(&str, &str)],
+        peer: Option<&str>,
+    ) -> (StatusCode, axum::http::HeaderMap, serde_json::Value) {
         let mut builder = Request::builder()
             .method(method)
             .uri(uri)
@@ -2505,18 +2639,19 @@ mod tests {
         for (name, value) in headers {
             builder = builder.header(*name, *value);
         }
-        let body = match body {
-            Some(text) => {
-                builder = builder.header("content-type", "application/json");
-                Body::from(text.to_owned())
-            }
-            None => Body::empty(),
+        let mut request = match body {
+            Some(text) => builder
+                .header("content-type", "application/json")
+                .body(Body::from(text.to_owned()))
+                .unwrap(),
+            None => builder.body(Body::empty()).unwrap(),
         };
-        let response = router
-            .clone()
-            .oneshot(builder.body(body).unwrap())
-            .await
-            .unwrap();
+        if let Some(peer) = peer {
+            request.extensions_mut().insert(ConnectInfo(
+                peer.parse::<SocketAddr>().expect("a socket address"),
+            ));
+        }
+        let response = router.clone().oneshot(request).await.unwrap();
         let status = response.status();
         let headers = response.headers().clone();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
@@ -2621,6 +2756,7 @@ mod tests {
             false,
             caps,
             None,
+            TrustedProxies::default(),
         )
     }
 
@@ -2759,6 +2895,7 @@ mod tests {
             true, // local mode
             Caps::default(),
             None,
+            TrustedProxies::default(),
         );
         let from = [("cf-connecting-ip", "203.0.113.9")];
         for _ in 0..30 {
@@ -2785,6 +2922,9 @@ mod tests {
         );
     }
 
+    /// The tunnel's socket on this machine, the peer production requests arrive on.
+    const TUNNEL: &str = "127.0.0.1:41234";
+
     /// Past the per-address allowance, a client gets no new anonymous id.
     #[tokio::test]
     async fn new_anonymous_ids_are_limited_per_address() {
@@ -2797,15 +2937,84 @@ mod tests {
         );
         let from = [("cf-connecting-ip", "203.0.113.7")];
         for _ in 0..2 {
-            let (status, _, _) = call(&router, "GET", "/api/v1/snapshot", None, &from).await;
+            let (status, _, _) = call_from(
+                &router,
+                "GET",
+                "/api/v1/snapshot",
+                None,
+                &from,
+                Some(TUNNEL),
+            )
+            .await;
             assert_eq!(status, StatusCode::OK);
         }
-        let (status, _, _) = call(&router, "GET", "/api/v1/snapshot", None, &from).await;
+        let (status, _, _) = call_from(
+            &router,
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            &from,
+            Some(TUNNEL),
+        )
+        .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
 
         let other = [("cf-connecting-ip", "203.0.113.8")];
-        let (status, _, _) = call(&router, "GET", "/api/v1/snapshot", None, &other).await;
+        let (status, _, _) = call_from(
+            &router,
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            &other,
+            Some(TUNNEL),
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "another address is not affected");
+    }
+
+    /// The reason the header is only read from a trusted peer: someone on the LAN
+    /// sends a fresh address every request and must not get a fresh allowance with it.
+    #[tokio::test]
+    async fn a_direct_client_cannot_buy_allowance_by_forging_the_proxy_header() {
+        let router = router_with_caps(
+            MemoryStore::default(),
+            Caps {
+                anon_ids_per_ip: 1,
+                ..Caps::default()
+            },
+        );
+        let direct = Some("198.51.100.4:5555");
+        let (status, _, _) = call_from(
+            &router,
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            &[("cf-connecting-ip", "203.0.113.1")],
+            direct,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the first new id is within the allowance"
+        );
+
+        for forged in ["203.0.113.2", "203.0.113.3"] {
+            let (status, _, _) = call_from(
+                &router,
+                "GET",
+                "/api/v1/snapshot",
+                None,
+                &[("cf-connecting-ip", forged)],
+                direct,
+            )
+            .await;
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "{forged} bought a second new id from one address"
+            );
+        }
     }
 
     /// Past the anonymous cap, capture still works but is judged by `FakeJudge`.
@@ -2860,6 +3069,7 @@ mod tests {
             false,
             Caps::default(),
             None,
+            TrustedProxies::default(),
         );
         let token = sign_in(&router).await;
         let bearer = format!("Bearer {token}");
@@ -2886,12 +3096,13 @@ mod tests {
             .block(&crate::v2::store::Block::Ip("203.0.113.9".into()))
             .unwrap();
         let router = router_with_caps(store, Caps::default());
-        let (status, _, body) = call(
+        let (status, _, body) = call_from(
             &router,
             "POST",
             "/api/v1/capture",
             Some(r#"{"text":"buy milk tomorrow"}"#),
             &[("cf-connecting-ip", "203.0.113.9")],
+            Some(TUNNEL),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
@@ -2907,29 +3118,130 @@ mod tests {
         assert!(body["google_client_id"].is_null(), "{body}");
     }
 
-    #[test]
-    fn the_client_address_is_the_proxy_header_then_the_socket() {
+    /// Headers carrying `CF-Connecting-IP: 203.0.113.5`.
+    fn from_cloudflare() -> HeaderMap {
         let mut headers = HeaderMap::new();
-        let peer = Some("198.51.100.4".parse::<IpAddr>().unwrap());
-        assert_eq!(client_ip(&headers, peer), "198.51.100.4");
-
         headers.insert("cf-connecting-ip", HeaderValue::from_static("203.0.113.5"));
-        assert_eq!(client_ip(&headers, peer), "203.0.113.5");
+        headers
+    }
 
-        headers.insert("cf-connecting-ip", HeaderValue::from_static("  "));
-        assert_eq!(client_ip(&headers, peer), "198.51.100.4");
-
-        // A non-IP value is not stored: it would be echoed on the admin page, so a
-        // client must not be able to smuggle an HTML string in there.
-        headers.insert(
-            "cf-connecting-ip",
-            HeaderValue::from_static("<img src=x onerror=alert(1)>"),
+    /// The tunnel runs on this machine, so a loopback peer may name the client.
+    #[test]
+    fn the_proxy_header_is_honoured_from_loopback() {
+        let peer = Some("127.0.0.1".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            client_ip(&from_cloudflare(), peer, &TrustedProxies::default()),
+            "203.0.113.5"
         );
-        assert_eq!(client_ip(&headers, peer), "198.51.100.4");
-        headers.insert("cf-connecting-ip", HeaderValue::from_static("not-an-ip"));
-        assert_eq!(client_ip(&headers, peer), "198.51.100.4");
+        // The whole loopback network, and IPv6 loopback, are the same machine.
+        for loopback in ["127.0.0.5", "::1"] {
+            let peer: IpAddr = loopback.parse().unwrap();
+            assert_eq!(
+                client_ip(&from_cloudflare(), Some(peer), &TrustedProxies::default()),
+                "203.0.113.5",
+                "{loopback} is this machine too"
+            );
+        }
+    }
 
-        assert_eq!(client_ip(&HeaderMap::new(), None), "unknown");
+    /// Anyone reaching the server directly can send any address, so from a peer we do
+    /// not trust the header is worth nothing: it is the socket that counts.
+    #[test]
+    fn the_proxy_header_is_ignored_from_an_untrusted_peer() {
+        let peer = Some("198.51.100.4".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            client_ip(&from_cloudflare(), peer, &TrustedProxies::default()),
+            "198.51.100.4"
+        );
+
+        let trusted = TrustedProxies::from_list(Some("203.0.113.0/24"));
+        assert_eq!(
+            client_ip(&from_cloudflare(), peer, &trusted),
+            "198.51.100.4",
+            "a different address must not become trusted by another entry"
+        );
+
+        // Nothing at all to fall back on, and no peer to check: the header is still
+        // not taken, because no socket vouched for it.
+        assert_eq!(
+            client_ip(&from_cloudflare(), None, &TrustedProxies::default()),
+            "unknown"
+        );
+    }
+
+    /// `RAMBL_TRUSTED_PROXIES` names the proxies allowed to speak for the client.
+    #[test]
+    fn a_listed_proxy_may_name_the_client() {
+        let trusted = TrustedProxies::from_list(Some("198.51.100.4, 10.0.0.0/8, fd00::/8"));
+        for peer in ["198.51.100.4", "10.1.2.3", "fd00::1"] {
+            let peer: IpAddr = peer.parse().unwrap();
+            assert_eq!(
+                client_ip(&from_cloudflare(), Some(peer), &trusted),
+                "203.0.113.5",
+                "{peer} is listed, so it may name the client"
+            );
+        }
+        let edge = Some("198.51.100.5".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            client_ip(&from_cloudflare(), edge, &trusted),
+            "198.51.100.5",
+            "an unlisted neighbour is not a proxy"
+        );
+    }
+
+    /// A trusted proxy that sends something that is not an address must not get it
+    /// stored: the value is echoed on the admin page, so a client must not be able to
+    /// smuggle an HTML string in there.
+    #[test]
+    fn a_header_that_is_not_an_address_falls_back_to_the_peer() {
+        let peer = Some("127.0.0.1".parse::<IpAddr>().unwrap());
+        for junk in [
+            "<img src=x onerror=alert(1)>",
+            "not-an-ip",
+            "203.0.113.5 203.0.113.6",
+            "  ",
+        ] {
+            let mut headers = HeaderMap::new();
+            headers.insert("cf-connecting-ip", HeaderValue::from_static(junk));
+            assert_eq!(
+                client_ip(&headers, peer, &TrustedProxies::default()),
+                "127.0.0.1",
+                "{junk} must not be stored"
+            );
+        }
+        assert_eq!(
+            client_ip(&HeaderMap::new(), peer, &TrustedProxies::default()),
+            "127.0.0.1",
+            "with no header the peer is the client"
+        );
+        assert_eq!(
+            client_ip(&HeaderMap::new(), None, &TrustedProxies::default()),
+            "unknown"
+        );
+    }
+
+    /// The list is read once at startup, so a typo in it is dropped rather than
+    /// taking the whole list down with it.
+    #[test]
+    fn only_real_addresses_become_trusted_proxies() {
+        let trusted =
+            TrustedProxies::from_list(Some("198.51.100.4,, not-an-ip, 10.0.0.0/33, fd00::/8"));
+        for peer in ["198.51.100.4", "fd00::1"] {
+            assert!(
+                trusted.trusts(peer.parse().unwrap()),
+                "{peer} should have been kept"
+            );
+        }
+        for peer in ["198.51.100.5", "10.1.2.3"] {
+            assert!(
+                !trusted.trusts(peer.parse().unwrap()),
+                "{peer} should not have been kept"
+            );
+        }
+        assert!(
+            !TrustedProxies::default().trusts("198.51.100.4".parse().unwrap()),
+            "an unset list trusts nothing but loopback"
+        );
     }
 
     #[test]
