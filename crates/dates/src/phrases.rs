@@ -37,6 +37,18 @@ fn weekday_of(word: &str) -> Option<Weekday> {
         .map(|(_, day)| *day)
 }
 
+/// A weekday name as a recurrence phrase spells it: the full name, its plural "s", or a
+/// three-letter prefix ("mondays", "tues" -> Monday), the same prefixes the month table
+/// takes. [`day`] keeps the full name alone, so a bare "tue" is still not a date.
+pub fn weekday(word: &str) -> Option<Weekday> {
+    let name = word.strip_suffix('s').unwrap_or(word);
+    let short = name.len() == 3;
+    WEEKDAYS
+        .iter()
+        .find(|(full, _)| *full == name || (short && full.starts_with(name)))
+        .map(|(_, day)| *day)
+}
+
 /// The coming `target`: today when it is that weekday and the local time is before 17:00,
 /// otherwise the next one, a week away when it is the same weekday after 17:00.
 fn upcoming(target: Weekday, ctx: &LocalContext) -> NaiveDate {
@@ -55,7 +67,7 @@ fn days_ahead(from: Weekday, target: Weekday) -> i64 {
     if diff == 0 { 7 } else { diff }
 }
 
-fn month_of(word: &str) -> Option<u32> {
+pub(crate) fn month_of(word: &str) -> Option<u32> {
     if word == "sept" {
         return Some(9);
     }

@@ -142,7 +142,7 @@ A **series** repeats weekly on chosen days, optionally until a date. The stored 
 
 **Types (`core`).**
 
-- `Recurrence { weekdays: BTreeSet<Weekday>, until: Option<NaiveDate> }` — the rule. Empty `weekdays` never constructs; `until` is the last day an occurrence exists, inclusive.
+- `Recurrence { weekdays: BTreeSet<Weekday>, until: Option<NaiveDate> }` — the rule. Empty `weekdays` never constructs; `until` is the last day an occurrence exists, inclusive. `chrono::Weekday` is `Eq` and `Hash` but not `Ord`, so this cannot be a `BTreeSet<Weekday>` as first sketched: the days are a sorted, duplicate-free `Vec<Weekday>` (Monday first), which is what `dates::RecurrenceMatch::weekdays` is too.
 - `Series { id: SeriesId, user, title, duration_min: u16, rule: Recurrence, start_day: NaiveDate, time_of_day: Option<NaiveTime>, zone: String, external_uid: Option<String>, created }` — one per repeated thing. `time_of_day` comes from the capture or import; without it an occurrence floats (`Anytime`) and is placed in the first free slot of its week. `zone` is where the weekly time lives, like `due_tz` for a deadline.
 - `SeriesException { series: SeriesId, date: NaiveDate, kind: ExceptionKind }` with `ExceptionKind::{Done, Skipped, Moved { to: When }}` — one per deviating occurrence, keyed by local date.
 - `Occurrence { series: SeriesId, date: NaiveDate, when: When, status: OccurrenceStatus }` — the pure expansion result, with `OccurrenceStatus::{Open, Done, Moved}`. Skipped days produce no occurrence at all.
@@ -164,13 +164,14 @@ A **series** repeats weekly on chosen days, optionally until a date. The stored 
 - `PATCH /v2/series/{id}/dates/{date}` with `{"kind": "done" | "skipped" | "moved", "when": <When object>, "due_tz": …}` (the last two only for `moved`). The server validates the grammar `"{series_id}:{date}"` and that `date` is a real day of this series' rule inside the expansion window — a client id is never trusted as an identity (the same rule as everywhere else).
 - `Snapshot` gains `series: Vec<Series>` alongside the ephemeral occurrence rows, so the web UI can draw the rule without a second call.
 
-**Capture.** A scanner runs on each clause **before** `dates::candidates`: `recurrence(clause) -> Option<(title_spans, weekdays, Option<time>, Option<until>)>`. It accepts:
+**Capture.** A scanner runs on each clause **before** `dates::candidates`: `dates::recurrence(clause, ctx) -> Option<RecurrenceMatch>`, carrying the days, an optional time, an optional end and an optional start day, plus the byte spans it consumed so the title can drop them. It accepts:
 
-- `every <weekday>` / `<weekday>s` / `every <weekday> and <weekday>…` / `weekly on <weekday>[, <weekday>]` — the existing `WEEKDAYS` name table (`crates/dates/src/phrases.rs`) supplies the names; plural stripping (`mondays`, `tuesdays`) is added there, not in `capture`.
+- `every <weekday>` / `<weekday>s` / `every <weekday> and <weekday>…` / `weekly on <weekday>[, <weekday>]` — the existing `WEEKDAYS` name table (`crates/dates/src/phrases.rs`) supplies the names; plural stripping (`mondays`, `tuesdays`) and three-letter prefixes (`tue`, `fri`) are added there, not in `capture`.
 - `every weekday` = Mon–Fri; `every day` = all seven.
-- `until <day phrase>` — anything the existing `day()` resolver already accepts ("until December 15", "until Friday"). Two additions to `day()`: a bare month after `until` ("until December") means the last day of the month **before** it, and `end of the month` = the last day of the current month.
+- `until <day phrase>` — anything the existing `day()` resolver already accepts ("until December 15", "until Friday"), plus two phrases the scanner adds and `day()` cannot hold: a bare month after `until` ("until December") means the last day of the month **before** it, and `end of the month` = the last day of the current month. A bare month stays out of `day()`, where it would make "December" a date of its own, and "end of the month" is four words, longer than any window `candidates` reads.
 - `at 7am`, `at 19:00` etc. reuse the existing time candidates.
-- No match — "every", "always" or a weekday with no `every`/`weekly on` marker — leaves the clause to the normal one-shot path ("a thing next Monday" is not a series).
+- `starting <day>`, `from <day>`, `beginning on <day>` — a one-shot date beside a marker is the first week of the series.
+- No match — "every", "always", a rhythm this scanner does not read ("every month", "every other Monday") or a weekday with no `every`/`weekly on` marker — leaves the clause to the normal one-shot path ("a thing next Monday" is not a series).
 
 The match wins over one-shot day phrases: `gym every Monday and Thursday` produces a series, not two `At` tasks. Jev still judges that the clause is a task; the scanner decides it repeats. A clause with both a one-shot date and a recurrence marker ("submit the report every Friday starting October 30") is a series whose `start_day` is that date.
 

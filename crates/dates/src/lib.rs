@@ -4,6 +4,9 @@
 //! candidate already carries its value. Jev only chooses among these candidates.
 
 mod phrases;
+mod repeats;
+
+pub use repeats::{RecurrenceMatch, recurrence};
 
 use std::ops::Range;
 
