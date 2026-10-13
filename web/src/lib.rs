@@ -2129,8 +2129,11 @@ mod tests {
 
     /// A snapshot holding one series ("Gym", Mon/Thu 07:00) and the expanded row
     /// for its Thursday, the way the server mints them (docs/ARCHITECTURE.md 7.1).
+    /// The fixture already carries that series and row; this replaces the row so
+    /// the `done` state is the test's to choose.
     fn snapshot_with_series(done: bool) -> Snapshot {
         let mut snapshot = api::fixture_snapshot();
+        snapshot.tasks.retain(|task| task.id.0 != "sgym:2026-10-15");
         let created = Utc.with_ymd_and_hms(2026, 10, 12, 6, 0, 0).unwrap();
         snapshot.series.push(todo_core::Series {
             id: todo_core::SeriesId("sgym".into()),
