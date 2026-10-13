@@ -116,14 +116,6 @@ pub fn pen_busy(state: &State) -> bool {
     )
 }
 
-/// Is he in a writing-related state (caret, row, or flying for writing)?
-pub fn is_writing_flight(state: &State) -> bool {
-    matches!(
-        state,
-        State::Flying | State::WritingCaret | State::WritingRow
-    )
-}
-
 /// Where a hop of the skitter run is at `progress` (0..=1): straight line from
 /// `start` to `home`, with little bounces above it. Pure, so the DOM layer
 /// only reads points off it.
@@ -283,14 +275,5 @@ mod tests {
         assert!(is_away(&State::Dragging));
         assert!(is_away(&State::WritingCaret));
         assert!(is_away(&State::Flying));
-    }
-
-    #[test]
-    fn is_writing_flight_identifies_writing_states() {
-        assert!(!is_writing_flight(&State::Home));
-        assert!(!is_writing_flight(&State::Dragging));
-        assert!(is_writing_flight(&State::Flying));
-        assert!(is_writing_flight(&State::WritingCaret));
-        assert!(is_writing_flight(&State::WritingRow));
     }
 }
