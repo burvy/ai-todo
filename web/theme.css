@@ -421,24 +421,45 @@ a {
   border-color: var(--accent);
 }
 
-/* ── Rambo: one mascot, one element, bottom-right home ── */
+/* ── Rambo: one mascot, one element, rests in the capture nest ── */
 
-/* The single Rambo button: fixed at bottom-right corner. All states
-   (dragging, writing, skittering) use CSS classes on this one element. */
+/* The nest: replaces the Add button at the end of the capture line.
+   Clicking it submits the form. Rambo sits inside it when at home. */
+.nest {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--tap) * 1.25);
+  height: calc(var(--tap) * 1.25);
+  min-width: calc(var(--tap) * 1.25);
+  min-height: calc(var(--tap) * 1.25);
+  padding: 0;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+}
+
+/* The single Rambo button: rests in the nest, fixed when away.
+   All states (dragging, writing, skittering) use CSS classes on this one element. */
 .rambo {
-  position: fixed;
-  bottom: calc(var(--tap) + var(--space-2) + env(safe-area-inset-bottom, 0px));
-  right: var(--gutter);
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   z-index: 50;
   display: inline-flex;
-  width: var(--tap);
-  height: var(--tap);
+  width: calc(var(--tap) * 1.25 - 4px);
+  height: calc(var(--tap) * 1.25 - 4px);
   padding: var(--space-1);
   background-color: var(--paper-sunken);
   border: 1px solid var(--rule-strong);
   border-radius: var(--radius-round);
   cursor: grab;
   touch-action: none;
+  /* At home, let clicks pass through to the nest button below */
+  pointer-events: none;
   /* CSS variables for writing position — ignored at home */
   --pen-x: 0px;
   --pen-y: 0px;
@@ -446,6 +467,34 @@ a {
 
 .rambo:hover {
   text-decoration: none;
+}
+
+/* When Rambo is away from home, he becomes fixed so he can move freely.
+   --pen-x and --pen-y are the center of the button, so we position top/left
+   there and translate back by half. */
+.rambo.is-dragging,
+.rambo.is-flying,
+.rambo.is-recovering,
+.rambo.is-skittering,
+.rambo.is-asking,
+.rambo.is-writing {
+  position: fixed;
+  top: 0;
+  left: 0;
+  transform: translate(
+    calc(var(--pen-x) - 50%),
+    calc(var(--pen-y) - 50%)
+  );
+}
+
+/* When Rambo is away from home (dragging, flying, writing, etc.), capture pointer events */
+.rambo.is-dragging,
+.rambo.is-flying,
+.rambo.is-recovering,
+.rambo.is-skittering,
+.rambo.is-asking,
+.rambo.is-writing {
+  pointer-events: auto;
 }
 
 .rambo:active {
@@ -458,15 +507,17 @@ a {
   pointer-events: none;
 }
 
-/* Dragging: follow the pointer via CSS variables */
+/* Dragging: follow the pointer exactly */
 .rambo.is-dragging {
-  transform: translate(var(--pen-x), var(--pen-y));
   cursor: grabbing;
 }
 
 /* Recovering: dazed pause at drop point */
 .rambo.is-recovering {
-  transform: translate(var(--pen-x), var(--pen-y)) rotate(12deg);
+  transform: translate(
+      calc(var(--pen-x) - 50%),
+      calc(var(--pen-y) - 50%)
+    ) rotate(12deg);
 }
 
 /* Skittering: hop animation back to home */
@@ -476,19 +527,31 @@ a {
 
 @keyframes rambo-skitter {
   0% {
-    transform: translate(var(--pen-x), var(--pen-y)) rotate(12deg);
+    transform: translate(
+        calc(var(--pen-x) - 50%),
+        calc(var(--pen-y) - 50%)
+      ) rotate(12deg);
   }
   25% {
-    transform: translate(calc(var(--pen-x) * 0.75), calc(var(--pen-y) * 0.75 - 10px)) rotate(6deg);
+    transform: translate(
+        calc(var(--pen-x) * 0.75 - 50%),
+        calc(var(--pen-y) * 0.75 - 50% - 10px)
+      ) rotate(6deg);
   }
   50% {
-    transform: translate(calc(var(--pen-x) * 0.5), calc(var(--pen-y) * 0.5 - 15px)) rotate(-4deg);
+    transform: translate(
+        calc(var(--pen-x) * 0.5 - 50%),
+        calc(var(--pen-y) * 0.5 - 50% - 15px)
+      ) rotate(-4deg);
   }
   75% {
-    transform: translate(calc(var(--pen-x) * 0.25), calc(var(--pen-y) * 0.25 - 8px)) rotate(2deg);
+    transform: translate(
+        calc(var(--pen-x) * 0.25 - 50%),
+        calc(var(--pen-y) * 0.25 - 50% - 8px)
+      ) rotate(2deg);
   }
   100% {
-    transform: translate(0, 0) rotate(0);
+    transform: translate(-50%, -50%) rotate(0);
   }
 }
 
@@ -499,17 +562,26 @@ a {
 
 /* Writing: shrunk and rotated like a pen at work */
 .rambo.is-flying.is-writing {
-  transform: translate(var(--pen-x), var(--pen-y)) rotate(34deg) scale(0.78);
+  transform: translate(
+      calc(var(--pen-x) - 50%),
+      calc(var(--pen-y) - 50%)
+    ) rotate(34deg) scale(0.78);
 }
 
 /* Writing at caret (same as writing, but marked for future differentiation) */
 .rambo.is-flying.is-writing.is-caret {
-  transform: translate(var(--pen-x), var(--pen-y)) rotate(34deg) scale(0.78);
+  transform: translate(
+      calc(var(--pen-x) - 50%),
+      calc(var(--pen-y) - 50%)
+    ) rotate(34deg) scale(0.78);
 }
 
 /* Asking: positioned at the task */
 .rambo.is-asking {
-  transform: translate(var(--pen-x), var(--pen-y));
+  transform: translate(
+    calc(var(--pen-x) - 50%),
+    calc(var(--pen-y) - 50%)
+  );
 }
 
 /* Status text below Rambo */
@@ -935,22 +1007,20 @@ a {
   }
 }
 
-/* Pen writing row animation: title reveals left to right */
+/* Pen writing row animation: title reveals letter by letter */
 .pen-title {
-  max-width: 100%;
-  overflow: hidden;
-  transition: max-width 0.6s linear;
   display: inline-block;
   white-space: nowrap;
 }
 
 .pen-pending .pen-title {
-  max-width: 0;
+  visibility: hidden;
 }
 
 .pen-writing .pen-title {
-  max-width: 100%;
+  visibility: visible;
 }
+
 
 .pen-underline {
   display: none;
