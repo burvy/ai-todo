@@ -35,18 +35,24 @@
   --paper-raised: var(--wheat);
   --paper-sunken: var(--ecru);
 
-  /* Type: system stacks only. */
-  --font-heading: Georgia, "Iowan Old Style", "Times New Roman", serif;
-  --font-body: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  /* Task titles, in the human's hand. System handwriting fonts only, no downloads. */
-  --font-hand: "Segoe Print", "Bradley Hand", "Comic Sans MS", "Chalkboard SE",
-    "Marker Felt", cursive;
-  --text-xs: 0.75rem;
-  --text-sm: 0.85rem;
-  --text-base: 1rem;
-  --text-lg: 1.15rem;
-  --text-xl: 1.4rem;
-  --text-2xl: 1.75rem;
+  /* Type: every word is handwritten (docs/DESIGN-DECISIONS.md). The three
+     self-hosted OFL faces live in web/assets/fonts/ (Ping's set, woff2):
+     Patrick Hand is the neat, very legible hand for the UI; Caveat (variable
+     400-700) is the expressive hand for task titles; Kalam 300/400/700 is
+     Rambo's tool writing. System handwriting stacks are fallbacks only. */
+  --font-hand-neat: "Patrick Hand", "Segoe Print", "Bradley Hand", cursive;
+  --font-hand: "Caveat", "Segoe Print", "Bradley Hand", cursive;
+  --font-marker: "Kalam", "Comic Sans MS", cursive;
+  --font-heading: var(--font-hand-neat);
+  --font-body: var(--font-hand-neat);
+  /* Hands run small and narrow against a body stack, so the scale is lifted
+     a step and opened up a little to keep the same footprint per line. */
+  --text-xs: 0.85rem;
+  --text-sm: 0.95rem;
+  --text-base: 1.05rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 1.9rem;
 
   /* Spacing. No radii: paper does not have rounded corners, except bubbles. */
   --gutter: 1rem;
@@ -139,6 +145,48 @@
   display: none !important;
 }
 
+/* ── The hands: three self-hosted OFL faces, woff2 (web/assets/fonts/).
+   Sources, licences and the tier/tool mapping live in that README. */
+@font-face {
+  font-family: "Patrick Hand";
+  src: url("assets/fonts/patrick-hand.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Caveat";
+  src: url("assets/fonts/caveat-var.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Kalam";
+  src: url("assets/fonts/kalam-light.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Kalam";
+  src: url("assets/fonts/kalam-regular.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Kalam";
+  src: url("assets/fonts/kalam-bold.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+}
+
 body {
   max-width: 1100px;
   margin: 0 auto;
@@ -146,7 +194,7 @@ body {
   /* Room for the fixed capture bar, plus the phone's home-indicator inset. */
   padding-bottom: calc(var(--tap) + var(--space-4) + var(--space-2) + env(safe-area-inset-bottom, 0px));
   color: var(--ink);
-  font: var(--text-base) / 1.5 var(--font-body);
+  font: var(--text-base) / 1.55 var(--font-body);
   background-color: var(--paper);
   background-image: var(--texture-paper);
   background-repeat: repeat;
@@ -171,8 +219,8 @@ h1 {
 h2 {
   margin: 0 0 var(--space-3);
   font-size: var(--text-xl);
-  font-variant: small-caps;
-  letter-spacing: 0.04em;
+  font-weight: 700;
+  letter-spacing: 0.05em;
 }
 
 h3 {
@@ -744,8 +792,8 @@ a {
   min-height: var(--tap);
   cursor: pointer;
   font-family: var(--font-heading);
-  font-variant: small-caps;
-  letter-spacing: 0.04em;
+  font-weight: 700;
+  letter-spacing: 0.05em;
 }
 
 .settings label {
