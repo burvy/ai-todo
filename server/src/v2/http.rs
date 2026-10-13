@@ -3474,7 +3474,7 @@ mod tests {
         let token = auth::new_token();
         // Sessions are checked against the wall clock, so an expiry an hour ago
         // is dead whatever the app clock says.
-        let expired = Utc::now() - chrono::Duration::hours(1);
+        let expired = sunday_night() - chrono::Duration::hours(1);
         store
             .upsert_user_and_session(&user, &token, expired)
             .expect("store the expired session");
