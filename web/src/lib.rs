@@ -1,6 +1,4 @@
-use std::collections::HashSet;
-
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use gloo_timers::callback::Timeout;
 #[cfg(target_arch = "wasm32")]
 use js_sys::Array;
@@ -152,7 +150,8 @@ pub fn App() -> impl IntoView {
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
     let pen_pos = RwSignal::new((0.0_f64, 0.0));
-    let pen_queue = RwSignal::new(Vec::<TaskId>::new());
+    // Transcript buffer: Rambo fills it while listening, CaptureBox reads it
+    let capture_text = RwSignal::new(String::new());
 
     window_event_listener(leptos::ev::keydown, move |event| {
         if event.key() == " "
@@ -170,13 +169,10 @@ pub fn App() -> impl IntoView {
             <account::HeaderLink />
             <CaptureBox
                 set_snapshot=set_snapshot
-                _set_error=set_error
                 state=mascot_state
                 set_state=set_mascot_state
-                _set_talking=set_talking
                 view_settings
                 pen_pos
-                _pen_queue=pen_queue
             />
         </header>
         {move || error.get().map(|e| view! {
@@ -201,7 +197,7 @@ pub fn App() -> impl IntoView {
         <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
             <div class="tasks-pane">
                 <ImportIcs set_snapshot set_error />
-                <TaskList snapshot set_snapshot set_error view_settings set_mascot_state pen_queue pen_pos />
+                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_pos />
             </div>
             <week::WeekGrid snapshot=snapshot settings=view_settings set_mascot_state=set_mascot_state />
         </main>
@@ -218,6 +214,7 @@ pub fn App() -> impl IntoView {
             brain_pose
             set_brain_event
             pen_pos
+            capture_text
         />
     }
 }
@@ -267,13 +264,10 @@ fn track_pane(_main: NodeRef<leptos::html::Main>, _set_pane: WriteSignal<u8>) {}
 #[component]
 fn CaptureBox(
     set_snapshot: WriteSignal<Snapshot>,
-    _set_error: WriteSignal<Option<String>>,
     state: ReadSignal<mascot::State>,
     set_state: WriteSignal<mascot::State>,
-    _set_talking: WriteSignal<bool>,
     view_settings: ReadSignal<settings::Settings>,
     pen_pos: RwSignal<(f64, f64)>,
-    _pen_queue: RwSignal<Vec<TaskId>>,
 ) -> impl IntoView {
     let (text, set_text) = signal(String::new());
     let input_ref = NodeRef::<leptos::html::Input>::new();
@@ -312,7 +306,15 @@ fn CaptureBox(
             let caret_x = rect.left() + f64::from(sel) * 8.0;
             let caret_y = rect.top() + rect.height() / 2.0;
             let center = pen::writing_pen_center(caret_x, caret_y);
-            pen_pos.set(center);
+            // Convert to offset from Rambo's home position
+            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                if let Some(rambo) = doc.query_selector(".rambo").ok().flatten() {
+                    let rrect = rambo.get_bounding_client_rect();
+                    let hx = rrect.left() + rrect.width() / 2.0;
+                    let hy = rrect.top() + rrect.height() / 2.0;
+                    pen_pos.set((center.0 - hx, center.1 - hy));
+                }
+            }
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -399,13 +401,18 @@ fn Rambo(
     brain_pose: ReadSignal<String>,
     set_brain_event: WriteSignal<Option<rambl_brain::Event>>,
     pen_pos: RwSignal<(f64, f64)>,
+    /// Transcript buffer: filled while listening, sent as capture on release
+    capture_text: RwSignal<String>,
 ) -> impl IntoView {
     let start_return = move || {
         if mascot::prefers_reduced_motion() {
             set_state.set(mascot::State::Home);
             return;
         }
-        set_state.set(mascot::State::Recovering);
+        set_state.set(mascot::transition(
+            &state.get_untracked(),
+            mascot::Event::DropEmpty,
+        ));
         let set_state = set_state;
         Timeout::new(mascot::RECOVER_MS, move || {
             set_state.set(mascot::State::Skittering);
@@ -424,18 +431,23 @@ fn Rambo(
     let moved_move = moved.clone();
     let moved_for_up = moved.clone();
 
-    // Speech session for grab-to-listen
+    // Speech session for grab-to-listen: transcript goes into capture_text so
+    // the capture box can submit it when the user releases Rambo.
     let speech_session = std::rc::Rc::new(std::cell::RefCell::new(None::<speech::Session>));
+    let transcript = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
     let start_speech = {
         let ss = speech_session.clone();
+        let transcript = transcript.clone();
+        let capture = capture_text;
         move || {
             if !speech::supported() {
                 return;
             }
             set_error.set(None);
+            transcript.borrow_mut().clear();
             let result = speech::Session::start(
-                std::rc::Rc::new(std::cell::RefCell::new(String::new())),
-                move |_| {},
+                transcript.clone(),
+                move |text| capture.set(text),
                 move |value| set_talking.set(value),
                 move |value| set_error.set(value),
             );
@@ -448,25 +460,51 @@ fn Rambo(
             }
         }
     };
-    let stop_speech = {
+    let stop_speech_and_send = {
         let ss = speech_session.clone();
+        let capture = capture_text;
         move || {
             if let Some(session) = ss.borrow().as_ref() {
                 session.stop();
             }
             set_talking.set(false);
+            // Send the transcript as a capture so the CaptureBox can submit it
+            let text = transcript.borrow().clone();
+            if !text.is_empty() {
+                capture.set(text);
+            }
         }
     };
 
     // Clone closures for multiple event handlers
     let start_speech_down = start_speech.clone();
     let start_speech_key = start_speech.clone();
-    let stop_speech_up = stop_speech.clone();
-    let stop_speech_cancel = stop_speech.clone();
-    let stop_speech_key = stop_speech.clone();
+    let stop_speech_up = stop_speech_and_send.clone();
+    let stop_speech_cancel = stop_speech_and_send.clone();
+    let stop_speech_key = stop_speech_and_send.clone();
+
+    // Home position: Rambo's CSS-anchored spot (bottom-right). pen_pos stores
+    // OFFSETS from home so translate() places him correctly.
+    let home_pos = RwSignal::new((0.0_f64, 0.0));
+    let rambo_ref = NodeRef::<leptos::html::Button>::new();
+
+    // Measure home position on mount so drag offsets are correct
+    Effect::new(move |_| {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(btn) = rambo_ref.get() {
+            let rect = btn.get_bounding_client_rect();
+            // Home is the center of the button
+            let hx = rect.left() + rect.width() / 2.0;
+            let hy = rect.top() + rect.height() / 2.0;
+            home_pos.set((hx, hy));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = rambo_ref;
+    });
 
     view! {
         <button
+            node_ref=rambo_ref
             class=move || mascot::rambo_class(&state.get(), &brain_pose.get())
             type="button"
             tabindex="0"
@@ -475,7 +513,7 @@ fn Rambo(
             style:--pen-y=move || format!("{:.1}px", pen_pos.get().1)
             on:pointerdown=move |ev| {
                 ev.prevent_default();
-                if mascot::is_writing_flight(&state.get_untracked()) {
+                if mascot::pen_busy(&state.get_untracked()) {
                     return;
                 }
                 set_brain_event.set(Some(rambl_brain::Event::Poked));
@@ -492,7 +530,12 @@ fn Rambo(
                     *moved_move.borrow_mut() = true;
                     let client_x = ev.client_x() as f64;
                     let client_y = ev.client_y() as f64;
-                    pen_pos.set((client_x, client_y));
+                    let home = home_pos.get_untracked();
+                    if home.0 != 0.0 || home.1 != 0.0 {
+                        let offset_x = client_x - home.0;
+                        let offset_y = client_y - home.1;
+                        pen_pos.set((offset_x, offset_y));
+                    }
                 }
             }
             on:pointerup=move |ev: leptos::ev::PointerEvent| {
@@ -502,12 +545,18 @@ fn Rambo(
                 }
                 let did_move = *moved_for_up.borrow();
                 if !did_move {
+                    // Release without moving: send transcript and go home
                     set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Release));
                     return;
                 }
                 let client_x = ev.client_x() as f64;
                 let client_y = ev.client_y() as f64;
-                pen_pos.set((client_x, client_y));
+                let home = home_pos.get_untracked();
+                if home.0 != 0.0 || home.1 != 0.0 {
+                    let offset_x = client_x - home.0;
+                    let offset_y = client_y - home.1;
+                    pen_pos.set((offset_x, offset_y));
+                }
 
                 // Check if dropped on a task row
                 let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
@@ -559,7 +608,7 @@ fn Rambo(
         </button>
         <span class="mascot-status" aria-live="polite">
             {move || brain_speech.get().map(|line| view! { <span class="brain-line">{line}</span> })}
-            {move || match state.get_untracked() {
+            {move || match state.get() {
                 mascot::State::Asking { ref title, .. } => view! {
                     <span class="ask">
                         <span>{format!("Hey! What do you want with \"{title}\"?")}</span>
@@ -578,9 +627,7 @@ fn Rambo(
                             }
                         }>"Edit"</button>
                         <button type="button" on:click=move |_| {
-                            if let mascot::State::Asking { .. } = state.get_untracked() {
-                                set_state.set(mascot::State::Home);
-                            }
+                            set_state.set(mascot::State::Home);
                         }>"Move"</button>
                         <button type="button" on:click=move |_| {
                             if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
@@ -840,8 +887,8 @@ fn TaskList(
     set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
     view_settings: ReadSignal<settings::Settings>,
+    mascot_state: ReadSignal<mascot::State>,
     set_mascot_state: WriteSignal<mascot::State>,
-    pen_queue: RwSignal<Vec<TaskId>>,
     pen_pos: RwSignal<(f64, f64)>,
 ) -> impl IntoView {
     let (dragged_task, set_dragged_task) = signal::<Option<TaskId>>(None);
@@ -875,23 +922,44 @@ fn TaskList(
             .collect::<Vec<_>>()
     };
 
-    // Pen queue choreography: process new tasks, animate pen writing each row
-    #[allow(unused_variables)]
+    // When capture text is submitted (speech or typed), the new task appears.
+    // Watch for new tasks in the snapshot and write them if Rambo is at Home.
+    let last_count = RwSignal::new(0usize);
     Effect::new(move |_| {
-        let queue = pen_queue.get();
         let mode = view_settings.get().mode;
-        if queue.is_empty()
-            || mascot::prefers_reduced_motion()
-            || mode == settings::RamblMode::Lobotomized
-        {
+        if mascot::prefers_reduced_motion() || mode == settings::RamblMode::Lobotomized {
             return;
         }
-        let pen_queue = pen_queue;
-        let set_mascot_state = set_mascot_state;
-        let _pen_pos = pen_pos;
+        let tasks = snapshot.get().tasks.len();
+        let last = last_count.get();
+        let current_state = mascot_state.get();
+        // Only start writing if Rambo is at Home and there are new tasks
+        if tasks <= last || !matches!(current_state, mascot::State::Home) {
+            return;
+        }
+        let new_ids: Vec<TaskId> = snapshot
+            .get()
+            .tasks
+            .iter()
+            .rev()
+            .take(tasks - last)
+            .map(|t| t.id.clone())
+            .collect();
+        last_count.set(tasks);
+        let set_state = set_mascot_state;
+        #[allow(unused_variables)]
+        let pen_pos = pen_pos;
         wasm_bindgen_futures::spawn_local(async move {
-            for task_id in queue.into_iter() {
-                set_mascot_state.set(mascot::State::Flying);
+            #[allow(unused_variables)]
+            for _task_id in new_ids {
+                // Check Rambo is still at Home before each row
+                if !matches!(mascot_state.get_untracked(), mascot::State::Home) {
+                    break;
+                }
+                set_state.set(mascot::transition(
+                    &mascot::State::Home,
+                    mascot::Event::WriteRow,
+                ));
                 #[cfg(target_arch = "wasm32")]
                 {
                     if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
@@ -910,12 +978,18 @@ fn TaskList(
                                 rect.left() + 40.0,
                                 rect.top() + rect.height() / 2.0,
                             );
-                            pen_pos.set(center);
+                            // Convert to offset from Rambo's home position
+                            if let Some(rambo) = doc.query_selector(".rambo").ok().flatten() {
+                                let rrect = rambo.get_bounding_client_rect();
+                                let hx = rrect.left() + rrect.width() / 2.0;
+                                let hy = rrect.top() + rrect.height() / 2.0;
+                                pen_pos.set((center.0 - hx, center.1 - hy));
+                            }
                         }
                     }
                 }
                 gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
-                set_mascot_state.set(mascot::State::WritingRow);
+                set_state.set(mascot::State::WritingRow);
                 #[cfg(target_arch = "wasm32")]
                 {
                     if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
@@ -935,11 +1009,14 @@ fn TaskList(
                     }
                 }
                 gloo_timers::future::TimeoutFuture::new(pen::WRITE_MS).await;
+                // Fly home after this row
+                set_state.set(mascot::transition(
+                    &mascot::State::WritingRow,
+                    mascot::Event::FlyHome,
+                ));
+                gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
+                set_state.set(mascot::State::Home);
             }
-            set_mascot_state.set(mascot::State::Flying);
-            gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
-            set_mascot_state.set(mascot::State::Home);
-            pen_queue.set(Vec::new());
         });
     });
 
