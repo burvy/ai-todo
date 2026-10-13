@@ -254,28 +254,28 @@ mod tests {
         }
     }
 
-    fn at_utc(month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, month, day, hour, minute, 0)
+    fn at_utc(year: u32, month: u32, day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(year as i32, month, day, hour, minute, 0)
             .unwrap()
     }
 
     #[test]
     fn a_placement_lands_on_its_own_local_day() {
-        let ny = zone("America/New_York", at_utc(10, 12, 12, 0));
+        let ny = zone("America/New_York", at_utc(2026, 10, 12, 12, 0));
         // 23:30 UTC on 12 Oct is 19:30 on 12 Oct in New York: today.
-        assert_eq!(day_index(at_utc(10, 12, 23, 30), &ny), 0);
-        let berlin = zone("Europe/Berlin", at_utc(10, 12, 12, 0));
+        assert_eq!(day_index(at_utc(2026, 10, 12, 23, 30), &ny), 0);
+        let berlin = zone("Europe/Berlin", at_utc(2026, 10, 12, 12, 0));
         // The same instant is 01:30 on 13 Oct in Berlin: tomorrow.
-        assert_eq!(day_index(at_utc(10, 12, 23, 30), &berlin), 1);
+        assert_eq!(day_index(at_utc(2026, 10, 12, 23, 30), &berlin), 1);
     }
 
     #[test]
     fn each_placement_appears_only_on_its_day() {
-        let ny = zone("America/New_York", at_utc(10, 12, 12, 0));
+        let ny = zone("America/New_York", at_utc(2026, 10, 12, 12, 0));
         let at = |day: u32, hour: u32| Placement {
             task: todo_core::TaskId(format!("t{day}{hour}")),
-            start: at_utc(10, day, hour, 0),
-            end: at_utc(10, day, hour + 1, 0),
+            start: at_utc(2026, 10, day, hour, 0),
+            end: at_utc(2026, 10, day, hour + 1, 0),
         };
         let placements = vec![at(12, 14), at(13, 9), at(14, 16), at(12, 18)];
         let ids = |day| -> Vec<String> {
@@ -292,27 +292,30 @@ mod tests {
 
     #[test]
     fn a_day_is_counted_in_the_users_zone_not_utc() {
-        let ny = zone("America/New_York", at_utc(10, 12, 12, 0));
+        let ny = zone("America/New_York", at_utc(2026, 10, 12, 12, 0));
         // 02:00 UTC on 13 Oct is still 22:00 on 12 Oct in New York.
-        assert_eq!(day_index(at_utc(10, 13, 2, 0), &ny), 0);
+        assert_eq!(day_index(at_utc(2026, 10, 13, 2, 0), &ny), 0);
     }
 
     #[test]
     fn a_placement_either_side_of_the_berlin_clock_change_keeps_its_day() {
         // Europe/Berlin goes from UTC+2 to UTC+1 at 01:00 UTC on 25 Oct 2026. A single
         // offset read on 19 Oct would put 22:30 UTC on 25 Oct on 26 Oct.
-        let berlin = zone("Europe/Berlin", at_utc(10, 19, 12, 0));
+        let berlin = zone("Europe/Berlin", at_utc(2026, 10, 19, 12, 0));
         // 22:30 UTC on 25 Oct is 23:30 on 25 Oct in Berlin, after the change.
-        assert_eq!(day_index(at_utc(10, 25, 22, 30), &berlin), 6);
+        assert_eq!(day_index(at_utc(2026, 10, 25, 22, 30), &berlin), 6);
         // 21:30 UTC on 24 Oct is 23:30 on 24 Oct in Berlin, before it.
-        assert_eq!(day_index(at_utc(10, 24, 21, 30), &berlin), 5);
+        assert_eq!(day_index(at_utc(2026, 10, 24, 21, 30), &berlin), 5);
     }
 
     #[test]
     fn a_task_shows_its_clock_time_in_the_users_zone() {
         // 14:00 UTC on Monday 12 Oct is 10:00 in New York (EDT, UTC-4).
-        let ny = zone("America/New_York", at_utc(10, 12, 12, 0));
-        assert_eq!(local_time_label(&ny, at_utc(10, 12, 14, 0)), "Mon 10:00");
+        let ny = zone("America/New_York", at_utc(2026, 10, 12, 12, 0));
+        assert_eq!(
+            local_time_label(&ny, at_utc(2026, 10, 12, 14, 0)),
+            "Mon 10:00"
+        );
     }
 
     #[test]
@@ -346,5 +349,55 @@ mod tests {
         let (top, height) = placement_style(23 * 60 + 30, 25 * 60 + 30, 8, HOUR_PX, 24);
         assert!((top - 15.5 * HOUR_PX).abs() < 0.01); // 23:30 = 15h30 after 8:00
         assert!((height - 0.5 * HOUR_PX).abs() < 0.01); // 30 min until 24:00
+    }
+    #[test]
+    fn planner_days_cross_month_and_year_end() {
+        let ny = zone("America/New_York", at_utc(2026, 12, 31, 12, 0));
+        assert_eq!(day_index(at_utc(2026, 12, 31, 23, 0), &ny), 0);
+        assert_eq!(day_index(at_utc(2027, 1, 1, 1, 0), &ny), 0);
+        assert_eq!(day_index(at_utc(2027, 1, 1, 5, 0), &ny), 1);
+    }
+
+    #[test]
+    fn placement_at_exact_planner_start_and_end_hour() {
+        let (top, height) = placement_style(8 * 60, 9 * 60, 8, HOUR_PX, 18);
+        assert!((top - 0.0).abs() < 0.01, "start at 08:00 = 0, got {top}");
+        assert!((height - HOUR_PX).abs() < 0.01, "1h = 64, got {height}");
+        let (top2, height2) = placement_style(17 * 60, 18 * 60, 8, HOUR_PX, 18);
+        assert!(
+            (top2 - 9.0 * HOUR_PX).abs() < 0.01,
+            "start at 17:00 = 9h, got {top2}"
+        );
+        assert!(
+            (height2 - HOUR_PX).abs() < 0.01,
+            "end at 18:00 = 64, got {height2}"
+        );
+    }
+
+    #[test]
+    fn one_minute_placement() {
+        let (top, height) = placement_style(10 * 60, 10 * 60 + 1, 8, HOUR_PX, 18);
+        assert!(
+            (height - (1.0 / 60.0 * HOUR_PX)).abs() < 0.01,
+            "1 min = 1.07, got {height}"
+        );
+        assert!((top - 2.0 * HOUR_PX).abs() < 0.01, "10:00 = 2h, got {top}");
+    }
+
+    #[test]
+    fn six_hundred_minute_placement() {
+        let (top, height) = placement_style(8 * 60, 18 * 60, 8, HOUR_PX, 18);
+        assert!((top - 0.0).abs() < 0.01);
+        assert!(
+            (height - 10.0 * HOUR_PX).abs() < 0.01,
+            "10h = 640, got {height}"
+        );
+    }
+
+    #[test]
+    fn empty_placements_on_day() {
+        let ny = zone("America/New_York", at_utc(2026, 10, 12, 12, 0));
+        assert!(placements_on_day(&[], 0, &ny).is_empty());
+        assert!(placements_on_day(&[], 1, &ny).is_empty());
     }
 }
