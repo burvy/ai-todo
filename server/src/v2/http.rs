@@ -4126,4 +4126,288 @@ mod tests {
         assert!(!valid_anon_id("anon_0123456789ABCDEF0123456789abcdef"));
         assert!(!valid_anon_id("anon_0123"));
     }
+
+    // ---- edge cases: bad input fails cleanly, never panics or 500s ----
+
+    /// Garbage bytes with a JSON content-type are a 4xx, and the server answers
+    /// the next request afterwards: no panic, no 500, no poisoned lock.
+    #[tokio::test]
+    async fn malformed_json_body_is_a_4xx_and_the_server_survives() {
+        let router = router_at(sunday_night());
+        let (status, _) = send(&router, "POST", "/api/v1/tasks", Some("{not json")).await;
+        assert!(
+            status.is_client_error(),
+            "garbage JSON must fail cleanly, got {status}"
+        );
+        assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        let (status, _) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the server did not survive a bad body"
+        );
+    }
+
+    /// Fields the server does not know are ignored, so a newer client still creates
+    /// its task against an older server. What matters is no panic and no 500.
+    #[tokio::test]
+    async fn unknown_fields_are_ignored_on_create() {
+        let router = router_at(sunday_night());
+        // The extra field sits on the draft itself: `When` is an internally
+        // tagged enum and serde rejects trailing fields inside its object, so a
+        // client must never hide new data there.
+        let draft = r#"{"title":"Buy milk","duration_min":30,"when":{"kind":"anytime"},"label":"Other","priority":"low","source":"text","extra_field":1}"#;
+        let (status, body) = send(&router, "POST", "/api/v1/tasks", Some(draft)).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "unknown fields must be ignored: {body}"
+        );
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(snapshot.tasks[0].title, "Buy milk");
+        assert_invariant(&snapshot);
+    }
+
+    /// One anonymous user's task id is a 404 to another, for PATCH and DELETE
+    /// alike, and the owner's task is untouched by both attempts.
+    #[tokio::test]
+    async fn another_users_task_id_is_404_and_their_data_is_untouched() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let (status, headers, body) =
+            call(&router, "POST", "/api/v1/tasks", Some(DRAFT), &[]).await;
+        assert_eq!(status, StatusCode::OK);
+        let owner = anonymous_id_of(&headers);
+        let id = serde_json::from_value::<Snapshot>(body).unwrap().tasks[0]
+            .id
+            .0
+            .clone();
+        let path = format!("/api/v1/tasks/{id}");
+
+        // A second anonymous visitor is a different person on the same server.
+        let (_, stranger_headers, _) = call(&router, "GET", "/api/v1/snapshot", None, &[]).await;
+        let stranger = anonymous_id_of(&stranger_headers);
+        assert_ne!(owner, stranger);
+
+        let (status, _, body) = call(
+            &router,
+            "PATCH",
+            &path,
+            Some(r#"{"done":true}"#),
+            &[("x-rambl-anon", &stranger)],
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "a stranger patched a task: {body}"
+        );
+        assert_eq!(body["error"]["code"], "not_found");
+
+        let (status, _, body) = call(
+            &router,
+            "DELETE",
+            &path,
+            None,
+            &[("x-rambl-anon", &stranger)],
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "a stranger deleted a task: {body}"
+        );
+
+        // The stranger sees an empty list; the owner still sees the original task.
+        let (_, _, body) = call(
+            &router,
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            &[("x-rambl-anon", &stranger)],
+        )
+        .await;
+        assert!(body["tasks"].as_array().unwrap().is_empty());
+        let (_, _, body) = call(
+            &router,
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            &[("x-rambl-anon", &owner)],
+        )
+        .await;
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(snapshot.tasks.len(), 1);
+        assert_eq!(snapshot.tasks[0].title, "Write the report");
+        assert!(!snapshot.tasks[0].done);
+        assert_invariant(&snapshot);
+    }
+
+    /// An empty PATCH body is a 4xx; an empty object patches nothing and changes nothing.
+    #[tokio::test]
+    async fn patch_with_an_empty_body_is_a_4xx_and_an_empty_object_is_a_noop() {
+        let router = router_at(sunday_night());
+        let id = create_task(&router, "Read").await;
+        let path = format!("/api/v1/tasks/{id}");
+        let (status, _) = send(&router, "PATCH", &path, Some("")).await;
+        assert!(
+            status.is_client_error(),
+            "an empty PATCH body must fail cleanly, got {status}"
+        );
+        let (status, body) = send(&router, "PATCH", &path, Some("{}")).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "an empty object patches nothing: {body}"
+        );
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(snapshot.tasks[0].title, "Read");
+        assert_invariant(&snapshot);
+    }
+
+    /// A 1 MB title is accepted whole: no truncation, no panic, no 500.
+    #[tokio::test]
+    async fn a_one_megabyte_title_is_stored_whole() {
+        let router = router_at(sunday_night());
+        let title = "a".repeat(1024 * 1024);
+        let draft = format!(
+            r#"{{"title":"{title}","duration_min":30,"when":{{"kind":"anytime"}},"label":"Other","priority":"low","source":"text"}}"#
+        );
+        let (status, body) = send(&router, "POST", "/api/v1/tasks", Some(&draft)).await;
+        assert_ne!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "a 1 MB title must never be a 500"
+        );
+        assert_eq!(status, StatusCode::OK, "a 1 MB title was refused: {status}");
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(snapshot.tasks[0].title.len(), 1024 * 1024);
+        assert_invariant(&snapshot);
+    }
+
+    /// Durations outside 5 to 480 minutes are refused: a negative or out-of-range
+    /// number never parses (422), a big-but-parseable one fails validation (400).
+    #[tokio::test]
+    async fn out_of_range_durations_are_4xx() {
+        let router = router_at(sunday_night());
+        for (duration, want) in [
+            ("-5", StatusCode::UNPROCESSABLE_ENTITY),
+            ("999999", StatusCode::UNPROCESSABLE_ENTITY),
+            ("60000", StatusCode::BAD_REQUEST),
+            ("0", StatusCode::BAD_REQUEST),
+        ] {
+            let draft = format!(
+                r#"{{"title":"Big job","duration_min":{duration},"when":{{"kind":"anytime"}},"label":"Other","priority":"low","source":"text"}}"#
+            );
+            let (status, _) = send(&router, "POST", "/api/v1/tasks", Some(&draft)).await;
+            assert_eq!(status, want, "duration_min {duration} gave {status}");
+        }
+    }
+
+    /// A zone that is not IANA is a 400 on writes too, not just on snapshot.
+    #[tokio::test]
+    async fn an_unknown_zone_is_a_400_on_writes() {
+        let router = router_at(sunday_night());
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/tasks")
+            .header("x-rambl-tz", "Mars/Olympus")
+            .header("content-type", "application/json")
+            .body(Body::from(DRAFT))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"]["code"], "bad_request");
+    }
+
+    /// Deleting twice: the first delete answers 200, the second is a 404.
+    #[tokio::test]
+    async fn deleting_twice_is_ok_then_404() {
+        let router = router_at(sunday_night());
+        let id = create_task(&router, "Gone").await;
+        let path = format!("/api/v1/tasks/{id}");
+        let (status, _) = send(&router, "DELETE", &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = send(&router, "DELETE", &path, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"]["code"], "not_found");
+    }
+
+    /// A session the store has expired is a 401 over HTTP, not just in the store
+    /// test: the request carries a real but dead token.
+    #[tokio::test]
+    async fn an_expired_bearer_token_is_401() {
+        let store = MemoryStore::default();
+        let user = auth::Me {
+            id: "google-1".into(),
+            email: "sam@example.com".into(),
+            name: "Sam".into(),
+            picture: None,
+            plan: auth::Plan::Free,
+        };
+        let token = auth::new_token();
+        // Sessions are checked against the wall clock, so an expiry an hour ago
+        // is dead whatever the app clock says.
+        let expired = sunday_night() - chrono::Duration::hours(1);
+        store
+            .upsert_user_and_session(&user, &token, expired)
+            .expect("store the expired session");
+        let router = super::router_with_verifier(
+            App::new(
+                Box::new(store) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(auth::FakeVerifier {
+                answer: Err("unused".into()),
+            }),
+            false,
+            Caps::default(),
+            None,
+            TrustedProxies::default(),
+        );
+        let (status, body) = send_as(&router, "GET", "/api/v1/snapshot", None, Some(&token)).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "an expired token worked: {body}"
+        );
+        assert_eq!(body["error"]["code"], "unauthorized");
+    }
+
+    /// A token the server never issued is a 401 with the JSON error body, on both
+    /// reads and writes.
+    #[tokio::test]
+    async fn a_forged_bearer_token_is_401() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let forged = auth::new_token();
+        let (status, body) = send_as(&router, "GET", "/api/v1/snapshot", None, Some(&forged)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"]["code"], "unauthorized");
+        let (status, _) =
+            send_as(&router, "POST", "/api/v1/tasks", Some(DRAFT), Some(&forged)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// A JSON body without a JSON content-type is a 415: axum refuses it before
+    /// the handler ever runs, and the server answers the next request.
+    #[tokio::test]
+    async fn a_missing_content_type_is_415_and_the_server_survives() {
+        let router = router_at(sunday_night());
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/tasks")
+            .header("x-rambl-tz", "America/New_York")
+            .body(Body::from(DRAFT))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "a body without a content-type must be refused"
+        );
+        let (status, _) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        assert_eq!(status, StatusCode::OK, "the server did not survive a 415");
+    }
 }
