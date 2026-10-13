@@ -1647,7 +1647,16 @@ mod pane_tests {
     use super::pane_at;
 
     #[test]
-    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    fn a_phone_swipe_maps_to_the_nearest_pane() {
+        assert_eq!(pane_at(0.0, 400.0), 0);
+        assert_eq!(pane_at(180.0, 400.0), 0);
+        assert_eq!(pane_at(220.0, 400.0), 1);
+        assert_eq!(pane_at(400.0, 400.0), 1);
+        assert_eq!(pane_at(900.0, 400.0), 1, "never past the last pane");
+        assert_eq!(pane_at(100.0, 0.0), 0, "no width yet, so the first pane");
+    }
+}
+
 /// Hook exposed for Chuan's Rambo scribble-out animation before removal.
 pub fn on_delete_requested(task_id: todo_core::TaskId) {
     // Placeholder: the row's delete event handler will call the existing
@@ -1655,10 +1664,18 @@ pub fn on_delete_requested(task_id: todo_core::TaskId) {
     let _ = task_id;
 }
 
-pub enum SwipeAction { Delete, SnapBack }
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SwipeAction {
+    Delete,
+    SnapBack,
+}
 
 pub fn swipe_action(delta_x: f64, threshold: f64) -> SwipeAction {
-    if delta_x > threshold { SwipeAction::Delete } else { SwipeAction::SnapBack }
+    if delta_x >= threshold {
+        SwipeAction::Delete
+    } else {
+        SwipeAction::SnapBack
+    }
 }
 
 #[cfg(test)]
@@ -1675,14 +1692,5 @@ mod swipe_tests {
     #[test]
     fn exactly_threshold_deletes() {
         assert_eq!(swipe_action(50.0, 50.0), SwipeAction::Delete);
-    }
-}
-
-        assert_eq!(pane_at(0.0, 400.0), 0);
-        assert_eq!(pane_at(180.0, 400.0), 0);
-        assert_eq!(pane_at(220.0, 400.0), 1);
-        assert_eq!(pane_at(400.0, 400.0), 1);
-        assert_eq!(pane_at(900.0, 400.0), 1, "never past the last pane");
-        assert_eq!(pane_at(100.0, 0.0), 0, "no width yet, so the first pane");
     }
 }
