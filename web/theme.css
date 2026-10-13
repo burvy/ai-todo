@@ -627,10 +627,15 @@ a {
 
 /* --- Week planner: days scroll inside their own box, never the page --- */
 
+/* The hour labels live in a left gutter outside the first day column, so
+   a task block can never print over them. The padding reserves the gutter
+   on the page grid. */
 .week {
+  --planner-gutter: 3.25rem;
   display: grid;
   gap: var(--space-1);
   overflow-x: auto;
+  padding-left: var(--planner-gutter);
   grid-template-columns: repeat(var(--days, 7), minmax(8rem, 1fr));
 }
 
@@ -648,18 +653,48 @@ a {
   border-left: 1px solid var(--rule);
 }
 
+/* The day's name in the neat hand, as it looks like it was written on the
+   paper; today is underlined in the accent ink. */
+.day-name {
+  margin: 0 0 var(--space-1);
+  font-family: var(--font-hand-neat);
+  font-weight: 400;
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+
+.day-name.today {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 5px;
+}
+
 .hours {
   position: relative;
 }
 
 .hour {
+  position: relative;
   height: var(--hour-h);
   border-top: 1px solid var(--rule);
 }
 
+/* Only today's column carries the hour text, and it sits in the gutter to
+   the left of the grid, over the padding, never under a task block. */
 .hour span {
   font-size: var(--text-xs);
+  font-family: var(--font-hand-neat);
   color: var(--ink-faint);
+}
+
+.day:first-child .hour span {
+  position: absolute;
+  left: 0;
+  top: 2px;
+  transform: translateX(calc(-100% - var(--space-2)));
+  white-space: nowrap;
 }
 
 /* A placed task: a wash of ink across the hour lines, marked by its edge. */
