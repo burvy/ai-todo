@@ -1,4 +1,5 @@
-$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Continue'
+# PowerShell 5.1: native stderr + 'Stop' terminates; 'Continue' lets $LASTEXITCODE drive failure.
 
 # Builds Rambl's server and stages a clean folder to copy to the server:
 #   rambl-server.exe, rambl.env.example
