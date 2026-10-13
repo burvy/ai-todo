@@ -276,4 +276,18 @@ mod tests {
         assert!(is_away(&State::WritingCaret));
         assert!(is_away(&State::Flying));
     }
+
+    #[test]
+    fn submit_while_writing_caret_flys_home_not_stuck() {
+        // When the user presses Add while Rambo is at the caret, FlyHome
+        // transitions to Flying, then another FlyHome brings him to Home.
+        // He must never stay stuck in WritingCaret.
+        let state = transition(&State::WritingCaret, Event::FlyHome);
+        assert_eq!(state, State::Flying);
+        let state = transition(&state, Event::FlyHome);
+        assert_eq!(state, State::Home);
+        // From Home, the pen queue can start writing the new row
+        let state = transition(&state, Event::WriteRow);
+        assert_eq!(state, State::Flying);
+    }
 }
