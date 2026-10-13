@@ -9,7 +9,10 @@ current code.
 ### 1. Ramble to tasks
 a. Type a sentence and Rambl creates a task with a title, duration, date, label and priority.
 b. Type text in the box labelled "Ramble" and press **Add**.
-c. Code: `web/src/lib.rs:CaptureBox`; `web/src/api.rs:capture_text, create_task`;
+c. While the box is empty, Rambo whispers a short prompt in it ("Ramble on…", "What's on
+today?", …); the line rotates every ~6 s with a soft fade, and with reduced motion it stays
+on one line with no fade.
+d. Code: `web/src/lib.rs:CaptureBox, WHISPER_PROMPTS, schedule_whisper`; `web/src/api.rs:capture_text, create_task`;
 `crates/capture/src/pipeline.rs:capture_text, clean_title`.
 
 ### 2. Capture from speech
