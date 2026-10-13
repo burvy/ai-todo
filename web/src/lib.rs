@@ -34,7 +34,7 @@ fn held<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a todo_core::Task> {
 }
 
 /// The body that flips `id` between done and not done, against the version held now.
-fn toggle_done_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBody> {
+pub(crate) fn toggle_done_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBody> {
     let task = held(snapshot, id)?;
     Some(
         api::PatchTaskBody::new()
@@ -91,10 +91,10 @@ fn refused_note(error: &api::ApiError, reloaded: bool) -> &'static str {
 /// Where an edit's result goes: the list it replaces, the note that explains a refusal,
 /// and the view settings that say how many days the list covers.
 #[derive(Clone, Copy)]
-struct EditSink {
-    set_snapshot: WriteSignal<Snapshot>,
-    set_error: WriteSignal<Option<String>>,
-    view_settings: ReadSignal<settings::Settings>,
+pub(crate) struct EditSink {
+    pub(crate) set_snapshot: WriteSignal<Snapshot>,
+    pub(crate) set_error: WriteSignal<Option<String>>,
+    pub(crate) view_settings: ReadSignal<settings::Settings>,
 }
 
 /// Sends an edit and shows what the server now holds. Returns whether the edit applied.
@@ -102,7 +102,7 @@ struct EditSink {
 /// A refused edit (the task changed on another device, or the network failed) is not an
 /// error to hide: the list is reloaded so the next click starts from the server's copy,
 /// and a short note says why nothing happened.
-async fn patch_and_show(id: &todo_core::TaskId, body: api::PatchTaskBody, sink: EditSink) -> bool {
+pub(crate) async fn patch_and_show(id: &todo_core::TaskId, body: api::PatchTaskBody, sink: EditSink) -> bool {
     match api::patch_task(id, body).await {
         Ok(snapshot) => {
             // A note about an earlier refusal must not outlive the retry that worked.
@@ -171,6 +171,12 @@ pub fn App() -> impl IntoView {
         <header>
             <h1>"Rambl"</h1>
             <account::HeaderLink />
+            <settings::GearMenu
+                settings=view_settings
+                set_settings=set_view_settings
+                set_snapshot=set_snapshot
+                set_error=set_error
+            />
             <CaptureBox
                 form_ref
                 snapshot=snapshot
@@ -186,7 +192,6 @@ pub fn App() -> impl IntoView {
         {move || error.get().map(|e| view! {
             <div class="error" aria-live="polite">{e}</div>
         })}
-        <settings::SettingsPanel settings=view_settings set_settings=set_view_settings />
         <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event set_speech=set_brain_speech set_pose=set_brain_pose />
         <nav class="pane-switch" aria-label="Show">
             <button
@@ -204,7 +209,6 @@ pub fn App() -> impl IntoView {
         </nav>
         <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
             <div class="tasks-pane">
-                <ImportIcs set_snapshot set_error />
                 <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
             </div>
             <week::WeekGrid snapshot=snapshot settings=view_settings set_mascot_state=set_mascot_state />
@@ -713,49 +717,6 @@ fn Rambo(
                 <span class="talking">"I'm listening."</span>
             })}
         </span>
-    }
-}
-
-#[component]
-fn ImportIcs(
-    set_snapshot: WriteSignal<Snapshot>,
-    set_error: WriteSignal<Option<String>>,
-) -> impl IntoView {
-    let handle_import = move |ev: leptos::ev::Event| {
-        let set_snapshot_clone = set_snapshot;
-        let set_error_clone = set_error;
-        wasm_bindgen_futures::spawn_local(async move {
-            if let Some(target) = ev.target()
-                && let Ok(input) = target.dyn_into::<web_sys::HtmlInputElement>()
-                && let Some(files) = input.files()
-                && files.length() > 0
-                && let Some(file) = files.get(0)
-            {
-                match api::import_ics(file).await {
-                    Ok(response) => {
-                        set_snapshot_clone.set(response.snapshot);
-                        set_error_clone.set(None);
-                    }
-                    Err(e) => {
-                        set_error_clone.set(Some(format!("Import failed: {}", e)));
-                    }
-                }
-            }
-        });
-    };
-
-    view! {
-        <div class="import">
-            <label>
-                "Import .ics: "
-                <input
-                    type="file"
-                    accept=".ics"
-                    on:change=handle_import
-                    aria-label="Import calendar file"
-                />
-            </label>
-        </div>
     }
 }
 
