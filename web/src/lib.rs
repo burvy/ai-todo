@@ -482,6 +482,9 @@ fn Rambo(
         let capture = capture_text;
         move || {
             if !speech::supported() {
+                // One calm note, and Rambo keeps the pose the grab already gave
+                // him; the transcript simply stays whatever was typed.
+                set_error.set(Some(speech::UNAVAILABLE_NOTE.to_owned()));
                 return;
             }
             set_error.set(None);
