@@ -20,7 +20,8 @@ This folder is the source of art for the v2 front end (Leptos, see `docs/ARCHITE
 | `illustrations/paper-grain.svg` | paper grain texture (generated noise) | background of the list and planner sheets, `styles.css` ~912 | SVG 180×180, tiled. A real scan replaces it as `paper.jpg` (see Paper below) | placeholder, code (SVG noise filter) |
 | `brand/rambl.png` | brand card: ruled page with "Rambl" and three sample tasks | burvy.dev project card (burvy-dev repo, `assets/images/rambl.png`) | PNG 2000×1000 | placeholder, code (`brand/rambl_card.py`, Pillow) |
 | `brand/rambl_card.py` | script that drew `rambl.png` | run by hand: `python rambl_card.py out.png` (needs Windows fonts Segoe Script and Ink Free) | — | AI-written code |
-| `sounds/` (`write`, `tick`, `page`, `listen`, `send`) | UI sounds | `play()` in `static/app.js` | mp3, mono, under 1.5 s, under 100 KB. **No files exist yet**: synth beeps play instead (`sounds/SPEC.md`) | placeholder, code (WebAudio synth) |
+| `web/assets/sounds/` (`write`, `tick`, `page`, `listen`, `drop`, `send`, `delete`) | UI sounds | v2 wires them from `web/assets/sounds/`; v1 `play()` in `static/app.js` | mp3, mono, 44.1 kHz, 0.16–0.98 s, 3–13 KB | placeholder: real foley cut from CC0/public-domain recordings (`web/assets/CREDITS.md`), `listen.mp3` synthesized |
+| `web/assets/rambo/nest.svg` | Rambo's nest (the bubble he rests in) | end of the capture line; tapping it submits | SVG, viewBox 0 0 96 56 | placeholder, AI |
 | `fonts.md` (Caveat, Inter) | the handwriting and interface fonts | everywhere, via `--hand` and `--chrome` | Google Fonts web fonts | stock fonts (OFL licence), not hand-made |
 
 Notes:
