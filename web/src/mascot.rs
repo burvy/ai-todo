@@ -22,6 +22,8 @@ pub enum State {
     Dragging,
     /// Dropped on empty space: sits there a moment, dazed.
     Recovering,
+    /// Dropped hard (fast release): ink splat + wobble, then recover.
+    Splatting,
     /// Running home in little hops.
     Skittering,
     /// Dropped on a task: asking what to do with it.
@@ -42,6 +44,8 @@ pub enum Event {
     Release,
     /// Dropped on empty space.
     DropEmpty,
+    /// Dropped hard on empty space (fast release — triggers splat).
+    DropHard,
     /// Dropped on a task row or planner block.
     DropTask { task_id: String, title: String },
     /// The recovering pause is over (he skitters), or the skitter ends (home).
@@ -62,6 +66,10 @@ pub enum Event {
 pub const RECOVER_MS: u32 = 600;
 /// Milliseconds his hop home takes.
 pub const SKITTER_MS: u32 = 900;
+/// Milliseconds the splat wobble lasts on a hard drop.
+pub const SPLAT_MS: u32 = 400;
+/// Minimum drop velocity (px/ms) to trigger a hard-drop splat.
+pub const HARD_DROP_VELOCITY: f64 = 0.5;
 
 pub fn transition(state: &State, event: Event) -> State {
     match (state, event) {
@@ -71,12 +79,15 @@ pub fn transition(state: &State, event: Event) -> State {
         (State::Home, Event::WriteRow) => State::Flying,
         (State::Home, Event::FlyHome) => State::Home,
 
-        // Dragging: release goes home; drop on task asks; drop empty recovers.
+        // Dragging: release goes home; drop on task asks; drop empty recovers;
+        // drop hard splats.
         (State::Dragging, Event::Release) => State::Home,
         (State::Dragging, Event::DropEmpty) => State::Recovering,
+        (State::Dragging, Event::DropHard) => State::Splatting,
         (State::Dragging, Event::DropTask { task_id, title }) => State::Asking { task_id, title },
 
-        // Recovering → Skittering → Home.
+        // Splatting → Recovering → Skittering → Home.
+        (State::Splatting, Event::Return) => State::Recovering,
         (State::Recovering, Event::Return) => State::Skittering,
         (State::Skittering, Event::Return) => State::Home,
 
@@ -107,6 +118,22 @@ pub fn transition(state: &State, event: Event) -> State {
 /// Is he away from home (not resting at his circle)?
 pub fn is_away(state: &State) -> bool {
     !matches!(state, State::Home)
+}
+
+/// True if the state is one where Rambo is physically away from his nest
+/// (dragging, dropped somewhere, skittering, writing, or asking).
+pub fn is_off_nest(state: &State) -> bool {
+    matches!(
+        state,
+        State::Dragging
+            | State::Recovering
+            | State::Splatting
+            | State::Skittering
+            | State::Asking { .. }
+            | State::Flying
+            | State::WritingCaret
+            | State::WritingRow
+    )
 }
 
 /// Is he writing or flying for writing (so typing must not yank him)?
@@ -159,6 +186,7 @@ pub fn rambo_class(state: &State, pose: &str) -> String {
         State::Home => "",
         State::Dragging => " is-dragging",
         State::Recovering => " is-recovering",
+        State::Splatting => " is-splatting",
         State::Skittering => " is-skittering",
         State::Asking { .. } => " is-asking",
         State::Flying => " is-flying",
@@ -191,6 +219,25 @@ mod tests {
         let state = transition(&state, Event::Return);
         assert_eq!(state, State::Skittering);
         assert_eq!(transition(&state, Event::Return), State::Home);
+    }
+
+    #[test]
+    fn hard_drop_splats_then_recovers_and_skitters_home() {
+        let state = transition(&State::Home, Event::Grab);
+        let state = transition(&state, Event::DropHard);
+        assert_eq!(state, State::Splatting);
+        let state = transition(&state, Event::Return);
+        assert_eq!(state, State::Recovering);
+        let state = transition(&state, Event::Return);
+        assert_eq!(state, State::Skittering);
+        assert_eq!(transition(&state, Event::Return), State::Home);
+    }
+
+    #[test]
+    fn splatting_is_off_nest() {
+        assert!(is_off_nest(&State::Splatting));
+        assert!(is_off_nest(&State::Dragging));
+        assert!(!is_off_nest(&State::Home));
     }
 
     #[test]
@@ -264,6 +311,9 @@ mod tests {
     fn rambo_classes_cover_every_state() {
         assert_eq!(rambo_class(&State::Home, ""), "rambo");
         assert!(rambo_class(&State::Dragging, "").contains("is-dragging"));
+        assert!(rambo_class(&State::Splatting, "").contains("is-splatting"));
+        assert!(rambo_class(&State::Recovering, "").contains("is-recovering"));
+        assert!(rambo_class(&State::Skittering, "").contains("is-skittering"));
         assert!(rambo_class(&State::Flying, "").contains("is-flying"));
         assert!(rambo_class(&State::WritingCaret, "").contains("is-caret"));
         assert!(rambo_class(&State::WritingRow, "").contains("is-writing"));

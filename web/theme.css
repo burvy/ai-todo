@@ -475,6 +475,7 @@ a {
 .rambo.is-dragging,
 .rambo.is-flying,
 .rambo.is-recovering,
+.rambo.is-splatting,
 .rambo.is-skittering,
 .rambo.is-asking,
 .rambo.is-writing {
@@ -491,6 +492,7 @@ a {
 .rambo.is-dragging,
 .rambo.is-flying,
 .rambo.is-recovering,
+.rambo.is-splatting,
 .rambo.is-skittering,
 .rambo.is-asking,
 .rambo.is-writing {
@@ -507,9 +509,30 @@ a {
   pointer-events: none;
 }
 
-/* Dragging: follow the pointer exactly */
+/* Dragging: held/listening pose — tilted like a pen in hand, subtle pulse
+   shows he is alive even where speech recognition is unavailable. */
 .rambo.is-dragging {
   cursor: grabbing;
+  transform: translate(
+      calc(var(--pen-x) - 50%),
+      calc(var(--pen-y) - 50%)
+    ) rotate(-15deg);
+  animation: rambo-held 0.8s ease-in-out infinite;
+}
+
+@keyframes rambo-held {
+  0%, 100% {
+    transform: translate(
+        calc(var(--pen-x) - 50%),
+        calc(var(--pen-y) - 50%)
+      ) rotate(-15deg);
+  }
+  50% {
+    transform: translate(
+        calc(var(--pen-x) - 50%),
+        calc(var(--pen-y) - 50%)
+      ) rotate(-12deg) scale(1.05);
+  }
 }
 
 /* Recovering: dazed pause at drop point */
@@ -520,9 +543,89 @@ a {
     ) rotate(12deg);
 }
 
-/* Skittering: hop animation back to home */
+/* Splatting: hard-drop ink splat with wobble, then settle */
+.rambo.is-splatting {
+  animation: rambo-splat 400ms ease-out forwards;
+}
+
+@keyframes rambo-splat {
+  0% {
+    transform: translate(
+        calc(var(--pen-x) - 50%),
+        calc(var(--pen-y) - 50%)
+      ) rotate(-15deg) scale(1.15);
+  }
+  20% {
+    transform: translate(
+        calc(var(--pen-x) - 50%),
+        calc(var(--pen-y) - 50%)
+      ) rotate(10deg) scale(0.95);
+  }
+  40% {
+    transform: translate(
+        calc(var(--pen-x) - 50%),
+        calc(var(--pen-y) - 50%)
+      ) rotate(-6deg) scale(1.02);
+  }
+  60% {
+    transform: translate(
+        calc(var(--pen-x) - 50%),
+        calc(var(--pen-y) - 50%)
+      ) rotate(4deg) scale(0.98);
+  }
+  80% {
+    transform: translate(
+        calc(var(--pen-x) - 50%),
+        calc(var(--pen-y) - 50%)
+      ) rotate(-2deg) scale(1.0);
+  }
+  100% {
+    transform: translate(
+        calc(var(--pen-x) - 50%),
+        calc(var(--pen-y) - 50%)
+      ) rotate(12deg);
+  }
+}
+
+/* Splat ink burst — ::after pseudo-element shows a small ink splat on hard drop */
+.rambo.is-splatting::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 120%;
+  height: 120%;
+  margin-left: -60%;
+  margin-top: -60%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--ink) 30%, transparent) 0%,
+    transparent 70%
+  );
+  animation: rambo-splat-burst 400ms ease-out forwards;
+  pointer-events: none;
+  z-index: -1;
+}
+
+@keyframes rambo-splat-burst {
+  0% {
+    transform: scale(0.2);
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+/* Skittering: spring-like bounce back to home with wobble, not a straight slide.
+   The nest never moves. */
 .rambo.is-skittering {
-  animation: rambo-skitter var(--dur-slow) ease-out forwards;
+  animation: rambo-skitter var(--dur-slow) cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
 }
 
 @keyframes rambo-skitter {
@@ -532,23 +635,35 @@ a {
         calc(var(--pen-y) - 50%)
       ) rotate(12deg);
   }
-  25% {
+  15% {
     transform: translate(
-        calc(var(--pen-x) * 0.75 - 50%),
-        calc(var(--pen-y) * 0.75 - 50% - 10px)
+        calc(var(--pen-x) * 0.8 - 50%),
+        calc(var(--pen-y) * 0.8 - 50% - 12px)
       ) rotate(6deg);
+  }
+  30% {
+    transform: translate(
+        calc(var(--pen-x) * 0.55 - 50%),
+        calc(var(--pen-y) * 0.55 - 50% - 18px)
+      ) rotate(-5deg);
   }
   50% {
     transform: translate(
-        calc(var(--pen-x) * 0.5 - 50%),
-        calc(var(--pen-y) * 0.5 - 50% - 15px)
-      ) rotate(-4deg);
+        calc(var(--pen-x) * 0.3 - 50%),
+        calc(var(--pen-y) * 0.3 - 50% - 10px)
+      ) rotate(3deg);
   }
-  75% {
+  70% {
     transform: translate(
-        calc(var(--pen-x) * 0.25 - 50%),
-        calc(var(--pen-y) * 0.25 - 50% - 8px)
-      ) rotate(2deg);
+        calc(var(--pen-x) * 0.1 - 50%),
+        calc(var(--pen-y) * 0.1 - 50% - 4px)
+      ) rotate(-2deg);
+  }
+  85% {
+    transform: translate(-45%, -48%) rotate(1deg);
+  }
+  95% {
+    transform: translate(-52%, -52%) rotate(-1deg);
   }
   100% {
     transform: translate(-50%, -50%) rotate(0);
