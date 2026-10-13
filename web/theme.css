@@ -812,12 +812,17 @@ a {
   white-space: nowrap;
 }
 
-/* A placed task: a wash of ink across the hour lines, marked by its edge. */
+/* A placed task: a wash of ink across the hour lines, marked by its edge.
+   The hour rows are positioned too and come later in the document, so without
+   a raised layer the slip paints under them and its grip never gets hit by
+   the pointer; a small layer puts the paper's edge back under the pen. */
 .placement {
   position: absolute;
+  z-index: 2;
   left: 0;
   right: 0;
   padding: var(--space-1);
+  padding-left: calc(var(--space-1) + 16px);
   background-color: var(--wash);
   border: none;
   border-left: 3px solid var(--accent);
@@ -827,6 +832,61 @@ a {
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: var(--text-sm);
+}
+
+/* The drag grip: a small strip along the placement's left edge, drawn as the
+   edge itself. Grabbing it lifts the slip; the rest of the block scrolls. */
+.placement-grip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 16px;
+  touch-action: none;
+  cursor: grab;
+}
+
+.placement-grip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 35%;
+  bottom: 35%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: color-mix(in srgb, var(--coffee) 55%, transparent);
+}
+
+/* The slip in hand: half faint while it is over the board... its shadow
+   rides the pointer as the ghost, also drawn on paper. */
+.placement.dragging {
+  opacity: 0.45;
+}
+
+.drag-ghost {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  padding: var(--space-1) var(--space-2);
+  background-color: var(--paper);
+  background-image: var(--texture-paper);
+  border: 1px solid var(--rule-strong);
+  box-shadow: var(--sheet-shadow);
+  font-size: var(--text-sm);
+  font-family: var(--font-hand);
+  transform: rotate(-1.5deg);
+}
+
+/* Where the slip would land: a faint outline of its slot, like a pencil
+   guide line waiting to be inked. */
+.landing {
+  position: absolute;
+  z-index: 3;
+  left: 0;
+  right: 0;
+  border: 1px dashed var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  pointer-events: none;
 }
 
 /* The task's title in the human's own hand, as the list shows it. */
@@ -1215,3 +1275,13 @@ li.task-row:hover .delete-mark { opacity: 1; pointer-events: auto; }
 @media (max-width: 720px) { .delete-mark { opacity: .35; pointer-events: auto; font-size: .65rem; } }
 .swipe-deleted { transform: translateX(110%); transition: transform .25s ease-out; opacity: 0; }
 .swipe-snapped { transform: translateX(0); transition: transform .2s ease-out; opacity: 1; }
+
+/* Recurring tasks (ARCHITECTURE.md 7.1): the hand-drawn repeat mark on an
+   occurrence row, and the edit dialog's day picker. Word buttons, no boxes —
+   picked days read like the active filter tabs. */
+.repeat-mark { display: inline-block; margin-left: .35em; transform: rotate(-6deg); color: var(--ink-soft); }
+.repeat-mark svg { display: block; }
+.day-picker { display: flex; flex-wrap: wrap; gap: .1em .55em; margin: .3em 0; }
+.day-picker button { border: none; background: transparent; padding: .05em .15em; font: inherit; color: var(--ink); cursor: pointer; }
+.day-picker button.active { color: var(--accent); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.dialog-hint { color: var(--ink-soft); }

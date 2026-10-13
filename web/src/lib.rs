@@ -1,4 +1,4 @@
-use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Timelike, Utc, Weekday};
 use gloo_timers::callback::Timeout;
 #[cfg(target_arch = "wasm32")]
 use js_sys::Array;
@@ -33,6 +33,42 @@ fn held<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a todo_core::Task> {
     snapshot.tasks.iter().find(|task| task.id.0 == id)
 }
 
+/// The order the server wants after moving `dragged` before `target`, or `None`
+/// when the drop is not a reorder at all.
+///
+/// The server renumbers stored tasks only (`ids must list every task exactly once`),
+/// and a snapshot lists series occurrences too — rows with `{series}:{date}` ids
+/// that are expanded on the fly and share the series' row. A slip dragged from or
+/// onto one is not a reorder, so the handler skips the call instead of failing 400.
+fn reorder_ids(snapshot: &Snapshot, dragged: &TaskId, target: &TaskId) -> Option<Vec<TaskId>> {
+    if snapshot
+        .tasks
+        .iter()
+        .any(|task| task.source == Source::Series && (task.id == *dragged || task.id == *target))
+    {
+        return None;
+    }
+    let mut new_order = Vec::new();
+    let mut found_target = false;
+    for task in &snapshot.tasks {
+        if task.source == Source::Series {
+            continue;
+        }
+        if task.id == *dragged {
+            continue;
+        }
+        if task.id == *target && !found_target {
+            new_order.push(dragged.clone());
+            found_target = true;
+        }
+        new_order.push(task.id.clone());
+    }
+    if !found_target {
+        new_order.push(dragged.clone());
+    }
+    Some(new_order)
+}
+
 /// The body that flips `id` between done and not done, against the version held now.
 fn toggle_done_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBody> {
     let task = held(snapshot, id)?;
@@ -41,6 +77,168 @@ fn toggle_done_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBody>
             .done(!task.done)
             .updated_at(task.updated_at),
     )
+}
+
+/// The two halves of an occurrence row's id, which the server mints as
+/// `"{series_id}:{date}"` (docs/ARCHITECTURE.md 7.1). Ordinary task ids carry
+/// no date, so they give `None`; a moved occurrence keeps its original date in
+/// the id, which is exactly the day an exception names.
+fn occurrence_parts(id: &str) -> Option<(&str, NaiveDate)> {
+    let (series_id, date) = id.split_once(':')?;
+    let date = NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
+    Some((series_id, date))
+}
+
+/// The series a row belongs to, when the row is an occurrence of one.
+fn series_of<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a todo_core::Series> {
+    let (series_id, _) = occurrence_parts(id)?;
+    snapshot
+        .series
+        .iter()
+        .find(|series| series.id.0 == series_id)
+}
+
+/// What ticking a row writes. An ordinary task flips its `done` flag against
+/// the version the list holds; an occurrence writes — or, un-ticked, clears —
+/// an exception on its own date, because its flag is per date, never per task.
+#[derive(Debug)]
+enum TickAction {
+    Task(api::PatchTaskBody),
+    MarkDone { series: String, date: NaiveDate },
+    ClearDone { series: String, date: NaiveDate },
+}
+
+fn tick_action(snapshot: &Snapshot, id: &str) -> Option<TickAction> {
+    if let Some((series_id, date)) = occurrence_parts(id) {
+        let done = held(snapshot, id)?.done;
+        let series = series_id.to_owned();
+        return Some(if done {
+            TickAction::ClearDone { series, date }
+        } else {
+            TickAction::MarkDone { series, date }
+        });
+    }
+    toggle_done_body(snapshot, id).map(TickAction::Task)
+}
+
+/// The dialog's day buttons, Monday first, each weekday with its short name.
+const WEEKDAY_CHOICES: [(Weekday, &str); 7] = [
+    (Weekday::Mon, "Mon"),
+    (Weekday::Tue, "Tue"),
+    (Weekday::Wed, "Wed"),
+    (Weekday::Thu, "Thu"),
+    (Weekday::Fri, "Fri"),
+    (Weekday::Sat, "Sat"),
+    (Weekday::Sun, "Sun"),
+];
+
+/// The days a series repeats on, Monday-first without duplicates — what the
+/// wire wants, whatever order the buttons were clicked in.
+fn sorted_weekdays(days: &[Weekday]) -> Vec<Weekday> {
+    let mut days: Vec<Weekday> = days.to_vec();
+    days.sort_by_key(|day| day.num_days_from_monday());
+    days.dedup();
+    days
+}
+
+/// Picking a picked day unpicks it.
+fn toggled_day(days: Vec<Weekday>, day: Weekday) -> Vec<Weekday> {
+    let mut days = days;
+    if days.contains(&day) {
+        days.retain(|picked| *picked != day);
+    } else {
+        days.push(day);
+    }
+    days
+}
+
+/// `HH:MM` from the dialog's time field, or none when left empty; an
+/// unparsable value is treated as empty, and the field never offers anything
+/// else its type cannot produce.
+fn parse_hhmm(value: &str) -> Option<String> {
+    chrono::NaiveTime::parse_from_str(value, "%H:%M")
+        .ok()
+        .map(|time| time.format("%H:%M").to_string())
+}
+
+/// `YYYY-MM-DD` from the dialog's end-date field, or none when left empty.
+fn parse_ymd(value: &str) -> Option<String> {
+    NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .ok()
+        .map(|date| date.to_string())
+}
+
+/// The series the dialog's fields describe, or `None` when they name no rule
+/// yet (no title, no length, no day picked): the caller leaves the dialog
+/// open, the way it already does for an ordinary edit that is not filled in.
+fn series_from_dialog(
+    title: &str,
+    duration: Option<u16>,
+    days: &[Weekday],
+    until: &str,
+    time: &str,
+) -> Option<api::SeriesBody> {
+    let title = title.trim();
+    if title.is_empty() || duration.is_none() || days.is_empty() {
+        return None;
+    }
+    Some(api::SeriesBody {
+        title: title.to_owned(),
+        duration_min: duration.unwrap_or(1),
+        weekdays: sorted_weekdays(days),
+        time_of_day: parse_hhmm(time),
+        until: parse_ymd(until),
+    })
+}
+
+/// The series edit the dialog's fields describe. An absent field keeps what
+/// the series already has: the server cannot clear one (`null` reads as
+/// absent), so an emptied end date or time changes nothing.
+fn series_patch_from_dialog(
+    title: &str,
+    duration: Option<u16>,
+    days: &[Weekday],
+    until: &str,
+    time: &str,
+) -> Option<api::SeriesPatchBody> {
+    let title = title.trim();
+    if title.is_empty() || duration.is_none() || days.is_empty() {
+        return None;
+    }
+    Some(api::SeriesPatchBody {
+        title: Some(title.to_owned()),
+        duration_min: duration,
+        weekdays: Some(sorted_weekdays(days)),
+        time_of_day: parse_hhmm(time),
+        until: parse_ymd(until),
+    })
+}
+
+/// The note when a series write is refused: the server's own words say best
+/// why (a day the rule never repeats, a series gone, the network down). A
+/// series has no `updated_at` to go stale, so unlike a task edit there is
+/// nothing to reload first.
+fn series_note(error: &api::ApiError) -> String {
+    match error {
+        api::ApiError::Server(e) => e.message.clone(),
+        other => other.to_string(),
+    }
+}
+
+/// The browser's own confirm dialog — for the one destructive button, so a
+/// whole series (every day still to come) is never deleted by a slip. The
+/// native test build has no window and never confirms.
+fn confirmed(message: &str) -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window()
+            .is_some_and(|window| window.confirm_with_message(message).is_ok_and(|ok| ok))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = message;
+        false
+    }
 }
 
 /// The body that moves `id` to the next priority, against the version held now.
@@ -207,7 +405,14 @@ pub fn App() -> impl IntoView {
                 <ImportIcs set_snapshot set_error />
                 <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
             </div>
-            <week::WeekGrid snapshot=snapshot settings=view_settings set_mascot_state=set_mascot_state />
+            <week::WeekGrid
+                snapshot=snapshot
+                settings=view_settings
+                set_snapshot=set_snapshot
+                set_error=set_error
+                capture_text
+                set_mascot_state=set_mascot_state
+            />
         </main>
         <Rambo
             state=mascot_state
@@ -992,6 +1197,11 @@ fn TaskList(
     let (edit_when, set_edit_when) = signal(EditWhen::Anytime);
     let (edit_datetime, set_edit_datetime) = signal(String::new());
     let (edit_time_error, set_edit_time_error) = signal::<Option<&'static str>>(None);
+    // The repeats block (docs/ARCHITECTURE.md 7.1): which weekdays a repeat
+    // runs on, and the optional end date and time for a series.
+    let edit_weekdays = RwSignal::new(Vec::<Weekday>::new());
+    let edit_until = RwSignal::new(String::new());
+    let edit_time = RwSignal::new(String::new());
     let labels = move || {
         let tasks = snapshot.get().tasks;
         [
@@ -1149,6 +1359,28 @@ fn TaskList(
                     {
                         let task_id = task.id.clone();
                         let task_title = task.title.clone();
+                        let task_done_label = match occurrence_parts(&task.id.0) {
+                            Some((_, date)) => format!("Mark {task_title} on {date} as done"),
+                            None => format!("Mark {task_title} as done"),
+                        };
+                        // An occurrence row carries the small hand-drawn repeat mark, and
+                        // loses the one-row delete: its × would refuse the id, and a whole
+                        // series is only ever deleted from the dialog, with a confirm.
+                        let is_occurrence = task.source == Source::Series;
+                        let repeat_mark = is_occurrence.then(|| view! {
+                            <span class="repeat-mark" aria-hidden="true">
+                                <svg viewBox="0 0 20 20" width="13" height="13">
+                                    <path
+                                        d="M10.1 3.3 C 5.6 2.8, 2.9 6.2, 3.5 10 C 4.1 14.1, 8.3 16.5, 12 15.3 C 15.7 14.1, 17.4 10.4, 15.9 7.2 C 14.7 4.6, 11.8 3.5, 9.4 4.5"
+                                        fill="none" stroke="currentColor" stroke-width="1.7"
+                                        stroke-linecap="round" stroke-linejoin="round" />
+                                    <path
+                                        d="M16.1 7.0 L 17.5 3.2 L 13.4 3.5"
+                                        fill="none" stroke="currentColor" stroke-width="1.7"
+                                        stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                            </span>
+                        });
                         let drop_task_id = task_id.0.clone();
                         let drop_task_title = task_title.clone();
                         let render_task_id = task_id.0.clone();
@@ -1160,11 +1392,38 @@ fn TaskList(
                             move |_| {
                                 let task_id_clone = task_id_clone.clone();
                                 let sink = EditSink { set_snapshot, set_error, view_settings };
-                                let Some(body) = snapshot.with_untracked(|s| toggle_done_body(s, &task_id_clone.0)) else {
+                                let Some(action) =
+                                    snapshot.with_untracked(|s| tick_action(s, &task_id_clone.0))
+                                else {
                                     return;
                                 };
                                 wasm_bindgen_futures::spawn_local(async move {
-                                    patch_and_show(&task_id_clone, body, sink).await;
+                                    // A task edit is refused with a reload-and-retry note
+                                    // (patch_and_show); a series write has nothing to reload,
+                                    // so its refusals speak for themselves.
+                                    match action {
+                                        TickAction::Task(body) => {
+                                            patch_and_show(&task_id_clone, body, sink).await;
+                                        }
+                                        TickAction::MarkDone { series, date } => {
+                                            match api::mark_occurrence(&series, &date.to_string(), "done").await {
+                                                Ok(snapshot) => {
+                                                    sink.set_error.set(None);
+                                                    sink.set_snapshot.set(snapshot);
+                                                }
+                                                Err(e) => sink.set_error.set(Some(series_note(&e))),
+                                            }
+                                        }
+                                        TickAction::ClearDone { series, date } => {
+                                            match api::clear_occurrence(&series, &date.to_string()).await {
+                                                Ok(snapshot) => {
+                                                    sink.set_error.set(None);
+                                                    sink.set_snapshot.set(snapshot);
+                                                }
+                                                Err(e) => sink.set_error.set(Some(series_note(&e))),
+                                            }
+                                        }
+                                    }
                                 });
                             }
                         };
@@ -1212,30 +1471,14 @@ fn TaskList(
                                     }
                                 });
 
-                                // Handle task reorder drop
+                                // Handle task reorder drop. A drop that involves a
+                                // series occurrence is a no-op here, not a reorder
+                                // the server would refuse (reorder_ids explains).
                                 if let Some(dragged_id) = dragged_task.get()
                                     && dragged_id != task_id_clone
+                                    && let Some(new_order) =
+                                        reorder_ids(&snapshot.get_untracked(), &dragged_id, &task_id_clone)
                                 {
-                                    let snapshot_tasks = snapshot.get().tasks;
-
-                                    // Reorder: move dragged task to position of dropped task
-                                    let mut new_order = Vec::new();
-                                    let mut found_target = false;
-
-                                    for t in &snapshot_tasks {
-                                        if t.id == dragged_id {
-                                            continue;
-                                        }
-                                        if t.id == task_id_clone && !found_target {
-                                            new_order.push(dragged_id.clone());
-                                            found_target = true;
-                                        }
-                                        new_order.push(t.id.clone());
-                                    }
-                                    if !found_target {
-                                        new_order.push(dragged_id.clone());
-                                    }
-
                                     wasm_bindgen_futures::spawn_local(async move {
                                         if let Ok(new_snap) = api::reorder_tasks(new_order).await {
                                             set_snapshot_clone.set(new_snap);
@@ -1264,7 +1507,7 @@ fn TaskList(
                             type="checkbox"
                             checked=task.done
                             on:change=toggle_done
-                            aria-label=format!("Mark {} as done", task_title)
+                            aria-label=task_done_label
                         />
                         <span
                             class="task-open"
@@ -1287,6 +1530,29 @@ fn TaskList(
                                             set_edit_datetime.set(local_input_value(time));
                                         }
                                     }
+                                    // A series row edits the series: its fields come from
+                                    // the rule, not from the one occurrence row clicked.
+                                    match snapshot
+                                        .with_untracked(|s| series_of(s, &task.id.0).cloned())
+                                    {
+                                        Some(series) => {
+                                            edit_weekdays.set(series.rule.weekdays.clone());
+                                            edit_until.set(
+                                                series.rule.until.map(|day| day.to_string()).unwrap_or_default(),
+                                            );
+                                            edit_time.set(
+                                                series
+                                                    .time_of_day
+                                                    .map(|time| time.format("%H:%M").to_string())
+                                                    .unwrap_or_default(),
+                                            );
+                                        }
+                                        None => {
+                                            edit_weekdays.set(Vec::new());
+                                            edit_until.set(String::new());
+                                            edit_time.set(String::new());
+                                        }
+                                    }
                                     set_editing_task.set(Some(task.id.clone()));
                                     set_edit_time_error.set(None);
                                 }
@@ -1294,6 +1560,7 @@ fn TaskList(
                         >
                             <span class="pen-title-wrap">
                                 <strong class="pen-title">{render_task_title.clone()}</strong>
+                                {repeat_mark}
                             </span> " — " {task.duration_min} " min"
                             {move || {
                                 let time = task_time(&snapshot.get(), &render_task_id);
@@ -1302,12 +1569,14 @@ fn TaskList(
                             {is_overdue(&task).then(|| view! { <span class="overdue">"Overdue"</span> })}
                         </span>
                         <span class="pen-underline"><img src="assets/pen-underline.svg" alt="" /></span>
-                        <button
-                            class="delete-mark"
-                            type="button"
-                            on:click=delete_task
-                            aria-label=format!("Delete {}", task_title)
-                        >"×"</button>
+                        {(!is_occurrence).then(|| view! {
+                            <button
+                                class="delete-mark"
+                                type="button"
+                                on:click=delete_task
+                                aria-label=format!("Delete {}", task_title)
+                            >"×"</button>
+                        })}
                     </li>
                         }
 
@@ -1321,11 +1590,20 @@ fn TaskList(
             on:cancel=move |_: leptos::ev::Event| set_editing_task.set(None)
         >
             <form method="dialog">
-                <h3>"Edit task"</h3>
+                <h3>{move || match editing_task.get() {
+                    Some(id) if occurrence_parts(&id.0).is_some() => "Edit series",
+                    _ => "Edit task",
+                }}</h3>
                 {move || editing_task.get().and_then(|id| {
                     snapshot.get().tasks.into_iter().find(|task| task.id == id).map(|task| {
                         let imported = task.source == Source::Calendar;
                         let task_id = task.id.clone();
+                        let task_done = task.done;
+                        // An occurrence row edits the series it belongs to; `occ` also
+                        // names the exact date, which is what Done / Not today write to.
+                        let recurring = task.source == Source::Series;
+                        let occ = occurrence_parts(&task_id.0)
+                            .map(|(series_id, date)| (series_id.to_owned(), date));
                         // The zone a deadline in this dialog is shown and parsed in,
                         // rendered next to the date field so the user knows the wall
                         // clock means that zone (docs/ARCHITECTURE.md 4.1).
@@ -1364,6 +1642,43 @@ fn TaskList(
                                 </div>
                             </fieldset>
                             <fieldset>
+                                <legend>{if recurring { "Repeats weekly" } else { "Make it repeat weekly" }}</legend>
+                                <div class="day-picker">
+                                    {WEEKDAY_CHOICES.iter().map(|(day, name)| view! {
+                                        <button
+                                            type="button"
+                                            class:active=move || edit_weekdays.get().contains(day)
+                                            on:click=move |_| {
+                                                edit_weekdays
+                                                    .set(toggled_day(edit_weekdays.get_untracked(), *day));
+                                            }
+                                        >{*name}</button>
+                                    }).collect_view()}
+                                </div>
+                                <label>
+                                    "Until (optional) "
+                                    <input
+                                        type="date"
+                                        prop:value=edit_until
+                                        on:input=move |event| edit_until.set(event_target_value(&event))
+                                    />
+                                </label>
+                                <label>
+                                    "At (optional) "
+                                    <input
+                                        type="time"
+                                        prop:value=edit_time
+                                        on:input=move |event| edit_time.set(event_target_value(&event))
+                                    />
+                                </label>
+                                {(!recurring).then(|| view! {
+                                    <p class="dialog-hint">
+                                        "Pick days and save: this task becomes a weekly series, and its one-off row goes away."
+                                    </p>
+                                })}
+                            </fieldset>
+                            {(!recurring).then(|| view! {
+                            <fieldset>
                                 <legend>"When"</legend>
                                 <label><input type="radio" name="when" checked=move || edit_when.get() == EditWhen::Anytime on:change=move |_| set_edit_when.set(EditWhen::Anytime) /> "Anytime"</label>
                                 <label><input type="radio" name="when" checked=move || edit_when.get() == EditWhen::DueBy on:change=move |_| set_edit_when.set(EditWhen::DueBy) /> "Due by"</label>
@@ -1386,7 +1701,123 @@ fn TaskList(
                                     <p class="time-error" role="alert">{message}</p>
                                 })}
                             </fieldset>
+                            })}
                             <div class="dialog-actions">
+                                {if recurring {
+                                    view! {
+                                        <button
+                                            type="button"
+                                            on:click={
+                                                let occ = occ.clone();
+                                                move |_| {
+                                                    let Some((series, date)) = occ.clone() else {
+                                                        return;
+                                                    };
+                                                    let set_snapshot = set_snapshot;
+                                                    let set_error = set_error;
+                                                    wasm_bindgen_futures::spawn_local(async move {
+                                                        // Done and Undone are the same button on
+                                                        // this date: marked writes the exception,
+                                                        // un-marked clears it.
+                                                        let result = if task_done {
+                                                            api::clear_occurrence(&series, &date.to_string()).await
+                                                        } else {
+                                                            api::mark_occurrence(&series, &date.to_string(), "done").await
+                                                        };
+                                                        match result {
+                                                            Ok(snapshot) => {
+                                                                set_snapshot.set(snapshot);
+                                                                set_editing_task.set(None);
+                                                            }
+                                                            Err(e) => set_error.set(Some(series_note(&e))),
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        >{if task_done { "Undone" } else { "Done" }}</button>
+                                        <button
+                                            type="button"
+                                            on:click={
+                                                let occ = occ.clone();
+                                                move |_| {
+                                                    let Some((series, date)) = occ.clone() else {
+                                                        return;
+                                                    };
+                                                    let set_snapshot = set_snapshot;
+                                                    let set_error = set_error;
+                                                    wasm_bindgen_futures::spawn_local(async move {
+                                                        match api::mark_occurrence(&series, &date.to_string(), "skipped").await {
+                                                            Ok(snapshot) => {
+                                                                set_snapshot.set(snapshot);
+                                                                set_editing_task.set(None);
+                                                            }
+                                                            Err(e) => set_error.set(Some(series_note(&e))),
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        >"Not today"</button>
+                                        <button
+                                            type="button"
+                                            on:click={
+                                                let occ = occ.clone();
+                                                move |_| {
+                                                    let Some((series, _)) = occ.clone() else {
+                                                        return;
+                                                    };
+                                                    if !confirmed("Delete this series and every day still to come?") {
+                                                        return;
+                                                    }
+                                                    let set_snapshot = set_snapshot;
+                                                    let set_error = set_error;
+                                                    wasm_bindgen_futures::spawn_local(async move {
+                                                        match api::delete_series(&series).await {
+                                                            Ok(snapshot) => {
+                                                                set_snapshot.set(snapshot);
+                                                                set_editing_task.set(None);
+                                                            }
+                                                            Err(e) => set_error.set(Some(series_note(&e))),
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        >"Delete series"</button>
+                                        <button type="button" on:click=move |_| set_editing_task.set(None)>"Cancel"</button>
+                                        <button
+                                            type="button"
+                                            on:click={
+                                                let occ = occ.clone();
+                                                move |_| {
+                                                    let Some((series_id, _)) = occ.clone() else {
+                                                        return;
+                                                    };
+                                                    let Some(patch) = series_patch_from_dialog(
+                                                        &edit_title.get_untracked(),
+                                                        edit_duration.get_untracked().parse::<u16>().ok(),
+                                                        &edit_weekdays.get_untracked(),
+                                                        &edit_until.get_untracked(),
+                                                        &edit_time.get_untracked(),
+                                                    ) else {
+                                                        return;
+                                                    };
+                                                    let set_snapshot = set_snapshot;
+                                                    let set_error = set_error;
+                                                    wasm_bindgen_futures::spawn_local(async move {
+                                                        match api::patch_series(&series_id, patch).await {
+                                                            Ok(snapshot) => {
+                                                                set_snapshot.set(snapshot);
+                                                                set_editing_task.set(None);
+                                                            }
+                                                            Err(e) => set_error.set(Some(series_note(&e))),
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        >"Save"</button>
+                                    }
+                                    .into_any()
+                                } else {
+                                    view! {
                                 <button
                                     type="button"
                                     on:click={
@@ -1429,6 +1860,43 @@ fn TaskList(
                                             let task_id = task_id.clone();
                                             let title = edit_title.get_untracked().trim().to_string();
                                             let duration = edit_duration.get_untracked().parse::<u16>().ok();
+                                            // Days picked: the task becomes a weekly series
+                                            // (docs/ARCHITECTURE.md 7.1), and the When field does
+                                            // not apply — a rule carries its own weekly time.
+                                            let days = edit_weekdays.get_untracked();
+                                            if !days.is_empty() {
+                                                let Some(body) = series_from_dialog(
+                                                    &title,
+                                                    duration,
+                                                    &days,
+                                                    &edit_until.get_untracked(),
+                                                    &edit_time.get_untracked(),
+                                                ) else {
+                                                    return;
+                                                };
+                                                let set_snapshot = set_snapshot;
+                                                let set_error = set_error;
+                                                wasm_bindgen_futures::spawn_local(async move {
+                                                    match api::create_series(body).await {
+                                                        Ok(snapshot) => {
+                                                            set_snapshot.set(snapshot);
+                                                            // The series takes over: drop the
+                                                            // one-off row it grew out of.
+                                                            if let Ok(snapshot) = api::delete_task(&task_id).await {
+                                                                set_snapshot.set(snapshot);
+                                                            } else {
+                                                                set_error.set(Some(
+                                                                    "The weekly series was made, but the old row stayed — delete it if you don't want it twice."
+                                                                        .to_owned(),
+                                                                ));
+                                                            }
+                                                            set_editing_task.set(None);
+                                                        }
+                                                        Err(e) => set_error.set(Some(series_note(&e))),
+                                                    }
+                                                });
+                                                return;
+                                            }
                                             let deadline = snapshot
                                                 .with_untracked(|s| held(s, &task_id.0).cloned());
                                             let when = match typed_when(
@@ -1465,6 +1933,9 @@ fn TaskList(
                                         }
                                     }
                                 >"Save"</button>
+                                    }
+                                    .into_any()
+                                }}
                             </div>
                         }
                     })
@@ -1527,6 +1998,42 @@ mod tests {
 
         let bump = next_priority_body(&snapshot, &id).expect("task is listed");
         assert_eq!(bump.updated_at, Some(snapshot.tasks[0].updated_at));
+    }
+
+    /// Reorder sends the server exactly the stored tasks, so the occurrence rows
+    /// a snapshot carries are kept out of the list — and a drop that starts or
+    /// lands on one is not a reorder at all.
+    #[test]
+    fn a_reorder_lists_stored_tasks_once_and_never_an_occurrence() {
+        let mut snapshot = api::fixture_snapshot();
+        // An expanded day of a repeating series sits between the stored tasks.
+        let mut occurrence = snapshot.tasks[0].clone();
+        occurrence.id = TaskId("standup:2026-10-14".into());
+        occurrence.source = Source::Series;
+        snapshot.tasks.insert(1, occurrence);
+
+        let first = snapshot.tasks[0].id.clone();
+        let third = snapshot.tasks[2].id.clone();
+        let order = reorder_ids(&snapshot, &third, &first).expect("stored slip onto stored slip");
+        assert_eq!(
+            order.first(),
+            Some(&third),
+            "the slip moves before its target"
+        );
+        assert_eq!(order.len(), 2, "only stored tasks, exactly once");
+        assert!(!order.iter().any(|id| id.0.contains(':')));
+
+        let occ = snapshot.tasks[1].id.clone();
+        assert_eq!(
+            reorder_ids(&snapshot, &occ, &first),
+            None,
+            "dragged occurrence"
+        );
+        assert_eq!(
+            reorder_ids(&snapshot, &first, &occ),
+            None,
+            "dropped on occurrence"
+        );
     }
 
     #[test]
@@ -1681,6 +2188,147 @@ mod tests {
             parse_edited_due("2026-10-16T21:00", &task),
             Some(When::DueBy(deadline))
         );
+    }
+
+    /// A snapshot holding one series ("Gym", Mon/Thu 07:00) and the expanded row
+    /// for its Thursday, the way the server mints them (docs/ARCHITECTURE.md 7.1).
+    /// The fixture already carries that series and row; this replaces the row so
+    /// the `done` state is the test's to choose.
+    fn snapshot_with_series(done: bool) -> Snapshot {
+        let mut snapshot = api::fixture_snapshot();
+        snapshot.tasks.retain(|task| task.id.0 != "sgym:2026-10-15");
+        let created = Utc.with_ymd_and_hms(2026, 10, 12, 6, 0, 0).unwrap();
+        snapshot.series.push(todo_core::Series {
+            id: todo_core::SeriesId("sgym".into()),
+            title: "Gym".into(),
+            duration_min: 30,
+            rule: todo_core::Recurrence::new([Weekday::Mon, Weekday::Thu], None)
+                .expect("two days name a rule"),
+            start_day: NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+            time_of_day: chrono::NaiveTime::from_hms_opt(7, 0, 0),
+            zone: "UTC".into(),
+            external_uid: None,
+            created,
+            order: -10,
+        });
+        snapshot.tasks.push(todo_core::Task {
+            id: TaskId("sgym:2026-10-15".into()),
+            title: "Gym".into(),
+            duration_min: 30,
+            when: When::At(Utc.with_ymd_and_hms(2026, 10, 15, 7, 0, 0).unwrap()),
+            done,
+            order: -10,
+            label: todo_core::Label::Other,
+            priority: todo_core::Priority::Medium,
+            source: todo_core::Source::Series,
+            created,
+            updated_at: created,
+            due_tz: None,
+            external_uid: None,
+        });
+        snapshot
+    }
+
+    #[test]
+    fn an_occurrence_id_names_its_series_and_date() {
+        let (series, date) = occurrence_parts("sgym:2026-10-15").expect("a valid occurrence id");
+        assert_eq!(series, "sgym");
+        assert_eq!(date, NaiveDate::from_ymd_opt(2026, 10, 15).unwrap());
+        // Ordinary task ids carry no date part.
+        assert!(occurrence_parts("t1234").is_none());
+        assert!(occurrence_parts("sgym:not-a-date").is_none());
+    }
+
+    #[test]
+    fn ticking_an_occurrence_marks_that_date_not_the_task() {
+        match tick_action(&snapshot_with_series(false), "sgym:2026-10-15") {
+            Some(TickAction::MarkDone { series, date }) => {
+                assert_eq!(series, "sgym");
+                assert_eq!(date.to_string(), "2026-10-15");
+            }
+            other => panic!("ticking an open occurrence marks its date, got {other:?}"),
+        }
+        // The same row, already done: un-ticking clears the exception, which
+        // puts the day back to the rule.
+        assert!(matches!(
+            tick_action(&snapshot_with_series(true), "sgym:2026-10-15"),
+            Some(TickAction::ClearDone { .. })
+        ));
+        // An ordinary task still flips its own flag, and an unknown id does nothing.
+        let fixture = api::fixture_snapshot();
+        let id = fixture.tasks[0].id.0.clone();
+        assert!(matches!(
+            tick_action(&fixture, &id),
+            Some(TickAction::Task(_))
+        ));
+        assert!(tick_action(&fixture, "gone").is_none());
+    }
+
+    #[test]
+    fn the_day_buttons_sort_monday_first_and_toggle() {
+        assert_eq!(
+            sorted_weekdays(&[Weekday::Sun, Weekday::Mon, Weekday::Wed, Weekday::Mon]),
+            vec![Weekday::Mon, Weekday::Wed, Weekday::Sun]
+        );
+        let picked = toggled_day(Vec::new(), Weekday::Thu);
+        assert_eq!(
+            toggled_day(picked.clone(), Weekday::Thu),
+            Vec::<Weekday>::new(),
+            "picking a picked day unpicks it"
+        );
+        assert_eq!(
+            toggled_day(picked, Weekday::Fri),
+            vec![Weekday::Thu, Weekday::Fri]
+        );
+    }
+
+    #[test]
+    fn the_dialog_builds_a_series_body_from_its_fields() {
+        let body = series_from_dialog(
+            "  Gym  ",
+            Some(30),
+            &[Weekday::Thu, Weekday::Mon],
+            "2026-12-15",
+            "07:00",
+        )
+        .expect("every field names a rule");
+        assert_eq!(body.title, "Gym");
+        assert_eq!(body.duration_min, 30);
+        assert_eq!(body.weekdays, vec![Weekday::Mon, Weekday::Thu]);
+        assert_eq!(body.until.as_deref(), Some("2026-12-15"));
+        assert_eq!(body.time_of_day.as_deref(), Some("07:00"));
+        // An empty end date or time is simply absent on the wire.
+        let floating = series_from_dialog("Gym", Some(30), &[Weekday::Mon], "", "")
+            .expect("no end and no time is a valid rule");
+        assert_eq!(floating.until, None);
+        assert_eq!(floating.time_of_day, None);
+        // No title, no length, or no day picked: nothing to save.
+        assert!(series_from_dialog("  ", Some(30), &[Weekday::Mon], "", "").is_none());
+        assert!(series_from_dialog("Gym", None, &[Weekday::Mon], "", "").is_none());
+        assert!(series_from_dialog("Gym", Some(30), &[], "", "").is_none());
+    }
+
+    #[test]
+    fn a_series_edit_sends_only_the_fields_the_dialog_holds() {
+        let patch = series_patch_from_dialog("Gym", Some(45), &[Weekday::Fri], "", "08:30")
+            .expect("a usable edit");
+        assert_eq!(patch.title.as_deref(), Some("Gym"));
+        assert_eq!(patch.duration_min, Some(45));
+        assert_eq!(patch.weekdays, Some(vec![Weekday::Fri]));
+        // An emptied end date cannot clear the series' one (7.1: null reads absent).
+        assert_eq!(patch.until, None);
+        assert_eq!(patch.time_of_day.as_deref(), Some("08:30"));
+        assert!(series_patch_from_dialog("Gym", Some(45), &[], "", "").is_none());
+    }
+
+    #[test]
+    fn a_refused_series_write_says_the_server_s_word() {
+        let refused = api::ApiError::Server(todo_core::ApiError {
+            code: todo_core::ErrorCode::BadRequest,
+            message: "not an occurrence".into(),
+        });
+        assert_eq!(series_note(&refused), "not an occurrence");
+        assert!(series_note(&api::ApiError::Network("offline".into())).contains("network error"));
     }
 }
 
