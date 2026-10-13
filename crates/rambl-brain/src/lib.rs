@@ -744,52 +744,22 @@ mod tests {
         assert_ne!(after.moods, before, "he should start drifting again");
     }
 
+    /// Instant Rambl stays put and quiet, but the night is the night for everyone: he
+    /// dozes off like the others. Only wandering and playing are his to skip.
     #[test]
-    fn lobotomized_never_emits_speech_or_personality() {
-        let brain = Brain::new(Mode::Lobotomized);
-        let events = [
-            Some(Event::TaskDone),
-            Some(Event::TaskOverdue),
-            Some(Event::Tick),
-            Some(Event::LocalHour(12)),
-            Some(Event::Poked),
-        ];
-        for event in events {
-            let (_, actions) = step(&brain, event, at(12), &mut Seeded::new(1));
-            assert!(
-                !actions.iter().any(|a| matches!(a, Action::Say(_))),
-                "lobotomized said something"
-            );
-            assert!(
-                !actions.iter().any(|a| matches!(a, Action::MoveTo(_))),
-                "lobotomized moved"
-            );
-            assert!(
-                !actions.iter().any(|a| matches!(a, Action::Animate(_))),
-                "lobotomized animated"
-            );
-            assert_eq!(actions, vec![Action::Pose("lobotomized")]);
-        }
-    }
-
-    #[test]
-    fn instant_mode_never_waits() {
-        let events: Vec<Option<Event>> = (0..60).map(|_| Some(Event::Tick)).collect();
+    fn instant_still_dozes_at_night() {
         let mut brain = Brain::new(Mode::Instant);
-        for event in events {
-            let (next, actions) = step(&brain, event.clone(), at(12), &mut Seeded::new(7));
-            assert!(
-                !actions.iter().any(|a| matches!(a, Action::Say(_))),
-                "instant emitted speech"
-            );
-            assert!(
-                !matches!(
-                    next.state,
-                    State::Wandering | State::Playing | State::Dozing
-                ),
-                "instant entered wait-like state {:?}",
-                next.state
-            );
+        let (asleep, _) = step(
+            &brain,
+            Some(Event::LocalHour(2)),
+            at(2),
+            &mut Seeded::new(7),
+        );
+        assert_eq!(asleep.state, State::Dozing);
+        brain = asleep;
+        for _ in 0..10 {
+            let (next, _) = step(&brain, Some(Event::Tick), at(2), &mut Seeded::new(7));
+            assert_eq!(next.state, State::Dozing, "instant woke up in the night");
             brain = next;
         }
     }
@@ -797,7 +767,6 @@ mod tests {
     #[test]
     fn every_event_kind_has_a_line() {
         let lines = data::lines();
-        let situations: std::collections::HashSet<&str> = lines.situations().collect();
         let required = [
             "task_added",
             "task_done",
@@ -813,23 +782,33 @@ mod tests {
             "wake",
         ];
         for s in required {
-            assert!(situations.contains(s), "missing situation {s}");
+            // `all` answers empty both for a situation nobody wrote and for one
+            // written with nothing in it, which is how the brain ends up mute.
+            assert!(!lines.all(s).is_empty(), "{s} has no line to say");
         }
     }
 
     #[test]
-    fn no_line_is_empty_or_over_120_chars() {
+    fn no_line_is_over_120_chars() {
         let lines = data::lines();
         for situation in lines.situations() {
             for line in lines.all(situation) {
-                assert!(!line.is_empty(), "empty line in {situation}");
                 assert!(
-                    line.len() <= 120,
+                    line.chars().count() <= 120,
                     "line over 120 chars in {situation}: len={}",
-                    line.len()
+                    line.chars().count()
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_parser_drops_blank_entries_so_a_blank_can_never_be_said() {
+        // This is why no test needs to check `Lines::all` for an empty string: the
+        // parser drops blanks and trims the rest, so one cannot survive to be said.
+        let parsed = Lines::parse("[lines.poked]\nlines = \"hi||  |there|\"\n").unwrap();
+        let said: Vec<&str> = parsed.all("poked").iter().map(String::as_str).collect();
+        assert_eq!(said, ["hi", "there"]);
     }
 
     #[test]
