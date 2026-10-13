@@ -1344,18 +1344,21 @@ a {
   }
 }
 
-/* Pen writing row animation: title reveals letter by letter */
+/* Pen writing row animation: the title reveals left to right. The reveal is
+   a clip-path wipe, not a shrinking box: a long title wraps onto the next
+   ruled line both while Rambo is writing and after he is done. */
 .pen-title {
-  display: inline-block;
-  white-space: nowrap;
+  clip-path: inset(0 0 0 0);
+  transition: clip-path 0.6s linear;
+  display: inline;
 }
 
 .pen-pending .pen-title {
-  visibility: hidden;
+  clip-path: inset(0 100% 0 0);
 }
 
 .pen-writing .pen-title {
-  visibility: visible;
+  clip-path: inset(0 0 0 0);
 }
 
 
@@ -1382,7 +1385,7 @@ a {
 
   .pen-title {
     transition: none !important;
-    max-width: 100% !important;
+    clip-path: inset(0 0 0 0) !important;
   }
 
   .pen-underline {
