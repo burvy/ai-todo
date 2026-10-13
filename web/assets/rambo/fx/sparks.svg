@@ -1,0 +1,8 @@
+<!-- PLACEHOLDER: replace me, see web/assets/README.md. Celebration sparks: four-point ink stars, follows text colour. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="celebration sparks" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M24 13 L26 21 L34 23 L26 25 L24 33 L22 25 L14 23 L22 21 Z"/>
+  <path d="M37 8 L38 11.5 L41.5 12.5 L38 13.5 L37 17 L36 13.5 L32.5 12.5 L36 11.5 Z" stroke-width="1.6"/>
+  <path d="M11 32 L12 35 L15 36 L12 37 L11 40 L10 37 L7 36 L10 35 Z" stroke-width="1.6"/>
+  <circle cx="38" cy="30" r="1.2" fill="currentColor" stroke="none"/>
+  <circle cx="10" cy="14" r="1" fill="currentColor" stroke="none"/>
+</svg>

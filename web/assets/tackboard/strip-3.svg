@@ -1,0 +1,10 @@
+<!-- PLACEHOLDER: replace me, see web/assets/README.md. Torn task strip, ragged tear, left dog-ear. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 46" role="img" aria-label="torn paper strip, ragged edges">
+  <path fill="#FCFAF4" stroke="#A7865D" stroke-width="1" stroke-linejoin="round"
+        d="M2 12 L10 6 L16 10 L16 6 L26 9 L38 4 L52 9 L68 4 L84 9 L100 4 L116 9 L132 4 L148 9 L162 5 L176 9 L188 5 L198 9
+           L198 35 L189 39 L180 34 L170 41 L158 36 L146 42 L132 36 L118 42 L104 36 L90 42 L76 36 L62 42 L48 36 L34 42 L22 36 L12 41 L2 35 Z"/>
+  <path fill="#ECD7AF" stroke="#A7865D" stroke-width="1" stroke-linejoin="round" d="M2 12 L16 6 L16 16 L6 18 Z"/>
+  <path fill="none" stroke="#5D4732" stroke-width="1.6" stroke-linecap="round" opacity=".55"
+        d="M20 24 C 52 20, 88 28, 122 23 S 172 21, 190 25"/>
+  <path fill="none" stroke="#A7865D" stroke-width=".8" opacity=".5" d="M20 15 H196 M18 31 H198"/>
+</svg>

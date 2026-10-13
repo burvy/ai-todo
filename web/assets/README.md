@@ -7,28 +7,63 @@ app needs to change.
 
 ## Rambo, the pen mascot — `rambo/`
 
-SVG, viewBox `0 0 64 112` (except the nest), palette via CSS variables inside
-each file (`--rambo-*`), with a `prefers-color-scheme: dark` variant. Colours
-follow the paper theme: body and tip coffee `#5D4732`, cap golden brown
-`#9F682E`, eyes paper-white, blush terracotta, motion lines chamoisee.
+**Tool skins:** `rambo/<skin>/<pose>.svg` with `<skin>` = `fountain`
+(default, the original art), `pencil`, `ballpoint`, `quill`, `marker`.
+Every skin has the same 11 poses with the same class names
+(`pen-barrel`, `pen-cap`, `pen-nib`, `eye-white`, `eye-black`, `brow`,
+`mouth`, …) and the same viewBox `0 0 64 112`, so the app swaps skins by
+path/skin id and the animation rig is untouched. Each SVG carries its palette
+as `--rambo-*` CSS variables with a `prefers-color-scheme: dark` variant.
 
-| File | Pose | Used for |
+| Pose | Used for |
+|---|---|
+| `idle.svg` | default state in the nest |
+| `listening.svg` | picked up / speech capture |
+| `writing.svg` | letter-by-letter writing animation |
+| `flying.svg` | moving to a row, recovering, skittering home |
+| `happy.svg` | task done, list empty |
+| `sleepy.svg` | drowsy: idle a while |
+| `dozing.svg` | dedicated: asleep, head tilted (night; wakes when you type) |
+| `teasing.svg` | being dragged / poked |
+| `worried.svg` | overdue task, dropped outside the nest |
+| `sulking.svg` | dedicated: sulking at overdue |
+| `lobotomized.svg` | no-brain mode |
+
+Shared, skin-independent: `rambo/nest.svg` (viewBox `0 0 96 56`, the bubble
+he rests in; tapping it submits) and the mood fx in `rambo/fx/` below.
+`rambo/sheet.html` previews every skin × pose on light and dark paper —
+open it in a browser to check art.
+
+**Replace:** redraw at the same viewBox, keep the class names. Scan-and-
+vectorize steps: `art/GUIDE.md`.
+
+## Mood fx — `rambo/fx/`
+
+Small overlays the rig composes over poses. Convention (agreed with Chuan):
+viewBox `0 0 48 48`, artwork centred on (24, 24), stroke-based,
+`currentColor`, **no animation inside the SVG** (opacity/transform are
+animated from CSS so `prefers-reduced-motion` can switch them off).
+
+| File | Used for |
+|---|---|
+| `ink-splat.svg` | dropped hard: splat under the nib |
+| `sleepy-z.svg` | floating Z's over `sleepy`/`dozing` |
+| `sparks.svg` | celebration stars (task done, list empty) |
+| `scribble-cloud.svg` | annoyed cloud; inner zigzag doubles as the scribble-out over a deleted row |
+
+## Tack board — `tackboard/`
+
+Per Huang's layout (`web/tack.css`, `web/src/tack.rs`); transparent
+backgrounds, paper palette, they render inside fixed boxes and scale.
+
+| File | What | Box |
 |---|---|---|
-| `idle.svg` | resting, watching | default state in the nest |
-| `listening.svg` | alert, held | picked up / speech capture |
-| `writing.svg` | leaning to the nib | letter-by-letter writing animation |
-| `flying.svg` | dashing | moving to a row, recovering, skittering home |
-| `happy.svg` | cheer | task done, list empty |
-| `sleepy.svg` | dozing | idle for a long time |
-| `teasing.svg` | playful | being dragged / poked |
-| `worried.svg` | concerned | overdue task, dropped outside the nest |
-| `lobotomized.svg` | blank | no-brain mode |
-| `nest.svg` | his nest (viewBox `0 0 96 56`) | the bubble he rests in, end of the capture line; tapping it submits |
-| `sheet.html` | preview of all poses on light and dark paper | open in a browser to check art |
-
-**Replace:** redraw at the same viewBox, keep the class names
-(`pen-barrel`, `pen-cap`, `pen-nib`, `eye-white`, `eye-black`, …) — the rig
-animates by class. Scan-and-vectorize steps: `art/GUIDE.md`.
+| `strip-1.svg` `strip-2.svg` `strip-3.svg` | torn task strips (plain tear / corner fold / ragged), stretched to 140×32, picked per task by hash | viewBox 200×46 |
+| `pin.svg` | push pin, ~16 px head, needle down | 24×24 |
+| `pin-pressed.svg` | pin pressed flat (tidy-up beat) | 24×16 |
+| `tape.svg` | translucent tape piece, torn ends | 64×24 |
+| `crumple.svg` | crumpled paper ball (end state ~20 px) | 40×40 |
+| `bin.svg` | small waste basket, drop target | 48×64 |
 
 ## The pen used by the running app — root of `assets/`
 
