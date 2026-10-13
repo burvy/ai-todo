@@ -238,6 +238,14 @@ impl<S: Store> App<S> {
         self.snapshot_now(user, self.load(user)?, &ctx, tz)
     }
 
+    /// Every task this user owns, in the order the client sees them, and no plan.
+    ///
+    /// For a caller that only wants the list — the export writes one out — so the
+    /// scheduler is never run for a read that cannot use it.
+    pub fn tasks(&self, user: &str) -> Result<Vec<Task>, ApiError> {
+        self.load(user)
+    }
+
     /// The same value with the plan narrowed to `from .. from + days`.
     ///
     /// The scheduler fills a long horizon and a week grid has nowhere to draw a

@@ -1144,6 +1144,11 @@ struct ExportOut {
 /// Tasks are all the server stores of a person — the planner's settings live in
 /// the browser — so the file is `{ "tasks": [...] }`, shaped so a server-side
 /// settings section can join it later without breaking readers.
+///
+/// A caller with no credentials is still a caller: the anonymous-id middleware
+/// hands out an id before this runs, so the download is 200 and an empty list.
+/// That is how the rest of the API treats a signed-out visitor, and the file
+/// holds their tasks from then on.
 async fn export(
     State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
@@ -1151,7 +1156,9 @@ async fn export(
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
     let app = shared.app.lock().unwrap();
-    let snapshot = app.snapshot(&user, tz)?;
+    // `App::tasks`, not `snapshot`: a download has no plan in it, and planning
+    // a list twice the size of what is written out is work nobody asked for.
+    let tasks = app.tasks(&user)?;
     let today = app.now().with_timezone(&tz).date_naive();
     let disposition = HeaderValue::from_str(&format!(
         "attachment; filename=\"rambl-export-{today}.json\""
@@ -1164,10 +1171,14 @@ async fn export(
                 HeaderValue::from_static("application/json"),
             ),
             (axum::http::header::CONTENT_DISPOSITION, disposition),
+            // A person's whole task list, on a URL any browser can be sent back
+            // to. Do not let a cache keep it.
+            (
+                axum::http::header::CACHE_CONTROL,
+                HeaderValue::from_static("no-store"),
+            ),
         ],
-        Json(ExportOut {
-            tasks: snapshot.tasks,
-        }),
+        Json(ExportOut { tasks }),
     )
         .into_response())
 }
@@ -3068,6 +3079,192 @@ mod tests {
         assert!(
             body["tasks"].as_array().expect("a tasks list").is_empty(),
             "a new account exported tasks: {body}"
+        );
+    }
+
+    /// An anonymous caller exports its own tasks and nobody else's, the same rule the
+    /// signed-in test holds. The two ids below are two different people as far as the
+    /// store is concerned.
+    #[tokio::test]
+    async fn an_anonymous_caller_exports_only_its_own_tasks() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        // Two fresh anonymous ids: no header at all, so the middleware mints each.
+        let (_, first_headers, _) = call(&router, "GET", "/api/v1/snapshot", None, &[]).await;
+        let (_, second_headers, _) = call(&router, "GET", "/api/v1/snapshot", None, &[]).await;
+        let first = anonymous_id_of(&first_headers);
+        let second = anonymous_id_of(&second_headers);
+        assert_ne!(first, second, "two visitors must be two accounts");
+
+        for (id, title) in [(&first, "Anon one"), (&second, "Anon two")] {
+            let (status, _, body) = call(
+                &router,
+                "POST",
+                "/api/v1/tasks",
+                Some(&draft_titled(title)),
+                &[("x-rambl-anon", id)],
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+
+        let (status, _, body) = call(
+            &router,
+            "GET",
+            "/api/v1/export",
+            None,
+            &[("x-rambl-anon", &first)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            task_titles(&body),
+            vec!["Anon one"],
+            "an anonymous export must hold only that caller's tasks"
+        );
+
+        // A forged id is not a person: the middleware replaces it, so the file is
+        // empty rather than someone else's.
+        let (status, _, body) = call(
+            &router,
+            "GET",
+            "/api/v1/export",
+            None,
+            &[("x-rambl-anon", FOREIGN_ID)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            task_titles(&body).is_empty(),
+            "a forged id exported someone else's tasks: {body}"
+        );
+
+        // No credentials at all is a fresh anonymous account, so 200 and an empty
+        // list. Pinned because it reads like it should be a 401.
+        let (status, _, body) = call(&router, "GET", "/api/v1/export", None, &[]).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "a signed-out visitor gets an empty file"
+        );
+        assert!(task_titles(&body).is_empty(), "{body}");
+
+        // A bad token is refused outright, never quietly replaced by an anonymous id.
+        let (status, _, _) = call(
+            &router,
+            "GET",
+            "/api/v1/export",
+            None,
+            &[("authorization", "Bearer not-a-real-token")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// Local mode has no sign-in, so every request is the fixed local user and the
+    /// export is theirs.
+    #[tokio::test]
+    async fn local_mode_exports_the_local_users_tasks() {
+        let router = super::router_with_verifier(
+            App::new(
+                Box::new(MemoryStore::default()) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(auth::FakeVerifier {
+                answer: Err("unused".into()),
+            }),
+            true,
+            Caps::default(),
+            None,
+            TrustedProxies::default(),
+        );
+        let (status, _) = send(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(&draft_titled("Local one")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = send(&router, "GET", "/api/v1/export", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(task_titles(&body), vec!["Local one"]);
+    }
+
+    /// The file is a copy, not a summary: every field of a task comes back, including
+    /// the ones a different shape would drop.
+    #[tokio::test]
+    async fn the_export_carries_every_field_of_a_task() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let sam = sign_in(&router).await;
+        let (status, _) = send_as(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(
+                r#"{"title":"Hand in","duration_min":45,"when":{"kind":"due_by","time":"2026-10-13T21:00:00Z"},"label":"School","priority":"high","source":"text"}"#,
+            ),
+            Some(&sam),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, body) = send_as(&router, "GET", "/api/v1/export", None, Some(&sam)).await;
+        assert_eq!(status, StatusCode::OK);
+        let task = &body["tasks"][0];
+        let fields: Vec<&str> = task
+            .as_object()
+            .expect("an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                "created",
+                "done",
+                "due_tz",
+                "duration_min",
+                "external_uid",
+                "id",
+                "label",
+                "order",
+                "priority",
+                "source",
+                "title",
+                "updated_at",
+                "when",
+            ],
+            "the export must carry every field, in the order Task declares them"
+        );
+        assert_eq!(task["label"], "School");
+        assert_eq!(task["priority"], "high");
+        assert_eq!(task["duration_min"], 45);
+        assert_eq!(task["when"]["kind"], "due_by");
+        // A deadline set in a zone keeps it, or a restore loses the local time.
+        assert_eq!(
+            task["due_tz"], "America/New_York",
+            "the deadline's zone must survive the export"
+        );
+    }
+
+    /// A download of one person's tasks is not a page to keep around.
+    #[tokio::test]
+    async fn the_export_is_not_cacheable() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let sam = sign_in(&router).await;
+        let request = Request::builder()
+            .uri("/api/v1/export")
+            .header("x-rambl-tz", "America/New_York")
+            .header("authorization", format!("Bearer {sam}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.headers().get("cache-control").unwrap(),
+            "no-store",
+            "a task list must not be kept by a cache"
         );
     }
 
