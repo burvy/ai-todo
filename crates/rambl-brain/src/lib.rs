@@ -781,4 +781,113 @@ mod tests {
         let (after, _) = step(&blank, Some(Event::Tick), at(12), &mut rng);
         assert_ne!(after.moods, before, "he should start drifting again");
     }
+
+    #[test]
+    fn lobotomized_never_emits_speech_or_personality() {
+        let brain = Brain::new(Mode::Lobotomized);
+        let events = [
+            Some(Event::TaskDone),
+            Some(Event::TaskOverdue),
+            Some(Event::Tick),
+            Some(Event::LocalHour(12)),
+            Some(Event::Poked),
+        ];
+        for event in events {
+            let (_, actions) = step(&brain, event, at(12), &mut Seeded::new(1));
+            assert!(
+                !actions.iter().any(|a| matches!(a, Action::Say(_))),
+                "lobotomized said something"
+            );
+            assert!(
+                !actions.iter().any(|a| matches!(a, Action::MoveTo(_))),
+                "lobotomized moved"
+            );
+            assert!(
+                !actions.iter().any(|a| matches!(a, Action::Animate(_))),
+                "lobotomized animated"
+            );
+            assert_eq!(actions, vec![Action::Pose("lobotomized")]);
+        }
+    }
+
+    #[test]
+    fn instant_mode_never_waits() {
+        let events: Vec<Option<Event>> = (0..60).map(|_| Some(Event::Tick)).collect();
+        let mut brain = Brain::new(Mode::Instant);
+        for event in events {
+            let (next, actions) = step(&brain, event.clone(), at(12), &mut Seeded::new(7));
+            assert!(
+                !actions.iter().any(|a| matches!(a, Action::Say(_))),
+                "instant emitted speech"
+            );
+            assert!(
+                !matches!(
+                    next.state,
+                    State::Wandering | State::Playing | State::Dozing
+                ),
+                "instant entered wait-like state {:?}",
+                next.state
+            );
+            brain = next;
+        }
+    }
+
+    #[test]
+    fn every_event_kind_has_a_line() {
+        let lines = data::lines();
+        let situations: std::collections::HashSet<&str> = lines.situations().collect();
+        let required = [
+            "task_added",
+            "task_done",
+            "task_overdue",
+            "list_empty",
+            "poked",
+            "dragged",
+            "asking",
+            "wander",
+            "play",
+            "home",
+            "doze",
+            "wake",
+        ];
+        for s in required {
+            assert!(situations.contains(s), "missing situation {s}");
+        }
+    }
+
+    #[test]
+    fn no_line_is_empty_or_over_120_chars() {
+        let lines = data::lines();
+        for situation in lines.situations() {
+            for line in lines.all(situation) {
+                assert!(!line.is_empty(), "empty line in {situation}");
+                assert!(
+                    line.len() <= 120,
+                    "line over 120 chars in {situation}: len={}",
+                    line.len()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_same_seed_gives_the_same_actions_for_events() {
+        let events = [
+            Some(Event::TaskDone),
+            Some(Event::Poked),
+            Some(Event::TaskOverdue),
+        ];
+        let mut first = Brain::new(Mode::Interactive);
+        let mut second = first.clone();
+        let mut rng_a = Seeded::new(99);
+        let mut rng_b = Seeded::new(99);
+        for event in events {
+            let (a, actions_a) = step(&first, event.clone(), at(12), &mut rng_a);
+            let (b, actions_b) = step(&second, event.clone(), at(12), &mut rng_b);
+            assert_eq!(a, b, "brain diverged with same seed");
+            assert_eq!(actions_a, actions_b, "actions diverged with same seed");
+            first = a;
+            second = b;
+        }
+    }
 }
