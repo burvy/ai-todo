@@ -266,6 +266,45 @@ main > * {
   min-width: 0;
 }
 
+/* A deliberate swipe (turning-forward = list → planner) shades the page
+   edge like a corner curling over — no 3D folds, just paper shading. The
+   sweep plays while the scroll snaps and drops with prefers-reduced-motion
+   handled by the global rule above. */
+@keyframes page-curl-forward {
+  from {
+    background: linear-gradient(90deg, transparent 30%, rgba(93, 71, 50, 0.28) 100%);
+  }
+  to {
+    background: linear-gradient(90deg, transparent 100%, rgba(93, 71, 50, 0.28) 100%);
+  }
+}
+
+@keyframes page-curl-back {
+  from {
+    background: linear-gradient(270deg, transparent 30%, rgba(93, 71, 50, 0.28) 100%);
+  }
+  to {
+    background: linear-gradient(270deg, transparent 100%, rgba(93, 71, 50, 0.28) 100%);
+  }
+}
+
+main.turning-forward::after,
+main.turning-back::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+main.turning-forward::after {
+  animation: page-curl-forward 420ms ease-out;
+}
+
+main.turning-back::after {
+  animation: page-curl-back 420ms ease-out;
+}
+
 .tasks-pane {
   display: grid;
   gap: var(--space-4);

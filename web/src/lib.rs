@@ -349,6 +349,72 @@ pub fn App() -> impl IntoView {
     account::start();
     let main_ref = NodeRef::<leptos::html::Main>::new();
     let (pane, set_pane) = signal(0_u8);
+    // The page flip: where the finger went down, and what direction is turning.
+    // Some(true) = turning forward (list → planner), Some(false) = turning back.
+    let swipe_start = RwSignal::new(None::<(f64, f64)>);
+    let turning = RwSignal::new(None::<bool>);
+    #[cfg(target_arch = "wasm32")]
+    let (flip_down, flip_up, flip_cancel) = (
+        // Never fight controls: Rambo's drag, the capture bar, the nav, the
+        // gear, form fields and buttons own their own pointers.
+        move |event: leptos::ev::PointerEvent| {
+            let on_control = event
+                .target()
+                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                .is_some_and(|el| {
+                    el.closest(
+                        ".rambo, .capture, nav, .gear-wrap, input, select, textarea, button, a, dialog",
+                    )
+                    .ok()
+                    .flatten()
+                    .is_some()
+                });
+            if !on_control {
+                swipe_start.set(Some((
+                    f64::from(event.client_x()),
+                    f64::from(event.client_y()),
+                )));
+            }
+        },
+        move |event: leptos::ev::PointerEvent| {
+            let Some((x0, y0)) = swipe_start.get_untracked() else {
+                return;
+            };
+            swipe_start.set(None);
+            let target = flip_target(
+                pane.get_untracked(),
+                f64::from(event.client_x()) - x0,
+                f64::from(event.client_y()) - y0,
+            );
+            if target.is_none() || target == Some(pane.get_untracked()) {
+                return;
+            }
+            // A turn only exists where the pages really scroll: on a wide
+            // screen both pages are on the desk at once, nothing to turn.
+            let Some(element) = main_ref.get() else {
+                return;
+            };
+            if f64::from(element.scroll_width()) <= f64::from(element.client_width()) {
+                return;
+            }
+            let index = target.unwrap();
+            turning.set(Some(index == 1));
+            show_pane(main_ref, index, set_pane);
+            wasm_bindgen_futures::spawn_local(async move {
+                gloo_timers::future::TimeoutFuture::new(FLIP_MS).await;
+                turning.set(None);
+            });
+        },
+        move |_: leptos::ev::PointerEvent| swipe_start.set(None),
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    let (flip_down, flip_up, flip_cancel) = (
+        |_: leptos::ev::PointerEvent| {},
+        |_: leptos::ev::PointerEvent| {},
+        |_: leptos::ev::PointerEvent| {},
+    );
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = swipe_start;
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
     let pen_pos = RwSignal::new((0.0_f64, 0.0));
@@ -417,7 +483,18 @@ pub fn App() -> impl IntoView {
                 on:click=move |_| show_pane(main_ref, 1, set_pane)
             >"Planner"</button>
         </nav>
-        <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
+        <main
+                node_ref=main_ref
+                on:scroll=move |_| track_pane(main_ref, set_pane)
+                on:pointerdown=flip_down
+                on:pointerup=flip_up
+                on:pointercancel=flip_cancel
+                class=move || match turning.get() {
+                    Some(true) => "turning-forward",
+                    Some(false) => "turning-back",
+                    None => "",
+                }
+            >
             <div class="tasks-pane">
                 <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
             </div>
@@ -442,6 +519,27 @@ fn pane_at(scroll_left: f64, pane_width: f64) -> u8 {
     }
     (scroll_left / pane_width).round().clamp(0.0, 1.0) as u8
 }
+
+// A horizontal swipe far enough and flat enough is a page turn: left turns
+// the list page over to the planner, right on the planner turns back. Small
+// or diagonal drags are just scrolling, and on a task row right is the
+// classic swipe-right delete, not a turn.
+#[cfg(any(target_arch = "wasm32", test))]
+fn flip_target(pane: u8, dx: f64, dy: f64) -> Option<u8> {
+    const FLIP_PX: f64 = 56.0;
+    if dx.abs() < FLIP_PX || dy.abs() >= dx.abs() * 0.6 {
+        return None;
+    }
+    match (pane, dx < 0.0) {
+        (0, true) => Some(1),
+        (1, false) => Some(0),
+        _ => None,
+    }
+}
+
+/// How long the curl shading shows before the class is dropped.
+#[cfg(target_arch = "wasm32")]
+const FLIP_MS: u32 = 420;
 
 #[cfg(target_arch = "wasm32")]
 fn show_pane(main: NodeRef<leptos::html::Main>, index: u8, set_pane: WriteSignal<u8>) {
@@ -2454,7 +2552,7 @@ mod tests {
 
 #[cfg(test)]
 mod pane_tests {
-    use super::pane_at;
+    use super::{flip_target, pane_at};
 
     #[test]
     fn a_phone_swipe_maps_to_the_nearest_pane() {
@@ -2464,6 +2562,41 @@ mod pane_tests {
         assert_eq!(pane_at(400.0, 400.0), 1);
         assert_eq!(pane_at(900.0, 400.0), 1, "never past the last pane");
         assert_eq!(pane_at(100.0, 0.0), 0, "no width yet, so the first pane");
+    }
+
+    #[test]
+    fn a_deliberate_flat_swipe_turns_one_page() {
+        assert_eq!(
+            flip_target(0, -120.0, 10.0),
+            Some(1),
+            "left on the list → planner"
+        );
+        assert_eq!(
+            flip_target(1, 120.0, 10.0),
+            Some(0),
+            "right on the planner → list"
+        );
+        assert_eq!(
+            flip_target(0, 120.0, 10.0),
+            None,
+            "right on the list is the delete there"
+        );
+        assert_eq!(
+            flip_target(1, -120.0, 10.0),
+            None,
+            "left on the planner has no page before it"
+        );
+    }
+
+    #[test]
+    fn short_or_steep_swipes_are_just_scrolling() {
+        assert_eq!(flip_target(0, -40.0, 0.0), None, "too short");
+        assert_eq!(
+            flip_target(0, -120.0, 200.0),
+            None,
+            "too steep, that is list scrolling"
+        );
+        assert_eq!(flip_target(0, 0.0, 0.0), None, "no move, no turn");
     }
 }
 
