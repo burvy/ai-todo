@@ -1552,7 +1552,7 @@ impl Store for SqliteStore {
         let conn = self.conn.lock().expect("db mutex");
         let mut stmt = conn
             .prepare(
-                "SELECT users.id, users.email, users.name, users.picture, users.plan \
+                "SELECT v2_users.id, v2_users.email, v2_users.name, v2_users.picture, v2_users.plan \
                  FROM v2_sessions JOIN v2_users ON v2_users.id = v2_sessions.user_id \
                  WHERE v2_sessions.token = ?1 AND v2_sessions.expires_at > ?2",
             )
@@ -2924,6 +2924,26 @@ mod tests {
         due_tz_round_trips(&SqliteStore::open_in_memory().unwrap());
         series_round_trip(&SqliteStore::open_in_memory().unwrap());
         series_are_isolated(&SqliteStore::open_in_memory().unwrap());
+    }
+
+    /// A session finds its own user, and only while it is live, on the real database.
+    #[test]
+    fn sqlite_session_finds_its_user_until_it_expires() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let me = super::super::auth::Me {
+            id: "alice".to_owned(),
+            email: "alice@example.com".to_owned(),
+            name: "alice".to_owned(),
+            picture: None,
+            plan: super::super::auth::Plan::Free,
+        };
+        store
+            .upsert_user_and_session(&me, "token-alice", at(12))
+            .unwrap();
+        let found = store.session_user("token-alice", at(1)).unwrap();
+        assert_eq!(found.map(|me| me.id), Some("alice".to_owned()));
+        assert!(store.session_user("token-alice", at(13)).unwrap().is_none());
+        assert!(store.session_user("nope", at(1)).unwrap().is_none());
     }
 
     // -- SQLite specifics the contract cannot cover through the trait.
