@@ -1414,11 +1414,34 @@ a {
 
 /* Pen writing row animation: the title reveals left to right. The reveal is
    a clip-path wipe, not a shrinking box: a long title wraps onto the next
-   ruled line both while Rambo is writing and after he is done. */
+   ruled line both while Rambo is writing and after he is done.
+
+   On a title that fits one ruled line the view layer drives that clip itself,
+   one frame at a time, so the nib sits exactly at the edge of the ink. A
+   title that wraps is left to this transition: there is more than one line
+   box to wipe and the pen cannot trace across both. */
 .pen-title {
   clip-path: inset(0 0 0 0);
   transition: clip-path 0.6s linear;
   display: inline;
+}
+
+.pen-pending .pen-title {
+  clip-path: inset(0 100% 0 0);
+}
+
+.pen-writing .pen-title {
+  clip-path: inset(0 0 0 0);
+}
+
+/* Per-tool ink: the gear menu's `data-pen` names the tool Rambo is holding and
+   the row he is writing carries it as a class, so a quill writes in a brown
+   ink and a marker in a heavy one. Anything unrecognised keeps --ink. */
+.pen-writing.pencil .pen-title { color: var(--ink-pencil); }
+.pen-writing.ballpoint .pen-title { color: var(--ink-ballpoint); }
+.pen-writing.quill .pen-title { color: var(--ink-quill); }
+.pen-writing.marker .pen-title { color: var(--ink-marker); font-weight: 700; }
+.pen-writing.fountain-pen .pen-title { color: var(--ink); }
 }
 
 .pen-pending .pen-title {

@@ -3,12 +3,24 @@
 //! Pure and unit-tested: no DOM, no clock, no timers. The view layer reads
 //! these numbers and animates the pen; nothing here moves anything.
 //!
-//! The pen writes a fresh row's title left to right over [`WRITE_MS`], one row
-//! after another, and lingers [`LINGER_MS`] at the capture caret after typing
-//! stops before flying home — the v1 behaviour, rebuilt.
+//! A fresh row's title appears glyph by glyph under the nib: each glyph's
+//! stroke time comes from its own measured width (wide glyphs take longer,
+//! word gaps are pen lifts), so the nib's pace matches the text it writes.
+//! The pen lingers [`LINGER_MS`] at the capture caret after typing stops
+//! before flying home.
 
-/// How long writing one title line takes.
-pub const WRITE_MS: u32 = 600;
+/// Average stroke time per glyph; sets the overall pace of a line.
+pub const PER_GLYPH_MS: u32 = 90;
+/// Shortest and longest a single title may take to write.
+pub const MIN_WRITE_MS: u32 = 500;
+pub const MAX_WRITE_MS: u32 = 2400;
+/// Added width (in the same units as glyph widths) for the pen lift over a
+/// space: the nib travels the gap and pauses a beat before the next word.
+pub const WORD_GAP_W: f64 = 10.0;
+/// Even the narrowest glyph costs this much of the schedule (an `i` is
+/// quick, not free), so a run of thin glyphs never flashes by.
+pub const MIN_GLYPH_W: f64 = 6.0;
+
 /// Quiet time at the capture box before the pen flies home.
 pub const LINGER_MS: u32 = 2000;
 /// Flight time between two spots (caret, row, home).
@@ -20,39 +32,61 @@ pub const PEN_H: f64 = 65.0;
 /// The scale the pen writes at (shrunk so it does not cover the words).
 pub const WRITE_SCALE: f64 = 0.78;
 
-/// One title's writing window, relative to the start of a batch.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WriteSlot {
-    pub start_ms: u32,
-    pub duration_ms: u32,
+/// How long a title with `glyphs` glyphs takes to write: pace by length,
+/// clamped so short titles still read as writing and long ones finish.
+pub fn write_total_ms(glyphs: usize) -> u32 {
+    (glyphs as u32 * PER_GLYPH_MS).clamp(MIN_WRITE_MS, MAX_WRITE_MS)
 }
 
-/// `count` titles written back to back: each starts `write_ms` after the last.
-pub fn schedule_slots(count: usize, write_ms: u32, offset_ms: u32) -> Vec<WriteSlot> {
-    (0..count as u32)
-        .map(|i| WriteSlot {
-            start_ms: offset_ms + i * write_ms,
-            duration_ms: write_ms,
-        })
-        .collect()
-}
-
-/// Milliseconds from the first nib touch until the last line is finished.
-pub fn total_write_ms(count: usize, write_ms: u32) -> u32 {
-    (count as u32).saturating_mul(write_ms)
-}
-
-/// How much of the line the nib has covered, clamped to 0..=1.
-pub fn nib_progress(elapsed_ms: u32, duration_ms: u32) -> f32 {
-    if duration_ms == 0 {
-        return 1.0;
+/// The stroke time of every glyph in `text`, in milliseconds.
+///
+/// `width_of` supplies each glyph's advance width (the DOM measures this
+/// with the title's real font; tests inject numbers). Time is shared in
+/// proportion to width — a wide `m` takes proportionally longer than an `i`
+/// — and every space also carries the [`WORD_GAP_W`] pen lift. The last
+/// glyph absorbs rounding so the durations sum to exactly
+/// [`write_total_ms`].
+pub fn glyph_durations(text: &str, width_of: impl Fn(char) -> f64) -> Vec<u32> {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.is_empty() {
+        return Vec::new();
     }
-    (elapsed_ms as f32 / duration_ms as f32).clamp(0.0, 1.0)
+    let weights: Vec<f64> = chars
+        .iter()
+        .map(|&c| {
+            let width = width_of(c).max(MIN_GLYPH_W);
+            if c.is_whitespace() {
+                width + WORD_GAP_W
+            } else {
+                width
+            }
+        })
+        .collect();
+    let total_ms = f64::from(write_total_ms(chars.len()));
+    let weight_sum: f64 = weights.iter().sum();
+    let mut durations: Vec<u32> = weights
+        .iter()
+        .map(|w| (total_ms * w / weight_sum).round() as u32)
+        .collect();
+    // Hand the rounding drift (either sign) to the last stroke so the line
+    // finishes exactly on time.
+    let drift = (total_ms as i64) - i64::from(durations.iter().sum::<u32>());
+    let last = durations.len() - 1;
+    durations[last] = (i64::from(durations[last]) + drift).max(0) as u32;
+    durations
 }
 
-/// The nib's x along a line: `left` when the write starts, `right` at the end.
-pub fn nib_x(left: f64, right: f64, progress: f32) -> f64 {
-    left + (right - left) * f64::from(progress)
+/// How many glyphs are on the paper `elapsed_ms` into the stroke schedule:
+/// a glyph appears once its stroke has fully passed.
+pub fn visible_prefix(durations: &[u32], elapsed_ms: u32) -> usize {
+    let mut spent = 0_u32;
+    for (index, duration) in durations.iter().enumerate() {
+        match spent.saturating_add(*duration) {
+            done if done <= elapsed_ms => spent = done,
+            _ => return index,
+        }
+    }
+    durations.len()
 }
 
 /// Where the pen's centre sits so its nib lands on `(caret_x, caret_y)`:
@@ -61,80 +95,87 @@ pub fn writing_pen_center(caret_x: f64, caret_y: f64) -> (f64, f64) {
     (caret_x, caret_y - (PEN_H / 2.0) * WRITE_SCALE)
 }
 
-/// The pen's centre so its nib (bottom point) touches `point_y` at `scale`.
-pub fn nib_center(point_x: f64, point_y: f64, scale: f64) -> (f64, f64) {
-    (point_x, point_y - (PEN_H / 2.0) * scale)
-}
-
-/// Clamp the nib so the pen never walks past the box's right edge
-/// (v1 kept a 6px margin and one pen width of room).
-pub fn clamp_nib_x(x: f64, box_left: f64, box_right: f64) -> f64 {
-    let max = box_right - 6.0 - PEN_W * WRITE_SCALE;
-    x.clamp(box_left, max.max(box_left))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn slots_run_back_to_back() {
-        let slots = schedule_slots(3, 600, 0);
-        assert_eq!(slots.len(), 3);
-        assert_eq!(
-            slots[0],
-            WriteSlot {
-                start_ms: 0,
-                duration_ms: 600
-            }
+    fn write_total_scales_with_length_and_clamps() {
+        assert_eq!(write_total_ms(0), MIN_WRITE_MS);
+        assert_eq!(write_total_ms(3), MIN_WRITE_MS);
+        assert_eq!(write_total_ms(10), 900);
+        assert_eq!(write_total_ms(100), MAX_WRITE_MS);
+    }
+
+    #[test]
+    fn durations_sum_to_the_line_total() {
+        for text in [
+            "a",
+            "hi",
+            "Buy oat milk",
+            "Something Much Longer To Write Out",
+        ] {
+            let durations = glyph_durations(text, |c| if c.is_whitespace() { 6.0 } else { 10.0 });
+            assert_eq!(
+                durations.iter().sum::<u32>(),
+                write_total_ms(text.chars().count()),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_text_writes_nothing() {
+        assert!(glyph_durations("", |_| 5.0).is_empty());
+    }
+
+    #[test]
+    fn wide_glyphs_take_longer_than_thin_ones() {
+        let text = "mim";
+        let durations = glyph_durations(text, |c| if c == 'm' { 20.0 } else { 4.0 });
+        let [_, mid, _] = durations[..] else {
+            panic!("three glyphs");
+        };
+        assert!(mid < durations[0], "thin i must be quicker: {durations:?}");
+        assert!(durations[0].abs_diff(durations[2]) < 2, "{durations:?}");
+    }
+
+    #[test]
+    fn spaces_carry_the_pen_lift() {
+        // Same measured width, but the space also pays WORD_GAP_W.
+        // Every glyph measures the same width; the space still costs more time.
+        let with_space = glyph_durations("a a", |_| 6.0);
+        let tight = glyph_durations("aia", |_| 6.0);
+        assert!(
+            with_space[1] > tight[1] + 5,
+            "space must pause: {:?} vs {:?}",
+            with_space,
+            tight
         );
-        assert_eq!(
-            slots[1],
-            WriteSlot {
-                start_ms: 600,
-                duration_ms: 600
-            }
-        );
-        assert_eq!(
-            slots[2],
-            WriteSlot {
-                start_ms: 1200,
-                duration_ms: 600
-            }
-        );
     }
 
     #[test]
-    fn slots_honour_offset() {
-        let slots = schedule_slots(2, 600, 450);
-        assert_eq!(slots[0].start_ms, 450);
-        assert_eq!(slots[1].start_ms, 1050);
+    fn thin_glyphs_never_flash_by() {
+        // All-zero widths still give every glyph a real stroke.
+        let durations = glyph_durations("illili", |_| 0.0);
+        assert!(durations.iter().all(|&d| d > 0), "{durations:?}");
     }
 
     #[test]
-    fn empty_batch_writes_nothing() {
-        assert!(schedule_slots(0, 600, 0).is_empty());
-        assert_eq!(total_write_ms(0, 600), 0);
+    fn single_glyph_takes_the_whole_window() {
+        let durations = glyph_durations("W", |_| 12.0);
+        assert_eq!(durations, vec![write_total_ms(1)]);
     }
 
     #[test]
-    fn total_is_the_last_line_finished() {
-        assert_eq!(total_write_ms(3, 600), 1800);
-    }
-
-    #[test]
-    fn nib_progress_clamps() {
-        assert_eq!(nib_progress(0, 600), 0.0);
-        assert!((nib_progress(300, 600) - 0.5).abs() < 1e-6);
-        assert_eq!(nib_progress(900, 600), 1.0);
-        assert_eq!(nib_progress(10, 0), 1.0);
-    }
-
-    #[test]
-    fn nib_sweeps_left_to_right() {
-        assert_eq!(nib_x(100.0, 300.0, 0.0), 100.0);
-        assert_eq!(nib_x(100.0, 300.0, 1.0), 300.0);
-        assert_eq!(nib_x(100.0, 300.0, 0.5), 200.0);
+    fn visible_prefix_grows_on_schedule() {
+        let durations = [100_u32, 100, 100];
+        assert_eq!(visible_prefix(&durations, 0), 0);
+        assert_eq!(visible_prefix(&durations, 99), 0);
+        assert_eq!(visible_prefix(&durations, 100), 1);
+        assert_eq!(visible_prefix(&durations, 250), 2);
+        assert_eq!(visible_prefix(&durations, 300), 3);
+        assert_eq!(visible_prefix(&durations, 10_000), 3);
     }
 
     #[test]
@@ -142,16 +183,5 @@ mod tests {
         let (x, y) = writing_pen_center(200.0, 100.0);
         assert_eq!(x, 200.0);
         assert!((y - (100.0 - (PEN_H / 2.0) * WRITE_SCALE)).abs() < 1e-9);
-    }
-
-    #[test]
-    fn nib_stays_inside_the_box() {
-        // right edge guard: pen width at write scale plus a 6px margin
-        assert_eq!(
-            clamp_nib_x(500.0, 0.0, 400.0),
-            400.0 - 6.0 - PEN_W * WRITE_SCALE
-        );
-        assert_eq!(clamp_nib_x(-50.0, 0.0, 400.0), 0.0);
-        assert_eq!(clamp_nib_x(200.0, 0.0, 400.0), 200.0);
     }
 }
