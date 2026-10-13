@@ -101,7 +101,6 @@ pub struct Cooldowns {
     pub wander: u32,
     pub play: u32,
     pub idle_line: u32,
-    pub react: u32,
 }
 
 impl Cooldowns {
@@ -109,7 +108,6 @@ impl Cooldowns {
         self.wander = self.wander.saturating_sub(1);
         self.play = self.play.saturating_sub(1);
         self.idle_line = self.idle_line.saturating_sub(1);
-        self.react = self.react.saturating_sub(1);
     }
 }
 
@@ -343,7 +341,7 @@ fn react(
     situation: &str,
     pose: &'static str,
     animate: &'static str,
-    p: &Personality,
+    _p: &Personality,
     rng: &mut impl Rng,
     actions: &mut Vec<Action>,
 ) {
@@ -351,9 +349,7 @@ fn react(
     actions.push(Action::Animate(animate));
     // Reacting is the whole point of the moment, so it is never rationed away. Only
     // idle chatter is.
-    if say(brain, situation, rng, actions) {
-        brain.cooldowns.react = p.react_cooldown;
-    }
+    say(brain, situation, rng, actions);
 }
 
 /// One thing he could do while nothing is happening.
