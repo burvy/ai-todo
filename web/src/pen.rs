@@ -153,4 +153,24 @@ mod tests {
         assert_eq!(clamp_nib_x(-50.0, 0.0, 400.0), 0.0);
         assert_eq!(clamp_nib_x(200.0, 0.0, 400.0), 200.0);
     }
+    #[test]
+    fn writing_schedule_for_one_title() {
+        let slots = schedule_slots(1, 600, 0);
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0].start_ms, 0);
+        assert_eq!(slots[0].duration_ms, 600);
+    }
+
+    #[test]
+    fn writing_schedule_for_twenty_titles() {
+        let slots = schedule_slots(20, 600, 0);
+        assert_eq!(slots.len(), 20);
+        assert_eq!(slots[0].start_ms, 0);
+        assert_eq!(slots[19].start_ms, 19 * 600);
+    }
+
+    #[test]
+    fn total_write_for_20_titles() {
+        assert_eq!(total_write_ms(20, 600), 20 * 600);
+    }
 }

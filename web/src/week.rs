@@ -347,4 +347,55 @@ mod tests {
         assert!((top - 15.5 * HOUR_PX).abs() < 0.01); // 23:30 = 15h30 after 8:00
         assert!((height - 0.5 * HOUR_PX).abs() < 0.01); // 30 min until 24:00
     }
+    #[test]
+    #[ignore = "bug: year-end day_index off by one"]
+    fn planner_days_cross_month_and_year_end() {
+        let ny = zone("America/New_York", at_utc(12, 31, 12, 0));
+        assert_eq!(day_index(at_utc(12, 31, 23, 0), &ny), 0);
+        assert_eq!(day_index(at_utc(1, 1, 1, 0), &ny), 0);
+        assert_eq!(day_index(at_utc(1, 1, 5, 0), &ny), 1);
+    }
+
+    #[test]
+    fn placement_at_exact_planner_start_and_end_hour() {
+        let (top, height) = placement_style(8 * 60, 9 * 60, 8, HOUR_PX, 18);
+        assert!((top - 0.0).abs() < 0.01, "start at 08:00 = 0, got {top}");
+        assert!((height - HOUR_PX).abs() < 0.01, "1h = 64, got {height}");
+        let (top2, height2) = placement_style(17 * 60, 18 * 60, 8, HOUR_PX, 18);
+        assert!(
+            (top2 - 9.0 * HOUR_PX).abs() < 0.01,
+            "start at 17:00 = 9h, got {top2}"
+        );
+        assert!(
+            (height2 - HOUR_PX).abs() < 0.01,
+            "end at 18:00 = 64, got {height2}"
+        );
+    }
+
+    #[test]
+    fn one_minute_placement() {
+        let (top, height) = placement_style(10 * 60, 10 * 60 + 1, 8, HOUR_PX, 18);
+        assert!(
+            (height - (1.0 / 60.0 * HOUR_PX)).abs() < 0.01,
+            "1 min =, got {height}"
+        );
+        assert!((top - 2.0 * HOUR_PX).abs() < 0.01, "10:00 = 2h, got {top}");
+    }
+
+    #[test]
+    fn six_hundred_minute_placement() {
+        let (top, height) = placement_style(8 * 60, 18 * 60, 8, HOUR_PX, 18);
+        assert!((top - 0.0).abs() < 0.01);
+        assert!(
+            (height - 10.0 * HOUR_PX).abs() < 0.01,
+            "10h =, got {height}"
+        );
+    }
+
+    #[test]
+    fn empty_placements_on_day() {
+        let ny = zone("America/New_York", at_utc(10, 12, 12, 0));
+        assert!(placements_on_day(&[], 0, &ny).is_empty());
+        assert!(placements_on_day(&[], 1, &ny).is_empty());
+    }
 }
