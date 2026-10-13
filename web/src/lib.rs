@@ -475,6 +475,60 @@ fn track_pane(main: NodeRef<leptos::html::Main>, set_pane: WriteSignal<u8>) {
 #[cfg(not(target_arch = "wasm32"))]
 fn track_pane(_main: NodeRef<leptos::html::Main>, _set_pane: WriteSignal<u8>) {}
 
+/// Rambo's whisper: short handwritten prompts the empty capture line cycles
+/// through, one every few seconds, as if he's quietly suggesting what to type.
+const WHISPER_PROMPTS: [&str; 6] = [
+    "Ramble on…",
+    "What's on today?",
+    "Tell me everything.",
+    "Anything due soon?",
+    "One line at a time.",
+    "It can wait till later.",
+];
+const WHISPER_ROTATE_MS: u32 = 6000;
+const WHISPER_FADE_MS: u32 = 450;
+
+fn next_whisper(current: usize, len: usize) -> usize {
+    if len == 0 { 0 } else { (current + 1) % len }
+}
+
+/// Rotation is motion; a user who asked the system for reduced motion gets
+/// neither the fade nor the rotation, just one quiet line.
+fn whisper_rotates(reduced_motion: bool) -> bool {
+    !reduced_motion
+}
+
+fn prefers_reduced_motion() -> bool {
+    web_sys::window()
+        .and_then(|window| {
+            window
+                .match_media("(prefers-reduced-motion: reduce)")
+                .ok()
+                .flatten()
+        })
+        .map(|media| media.matches())
+        .unwrap_or(false)
+}
+
+/// Keep the whisper turning: wait, dip the placeholder colour to transparent
+/// (the `.whisper-fade` class), swap the text at the bottom of the dip and
+/// let the colour return. Re-arms forever; on a reduced-motion system the
+/// tick is a no-op, so the line stays put and the CSS transition is off.
+fn schedule_whisper(index: RwSignal<usize>, fading: RwSignal<bool>) {
+    Timeout::new(WHISPER_ROTATE_MS, move || {
+        if whisper_rotates(prefers_reduced_motion()) {
+            fading.set(true);
+            Timeout::new(WHISPER_FADE_MS, move || {
+                index.update(|current| *current = next_whisper(*current, WHISPER_PROMPTS.len()));
+                fading.set(false);
+            })
+            .forget();
+        }
+        schedule_whisper(index, fading);
+    })
+    .forget();
+}
+
 #[component]
 fn CaptureBox(
     form_ref: NodeRef<leptos::html::Form>,
@@ -497,6 +551,26 @@ fn CaptureBox(
         }
     });
     let input_ref = NodeRef::<leptos::html::Input>::new();
+
+    // Rambo's whisper: the placeholder is the rotating prompt. Read the index
+    // before the node ref so a ref that loads later can't drop a swap.
+    let whisper = RwSignal::new(0);
+    let whisper_fading = RwSignal::new(false);
+    Effect::new(move |_| {
+        let index = whisper.get();
+        let Some(input) = input_ref.get() else {
+            return;
+        };
+        input.set_placeholder(WHISPER_PROMPTS[index]);
+    });
+    Effect::new(move |_| {
+        let fading = whisper_fading.get();
+        let Some(input) = input_ref.get() else {
+            return;
+        };
+        let _ = input.class_list().toggle_with_force("whisper-fade", fading);
+    });
+    schedule_whisper(whisper, whisper_fading);
 
     // Caret follow: on input, position pen at caret; after 2s of inactivity, fly home
     let linger_timer = std::rc::Rc::new(std::cell::RefCell::new(None::<Timeout>));
@@ -619,7 +693,7 @@ fn CaptureBox(
                 node_ref=input_ref
                 prop:value=text
                 on:input=handle_input
-                placeholder="Say what you need to do…"
+                placeholder=WHISPER_PROMPTS[0]
                 aria-label="Ramble"
             />
             // The nest: clicking it submits the form (replaces the Add button)
@@ -1965,6 +2039,42 @@ pub fn start() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn whisper_rotation_visits_every_line_then_wraps() {
+        let len = WHISPER_PROMPTS.len();
+        let mut current = 0;
+        let mut seen = vec![current];
+        for _ in 0..len {
+            current = next_whisper(current, len);
+            seen.push(current);
+        }
+        assert_eq!(seen, (0..=len).map(|step| step % len).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn whisper_rotation_is_total_even_without_lines() {
+        assert_eq!(next_whisper(3, 0), 0);
+    }
+
+    #[test]
+    fn whisper_prompts_stay_short_and_few() {
+        assert!(
+            (4..=8).contains(&WHISPER_PROMPTS.len()),
+            "the work order asks for 4-8 lines"
+        );
+        assert!(
+            WHISPER_PROMPTS
+                .iter()
+                .all(|prompt| !prompt.trim().is_empty() && prompt.chars().count() <= 40)
+        );
+    }
+
+    #[test]
+    fn reduced_motion_stops_the_whisper() {
+        assert!(!whisper_rotates(true));
+        assert!(whisper_rotates(false));
+    }
 
     #[test]
     fn overdue_only_applies_to_incomplete_due_tasks() {

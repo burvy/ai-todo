@@ -1285,3 +1285,18 @@ li.task-row:hover .delete-mark { opacity: 1; pointer-events: auto; }
 .day-picker button { border: none; background: transparent; padding: .05em .15em; font: inherit; color: var(--ink); cursor: pointer; }
 .day-picker button.active { color: var(--accent); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 .dialog-hint { color: var(--ink-soft); }
+
+/* Rambo's whisper (capture placeholder): the prompt fades out, the text swaps
+   at the bottom of the dip, and the colour returns. Reduced motion: no fade,
+   and schedule_whisper stops rotating. */
+.capture input::placeholder {
+  transition: color var(--dur-slow) ease;
+}
+.capture input.whisper-fade::placeholder {
+  color: transparent;
+}
+@media (prefers-reduced-motion: reduce) {
+  .capture input::placeholder {
+    transition: none;
+  }
+}
