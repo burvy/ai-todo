@@ -34,3 +34,16 @@ The v1 prototype was decent; read it for feel and behaviour (not code to copy):
 
 ## Definition of done (every PR)
 Full gate green (incl. `cargo check -p rambl-web --target wasm32-unknown-unknown` and `trunk build --release`), works at 1366x800 and 390x844, light and dark, and the PR body says what to click to see it.
+
+## Owner decisions, round 2 (2026-10-13)
+
+1. **Phone gestures, settled:** swipe **right** on a task = delete (Rambo scribbles it out). Swipe **left** = turn the page (list → planner, with a page-flip); on the planner page, swipe **right** turns back. The two never conflict.
+2. **Task reordering on the planner must work:** drag a task to another time or day (keep the existing list drag-reorder too). Make it feel like moving a paper slip.
+3. **All suggestions approved, build them:**
+   - Rambo **dozes at night** and wakes when you type.
+   - Rambo **peeks at the text box** while you type.
+   - A **small celebration + hand-drawn strike-through** when a task is ticked done.
+   - A **sulky look** at overdue tasks.
+   - **Ink splat / wobble** when he is dropped hard.
+   - A **faint previous-page shadow** on the planner.
+   - **Pen-scratch sound** synced to the writing animation.

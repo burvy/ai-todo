@@ -6,10 +6,8 @@ All files in this directory are AI-generated placeholder graphics. Replace them 
 
 | File | Purpose | Size | Format | Used in |
 |---|---|---|---|---|
-| paper.svg | Tileable light parchment background | 512x512 | SVG (tileable) | Theme backgrounds |
-| paper-dark.svg | Tileable dark-mode parchment | 512x512 | SVG (tileable) | Dark theme backgrounds |
-| edge.svg | Deckled paper edge strip | 512x24 | SVG (repeat-x) | Page borders |
-| stain.svg | Faint ink stain overlay | 256x256 | SVG (transparent) | Background texture |
+| paper.svg | Tileable light parchment grain | 512x512 | SVG (tileable) | Page background |
+| paper-dark.svg | Tileable dark-mode parchment grain | 512x512 | SVG (tileable) | Dark page background |
 | icon-mic.svg | Microphone icon | 24x24 | SVG (currentColor) | Speech / voice actions |
 | icon-settings.svg | Settings gear icon | 24x24 | SVG (currentColor) | Settings / preferences |
 | icon-list.svg | List icon | 24x24 | SVG (currentColor) | List / task list views |
