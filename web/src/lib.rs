@@ -370,6 +370,20 @@ fn CaptureBox(
                 if let Some(timer) = linger_timer.borrow_mut().take() {
                     timer.cancel();
                 }
+                // Fly Rambo home from WritingCaret so he's not stuck at the caret.
+                // The pen queue Effect will pick up the new task once he's Home.
+                set_state.update(|s| {
+                    *s = mascot::transition(s, mascot::Event::FlyHome);
+                });
+                // The linger timer is cancelled, so schedule the Flying→Home arrival
+                // ourselves so Rambo doesn't stay in Flying forever.
+                {
+                    let set_state = set_state;
+                    Timeout::new(pen::FLY_MS, move || {
+                        set_state.set(mascot::State::Home);
+                    })
+                    .forget();
+                }
                 // Record current task IDs so we can find the new one after capture
                 let old_ids: std::collections::HashSet<_> =
                     snapshot.with_untracked(|s| s.tasks.iter().map(|t| t.id.clone()).collect());
