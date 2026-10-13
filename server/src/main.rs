@@ -104,11 +104,17 @@ const DEFAULT_PORT: u16 = 3160;
 
 /// The address the server listens on: `RAMBL_BIND`, else loopback.
 ///
-/// Loopback by default, because the Cloudflare tunnel on this machine is the way in.
-/// Listening on every interface would put the server on the LAN, where a client could
-/// reach it directly and put any address it liked in `CF-Connecting-IP`, which is the
-/// header the per-address limits and blocks rely on. It also pops a firewall prompt on
-/// Windows every time a new build path runs the exe.
+/// Loopback by default because the Cloudflare tunnel runs on this machine, and that is
+/// the way in. It keeps the server off the LAN, where anything that can reach the box
+/// can talk to it whether or not it has business doing so, and it is also why Windows
+/// stops popping a firewall prompt for every new build path that runs the exe.
+///
+/// A wider bind does not let anyone forge a client address on its own: a peer's
+/// `CF-Connecting-IP` is only believed when the peer is a trusted proxy. What a wider
+/// bind costs is that the tunnel is no longer on loopback, so a tunnel running
+/// elsewhere has to be listed in `RAMBL_TRUSTED_PROXIES` by its own address. Listing a
+/// client's network there would hand that client the ability to name itself, which is
+/// the one thing the proxy list is there to prevent.
 ///
 /// A value that is not an IP address stops the server rather than quietly falling back
 /// to loopback: an operator who asked for `0.0.0.0` and did not get it would rather be
@@ -162,8 +168,8 @@ mod settings_tests {
     }
 
     /// Unset, empty or blank means the same thing: this machine only. The tunnel is
-    /// here, and a listener on every interface would also pop a firewall prompt on
-    /// Windows for every new build path.
+    /// here, and a listener on every interface would put the server on the LAN and pop
+    /// a firewall prompt on Windows for every new build path.
     #[test]
     fn the_default_is_loopback() {
         let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);

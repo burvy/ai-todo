@@ -12,12 +12,18 @@ and `rambl.env.example` there. Copy `rambl.env.example` to `rambl.env` and fill 
 - `TYPESAFE_API_KEY`, the Jev key.
 - `RAMBL_PORT=3160`, unless another port is wanted.
 - `RAMBL_BIND`, optional, and normally left empty. The server listens on `127.0.0.1`
-  only, which is enough because the Cloudflare tunnel runs on this machine. Set it to
-  `0.0.0.0` to serve the rest of the LAN as well, or to one address to serve only that
-  one. A value that is not an IP address stops the server with an error naming the
-  variable and the value, rather than quietly falling back. Loopback is also what keeps
-  the trust in `CF-Connecting-IP` meaningful: a visitor who reaches the server directly
-  can name their own address.
+  only, which is enough because the Cloudflare tunnel runs on this machine. Loopback
+  keeps the server off the LAN and stops Windows asking for firewall access every time
+  a new build path runs the exe. Set it to `0.0.0.0` to serve the rest of the LAN as
+  well, or to one address to serve only that one. A value that is not an IP address
+  stops the server with an error naming the variable and the value, rather than quietly
+  falling back.
+- If you do widen the bind, set `RAMBL_TRUSTED_PROXIES` to cloudflared's own address in
+  the same edit. The tunnel will no longer be arriving over loopback, and a peer's
+  `CF-Connecting-IP` is only read from a trusted proxy. List the tunnel and nothing
+  else: a client's address or network in that list would let that client name itself
+  and walk past the per-address limits and blocks, which is the one thing the list
+  exists to prevent.
 - `RAMBL_DEFAULT_TZ=America/New_York`.
 - `GOOGLE_CLIENT_ID=138340425604-qagdhrfblj66i5s9i9icq07lb32sd2g2.apps.googleusercontent.com`,
   the public Google OAuth web client (its authorized origins are https://rambl.burvy.dev
