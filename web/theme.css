@@ -344,7 +344,7 @@ button {
    (dragging, writing, skittering) use CSS classes on this one element. */
 .rambo {
   position: fixed;
-  bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
+  bottom: calc(var(--tap) + var(--space-2) + env(safe-area-inset-bottom, 0px));
   right: var(--gutter);
   z-index: 50;
   display: inline-flex;
@@ -428,7 +428,7 @@ button {
 /* Status text below Rambo */
 .mascot-status {
   position: fixed;
-  bottom: calc(var(--tap) + var(--space-2) + env(safe-area-inset-bottom, 0px));
+  bottom: calc(2 * var(--tap) + var(--space-2) + env(safe-area-inset-bottom, 0px));
   right: var(--gutter);
   z-index: 50;
   display: block;
