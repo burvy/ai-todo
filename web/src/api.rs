@@ -371,6 +371,41 @@ pub async fn patch_task(id: &TaskId, body: PatchTaskBody) -> Result<Snapshot, Ap
         .map_err(|e| ApiError::Decode(e.to_string()))
 }
 
+/// PATCH /api/v1/series/{id}/dates/{date} - one occurrence's exception. Moving
+/// one day of a series is an exception on the series, never a task PATCH.
+pub async fn move_series_occurrence(
+    series_id: &str,
+    date: chrono::NaiveDate,
+    to: When,
+) -> Result<Snapshot, ApiError> {
+    let url = format!(
+        "/api/v1/series/{}/dates/{}",
+        series_id,
+        date.format("%Y-%m-%d")
+    );
+    let body = OccurrencePatchBody {
+        kind: "moved".to_owned(),
+        when: Some(to),
+    };
+    Request::patch(&url)
+        .identity()
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
+        .json::<Snapshot>()
+        .await
+        .map_err(|e| ApiError::Decode(e.to_string()))
+}
+
+/// The body `PATCH /api/v1/series/{id}/dates/{date}` takes.
+#[derive(Serialize)]
+struct OccurrencePatchBody {
+    kind: String,
+    when: Option<When>,
+}
+
 /// POST /api/v1/tasks/{id}/revise - revise a task with an instruction
 pub async fn revise_task(id: &TaskId, instruction: &str) -> Result<Snapshot, ApiError> {
     let url = format!("/api/v1/tasks/{}/revise", id.0);

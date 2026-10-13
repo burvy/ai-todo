@@ -207,7 +207,14 @@ pub fn App() -> impl IntoView {
                 <ImportIcs set_snapshot set_error />
                 <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
             </div>
-            <week::WeekGrid snapshot=snapshot settings=view_settings set_mascot_state=set_mascot_state />
+            <week::WeekGrid
+                snapshot=snapshot
+                settings=view_settings
+                set_snapshot=set_snapshot
+                set_error=set_error
+                capture_text
+                set_mascot_state=set_mascot_state
+            />
         </main>
         <Rambo
             state=mascot_state

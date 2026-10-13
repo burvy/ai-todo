@@ -818,6 +818,7 @@ a {
   left: 0;
   right: 0;
   padding: var(--space-1);
+  padding-left: calc(var(--space-1) + 16px);
   background-color: var(--wash);
   border: none;
   border-left: 3px solid var(--accent);
@@ -827,6 +828,60 @@ a {
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: var(--text-sm);
+}
+
+/* The drag grip: a small strip along the placement's left edge, drawn as the
+   edge itself. Grabbing it lifts the slip; the rest of the block scrolls. */
+.placement-grip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 16px;
+  touch-action: none;
+  cursor: grab;
+}
+
+.placement-grip::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 35%;
+  bottom: 35%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: color-mix(in srgb, var(--coffee) 55%, transparent);
+}
+
+/* The slip in hand: half faint while it is over the board... its shadow
+   rides the pointer as the ghost, also drawn on paper. */
+.placement.dragging {
+  opacity: 0.45;
+}
+
+.drag-ghost {
+  position: fixed;
+  z-index: 60;
+  pointer-events: none;
+  padding: var(--space-1) var(--space-2);
+  background-color: var(--paper);
+  background-image: var(--texture-paper);
+  border: 1px solid var(--rule-strong);
+  box-shadow: var(--sheet-shadow);
+  font-size: var(--text-sm);
+  font-family: var(--font-hand);
+  transform: rotate(-1.5deg);
+}
+
+/* Where the slip would land: a faint outline of its slot, like a pencil
+   guide line waiting to be inked. */
+.landing {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border: 1px dashed var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 8%, transparent);
+  pointer-events: none;
 }
 
 /* The task's title in the human's own hand, as the list shows it. */
