@@ -831,11 +831,11 @@ button {
   }
 }
 
-/* Pen writing row animation: title reveals left to right */
+/* Pen writing row animation: Rust writes the title glyph by glyph under the
+   nib; CSS only clips the line while the pen is in flight. */
 .pen-title {
   max-width: 100%;
   overflow: hidden;
-  transition: max-width 0.6s linear;
   display: inline-block;
   white-space: nowrap;
 }

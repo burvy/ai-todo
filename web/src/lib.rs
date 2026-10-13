@@ -1,7 +1,5 @@
 use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
 use gloo_timers::callback::Timeout;
-#[cfg(target_arch = "wasm32")]
-use js_sys::Array;
 use leptos::prelude::*;
 use todo_core::Snapshot;
 use todo_core::{Label, Priority, Source, TaskDraft, TaskId, When};
@@ -927,6 +925,151 @@ fn is_overdue(task: &todo_core::Task) -> bool {
     }
 }
 
+/// Glyph-by-glyph writing, DOM side. The pure timing lives in `pen::glyph_durations`;
+/// these helpers measure the real rendered text so the nib traces what the
+/// user actually sees. All wasm-only: no DOM on the test path.
+#[cfg(target_arch = "wasm32")]
+mod write {
+    use super::pen;
+    use leptos::prelude::{RwSignal, Set};
+    use std::collections::HashMap;
+    use wasm_bindgen::JsCast;
+
+    /// Wait until the self-hosted handwriting fonts have loaded, so glyph
+    /// widths are measured in the writing font, not the fallback.
+    pub async fn wait_for_fonts() {
+        let Some(fonts) = web_sys::window().and_then(|w| w.document()).map(|doc| doc.fonts())
+        else {
+            return;
+        };
+        if let Ok(ready) = fonts.ready() {
+            let _ = wasm_bindgen_futures::JsFuture::from(ready).await;
+        }
+    }
+
+    /// A canvas laid out with `el`'s computed font: the measuring stick for
+    /// glyph advance widths and the font's descent below the baseline.
+    fn measuring_canvas(el: &web_sys::Element) -> Option<web_sys::CanvasRenderingContext2d> {
+        let style = web_sys::window()?
+            .get_computed_style(el)
+            .ok()
+            .flatten()?;
+        let property = |name: &str| style.get_property_value(name).ok();
+        let font = format!(
+            "{} {} {} {}",
+            property("font-style")?,
+            property("font-weight")?,
+            property("font-size")?,
+            property("font-family")?
+        );
+        let canvas = web_sys::window()?
+            .document()?
+            .create_element("canvas")
+            .ok()?
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .ok()?;
+        let ctx = canvas
+            .get_context("2d")
+            .ok()?
+            .and_then(|ctx| ctx.dyn_into::<web_sys::CanvasRenderingContext2d>().ok())?;
+        // The font string is the computed font shorthand, so this parses;
+        // if it somehow does not, the canvas keeps its default and the
+        // write still runs with fallback metrics.
+        ctx.set_font(&font);
+        Some(ctx)
+    }
+
+    /// Advance width of every char in `text` (first occurrence measured once),
+    /// and how far the font's descenders reach below the baseline.
+    pub fn glyph_metrics(el: &web_sys::Element, text: &str) -> Option<(impl Fn(char) -> f64, f64)> {
+        let ctx = measuring_canvas(el)?;
+        let mut widths: HashMap<char, f64> = HashMap::new();
+        for c in text.chars().filter(|c| !c.is_whitespace()) {
+            widths.entry(c).or_insert_with(|| {
+                ctx.measure_text(&c.to_string())
+                    .map(|m| m.width())
+                    .unwrap_or(6.0)
+            });
+        }
+        let space = ctx.measure_text(" ").map(|m| m.width()).unwrap_or(4.0);
+        let lookup = move |c: char| {
+            if c.is_whitespace() {
+                space
+            } else {
+                widths.get(&c).copied().unwrap_or(6.0)
+            }
+        };
+        let descent = ctx
+            .measure_text(text)
+            .map(|m| m.actual_bounding_box_descent())
+            .unwrap_or(4.0);
+        Some((lookup, descent))
+    }
+
+    /// Where the next glyph lands: the end of `el`'s current text. `x` is the
+    /// writing edge, `bottom` the line box's bottom edge (the baseline sits
+    /// `descent` above it).
+    pub fn text_end(el: &web_sys::Element) -> Option<(f64, f64)> {
+        let range = web_sys::Range::new().ok()?;
+        range.select_node_contents(el).ok()?;
+        // Collapse to the end (the IDL's default `toStart = false`): the
+        // point the next stroke starts from.
+        range.collapse();
+        let rect = range.get_bounding_client_rect();
+        Some((rect.right(), rect.bottom()))
+    }
+
+    /// Write `row`'s title: glyphs land under the nib one by one, each stroke
+    /// timed by its own width (`pen::glyph_durations`), the nib reading its
+    /// position off the live text so it traces the real rendered line.
+    pub async fn write_row_title(row: &web_sys::Element, pen_pos: RwSignal<(f64, f64)>) {
+        let Some(title) = row.query_selector(".pen-title").ok().flatten() else {
+            return;
+        };
+        let full = title.text_content().unwrap_or_default();
+        let chars: Vec<char> = full.chars().collect();
+        if chars.is_empty() {
+            return;
+        }
+        // Empty the line before the first await so the full title never
+        // flashes between the flight and the first stroke.
+        title.set_text_content(Some(""));
+        wait_for_fonts().await;
+        let Some((width_of, descent)) = glyph_metrics(&title, &full) else {
+            title.set_text_content(Some(&full));
+            return;
+        };
+        let durations = pen::glyph_durations(&full, width_of);
+        let mut prefix = String::new();
+        for (glyph, stroke) in chars.into_iter().zip(durations) {
+            prefix.push(glyph);
+            title.set_text_content(Some(&prefix));
+            // The nib sits on the baseline at the writing edge of the prefix.
+            if let Some((x, bottom)) = text_end(&title) {
+                place_nib(pen_pos, x, bottom - descent);
+            }
+            gloo_timers::future::TimeoutFuture::new(stroke).await;
+        }
+    }
+
+    /// Put the pen so its nib sits at `(x, y)`, in the offset-from-home
+    /// coordinates Rambo's element is placed with.
+    pub fn place_nib(pen_pos: RwSignal<(f64, f64)>, x: f64, y: f64) {
+        let center = pen::writing_pen_center(x, y);
+        let Some(rambo) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|doc| doc.query_selector(".rambo").ok().flatten())
+        else {
+            return;
+        };
+        let rect = rambo.get_bounding_client_rect();
+        pen_pos.set((
+            center.0 - (rect.left() + rect.width() / 2.0),
+            center.1 - (rect.top() + rect.height() / 2.0),
+        ));
+    }
+}
+
 #[component]
 fn TaskList(
     snapshot: ReadSignal<Snapshot>,
@@ -1003,65 +1146,30 @@ fn TaskList(
                             break;
                         }
                         set_state.set(mascot::transition(&state, mascot::Event::WriteRow));
-                        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                            if let Some(row) = doc
-                                .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
-                                .ok()
-                                .flatten()
-                            {
-                                {
-                                    let arr = Array::new();
-                                    arr.push(&"pen-pending".into());
-                                    row.class_list().add(&arr).ok();
-                                }
-                                let rect = row.get_bounding_client_rect();
-                                let center = pen::writing_pen_center(
-                                    rect.left() + 40.0,
-                                    rect.top() + rect.height() / 2.0,
-                                );
-                                // Convert to offset from Rambo's home position
-                                if let Some(rambo) = doc.query_selector(".rambo").ok().flatten() {
-                                    let rrect = rambo.get_bounding_client_rect();
-                                    let hx = rrect.left() + rrect.width() / 2.0;
-                                    let hy = rrect.top() + rrect.height() / 2.0;
-                                    pen_pos.set((center.0 - hx, center.1 - hy));
-                                }
-                            }
+                        let row = web_sys::window()
+                            .and_then(|w| w.document())
+                            .and_then(|doc| {
+                                doc.query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
+                                    .ok()
+                                    .flatten()
+                            });
+                        // Clip the title and park the nib where the line starts.
+                        if let Some(row) = row.as_ref() {
+                            row.class_list().add_1("pen-pending").ok();
+                            let rect = row.get_bounding_client_rect();
+                            write::place_nib(
+                                pen_pos,
+                                rect.left() + 40.0,
+                                rect.top() + rect.height() / 2.0,
+                            );
                         }
                         gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
                         set_state.set(mascot::State::WritingRow);
-                        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                            if let Some(row) = doc
-                                .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
-                                .ok()
-                                .flatten()
-                            {
-                                // Remove pen-pending and add pen-writing: use separate arrays
-                                // so pen-pending doesn't get re-added.
-                                {
-                                    let remove_arr = Array::new();
-                                    remove_arr.push(&"pen-pending".into());
-                                    row.class_list().remove(&remove_arr).ok();
-                                }
-                                {
-                                    let add_arr = Array::new();
-                                    add_arr.push(&"pen-writing".into());
-                                    row.class_list().add(&add_arr).ok();
-                                }
-                            }
-                        }
-                        gloo_timers::future::TimeoutFuture::new(pen::WRITE_MS).await;
-                        // Remove pen-writing class so the title becomes fully visible
-                        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                            if let Some(row) = doc
-                                .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
-                                .ok()
-                                .flatten()
-                            {
-                                let remove_arr = Array::new();
-                                remove_arr.push(&"pen-writing".into());
-                                row.class_list().remove(&remove_arr).ok();
-                            }
+                        if let Some(row) = row.as_ref() {
+                            row.class_list().remove_1("pen-pending").ok();
+                            row.class_list().add_1("pen-writing").ok();
+                            write::write_row_title(row, pen_pos).await;
+                            row.class_list().remove_1("pen-writing").ok();
                         }
                         // Fly home after this row
                         set_state.set(mascot::transition(
