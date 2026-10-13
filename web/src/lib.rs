@@ -1682,8 +1682,11 @@ fn TaskList(
                         draggable="true"
                         on:dragstart=handle_drag_start
                         on:dragend=handle_drag_end
-                        on:touchstart=move |ev: leptos::ev::TouchEvent| { let _ = ev; }
-                        on:touchend=move |ev: leptos::ev::TouchEvent| { let _ = ev; }
+                        // The row owns its touch gestures: swipe right deletes it
+                        // (swipe left still turns the page, see flip_target), and
+                        // nothing above the row should answer the same touch.
+                        on:touchstart=move |ev: leptos::ev::TouchEvent| ev.stop_propagation()
+                        on:touchend=move |ev: leptos::ev::TouchEvent| ev.stop_propagation()
                     >
                         <input
                             type="checkbox"
