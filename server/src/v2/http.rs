@@ -1774,6 +1774,339 @@ mod tests {
         );
     }
 
+    /// A series over `/api/v1/series`: created, edited, and marked occurrence by
+    /// occurrence (docs/ARCHITECTURE.md 7.1).
+    #[tokio::test]
+    async fn a_series_is_created_and_its_occurrences_are_marked() {
+        let router = router_at(sunday_night());
+        let (status, body) = send(
+            &router,
+            "POST",
+            "/api/v1/series",
+            Some(
+                r#"{"title":"Gym","duration_min":60,"weekdays":["Mon","Tue","Thu"],
+                    "start_day":"2026-10-12","time_of_day":"07:00:00","until":"2026-12-18"}"#,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(snapshot.series.len(), 1);
+        let id = snapshot.series[0].id.0.clone();
+        assert_eq!(snapshot.series[0].zone, "America/New_York");
+        assert_eq!(
+            snapshot.series[0].rule.until,
+            chrono::NaiveDate::from_ymd_opt(2026, 12, 18),
+            "the end sent with the series is kept"
+        );
+        let mut rows: Vec<String> = snapshot
+            .tasks
+            .iter()
+            .filter(|task| task.source == todo_core::Source::Series)
+            .map(|task| task.id.0.clone())
+            .collect();
+        rows.sort();
+        assert_eq!(
+            rows,
+            vec![
+                format!("{id}:2026-10-12"),
+                format!("{id}:2026-10-13"),
+                format!("{id}:2026-10-15")
+            ],
+            "one row per repeated day this week"
+        );
+        assert_invariant(&snapshot);
+
+        // Done: the row stays, marked, and holds no slot.
+        let (status, body) = send(
+            &router,
+            "PATCH",
+            &format!("/api/v1/series/{id}/dates/2026-10-12"),
+            Some(r#"{"kind":"done"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        let monday = format!("{id}:2026-10-12");
+        assert!(
+            snapshot
+                .tasks
+                .iter()
+                .any(|task| task.id.0 == monday && task.done)
+        );
+        assert!(
+            !snapshot
+                .plan
+                .placements
+                .iter()
+                .any(|placement| placement.task.0 == monday),
+            "a done occurrence holds no slot"
+        );
+        assert_invariant(&snapshot);
+
+        // Skipped: the row is gone.
+        let (status, body) = send(
+            &router,
+            "PATCH",
+            &format!("/api/v1/series/{id}/dates/2026-10-13"),
+            Some(r#"{"kind":"skipped"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert!(
+            !snapshot
+                .tasks
+                .iter()
+                .any(|task| task.id.0.ends_with("2026-10-13")),
+            "a skipped day produces no row"
+        );
+
+        // Moved: the row keeps its date and takes the new instant.
+        let (status, body) = send(
+            &router,
+            "PATCH",
+            &format!("/api/v1/series/{id}/dates/2026-10-15"),
+            Some(r#"{"kind":"moved","when":{"kind":"at","time":"2026-10-15T22:00:00Z"}}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        let moved = snapshot
+            .tasks
+            .iter()
+            .find(|task| task.id.0 == format!("{id}:2026-10-15"))
+            .expect("the moved row is there under its original date");
+        assert_eq!(
+            moved.when,
+            When::At(Utc.with_ymd_and_hms(2026, 10, 15, 22, 0, 0).unwrap())
+        );
+        assert_invariant(&snapshot);
+
+        // Clearing puts a day back to the rule.
+        let (status, _) = send(
+            &router,
+            "DELETE",
+            &format!("/api/v1/series/{id}/dates/2026-10-15"),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Editing the series replaces its rule.
+        let (status, body) = send(
+            &router,
+            "PATCH",
+            &format!("/api/v1/series/{id}"),
+            Some(r#"{"title":"Yoga","weekdays":["Wed"]}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(snapshot.series[0].title, "Yoga");
+        assert_eq!(
+            snapshot
+                .tasks
+                .iter()
+                .filter(|task| task.source == todo_core::Source::Series)
+                .map(|task| task.id.0.clone())
+                .collect::<Vec<String>>(),
+            vec![format!("{id}:2026-10-14")],
+            "only Wednesdays now, and the days the rule no longer covers are not rows"
+        );
+
+        // Deleting takes the rows with it.
+        let (status, body) = send(&router, "DELETE", &format!("/api/v1/series/{id}"), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert!(snapshot.series.is_empty());
+        assert!(
+            !snapshot
+                .tasks
+                .iter()
+                .any(|task| task.source == todo_core::Source::Series)
+        );
+        assert_invariant(&snapshot);
+    }
+
+    /// The window a snapshot asks for is the window the series is expanded over.
+    #[tokio::test]
+    async fn a_snapshot_expands_a_series_over_the_window_it_asks_for() {
+        let router = router_at(sunday_night());
+        let (_, body) = send(
+            &router,
+            "POST",
+            "/api/v1/series",
+            Some(
+                r#"{"title":"Gym","duration_min":60,"weekdays":["Mon","Thu"],
+                    "start_day":"2026-10-12","time_of_day":"07:00:00"}"#,
+            ),
+        )
+        .await;
+        let id = serde_json::from_value::<Snapshot>(body).unwrap().series[0]
+            .id
+            .0
+            .clone();
+
+        let (_, body) = send(
+            &router,
+            "GET",
+            "/api/v1/snapshot?from=2026-10-19&days=7",
+            None,
+        )
+        .await;
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        let mut dates: Vec<String> = snapshot
+            .tasks
+            .iter()
+            .filter(|task| task.source == todo_core::Source::Series)
+            .map(|task| task.id.0.clone())
+            .collect();
+        dates.sort();
+        assert_eq!(
+            dates,
+            vec![format!("{id}:2026-10-19"), format!("{id}:2026-10-22")],
+            "the week asked for, not the week it was created in"
+        );
+        assert_invariant(&snapshot);
+    }
+
+    /// What a client cannot do: mark a day the series does not repeat, name a series it
+    /// does not hold, send a date that is not a date, or create a rule that can never
+    /// fire.
+    #[tokio::test]
+    async fn an_occurrence_the_rule_does_not_cover_is_refused() {
+        let router = router_at(sunday_night());
+        let (_, body) = send(
+            &router,
+            "POST",
+            "/api/v1/series",
+            Some(
+                r#"{"title":"Gym","duration_min":60,"weekdays":["Mon"],
+                    "start_day":"2026-10-12","time_of_day":"07:00:00"}"#,
+            ),
+        )
+        .await;
+        let id = serde_json::from_value::<Snapshot>(body).unwrap().series[0]
+            .id
+            .0
+            .clone();
+
+        for (path, body) in [
+            (
+                format!("/api/v1/series/{id}/dates/2026-10-13"),
+                r#"{"kind":"done"}"#, // a Tuesday: not in the rule
+            ),
+            (
+                format!("/api/v1/series/{id}/dates/2026-10-05"),
+                r#"{"kind":"done"}"#, // a Monday, but before the series starts
+            ),
+            (
+                format!("/api/v1/series/{id}/dates/2026-10-12"),
+                r#"{"kind":"moved"}"#, // a move with no instant
+            ),
+            (
+                format!("/api/v1/series/{id}/dates/2026-10-12"),
+                r#"{"kind":"whenever"}"#, // a kind that is not one of the three
+            ),
+        ] {
+            let (status, _) = send(&router, "PATCH", &path, Some(body)).await;
+            assert_eq!(
+                status,
+                StatusCode::BAD_REQUEST,
+                "{path} with {body} should be refused"
+            );
+        }
+        // A date that is not a date at all never reaches the app.
+        let (status, _) = send(
+            &router,
+            "PATCH",
+            &format!("/api/v1/series/{id}/dates/banana"),
+            Some(r#"{"kind":"done"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // A series this user does not hold is a 404, not a 400: it is not there at all.
+        let (status, _) = send(
+            &router,
+            "PATCH",
+            "/api/v1/series/s-made-up/dates/2026-10-13",
+            Some(r#"{"kind":"done"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // A series that could never fire is refused, and nothing is stored.
+        let (status, _) = send(
+            &router,
+            "POST",
+            "/api/v1/series",
+            Some(r#"{"title":"Nothing","duration_min":30,"weekdays":[],"start_day":"2026-10-12"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _) = send(
+            &router,
+            "POST",
+            "/api/v1/series",
+            Some(
+                r#"{"title":"Backwards","duration_min":30,"weekdays":["Mon"],
+                    "start_day":"2026-10-12","until":"2026-10-01"}"#,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (_, body) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(
+            snapshot.series.len(),
+            1,
+            "only the one that worked is stored"
+        );
+    }
+
+    /// An occurrence row's id is not a task id: a task edit with one says where to send
+    /// it instead of reporting a task that is not there.
+    #[tokio::test]
+    async fn patching_an_occurrence_as_a_task_is_a_400() {
+        let router = router_at(sunday_night());
+        let (_, body) = send(
+            &router,
+            "POST",
+            "/api/v1/series",
+            Some(
+                r#"{"title":"Gym","duration_min":60,"weekdays":["Mon"],
+                    "start_day":"2026-10-12","time_of_day":"07:00:00"}"#,
+            ),
+        )
+        .await;
+        let id = serde_json::from_value::<Snapshot>(body).unwrap().series[0]
+            .id
+            .0
+            .clone();
+
+        let (status, _) = send(
+            &router,
+            "PATCH",
+            &format!("/api/v1/tasks/{id}:2026-10-12"),
+            Some(r#"{"done":true}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // The occurrence itself is untouched by the refused edit.
+        let (_, body) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert!(
+            !snapshot
+                .tasks
+                .iter()
+                .any(|task| task.id.0 == format!("{id}:2026-10-12") && task.done)
+        );
+    }
+
     #[tokio::test]
     async fn sunday_night_tomorrow_is_monday_in_the_users_zone() {
         // A task due Monday comes back due at 17:00 New York on 2026-10-12.

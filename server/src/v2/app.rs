@@ -324,6 +324,11 @@ impl<S: Store> App<S> {
         tz: Tz,
     ) -> Result<Snapshot, ApiError> {
         let ctx = self.ctx(tz);
+        // An occurrence row's id names a date, not a stored task. Finding no task would
+        // read as "gone", so it says where that row is edited instead.
+        if id.contains(':') {
+            return Err(occurrence_id_error());
+        }
         let mut tasks = self.load(user)?;
         let task = Self::held(&mut tasks, id)?;
         check_fresh(task, patch.updated_at)?;
@@ -544,7 +549,7 @@ impl<S: Store> App<S> {
         user: &str,
         tz: Tz,
     ) -> Result<Snapshot, ApiError> {
-        let rule = Self::recurrence_of(draft.weekdays, None)?;
+        let rule = Self::recurrence_of(draft.weekdays, draft.until)?;
         check_title(&draft.title)?;
         check_duration(draft.duration_min)?;
         let ctx = self.ctx(tz);
@@ -562,6 +567,7 @@ impl<S: Store> App<S> {
             created: ctx.now,
             order,
         };
+        check_span(series.start_day, series.rule.until)?;
         self.store
             .put_series(user, series.clone())
             .map_err(Self::storage_error)?;
@@ -600,6 +606,7 @@ impl<S: Store> App<S> {
         if let Some(start_day) = patch.start_day {
             series.start_day = start_day;
         }
+        check_span(series.start_day, series.rule.until)?;
         let series = series.clone();
         self.store
             .put_series(user, series)
@@ -833,6 +840,27 @@ fn check_duration(minutes: u16) -> Result<(), ApiError> {
         });
     }
     Ok(())
+}
+
+/// A series must be able to fire: an end before its first day is a rule that never
+/// holds an occurrence, which would sit in the store looking alive.
+fn check_span(start_day: NaiveDate, until: Option<NaiveDate>) -> Result<(), ApiError> {
+    match until {
+        Some(until) if until < start_day => Err(ApiError {
+            code: ErrorCode::BadRequest,
+            message: "until is before the first day of the series".into(),
+        }),
+        _ => Ok(()),
+    }
+}
+
+/// What a task endpoint says when it is handed an occurrence id
+/// (`"{series_id}:{date}"`), which names a date rather than a stored task.
+fn occurrence_id_error() -> ApiError {
+    ApiError {
+        code: ErrorCode::BadRequest,
+        message: "that id names an occurrence; patch it at /api/v1/series/{id}/dates/{date}".into(),
+    }
 }
 
 /// Where each open task goes: the scheduler fits floating tasks into the working
@@ -1664,5 +1692,471 @@ mod tests {
             NEW_YORK,
         )
         .expect("the current version is accepted");
+    }
+
+    // -- series (docs/ARCHITECTURE.md 7.1)
+
+    /// Sunday 2026-10-11 21:00 in New York, the suite's usual clock.
+    fn sunday_night() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap()
+    }
+
+    fn day(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    fn utc(y: i32, m: u32, d: u32, h: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(y, m, d, h, 0, 0).unwrap()
+    }
+
+    /// A Monday and Thursday series at 07:00, starting Monday 2026-10-12.
+    fn series_draft() -> SeriesDraft {
+        SeriesDraft {
+            title: "Gym".into(),
+            duration_min: 60,
+            weekdays: vec![Weekday::Mon, Weekday::Thu],
+            time_of_day: NaiveTime::from_hms_opt(7, 0, 0),
+            until: None,
+            start_day: Some(day(2026, 10, 12)),
+        }
+    }
+
+    fn mark(kind: &str, when: Option<When>) -> OccurrencePatch {
+        OccurrencePatch {
+            kind: kind.into(),
+            when,
+        }
+    }
+
+    /// An app on a fixed clock holding one Monday/Thursday series.
+    fn app_with_one_series() -> (App<MemoryStore>, String) {
+        let mut app = App::new(MemoryStore::new(), Arc::new(FixedClock(sunday_night())));
+        let snapshot = app
+            .create_series(series_draft(), USER, NEW_YORK)
+            .expect("create series");
+        let id = snapshot.series[0].id.0.clone();
+        (app, id)
+    }
+
+    /// The occurrence rows of a snapshot, which are the ones a series produced.
+    fn occurrences(snapshot: &Snapshot) -> Vec<&Task> {
+        snapshot
+            .tasks
+            .iter()
+            .filter(|task| task.source == Source::Series)
+            .collect()
+    }
+
+    fn row<'a>(snapshot: &'a Snapshot, id: &str) -> &'a Task {
+        snapshot
+            .tasks
+            .iter()
+            .find(|task| task.id.0 == id)
+            .unwrap_or_else(|| panic!("{id} is not in the snapshot"))
+    }
+
+    fn placed_at(snapshot: &Snapshot, id: &str) -> Option<DateTime<Utc>> {
+        snapshot
+            .plan
+            .placements
+            .iter()
+            .find(|placement| placement.task.0 == id)
+            .map(|placement| placement.start)
+    }
+
+    /// A series shows as one row per day it repeats on inside the window, each named
+    /// after its own date, each placed at the series' local time.
+    #[test]
+    fn a_new_series_shows_the_occurrences_of_the_week() {
+        let (app, id) = app_with_one_series();
+        let snapshot = app.snapshot(USER, NEW_YORK).expect("snapshot");
+        assert_eq!(
+            occurrences(&snapshot)
+                .iter()
+                .map(|row| row.id.0.clone())
+                .collect::<Vec<String>>(),
+            vec![format!("{id}:2026-10-12"), format!("{id}:2026-10-15")],
+            "one row per repeated day in the week, named after its own date"
+        );
+
+        let monday = row(&snapshot, &format!("{id}:2026-10-12"));
+        assert_eq!(monday.title, "Gym");
+        assert!(!monday.done);
+        // 07:00 New York on 2026-10-12 is 11:00Z (EDT), and the row is pinned there.
+        assert_eq!(monday.when, When::At(utc(2026, 10, 12, 11)));
+        assert_eq!(
+            placed_at(&snapshot, &monday.id.0),
+            Some(utc(2026, 10, 12, 11))
+        );
+    }
+
+    /// The expansion follows the range the planner asked for, not a fixed horizon.
+    #[test]
+    fn occurrences_follow_the_planner_window() {
+        let (app, id) = app_with_one_series();
+
+        let next_week = app
+            .snapshot_in_window(USER, NEW_YORK, day(2026, 10, 19), 7)
+            .expect("snapshot");
+        assert_eq!(
+            occurrences(&next_week)
+                .iter()
+                .map(|row| row.id.0.clone())
+                .collect::<Vec<String>>(),
+            vec![format!("{id}:2026-10-19"), format!("{id}:2026-10-22")],
+            "the same two days, one week later"
+        );
+
+        let narrow = app
+            .snapshot_in_window(USER, NEW_YORK, day(2026, 10, 13), 1)
+            .expect("snapshot");
+        assert!(
+            occurrences(&narrow).is_empty(),
+            "a Tuesday holds no occurrence of a Monday/Thursday series"
+        );
+    }
+
+    /// Marking an occurrence done writes an exception, not a task: the row is still
+    /// there, marked done and unplaced, and a fresh app over the same database still
+    /// sees it that way.
+    #[test]
+    fn a_done_occurrence_stays_done_after_a_restart() {
+        let path = std::env::temp_dir().join(format!(
+            "rambl-series-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        let store = crate::v2::store::SqliteStore::open(&path).expect("open database");
+        let mut app = App::new(store, Arc::new(FixedClock(sunday_night())));
+        let created = app
+            .create_series(series_draft(), USER, NEW_YORK)
+            .expect("create series");
+        let id = created.series[0].id.0.clone();
+        let marked = app
+            .patch_occurrence(&id, day(2026, 10, 12), mark("done", None), USER, NEW_YORK)
+            .expect("marked done");
+        assert!(
+            row(&marked, &format!("{id}:2026-10-12")).done,
+            "the row is marked done"
+        );
+        assert_eq!(
+            placed_at(&marked, &format!("{id}:2026-10-12")),
+            None,
+            "a done occurrence holds no slot"
+        );
+        assert_eq!(occurrences(&marked).len(), 2, "the week is unchanged");
+        drop(app);
+
+        // A fresh handle on the same file: what a restart sees.
+        let restarted = App::new(
+            crate::v2::store::SqliteStore::open(&path).expect("reopen"),
+            Arc::new(FixedClock(sunday_night())),
+        );
+        let after = restarted.snapshot(USER, NEW_YORK).expect("snapshot");
+        assert!(
+            row(&after, &format!("{id}:2026-10-12")).done,
+            "the exception survives a restart"
+        );
+        std::fs::remove_dir_all(path.parent().unwrap()).ok();
+    }
+
+    /// A skipped day has no row at all; a moved one sits at its new time under its
+    /// original date, and the slot the rule held is free.
+    #[test]
+    fn a_skipped_occurrence_is_gone_and_a_moved_one_sits_at_its_new_time() {
+        let (mut app, id) = app_with_one_series();
+        let skipped = app
+            .patch_occurrence(
+                &id,
+                day(2026, 10, 12),
+                mark("skipped", None),
+                USER,
+                NEW_YORK,
+            )
+            .expect("skipped");
+        assert!(
+            !occurrences(&skipped)
+                .iter()
+                .any(|row| row.id.0.ends_with("2026-10-12")),
+            "a skipped day produces no row"
+        );
+
+        let moved_to = utc(2026, 10, 12, 18);
+        let moved = app
+            .patch_occurrence(
+                &id,
+                day(2026, 10, 12),
+                mark("moved", Some(When::At(moved_to))),
+                USER,
+                NEW_YORK,
+            )
+            .expect("moved");
+        assert_eq!(
+            row(&moved, &format!("{id}:2026-10-12")).when,
+            When::At(moved_to),
+            "the row keeps its original date and takes the new time"
+        );
+        assert_eq!(
+            placed_at(&moved, &format!("{id}:2026-10-12")),
+            Some(moved_to)
+        );
+        assert_eq!(
+            placed_at(&moved, &format!("{id}:2026-10-15")),
+            Some(utc(2026, 10, 15, 11)),
+            "the series' own time is untouched elsewhere"
+        );
+
+        // Clearing the exception puts the day back to the rule.
+        let cleared = app
+            .clear_occurrence(&id, day(2026, 10, 12), USER, NEW_YORK)
+            .expect("cleared");
+        assert_eq!(
+            row(&cleared, &format!("{id}:2026-10-12")).when,
+            When::At(utc(2026, 10, 12, 11)),
+            "with no exception the rule applies again"
+        );
+    }
+
+    /// A client cannot mark a day the series does not repeat, cannot reach another
+    /// person's series by naming it, and cannot leave the kind open.
+    #[test]
+    fn an_occurrence_outside_the_rule_or_another_user_is_refused() {
+        let (mut app, id) = app_with_one_series();
+        for date in [day(2026, 10, 13), day(2026, 10, 5)] {
+            let refused = app
+                .patch_occurrence(&id, date, mark("done", None), USER, NEW_YORK)
+                .expect_err("a day the series does not repeat");
+            assert_eq!(refused.code, ErrorCode::BadRequest, "{date}");
+        }
+        assert_eq!(
+            app.patch_occurrence(
+                "s-not-mine",
+                day(2026, 10, 12),
+                mark("done", None),
+                USER,
+                NEW_YORK
+            )
+            .expect_err("another user's series")
+            .code,
+            ErrorCode::NotFound
+        );
+        assert_eq!(
+            app.patch_occurrence(&id, day(2026, 10, 12), mark("moved", None), USER, NEW_YORK)
+                .expect_err("a move with no instant")
+                .code,
+            ErrorCode::BadRequest
+        );
+        assert_eq!(
+            app.patch_occurrence(
+                &id,
+                day(2026, 10, 12),
+                mark("whenever", None),
+                USER,
+                NEW_YORK
+            )
+            .expect_err("a kind that is not one of the three")
+            .code,
+            ErrorCode::BadRequest
+        );
+    }
+
+    /// A rule that can never fire is refused: no days at all, or an end before the
+    /// first day. Nothing is stored either way.
+    #[test]
+    fn a_series_that_could_never_fire_is_refused() {
+        let mut app = App::new(MemoryStore::new(), Arc::new(FixedClock(sunday_night())));
+        let no_days = SeriesDraft {
+            weekdays: vec![],
+            ..series_draft()
+        };
+        assert_eq!(
+            app.create_series(no_days, USER, NEW_YORK)
+                .expect_err("no days")
+                .code,
+            ErrorCode::BadRequest
+        );
+        let backwards = SeriesDraft {
+            until: Some(day(2026, 10, 1)),
+            ..series_draft()
+        };
+        assert_eq!(
+            app.create_series(backwards, USER, NEW_YORK)
+                .expect_err("an end before the first day")
+                .code,
+            ErrorCode::BadRequest
+        );
+        assert!(app.store.series(USER).unwrap().is_empty());
+    }
+
+    /// An edit changes the rule every occurrence follows, and deleting a series takes
+    /// its rows with it.
+    #[test]
+    fn editing_a_series_changes_its_occurrences_and_deleting_takes_them_all() {
+        let (mut app, id) = app_with_one_series();
+        let edited = app
+            .update_series(
+                &id,
+                SeriesPatch {
+                    title: Some("Yoga".into()),
+                    weekdays: Some(vec![Weekday::Wed]),
+                    ..SeriesPatch::default()
+                },
+                USER,
+                NEW_YORK,
+            )
+            .expect("edited");
+        assert_eq!(edited.series[0].title, "Yoga");
+        assert_eq!(
+            occurrences(&edited)
+                .iter()
+                .map(|row| row.id.0.clone())
+                .collect::<Vec<String>>(),
+            vec![format!("{id}:2026-10-14")],
+            "only Wednesdays now"
+        );
+
+        let gone = app.delete_series(&id, USER, NEW_YORK).expect("deleted");
+        assert!(gone.series.is_empty());
+        assert!(occurrences(&gone).is_empty());
+        assert_eq!(
+            app.delete_series(&id, USER, NEW_YORK)
+                .expect_err("the second time")
+                .code,
+            ErrorCode::NotFound
+        );
+    }
+
+    /// A series keeps its local time across a clock change: 07:00 New York is 12:00Z
+    /// before the March change and 11:00Z after it.
+    #[test]
+    fn a_series_keeps_its_local_time_across_the_dst_change() {
+        let mut app = App::new(MemoryStore::new(), Arc::new(FixedClock(sunday_night())));
+        app.create_series(
+            SeriesDraft {
+                weekdays: vec![Weekday::Sun],
+                start_day: Some(day(2026, 3, 1)),
+                ..series_draft()
+            },
+            USER,
+            NEW_YORK,
+        )
+        .expect("create series");
+
+        let around = app
+            .snapshot_in_window(USER, NEW_YORK, day(2026, 3, 1), 14)
+            .expect("snapshot");
+        let sunday: Vec<DateTime<Utc>> = occurrences(&around)
+            .iter()
+            .map(|row| match row.when {
+                When::At(start) => start,
+                other => panic!("an occurrence at a time, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            sunday,
+            vec![utc(2026, 3, 1, 12), utc(2026, 3, 8, 11)],
+            "07:00 local is 12:00Z in EST and 11:00Z in EDT"
+        );
+    }
+
+    /// One person's series never reaches another's snapshot, and cannot be deleted by
+    /// name from the other side.
+    #[test]
+    fn a_series_is_scoped_to_its_owner() {
+        let (mut app, id) = app_with_one_series();
+        let mine = app.snapshot(USER, NEW_YORK).expect("mine");
+        assert_eq!(occurrences(&mine).len(), 2);
+        let theirs = app.snapshot("someone-else", NEW_YORK).expect("theirs");
+        assert!(
+            occurrences(&theirs).is_empty() && theirs.series.is_empty(),
+            "another person sees nothing"
+        );
+
+        assert_eq!(
+            app.delete_series(&id, "someone-else", NEW_YORK)
+                .expect_err("another user cannot delete it")
+                .code,
+            ErrorCode::NotFound
+        );
+        assert_eq!(app.snapshot(USER, NEW_YORK).unwrap().series.len(), 1);
+    }
+
+    /// An occurrence row's id names a date, not a stored task, so a task endpoint handed
+    /// one says where to send it rather than reporting a task that is not there.
+    #[test]
+    fn an_occurrence_id_cannot_be_patched_as_a_task() {
+        let (mut app, id) = app_with_one_series();
+        let error = app
+            .patch(
+                &format!("{id}:2026-10-12"),
+                done_patch(None),
+                USER,
+                NEW_YORK,
+            )
+            .expect_err("an occurrence is not a task");
+        assert_eq!(error.code, ErrorCode::BadRequest);
+        assert!(
+            error.message.contains("/dates/"),
+            "the message must name the endpoint: {}",
+            error.message
+        );
+    }
+
+    /// An edit that leaves the series unable to fire is refused as well, not only one
+    /// that creates it that way.
+    #[test]
+    fn an_edit_cannot_leave_a_series_that_could_never_fire() {
+        let (mut app, id) = app_with_one_series();
+        let error = app
+            .update_series(
+                &id,
+                SeriesPatch {
+                    // An end before the first day: no occurrence can ever fall inside it.
+                    until: Some(day(2026, 10, 20)),
+                    start_day: Some(day(2026, 11, 1)),
+                    ..SeriesPatch::default()
+                },
+                USER,
+                NEW_YORK,
+            )
+            .expect_err("an end before the first day");
+        assert_eq!(error.code, ErrorCode::BadRequest);
+        let held = &app.snapshot(USER, NEW_YORK).unwrap().series[0];
+        assert_eq!(
+            held.start_day,
+            day(2026, 10, 12),
+            "the refused edit stored nothing"
+        );
+        assert_eq!(held.rule.until, None);
+    }
+
+    /// An `until` sent with a new series is kept: a rule that ends is not one that
+    /// repeats forever.
+    #[test]
+    fn a_series_is_created_with_the_end_it_was_given() {
+        let mut app = App::new(MemoryStore::new(), Arc::new(FixedClock(sunday_night())));
+        let until = day(2026, 10, 13);
+        let snapshot = app
+            .create_series(
+                SeriesDraft {
+                    until: Some(until),
+                    ..series_draft()
+                },
+                USER,
+                NEW_YORK,
+            )
+            .expect("created");
+        assert_eq!(snapshot.series[0].rule.until, Some(until));
+        // Only the Monday inside the span expands; the Thursday after it does not.
+        assert_eq!(
+            occurrences(&snapshot)
+                .iter()
+                .map(|row| row.id.0.clone())
+                .collect::<Vec<String>>(),
+            vec![format!("{}:2026-10-12", snapshot.series[0].id.0)],
+        );
     }
 }
