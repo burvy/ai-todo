@@ -1,0 +1,10 @@
+<!-- PLACEHOLDER: replace me, see web/assets/README.md. Push pin, ~16px head, needle down. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-label="push pin">
+  <ellipse cx="12.6" cy="21" rx="3.2" ry="1" fill="#5D4732" opacity=".18"/>
+  <path d="M12 15.5 L12 21.6" stroke="#5D4732" stroke-width="1.4" stroke-linecap="round"/>
+  <circle cx="12" cy="9" r="7" fill="#9F682E"/>
+  <circle cx="12" cy="9" r="7" fill="none" stroke="#6B4520" stroke-width="1"/>
+  <path d="M8.4 6.2 A5 5 0 0 1 12 4.2" stroke="#E1C38C" stroke-width="1.6" stroke-linecap="round" fill="none" opacity=".8"/>
+  <circle cx="12" cy="15.6" r="2" fill="#A7865D"/>
+  <circle cx="12" cy="15.6" r="2" fill="none" stroke="#6B4520" stroke-width=".8"/>
+</svg>

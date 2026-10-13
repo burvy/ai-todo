@@ -1,0 +1,6 @@
+<!-- PLACEHOLDER: replace me, see web/assets/README.md. Sleepy Z with trailing z's, follows text colour. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="sleeping z" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M17 33 L29 33 L17 43 L29 43"/>
+  <path d="M32 22 L39 22 L32 29 L39 29" stroke-width="1.9"/>
+  <path d="M40 9 L44 9 L40 13.5 L44 13.5" stroke-width="1.5"/>
+</svg>

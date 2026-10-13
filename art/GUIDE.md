@@ -21,7 +21,10 @@ This folder is the source of art for the v2 front end (Leptos, see `docs/ARCHITE
 | `brand/rambl.png` | brand card: ruled page with "Rambl" and three sample tasks | burvy.dev project card (burvy-dev repo, `assets/images/rambl.png`) | PNG 2000×1000 | placeholder, code (`brand/rambl_card.py`, Pillow) |
 | `brand/rambl_card.py` | script that drew `rambl.png` | run by hand: `python rambl_card.py out.png` (needs Windows fonts Segoe Script and Ink Free) | — | AI-written code |
 | `web/assets/sounds/` (`write`, `tick`, `page`, `listen`, `drop`, `send`, `delete`) | UI sounds | v2 wires them from `web/assets/sounds/`; v1 `play()` in `static/app.js` | mp3, mono, 44.1 kHz, 0.16–0.98 s, 3–13 KB | placeholder: real foley cut from CC0/public-domain recordings (`web/assets/CREDITS.md`), `listen.mp3` synthesized |
+| `web/assets/rambo/<skin>/<pose>.svg` | Rambo tool skins: `fountain` (default), `pencil`, `ballpoint`, `quill`, `marker` — same 11 poses, class names and viewBox `0 0 64 112` per skin, so the app swaps by skin id | mascot rig (`web/src/mascot.rs`), tool picker | 5 skins × 11 poses | placeholder, AI (scripted edits of the fountain art) |
 | `web/assets/rambo/nest.svg` | Rambo's nest (the bubble he rests in) | end of the capture line; tapping it submits | SVG, viewBox 0 0 96 56 | placeholder, AI |
+| `web/assets/rambo/fx/` (`ink-splat`, `sleepy-z`, `sparks`, `scribble-cloud`) | mood fx overlays, `currentColor`, no inner animation | moods, scribble-out on delete | SVG, viewBox 0 0 48 48 | placeholder, AI |
+| `web/assets/tackboard/` (`strip-1..3`, `pin`, `pin-pressed`, `tape`, `crumple`, `bin`) | tack board art for Huang (`web/src/tack.rs`) | done-task strips, pins, tape, crumple throw, bin drop target | SVG, boxes listed in `web/assets/README.md` | placeholder, AI |
 | `fonts.md` (Caveat, Inter) | the handwriting and interface fonts | everywhere, via `--hand` and `--chrome` | Google Fonts web fonts | stock fonts (OFL licence), not hand-made |
 
 Notes:

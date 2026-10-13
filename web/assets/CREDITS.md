@@ -44,7 +44,10 @@ Converted TTF → WOFF2 with `fontTools`.
 
 ## Art
 
-All SVGs in `web/assets/` (Rambo poses, `nest.svg`, `pen.svg`, icons, paper
-textures) are placeholders drawn in this repository by AI agents; no external
-source, no licence needed. The Rambo poses were recoloured to the paper
-palette (coffee `#5D4732` body, golden brown `#9F682E` cap) on 2026-10-13.
+All SVGs in `web/assets/` (Rambo skins and poses, `nest.svg`, mood fx,
+tack-board art, `pen.svg`, icons, paper textures) are placeholders drawn in
+this repository by AI agents; no external source, no licence needed. The
+fountain-pen skin was recoloured to the paper palette (coffee `#5D4732` body,
+golden brown `#9F682E` cap) on 2026-10-13; the pencil/ballpoint/quill/marker
+skins, `dozing`/`sulking` poses, `rambo/fx/` and `tackboard/` art were
+generated in-repo on 2026-10-14 by scripted edits of the fountain poses.
