@@ -370,20 +370,6 @@ fn CaptureBox(
                 if let Some(timer) = linger_timer.borrow_mut().take() {
                     timer.cancel();
                 }
-                // Fly Rambo home from WritingCaret so he's not stuck at the caret.
-                // The pen queue Effect will pick up the new task once he's Home.
-                set_state.update(|s| {
-                    *s = mascot::transition(s, mascot::Event::FlyHome);
-                });
-                // The linger timer is cancelled, so schedule the Flying→Home arrival
-                // ourselves so Rambo doesn't stay in Flying forever.
-                {
-                    let set_state = set_state;
-                    Timeout::new(pen::FLY_MS, move || {
-                        set_state.set(mascot::State::Home);
-                    })
-                    .forget();
-                }
                 // Record current task IDs so we can find the new one after capture
                 let old_ids: std::collections::HashSet<_> =
                     snapshot.with_untracked(|s| s.tasks.iter().map(|t| t.id.clone()).collect());
@@ -996,20 +982,24 @@ fn TaskList(
                 return;
             }
             let current_state = mascot_state.get();
-            // Only start writing if Rambo is at Home
-            if matches!(current_state, mascot::State::Home) {
+            // Start writing if Rambo is at Home or stuck at WritingCaret (after Add).
+            if matches!(
+                current_state,
+                mascot::State::Home | mascot::State::WritingCaret
+            ) {
                 let set_state = set_mascot_state;
                 let pen_pos = pen_pos;
                 wasm_bindgen_futures::spawn_local(async move {
                     for task_id in queue {
-                        // Check Rambo is still at Home before each row
-                        if !matches!(mascot_state.get_untracked(), mascot::State::Home) {
+                        // On the first row, Rambo may be at WritingCaret (after Add) or Home.
+                        // On subsequent rows, he should be back at Home from the fly-home above.
+                        let state = mascot_state.get_untracked();
+                        let is_ready =
+                            matches!(state, mascot::State::Home | mascot::State::WritingCaret);
+                        if !is_ready {
                             break;
                         }
-                        set_state.set(mascot::transition(
-                            &mascot::State::Home,
-                            mascot::Event::WriteRow,
-                        ));
+                        set_state.set(mascot::transition(&state, mascot::Event::WriteRow));
                         if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
                             if let Some(row) = doc
                                 .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
