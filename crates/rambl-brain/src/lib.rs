@@ -101,7 +101,6 @@ pub struct Cooldowns {
     pub wander: u32,
     pub play: u32,
     pub idle_line: u32,
-    pub react: u32,
 }
 
 impl Cooldowns {
@@ -109,7 +108,6 @@ impl Cooldowns {
         self.wander = self.wander.saturating_sub(1);
         self.play = self.play.saturating_sub(1);
         self.idle_line = self.idle_line.saturating_sub(1);
-        self.react = self.react.saturating_sub(1);
     }
 }
 
@@ -217,30 +215,14 @@ pub fn step_with(
             next.moods.boredom = clamp01(next.moods.boredom - 0.2);
             next.state = State::Thinking;
             next.idle_rounds = 0;
-            react(
-                &mut next,
-                "task_added",
-                "think",
-                "nod",
-                p,
-                rng,
-                &mut actions,
-            );
+            react(&mut next, "task_added", "think", "nod", rng, &mut actions);
         }
         Event::TaskDone => {
             next.moods.cheer = clamp01(next.moods.cheer + p.cheer_gain);
             next.moods.boredom = clamp01(next.moods.boredom - 0.1);
             next.state = State::Reacting;
             next.idle_rounds = 0;
-            react(
-                &mut next,
-                "task_done",
-                "cheer",
-                "bounce",
-                p,
-                rng,
-                &mut actions,
-            );
+            react(&mut next, "task_done", "cheer", "bounce", rng, &mut actions);
         }
         Event::TaskOverdue => {
             next.moods.cheer = clamp01(next.moods.cheer - p.cheer_loss);
@@ -251,7 +233,6 @@ pub fn step_with(
                 "task_overdue",
                 "worried",
                 "frown",
-                p,
                 rng,
                 &mut actions,
             );
@@ -260,15 +241,7 @@ pub fn step_with(
             next.moods.cheer = clamp01(next.moods.cheer + p.cheer_gain / 2.0);
             next.state = State::Reacting;
             next.idle_rounds = 0;
-            react(
-                &mut next,
-                "list_empty",
-                "smile",
-                "grin",
-                p,
-                rng,
-                &mut actions,
-            );
+            react(&mut next, "list_empty", "smile", "grin", rng, &mut actions);
         }
         Event::Poked => {
             next.moods.cheer = clamp01(next.moods.cheer + 0.05);
@@ -277,26 +250,18 @@ pub fn step_with(
             next.idle_rounds = 0;
             // Being poked in the middle of the night is a different thing entirely.
             let situation = if next.is_night() { "wake" } else { "poked" };
-            react(&mut next, situation, "look", "wiggle", p, rng, &mut actions);
+            react(&mut next, situation, "look", "wiggle", rng, &mut actions);
         }
         Event::Dragged => {
             next.state = State::Reacting;
             next.idle_rounds = 0;
-            react(
-                &mut next,
-                "dragged",
-                "dangle",
-                "swing",
-                p,
-                rng,
-                &mut actions,
-            );
+            react(&mut next, "dragged", "dangle", "swing", rng, &mut actions);
         }
         Event::Dropped { on_task } => {
             next.state = State::Asking;
             next.asking_about = Some(on_task.clone());
             next.idle_rounds = 0;
-            react(&mut next, "asking", "ask", "point", p, rng, &mut actions);
+            react(&mut next, "asking", "ask", "point", rng, &mut actions);
         }
         Event::UserIdle(minutes) => {
             next.idle_rounds = next.idle_rounds.saturating_add(*minutes);
@@ -321,7 +286,7 @@ pub fn step_with(
                 next.state = State::Home;
                 actions.push(Action::Pose("home"));
                 if asleep {
-                    react(&mut next, "wake", "stretch", "wake", p, rng, &mut actions);
+                    react(&mut next, "wake", "stretch", "wake", rng, &mut actions);
                 }
             }
         }
@@ -343,7 +308,6 @@ fn react(
     situation: &str,
     pose: &'static str,
     animate: &'static str,
-    p: &Personality,
     rng: &mut impl Rng,
     actions: &mut Vec<Action>,
 ) {
@@ -351,9 +315,7 @@ fn react(
     actions.push(Action::Animate(animate));
     // Reacting is the whole point of the moment, so it is never rationed away. Only
     // idle chatter is.
-    if say(brain, situation, rng, actions) {
-        brain.cooldowns.react = p.react_cooldown;
-    }
+    say(brain, situation, rng, actions);
 }
 
 /// One thing he could do while nothing is happening.
@@ -780,5 +742,10 @@ mod tests {
         assert_eq!(blank.moods, before, "his moods should come back with him");
         let (after, _) = step(&blank, Some(Event::Tick), at(12), &mut rng);
         assert_ne!(after.moods, before, "he should start drifting again");
+    }
+    #[test]
+    fn personality_loads() {
+        let p = data::personality();
+        assert!(p.sass >= 0.0);
     }
 }

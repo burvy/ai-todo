@@ -100,7 +100,6 @@ pub struct Personality {
     pub wander_cooldown: u32,
     pub play_cooldown: u32,
     pub idle_line_cooldown: u32,
-    pub react_cooldown: u32,
     pub night_start: u8,
     pub night_end: u8,
     /// How likely an idle moment is to come with a line at all.
@@ -123,7 +122,6 @@ impl Personality {
             wander_cooldown: count(cooldowns, "cooldowns", "wander")?,
             play_cooldown: count(cooldowns, "cooldowns", "play")?,
             idle_line_cooldown: count(cooldowns, "cooldowns", "idle_line")?,
-            react_cooldown: count(cooldowns, "cooldowns", "react")?,
             night_start: hour(day, "day", "night_start")?,
             night_end: hour(day, "day", "night_end")?,
             sass: number(voice, "voice", "sass")?,
