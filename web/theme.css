@@ -1,27 +1,39 @@
-/* Rambl's parchment theme: aged paper, ink, calm and readable.
+/* Rambl's paper theme: one sheet of parchment, ink, and rules — not a stack of cards.
    MOBILE FIRST: the base rules are written for a 360px phone; the wide layout starts
    at @media (min-width: 701px). Layout behaviour (panes, scroll-snap, 64px hour rows)
-   comes from Ryan's PR #135 and is kept as it is; colours, fonts, spacing, paper and
-   ruled lines are decided here. Design spec: docs/THEME.md. */
+   comes from Ryan's PR #135 and is kept as it is. Design spec: docs/THEME.md. */
 
 :root {
   color-scheme: light;
 
-  /* Palette, light: parchment and iron-gall ink. */
-  --paper: #f2e6cd;
-  --paper-raised: #f8efdb;
-  --paper-sunken: #eadcc0;
-  --ink: #2b2318;
-  --ink-soft: #5f5138;
-  /* 5.3:1 on --paper-raised, so 12px meta text passes WCAG AA. */
-  --ink-faint: #6f6248;
-  --rule: #c9b58c;
-  --accent: #8a4b1f;
-  --danger: #a5342a;
+  /* Palette, light (docs/REDESIGN.md). Chamoisee is for lines only, never text:
+     on parchment it manages just 2.8:1. Muted text uses the coffee mixes below. */
+  --parchment: #f2e8cf;    /* the page */
+  --wheat: #ecd7af;        /* a sheet laid on the page: dialogs, the capture bar */
+  --ecru: #e1c38c;         /* pressed-in paper: Rambo's nest, sunken bits */
+  --chamoisee: #a7865d;    /* rules and lines */
+  --ink: #5d4732;          /* coffee: everything written */
+  --accent: #9f682e;       /* golden brown: one emphasis, bold text only */
+  --danger: #a5342a;       /* red pencil */
   --now: #b03a2a;
-  --wash: rgba(138, 75, 31, 0.12);
-  --shadow: 0 1px 2px rgba(43, 35, 24, 0.18);
-  --backdrop: rgba(43, 35, 24, 0.35);
+
+  /* Muted inks: 4.9:1 and 4.7:1 on parchment/wheat, so small text passes WCAG AA. */
+  --ink-soft: #75604a;
+  --ink-faint: #6e5a43;
+
+  --rule: color-mix(in srgb, var(--chamoisee) 42%, transparent);
+  --rule-strong: color-mix(in srgb, var(--chamoisee) 62%, transparent);
+  --margin-line: rgba(165, 52, 42, 0.24);
+  --wash: rgba(159, 104, 46, 0.1);
+  --shadow: 0 1px 2px rgba(93, 71, 50, 0.14);
+  --sheet-shadow: 0 10px 24px -14px rgba(60, 44, 26, 0.5);
+  /* The page under the spread, peeking out at the fold. */
+  --fold-shadow: -8px 0 14px -10px rgba(60, 44, 26, 0.35);
+  --backdrop: rgba(46, 35, 21, 0.35);
+
+  --paper: var(--parchment);
+  --paper-raised: var(--wheat);
+  --paper-sunken: var(--ecru);
 
   /* Type: system stacks only. */
   --font-heading: Georgia, "Iowan Old Style", "Times New Roman", serif;
@@ -36,14 +48,14 @@
   --text-xl: 1.4rem;
   --text-2xl: 1.75rem;
 
-  /* Spacing and shape. */
+  /* Spacing. No radii: paper does not have rounded corners, except bubbles. */
   --gutter: 1rem;
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
-  --radius-sm: 0.25rem;
-  --radius-md: 0.5rem;
+  --radius-sm: 0;
+  --radius-md: 2px;
   --radius-round: 50%;
 
   /* Touch: every tappable control is at least this tall. */
@@ -53,47 +65,70 @@
      with the same number, so change both together. */
   --hour-h: 64px;
 
-  /* The torn edge strip under the masthead (assets/theme/edge.svg). */
-  --edge-h: 24px;
-
   /* Motion. */
   --dur-fast: 120ms;
   --dur: 200ms;
   --dur-slow: 450ms;
   --ease: ease;
 
-  /* Paper texture (web/assets/theme/; the flat colours carry the page if one is missing). */
+  /* Paper grain (web/assets/theme/); the flat colours carry the page if missing. */
   --texture-paper: url("assets/theme/paper.svg");
-  --texture-edge: url("assets/theme/edge.svg");
-  --texture-stain: url("assets/theme/stain.svg");
 }
 
+/* Dark is the same desk at night: deep paper, parchment-coloured ink.
+   Shown when the OS asks for dark (until the user picks a theme in settings,
+   which sets data-theme and wins over the OS). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     color-scheme: dark;
 
-    /* Palette, dark: the same paper, aged and lamp-lit. */
-    --paper: #1e1811;
-    --paper-raised: #272016;
-    --paper-sunken: #171209;
-    --ink: #e9dcc0;
-    --ink-soft: #c3b294;
-    --ink-faint: #9a8a6d;
-    --rule: #453a2a;
+    --parchment: #241c11;
+    --wheat: #2d2315;
+    --ecru: #1a140b;
+    --ink: #efe3c8;
     --accent: #d9a45c;
     --danger: #e0705f;
     --now: #d96a4f;
-    --wash: rgba(217, 164, 92, 0.16);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+
+    --ink-soft: #c9b693;
+    --ink-faint: #b3a17e;
+
+    --rule: rgba(167, 134, 93, 0.3);
+    --rule-strong: rgba(167, 134, 93, 0.46);
+    --margin-line: rgba(224, 112, 95, 0.26);
+    --wash: rgba(217, 164, 92, 0.14);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --sheet-shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.8);
+    --fold-shadow: -8px 0 14px -10px rgba(0, 0, 0, 0.65);
     --backdrop: rgba(10, 8, 5, 0.55);
+
     --texture-paper: url("assets/theme/paper-dark.svg");
   }
+}
 
-  /* The placeholder edge is drawn pale for light paper; darken it here so it
-     reads as a torn edge on a dark sheet instead of a bright strip. */
-  header::before {
-    filter: brightness(0.42) saturate(0.7);
-  }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --parchment: #241c11;
+  --wheat: #2d2315;
+  --ecru: #1a140b;
+  --ink: #efe3c8;
+  --accent: #d9a45c;
+  --danger: #e0705f;
+  --now: #d96a4f;
+
+  --ink-soft: #c9b693;
+  --ink-faint: #b3a17e;
+
+  --rule: rgba(167, 134, 93, 0.3);
+  --rule-strong: rgba(167, 134, 93, 0.46);
+  --margin-line: rgba(224, 112, 95, 0.26);
+  --wash: rgba(217, 164, 92, 0.14);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sheet-shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.8);
+  --backdrop: rgba(10, 8, 5, 0.55);
+
+  --texture-paper: url("assets/theme/paper-dark.svg");
 }
 
 * {
@@ -127,12 +162,17 @@ h3 {
 
 h1 {
   margin: 0;
+  /* The masthead is the owner's signature on the page, so it is in the hand. */
+  font-family: var(--font-hand);
+  font-weight: 600;
   font-size: var(--text-2xl);
 }
 
 h2 {
   margin: 0 0 var(--space-3);
   font-size: var(--text-xl);
+  font-variant: small-caps;
+  letter-spacing: 0.04em;
 }
 
 h3 {
@@ -140,46 +180,14 @@ h3 {
   font-size: var(--text-lg);
 }
 
-/* --- Masthead --- */
+/* --- Masthead: a heading written on the page, closed with a rule --- */
 
 header {
-  position: relative;
-  overflow: hidden;
   display: grid;
   gap: var(--space-2);
   margin-bottom: var(--space-4);
-  /* The torn edge is as tall as --edge-h: keep the text clear of it (top and
-     bottom padding >= the edge, so the strip never runs through the h1). */
-  padding-top: var(--space-3);
-  padding-bottom: calc(var(--edge-h) + var(--space-2));
-  border-bottom: 1px solid var(--rule);
-  background-color: var(--paper-raised);
-}
-
-/* The torn edge: a strip along the bottom of the masthead, on its own layer so
-   the dark mode can tint it without touching the text. */
-header::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: var(--edge-h);
-  background: var(--texture-edge) repeat-x left bottom / auto var(--edge-h);
-  pointer-events: none;
-}
-
-/* A faint stain in the corner of the masthead, clipped to the header. */
-header::after {
-  content: "";
-  position: absolute;
-  top: -140px;
-  right: -70px;
-  width: 256px;
-  height: 256px;
-  background: var(--texture-stain) center / contain no-repeat;
-  opacity: 0.45;
-  pointer-events: none;
+  padding: var(--space-2) 0 var(--space-3);
+  border-bottom: 1px solid var(--rule-strong);
 }
 
 /* --- Layout: the two panes sit side by side in a scroll-snap row on a phone --- */
@@ -213,37 +221,30 @@ main > * {
   display: grid;
   gap: var(--space-4);
   min-width: 0;
+  /* The list is the written page: it alone gets the notebook's red margin. */
+  border-left: 1px solid var(--margin-line);
+  padding-left: var(--space-3);
 }
 
 .pane-switch {
   display: flex;
-  gap: var(--space-2);
+  gap: var(--space-4);
   margin: var(--space-2) 0;
 }
 
-/* The tabs are targets in their own right, 44x44. */
-.pane-switch button {
-  min-width: var(--tap);
-  min-height: var(--tap);
-}
-
-.pane-switch button.active {
-  font-weight: 700;
-  color: var(--accent);
-  background-color: var(--wash);
-  outline: 2px solid var(--accent);
-}
-
+/* Sections are parts of one page, not cards: space and rules divide them. */
 section {
   min-width: 0;
-  padding: var(--space-4);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
-  background-color: var(--paper-raised);
-  box-shadow: var(--shadow);
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
 }
 
-/* --- Controls: 44px targets, 16px text (inputs never zoom) --- */
+/* --- Controls: ink on paper. 44px targets, 16px text (inputs never zoom) ---
+   Buttons are words on the page: no chrome until hover or focus underlines them.
+   Inputs are written on a rule: transparent, boxed in nothing but the line. */
 
 button,
 input,
@@ -252,9 +253,29 @@ select {
   padding: var(--space-2);
   color: var(--ink);
   font: inherit;
-  background-color: var(--paper-raised);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
+  background-color: transparent;
+  border: none;
+  border-radius: 0;
+}
+
+input,
+select {
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+input:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-bottom-color: var(--accent);
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
 }
 
 /* Checkboxes and radios stay small (1.25rem): their 44px hit area comes from
@@ -266,17 +287,31 @@ input[type="radio"] {
   min-width: 0;
   min-height: 0;
   padding: 0;
+  border-bottom: none;
   background-color: var(--paper);
   accent-color: var(--accent);
 }
 
-button {
-  cursor: pointer;
+a {
+  color: var(--accent);
 }
 
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+}
+
+/* The active tab or filter: underlined in golden brown, like a marked word. */
+.pane-switch button.active,
+.label-filters button.active,
+.duration-chips button.active {
+  font-weight: 700;
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 6px;
+  background: none;
+  outline: none;
 }
 
 /* Task rows only: scoped so it never styles some other list. */
@@ -293,7 +328,7 @@ button {
   align-items: center;
   min-height: var(--tap);
   padding: var(--space-1) 0;
-  border-bottom: 1px dashed var(--rule);
+  border-bottom: 1px solid var(--rule);
 }
 
 .task-list li:last-child {
@@ -316,10 +351,10 @@ button {
   gap: var(--space-2);
   padding: var(--space-2) var(--gutter);
   padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px));
-  background-color: var(--paper-raised);
+  background-color: var(--paper);
   background-image: var(--texture-paper);
-  border-top: 1px solid var(--rule);
-  box-shadow: var(--shadow);
+  border-top: 1px solid var(--rule-strong);
+  box-shadow: var(--sheet-shadow);
 }
 
 .capture input {
@@ -334,7 +369,7 @@ button {
 
 .mic.listening {
   color: var(--accent);
-  background-color: var(--wash);
+  font-weight: 700;
   border-color: var(--accent);
 }
 
@@ -352,13 +387,17 @@ button {
   height: var(--tap);
   padding: var(--space-1);
   background-color: var(--paper-sunken);
-  border: 1px solid var(--rule);
+  border: 1px solid var(--rule-strong);
   border-radius: var(--radius-round);
   cursor: grab;
   touch-action: none;
   /* CSS variables for writing position — ignored at home */
   --pen-x: 0px;
   --pen-y: 0px;
+}
+
+.rambo:hover {
+  text-decoration: none;
 }
 
 .rambo:active {
@@ -444,6 +483,8 @@ button {
   color: var(--ink-soft);
 }
 
+/* Rambo's ask: a speech bubble pinned above the capture bar. A bubble is the
+   one thing on this page allowed to be round. */
 .ask {
   position: absolute;
   z-index: 4;
@@ -451,12 +492,12 @@ button {
   right: var(--gutter);
   max-width: 24rem;
   margin-top: var(--space-2);
-  padding: var(--space-2);
+  padding: var(--space-3);
   font-family: var(--font-heading);
   font-style: italic;
   background-color: var(--paper-raised);
   border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
+  border-radius: 12px;
   box-shadow: var(--shadow);
 }
 
@@ -493,7 +534,7 @@ button {
 
 .hour {
   height: var(--hour-h);
-  border-top: 1px solid color-mix(in srgb, var(--ink) 18%, transparent);
+  border-top: 1px solid var(--rule);
 }
 
 .hour span {
@@ -501,12 +542,16 @@ button {
   color: var(--ink-faint);
 }
 
+/* A placed task: a wash of ink across the hour lines, marked by its edge. */
 .placement {
+  position: absolute;
+  left: 0;
+  right: 0;
   padding: var(--space-1);
   background-color: var(--wash);
-  border: 1px solid var(--rule);
+  border: none;
   border-left: 3px solid var(--accent);
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   /* A 30-minute block is 32px tall: one small line, truncated, never spilled. */
   overflow: hidden;
   white-space: nowrap;
@@ -533,20 +578,12 @@ button {
 .label-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1);
+  gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
 
 .label-filters button {
   min-width: var(--tap);
-}
-
-.label-filters button.active,
-.duration-chips button.active {
-  font-weight: 700;
-  color: var(--accent);
-  background-color: var(--wash);
-  outline: 2px solid var(--accent);
 }
 
 /* One text run: block layout, not flex, so the space in
@@ -593,6 +630,11 @@ button {
   color: var(--danger);
 }
 
+.delete:hover {
+  color: var(--danger);
+  font-weight: 700;
+}
+
 .task-editor {
   display: inline-flex;
   flex-wrap: wrap;
@@ -601,7 +643,8 @@ button {
 }
 
 /* Fixed and centred (behaviour from #135); here it also fits a phone:
-   never wider than the screen, scrollable inside itself. */
+   never wider than the screen, scrollable inside itself. A dialog is a
+   loose sheet laid over the page, so it alone gets a shadow. */
 .task-dialog {
   box-sizing: border-box;
   max-width: calc(100vw - 2rem);
@@ -616,9 +659,9 @@ button {
   padding: var(--space-4);
   color: var(--ink);
   background-color: var(--paper-raised);
-  border: 1px solid var(--rule);
+  border: 1px solid var(--rule-strong);
   border-radius: var(--radius-md);
-  box-shadow: var(--shadow);
+  box-shadow: var(--sheet-shadow);
 }
 
 .task-dialog::backdrop {
@@ -633,8 +676,11 @@ button {
 .task-dialog fieldset {
   display: grid;
   gap: var(--space-1);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-sm);
+  margin: 0;
+  padding: var(--space-2) 0 0;
+  border: none;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
 }
 
 /* Radio rows: 44px tall with the control beside its text, so labels such as
@@ -687,9 +733,9 @@ button {
 .settings {
   margin-bottom: var(--space-4);
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-md);
-  background-color: var(--paper-raised);
+  border: none;
+  border-radius: 0;
+  background: none;
 }
 
 .settings summary {
@@ -698,6 +744,8 @@ button {
   min-height: var(--tap);
   cursor: pointer;
   font-family: var(--font-heading);
+  font-variant: small-caps;
+  letter-spacing: 0.04em;
 }
 
 .settings label {
@@ -739,10 +787,10 @@ button {
   margin: var(--space-2) 0;
   padding: var(--space-2) var(--space-3);
   color: var(--danger);
-  background-color: var(--paper-raised);
-  border: 1px solid var(--danger);
-  border-left-width: 4px;
-  border-radius: var(--radius-sm);
+  background-color: rgba(165, 52, 42, 0.07);
+  border: none;
+  border-left: 3px solid var(--danger);
+  border-radius: 0;
 }
 
 .import {
@@ -776,6 +824,14 @@ button {
     scroll-snap-stop: normal;
   }
 
+  /* The page fold: the planner starts on the next page of the spread,
+     with the page beneath peeking out along the fold. */
+  main > :nth-child(2) {
+    border-left: 1px solid var(--rule-strong);
+    padding-left: calc(2 * var(--gutter));
+    box-shadow: var(--fold-shadow);
+  }
+
   .pane-switch {
     display: none;
   }
@@ -807,9 +863,9 @@ button {
   input,
   select {
     transition:
-      background-color var(--dur) var(--ease),
+      color var(--dur) var(--ease),
       border-color var(--dur) var(--ease),
-      color var(--dur) var(--ease);
+      background-color var(--dur) var(--ease);
   }
 
   .rambo {
@@ -826,7 +882,7 @@ button {
 
   @keyframes mic-pulse {
     50% {
-      box-shadow: 0 0 0 4px var(--wash);
+      opacity: 0.55;
     }
   }
 }
@@ -878,4 +934,3 @@ button {
     display: none !important;
   }
 }
-.placement { position: absolute; left: 0; right: 0; box-sizing: border-box; border: 1px solid var(--rule); background: var(--paper); }
