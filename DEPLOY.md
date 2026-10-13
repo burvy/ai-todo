@@ -61,10 +61,107 @@ window, rename `rambl-server.exe` in the Rambl folder to `rambl-server.old.exe`,
 send the new `rambl-server.exe` from `deploy\dist\rambl-release` over RustDesk, and
 double-click it. Open <https://rambl.burvy.dev> to verify the deployment.
 
+The notes for what changed, and the PR behind each item, are in
+[docs/RELEASE-NOTES.md](docs/RELEASE-NOTES.md).
+
+## Deploy checklist
+
+1. **Build.** On the development machine, `deploy\build-release.ps1`, or from
+   burvy-dev the full command:
+
+   ```powershell
+   .build.ps1 -Deploy -Modules primer-wasm -Servers rambl,primer
+   ```
+
+   Either leaves `rambl-server.exe` and `rambl.env.example` in
+   `deploy\dist\rambl-release`. Run it with PowerShell 7 (`pwsh`); on Windows
+   PowerShell 5.1 the script stops on the build output that trunk writes to stderr.
+
+2. **New settings.** In the server's `rambl.env`:
+
+   - `RAMBL_ADMIN_EMAILS=you@example.com`, a comma-separated list of the emails
+     allowed to open `/admin`. Unset or empty answers 404 to everyone, which is the
+     reason an admin page that "disappeared" is almost always this line.
+   - `RAMBL_TRUSTED_PROXIES=`, left empty. cloudflared runs on the same machine and
+     reaches the server over loopback, which is trusted without being listed. Only fill
+     it in if a proxy runs on another host, as a comma-separated list of addresses or
+     networks (`10.0.0.1, 10.0.0.0/8`). Entries that are not a real address or network
+     are ignored.
+   - `RAMBL_BIND=`, left empty. The server listens on `127.0.0.1`, which is all the
+     tunnel on this machine needs. Set `0.0.0.0` only if the server should also serve
+     the LAN, and expect the trust in `CF-Connecting-IP` to matter again from then on.
+     A value that is not an IP address stops the server instead of falling back.
+
+3. **Before swapping the exe**, copy `C:\Rambl\data\rambl.db` to `rambl.db.<date>`.
+   The file only moves forward: the new exe applies the migrations it has not seen.
+   The startup backup in `data\backups` is written after the migration, so it is not a
+   pre-upgrade copy.
+
+4. **Swap and start.** Close the server window, rename `rambl-server.exe` to
+   `rambl-server.old.exe`, copy the new one in, double-click it. The window prints
+   `Rambl is listening on 127.0.0.1:3160 — open http://127.0.0.1:3160`, or whatever
+   `RAMBL_BIND` asked for. If it closes instead, run the exe from PowerShell to read
+   the error; a refused `RAMBL_BIND` is one reason to do that.
+
+5. **Smoke it** from the development machine (change the port if you are testing
+   locally):
+
+   ```powershell
+   curl.exe -s -o NUL -w "%{http_code}`n" https://rambl.burvy.dev/
+   curl.exe -s -o NUL -w "%{http_code}`n" https://rambl.burvy.dev/api/v1/config
+   curl.exe -s -o NUL -w "%{http_code}`n" https://rambl.burvy.dev/api/v1/snapshot
+   curl.exe -s -o NUL -w "%{http_code}`n" https://rambl.burvy.dev/admin
+   ```
+
+   | Check | Expected |
+   |---|---|
+   | `/` | `200` and a page titled Rambl |
+   | `/api/v1/config` | `200`, `{"google_client_id":null}` on a server with sign-in off |
+   | `/api/v1/snapshot` | `200` with a plan window |
+   | `/admin` | `404` with `RAMBL_ADMIN_EMAILS` empty, `200` with it set |
+   | `C:\Rambl\data\rambl.db` | exists, and grows with use |
+   | `C:\Rambl\data\backups` | one `rambl-<date>.db` from startup, one more each day |
+
+6. **Check the admin page shows real visitor addresses.** See below.
+
+7. **Rollback** if any check fails: see [Rollback](#rollback).
+
+## Checking that the admin page shows real visitor addresses
+
+The admin page's usage list shows the address each capture came from. It is only
+meaningful if Cloudflare's `CF-Connecting-IP` is being read, and that happens only when
+the request arrived through the tunnel.
+
+1. Capture one ramble from a phone on mobile data, not on the office wifi, so the
+   request can only have come through Cloudflare.
+2. Open <https://rambl.burvy.dev/admin> and sign in with an email in
+   `RAMBL_ADMIN_EMAILS`. Today's usage lists captures by address.
+3. The row for that capture should be your phone's public address (the mobile
+   carrier's range), not `127.0.0.1` and not the machine's `192.168.x.x`.
+
+| What you see | What it means | What to do |
+|---|---|---|
+| The phone's public address | The tunnel is forwarding the header and the server believes it. Nothing to set. | none |
+| `127.0.0.1` | The request came from the tunnel over loopback but the header was not used, or the capture was made against `localhost` or the LAN rather than through Cloudflare. | Confirm the capture came from `https://rambl.burvy.dev` on mobile data, not from `http://localhost:3160`. If it did, check the exe is the current build, since this is what #168 changed. |
+| `192.168.x.x` or another LAN address | The request bypassed the tunnel and came straight to the server. | Not a setting problem: the server is reachable directly. Keep the firewall and router forwarding as they are. |
+| No row for that capture at all | Nothing was captured, or the day has rolled over. | Capture again, then check `/api/v1/snapshot` from the same account. |
+
+If the tunnel ever moves to another machine, put that machine's address in
+`RAMBL_TRUSTED_PROXIES` and restart the server. Nothing else changes.
+
 ## Rollback
 
 Close the server window, remove the failed `rambl-server.exe`, rename
 `rambl-server.old.exe` back to `rambl-server.exe`, and double-click it.
+
+The database file only moves forward, so two cases matter:
+
+- **An exe from this release or later**: it opens the migrated file, changes nothing,
+  and does not read the columns it does not know. The site works; a deadline set by the
+  new build reads in the browser's zone until you roll forward again.
+- **An exe older than the anonymous-expiry release (#146)**: it re-ran every migration
+  on open, so it will refuse the migrated file and stop. Put back the
+  `rambl.db.<date>` copy taken in step 3, then start it again.
 
 ## Troubleshooting
 
@@ -75,5 +172,10 @@ Close the server window, remove the failed `rambl-server.exe`, rename
 - If the page works on `http://localhost:3160` but not through Cloudflare, the server
   is bound somewhere the tunnel cannot reach: check the address in the window against
   `RAMBL_BIND`.
+- If `/admin` answers 404, check `RAMBL_ADMIN_EMAILS` in `rambl.env`, that it is not
+  empty, that the signed-in email is in it, and that the server was restarted after
+  the edit.
+- If `/admin` shows `127.0.0.1` for a capture made through the tunnel, see
+  [Checking that the admin page shows real visitor addresses](#checking-that-the-admin-page-shows-real-visitor-addresses).
 - If sign-in or Jev fails, check the values in `rambl.env` without committing or
   sharing them.
