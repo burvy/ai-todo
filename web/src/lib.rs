@@ -351,9 +351,6 @@ pub fn App() -> impl IntoView {
     let (pane, set_pane) = signal(0_u8);
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
-    // Rambo peeks over at you while you type. The gear menu picks the tool
-    // (settings::Pen), and the pen decides which drawing of each pose he wears.
-    let (typing, set_typing) = signal(false);
     let pen_pos = RwSignal::new((0.0_f64, 0.0));
     // Transcript buffer: Rambo fills it while listening, CaptureBox reads it
     let capture_text = RwSignal::new(String::new());
@@ -375,78 +372,65 @@ pub fn App() -> impl IntoView {
     });
 
     view! {
-            <header>
-                <h1>"Rambl"</h1>
-                <account::HeaderLink />
-                <settings::GearMenu
-                    settings=view_settings
-                    set_settings=set_view_settings
-                    set_snapshot=set_snapshot
-                    set_error=set_error
-                />
-                <CaptureBox
-                    form_ref
-                    snapshot=snapshot
-                    set_snapshot=set_snapshot
-                    state=mascot_state
-                    set_state=set_mascot_state
-                    view_settings
-                    pen_pos
-                    capture_text
-                    pen_queue
-                    set_typing
-                />
-            </header>
-            {move || error.get().map(|e| view! {
-                <div class="error" aria-live="polite">{e}</div>
-            })}
-            <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event set_speech=set_brain_speech set_pose=set_brain_pose />
-            <nav class="pane-switch" aria-label="Show">
-                <button
-                    type="button"
-                    class:active=move || pane.get() == 0
-                    aria-pressed=move || (pane.get() == 0).to_string()
-                    on:click=move |_| show_pane(main_ref, 0, set_pane)
-                >"To do"</button>
-                <button
-                    type="button"
-                    class:active=move || pane.get() == 1
-                    aria-pressed=move || (pane.get() == 1).to_string()
-                    on:click=move |_| show_pane(main_ref, 1, set_pane)
-                >"Planner"</button>
-            </nav>
-            <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
-                <div class="tasks-pane">
-                    <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
-                </div>
-                <week::WeekGrid
-                    snapshot=snapshot
-                    settings=view_settings
-                    set_snapshot=set_snapshot
-                    set_error=set_error
-                    capture_text
-                    set_mascot_state=set_mascot_state
-                />
-            </main>
-            <Rambo
+        <header>
+            <h1>"Rambl"</h1>
+            <account::HeaderLink />
+            <settings::GearMenu
+                settings=view_settings
+                set_settings=set_view_settings
+                set_snapshot=set_snapshot
+                set_error=set_error
+            />
+            <CaptureBox
+                form_ref
+                snapshot=snapshot
+                set_snapshot=set_snapshot
                 state=mascot_state
                 set_state=set_mascot_state
+                view_settings
+                pen_pos
+                capture_text
+                pen_queue
                 talking
                 set_talking
-                snapshot
-                set_snapshot
                 set_error
-                view_settings
                 brain_speech
                 brain_pose
                 set_brain_event
-                pen_pos
-                capture_text
-                form_ref
-    pen=Signal::derive(move || view_settings.get().pen)
-                typing
             />
-        }
+        </header>
+        {move || error.get().map(|e| view! {
+            <div class="error" aria-live="polite">{e}</div>
+        })}
+        <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event set_speech=set_brain_speech set_pose=set_brain_pose />
+        <nav class="pane-switch" aria-label="Show">
+            <button
+                type="button"
+                class:active=move || pane.get() == 0
+                aria-pressed=move || (pane.get() == 0).to_string()
+                on:click=move |_| show_pane(main_ref, 0, set_pane)
+            >"To do"</button>
+            <button
+                type="button"
+                class:active=move || pane.get() == 1
+                aria-pressed=move || (pane.get() == 1).to_string()
+                on:click=move |_| show_pane(main_ref, 1, set_pane)
+            >"Planner"</button>
+        </nav>
+        <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
+            <div class="tasks-pane">
+                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
+            </div>
+            <week::WeekGrid
+                snapshot=snapshot
+                settings=view_settings
+                set_snapshot=set_snapshot
+                set_error=set_error
+                capture_text
+                set_mascot_state=set_mascot_state
+            />
+        </main>
+    }
 }
 
 /// The pane in view on a phone: 0 for tasks, 1 for the week. The two panes sit side by
@@ -556,10 +540,17 @@ fn CaptureBox(
     pen_pos: RwSignal<(f64, f64)>,
     capture_text: RwSignal<String>,
     pen_queue: RwSignal<Vec<TaskId>>,
-    /// True while you are typing, so Rambo peeks over at the box
-    set_typing: WriteSignal<bool>,
+    talking: ReadSignal<bool>,
+    set_talking: WriteSignal<bool>,
+    set_error: WriteSignal<Option<String>>,
+    brain_speech: ReadSignal<Option<String>>,
+    brain_pose: ReadSignal<String>,
+    set_brain_event: WriteSignal<Option<rambl_brain::Event>>,
 ) -> impl IntoView {
     let (text, set_text) = signal(String::new());
+    // Rambo peeks over at you while you type. He lives in the capture form, so
+    // the peek signal belongs with the input that drives it.
+    let (typing, set_typing) = signal(false);
 
     // Watch for speech transcript from Rambo: when capture_text changes, fill the input
     Effect::new(move |_| {
@@ -735,6 +726,24 @@ fn CaptureBox(
             >
                 // Rambo sits here; his pointer-events:none at home lets clicks reach the nest
             </button>
+            <Rambo
+                state
+                set_state
+                talking
+                set_talking
+                snapshot
+                set_snapshot
+                set_error
+                view_settings
+                brain_speech
+                brain_pose
+                set_brain_event
+                pen_pos
+                capture_text
+                form_ref
+                pen=Signal::derive(move || view_settings.get().pen)
+                typing
+            />
         </form>
     }
 }
