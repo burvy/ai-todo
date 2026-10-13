@@ -69,7 +69,7 @@ block/unblock ip <addr>, pause/unpause <email|id>, or plan <email|id> <anon|free
             if numbers.is_empty() {
                 numbers.push(TOP);
             }
-            if numbers.iter().any(|rank| *rank == 0) {
+            if numbers.contains(&0) {
                 return Err(BAD_RANK);
             }
             // `top 10 5` is the same request as `top 5 10`, not a mistake to refuse.
@@ -227,8 +227,8 @@ fn usage_line(rank: usize, row: &UsageRow, paused: bool) -> String {
         row.plan.as_str(),
         if paused { "PAUSED" } else { "" }
     )
-        .trim_end()
-        .to_owned()
+    .trim_end()
+    .to_owned()
 }
 
 /// An account named by id or email, with an error when there is no such account.
@@ -305,7 +305,7 @@ pub fn start_console(database: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::super::auth::Me;
-    use super::super::store::MemoryStore;
+    use super::super::store::{MemoryStore, SqliteStore};
     use super::*;
 
     fn signed_in(store: &MemoryStore, id: &str, email: &str) {
@@ -319,6 +319,22 @@ mod tests {
                     plan: Plan::Free,
                 },
                 "token",
+                SystemClock.now() + chrono::Duration::days(1),
+            )
+            .unwrap();
+    }
+
+    fn signed_in_sqlite(store: &SqliteStore, id: &str, email: &str) {
+        store
+            .upsert_user_and_session(
+                &Me {
+                    id: id.into(),
+                    email: email.into(),
+                    name: "Sam".into(),
+                    picture: None,
+                    plan: Plan::Free,
+                },
+                &format!("token-{}", id),
                 SystemClock.now() + chrono::Duration::days(1),
             )
             .unwrap();
@@ -452,8 +468,12 @@ mod tests {
                 store.record_capture(id, "203.0.113.1", today).unwrap();
             }
         }
-        store.ensure_anonymous("anon_visitor", today).unwrap();
-        store.record_capture("anon_visitor", "203.0.113.1", today).unwrap();
+        store
+            .ensure_anonymous("anon_visitor", SystemClock.now())
+            .unwrap();
+        store
+            .record_capture("anon_visitor", "203.0.113.1", today)
+            .unwrap();
     }
 
     #[test]
@@ -519,7 +539,10 @@ mod tests {
     fn a_top_rank_must_be_a_positive_number() {
         for input in ["top 0", "top 0 3", "top 3 0", "top x", "top 3 x", "top 3.5"] {
             let error = parse_command(input).expect_err(input);
-            assert!(error.contains("number"), "{input:?} should say what a rank is");
+            assert!(
+                error.contains("number"),
+                "{input:?} should say what a rank is"
+            );
         }
         assert!(parse_command("top 1 2 tomorrow").is_err());
     }
@@ -541,12 +564,17 @@ mod tests {
     #[test]
     fn top_ranks_the_biggest_spenders_first() {
         let store = MemoryStore::default();
-        store_with_spenders(
-            &store,
-            &[("google-1", 5), ("google-2", 9), ("google-3", 5)],
-        );
+        store_with_spenders(&store, &[("google-1", 5), ("google-2", 9), ("google-3", 5)]);
 
-        let text = run(&store, Command::Top { from: 1, to: 3, order: UsageOrder::AllTime }).unwrap();
+        let text = run(
+            &store,
+            Command::Top {
+                from: 1,
+                to: 3,
+                order: UsageOrder::AllTime,
+            },
+        )
+        .unwrap();
         let rows: Vec<&str> = text.lines().skip(1).collect();
         assert_eq!(rows.len(), 3, "got: {text}");
         assert!(
@@ -568,11 +596,25 @@ mod tests {
         let store = MemoryStore::default();
         store_with_spenders(&store, &[("a", 5), ("b", 4), ("c", 3), ("d", 2)]);
 
-        let text = run(&store, Command::Top { from: 2, to: 3, order: UsageOrder::AllTime }).unwrap();
+        let text = run(
+            &store,
+            Command::Top {
+                from: 2,
+                to: 3,
+                order: UsageOrder::AllTime,
+            },
+        )
+        .unwrap();
         let rows: Vec<&str> = text.lines().skip(1).collect();
         assert_eq!(rows.len(), 2, "got: {text}");
-        assert!(rows[0].starts_with("2 ") && rows[0].contains("b@"), "{rows:?}");
-        assert!(rows[1].starts_with("3 ") && rows[1].contains("c@"), "{rows:?}");
+        assert!(
+            rows[0].starts_with("2 ") && rows[0].contains("b@"),
+            "{rows:?}"
+        );
+        assert!(
+            rows[1].starts_with("3 ") && rows[1].contains("c@"),
+            "{rows:?}"
+        );
         assert!(
             !text.contains('d'),
             "a rank outside the range is not shown: {text}"
@@ -585,15 +627,34 @@ mod tests {
         let store = MemoryStore::default();
         store_with_spenders(&store, &[("a", 5)]);
 
-        let text = run(&store, Command::Top { from: 1, to: 10, order: UsageOrder::AllTime }).unwrap();
+        let text = run(
+            &store,
+            Command::Top {
+                from: 1,
+                to: 10,
+                order: UsageOrder::AllTime,
+            },
+        )
+        .unwrap();
         assert!(text.contains("(only 2 users)"), "got: {text}");
         assert!(
-            text.lines().filter(|line| line.starts_with(['0', '1', '2'])).count() == 2,
+            text.lines()
+                .filter(|line| line.starts_with(['0', '1', '2']))
+                .count()
+                == 2,
             "the two accounts that exist are printed: {text}"
         );
 
         let empty = MemoryStore::default();
-        let text = run(&empty, Command::Top { from: 1, to: 5, order: UsageOrder::AllTime }).unwrap();
+        let text = run(
+            &empty,
+            Command::Top {
+                from: 1,
+                to: 5,
+                order: UsageOrder::AllTime,
+            },
+        )
+        .unwrap();
         assert!(text.contains("no accounts"), "got: {text}");
     }
 
@@ -606,16 +667,28 @@ mod tests {
         signed_in(&store, "google-2", "two@example.com");
         // google-1 spent a lot yesterday and nothing today; google-2 the reverse.
         for _ in 0..7 {
-            store.record_capture("google-1", "203.0.113.1", yesterday).unwrap();
+            store
+                .record_capture("google-1", "203.0.113.1", yesterday)
+                .unwrap();
         }
         for _ in 0..2 {
-            store.record_capture("google-2", "203.0.113.1", yesterday).unwrap();
+            store
+                .record_capture("google-2", "203.0.113.1", yesterday)
+                .unwrap();
         }
         store
             .record_capture("google-2", "203.0.113.1", SystemClock.now().date_naive())
             .unwrap();
 
-        let all = run(&store, Command::Top { from: 1, to: 1, order: UsageOrder::AllTime }).unwrap();
+        let all = run(
+            &store,
+            Command::Top {
+                from: 1,
+                to: 1,
+                order: UsageOrder::AllTime,
+            },
+        )
+        .unwrap();
         assert!(all.contains("one@example.com"), "all time: {all}");
         let today = run(
             &store,
@@ -636,41 +709,75 @@ mod tests {
         store_with_spenders(&store, &[("google-1", 5)]);
         run(&store, Command::Pause("google-1".into())).unwrap();
 
-        let text = run(&store, Command::Top { from: 1, to: 5, order: UsageOrder::AllTime }).unwrap();
+        let text = run(
+            &store,
+            Command::Top {
+                from: 1,
+                to: 5,
+                order: UsageOrder::AllTime,
+            },
+        )
+        .unwrap();
         assert!(
-            text.lines().any(|line| line.contains("google-1") && line.ends_with("PAUSED")),
+            text.lines()
+                .any(|line| line.contains("google-1") && line.ends_with("PAUSED")),
             "got: {text}"
         );
     }
 
     /// Pause and unpause are one mechanism with `block user`, and say what happened.
     #[test]
-    fn pause_and_unpause_round_trip_on_both_stores() {
-        for store in [
-            Box::new(MemoryStore::new()) as Box<dyn Store>,
-            Box::new(SqliteStore::open_in_memory().unwrap()),
-        ] {
-            signed_in(&store, "google-1", "sam@example.com");
-            signed_in(&store, "google-2", "kim@example.com");
+    fn pause_and_unpause_round_trip_on_memory_store() {
+        let store = MemoryStore::new();
+        signed_in(&store, "google-1", "sam@example.com");
+        signed_in(&store, "google-2", "kim@example.com");
 
-            assert_eq!(
-                run(&store, Command::Pause("sam@example.com".into())).unwrap(),
-                "paused google-1"
-            );
-            assert!(store.is_user_blocked("google-1").unwrap());
-            assert!(!store.is_user_blocked("google-2").unwrap(), "one only");
-            // The same thing as the older command, so there is one mechanism.
-            assert_eq!(
-                run(&store, Command::Unblock(Target::User("sam@example.com".into()))).unwrap(),
-                "unpaused google-1"
-            );
-            assert!(!store.is_user_blocked("google-1").unwrap());
+        assert_eq!(
+            run(&store, Command::Pause("sam@example.com".into())).unwrap(),
+            "paused google-1"
+        );
+        assert!(store.is_user_blocked("google-1").unwrap());
+        assert!(!store.is_user_blocked("google-2").unwrap(), "one only");
+        // Unblock lifts the same block pause set, so it works.
+        assert_eq!(
+            run(
+                &store,
+                Command::Unblock(Target::User("sam@example.com".into()))
+            )
+            .unwrap(),
+            "unblocked user google-1"
+        );
+        assert!(!store.is_user_blocked("google-1").unwrap());
 
-            assert_eq!(
-                run(&store, Command::Unpause("kim@example.com".into())).unwrap(),
-                "google-2 was not paused"
-            );
-        }
+        assert_eq!(
+            run(&store, Command::Unpause("kim@example.com".into())).unwrap(),
+            "google-2 was not paused"
+        );
+    }
+
+    /// Pause and unpause work on SqliteStore too.
+    #[test]
+    fn pause_and_unpause_round_trip_on_sqlite_store() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        signed_in_sqlite(&store, "google-1", "sam@example.com");
+        signed_in_sqlite(&store, "google-2", "kim@example.com");
+
+        assert_eq!(
+            run(&store, Command::Pause("sam@example.com".into())).unwrap(),
+            "paused google-1"
+        );
+        assert!(store.is_user_blocked("google-1").unwrap());
+        assert!(!store.is_user_blocked("google-2").unwrap(), "one only");
+        assert_eq!(
+            run(&store, Command::Unpause("sam@example.com".into())).unwrap(),
+            "unpaused google-1"
+        );
+        assert!(!store.is_user_blocked("google-1").unwrap());
+
+        assert_eq!(
+            run(&store, Command::Unpause("kim@example.com".into())).unwrap(),
+            "google-2 was not paused"
+        );
     }
 
     /// Pausing an account nobody holds says so and blocks nothing.
@@ -679,9 +786,12 @@ mod tests {
         let store = MemoryStore::new();
         signed_in(&store, "google-1", "sam@example.com");
 
-        let missing_email = run(&store, Command::Pause("nobody@example.com".into()))
-            .expect_err("no such account");
-        assert!(missing_email.contains("nobody@example.com"), "got: {missing_email}");
+        let missing_email =
+            run(&store, Command::Pause("nobody@example.com".into())).expect_err("no such account");
+        assert!(
+            missing_email.contains("nobody@example.com"),
+            "got: {missing_email}"
+        );
         let missing_id = run(&store, Command::Pause("google-99".into())).expect_err("no such id");
         assert!(missing_id.contains("google-99"), "got: {missing_id}");
         assert!(store.blocks().unwrap().is_empty(), "nothing was paused");
