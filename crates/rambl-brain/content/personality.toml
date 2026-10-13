@@ -16,7 +16,6 @@ cheer_loss = 0.2
 wander = 8
 play = 12
 idle_line = 6
-react = 2
 
 [day]
 # He dozes from night_start until night_end, in local hours.
