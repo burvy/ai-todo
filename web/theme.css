@@ -812,9 +812,13 @@ a {
   white-space: nowrap;
 }
 
-/* A placed task: a wash of ink across the hour lines, marked by its edge. */
+/* A placed task: a wash of ink across the hour lines, marked by its edge.
+   The hour rows are positioned too and come later in the document, so without
+   a raised layer the slip paints under them and its grip never gets hit by
+   the pointer; a small layer puts the paper's edge back under the pen. */
 .placement {
   position: absolute;
+  z-index: 2;
   left: 0;
   right: 0;
   padding: var(--space-1);
@@ -877,6 +881,7 @@ a {
    guide line waiting to be inked. */
 .landing {
   position: absolute;
+  z-index: 3;
   left: 0;
   right: 0;
   border: 1px dashed var(--accent);

@@ -67,7 +67,10 @@ c. Code: `web/src/lib.rs:CaptureBox, TaskList`;
 ### 3. Reorder tasks
 a. Dragging task rows changes their saved order.
 b. Drag a task row above or below another row.
-c. Code: `web/src/lib.rs:TaskList`; `web/src/api.rs:reorder_tasks`;
+c. Rows for series occurrences are not reorderable: a drag that starts or lands
+on one does nothing (occurrences share the series' row, not a slot of their own —
+ARCHITECTURE.md 7.1 lists reordering them as out of scope).
+d. Code: `web/src/lib.rs:reorder_ids`; `web/src/api.rs:reorder_tasks`;
 `server/src/v2/http.rs:reorder`; `server/src/v2/app.rs:reorder`.
 
 ### 4. Edit through Rambo

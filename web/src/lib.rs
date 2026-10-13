@@ -33,6 +33,42 @@ fn held<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a todo_core::Task> {
     snapshot.tasks.iter().find(|task| task.id.0 == id)
 }
 
+/// The order the server wants after moving `dragged` before `target`, or `None`
+/// when the drop is not a reorder at all.
+///
+/// The server renumbers stored tasks only (`ids must list every task exactly once`),
+/// and a snapshot lists series occurrences too — rows with `{series}:{date}` ids
+/// that are expanded on the fly and share the series' row. A slip dragged from or
+/// onto one is not a reorder, so the handler skips the call instead of failing 400.
+fn reorder_ids(snapshot: &Snapshot, dragged: &TaskId, target: &TaskId) -> Option<Vec<TaskId>> {
+    if snapshot
+        .tasks
+        .iter()
+        .any(|task| task.source == Source::Series && (task.id == *dragged || task.id == *target))
+    {
+        return None;
+    }
+    let mut new_order = Vec::new();
+    let mut found_target = false;
+    for task in &snapshot.tasks {
+        if task.source == Source::Series {
+            continue;
+        }
+        if task.id == *dragged {
+            continue;
+        }
+        if task.id == *target && !found_target {
+            new_order.push(dragged.clone());
+            found_target = true;
+        }
+        new_order.push(task.id.clone());
+    }
+    if !found_target {
+        new_order.push(dragged.clone());
+    }
+    Some(new_order)
+}
+
 /// The body that flips `id` between done and not done, against the version held now.
 fn toggle_done_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBody> {
     let task = held(snapshot, id)?;
@@ -1219,30 +1255,14 @@ fn TaskList(
                                     }
                                 });
 
-                                // Handle task reorder drop
+                                // Handle task reorder drop. A drop that involves a
+                                // series occurrence is a no-op here, not a reorder
+                                // the server would refuse (reorder_ids explains).
                                 if let Some(dragged_id) = dragged_task.get()
                                     && dragged_id != task_id_clone
+                                    && let Some(new_order) =
+                                        reorder_ids(&snapshot.get_untracked(), &dragged_id, &task_id_clone)
                                 {
-                                    let snapshot_tasks = snapshot.get().tasks;
-
-                                    // Reorder: move dragged task to position of dropped task
-                                    let mut new_order = Vec::new();
-                                    let mut found_target = false;
-
-                                    for t in &snapshot_tasks {
-                                        if t.id == dragged_id {
-                                            continue;
-                                        }
-                                        if t.id == task_id_clone && !found_target {
-                                            new_order.push(dragged_id.clone());
-                                            found_target = true;
-                                        }
-                                        new_order.push(t.id.clone());
-                                    }
-                                    if !found_target {
-                                        new_order.push(dragged_id.clone());
-                                    }
-
                                     wasm_bindgen_futures::spawn_local(async move {
                                         if let Ok(new_snap) = api::reorder_tasks(new_order).await {
                                             set_snapshot_clone.set(new_snap);
@@ -1534,6 +1554,42 @@ mod tests {
 
         let bump = next_priority_body(&snapshot, &id).expect("task is listed");
         assert_eq!(bump.updated_at, Some(snapshot.tasks[0].updated_at));
+    }
+
+    /// Reorder sends the server exactly the stored tasks, so the occurrence rows
+    /// a snapshot carries are kept out of the list — and a drop that starts or
+    /// lands on one is not a reorder at all.
+    #[test]
+    fn a_reorder_lists_stored_tasks_once_and_never_an_occurrence() {
+        let mut snapshot = api::fixture_snapshot();
+        // An expanded day of a repeating series sits between the stored tasks.
+        let mut occurrence = snapshot.tasks[0].clone();
+        occurrence.id = TaskId("standup:2026-10-14".into());
+        occurrence.source = Source::Series;
+        snapshot.tasks.insert(1, occurrence);
+
+        let first = snapshot.tasks[0].id.clone();
+        let third = snapshot.tasks[2].id.clone();
+        let order = reorder_ids(&snapshot, &third, &first).expect("stored slip onto stored slip");
+        assert_eq!(
+            order.first(),
+            Some(&third),
+            "the slip moves before its target"
+        );
+        assert_eq!(order.len(), 2, "only stored tasks, exactly once");
+        assert!(!order.iter().any(|id| id.0.contains(':')));
+
+        let occ = snapshot.tasks[1].id.clone();
+        assert_eq!(
+            reorder_ids(&snapshot, &occ, &first),
+            None,
+            "dragged occurrence"
+        );
+        assert_eq!(
+            reorder_ids(&snapshot, &first, &occ),
+            None,
+            "dropped on occurrence"
+        );
     }
 
     #[test]
