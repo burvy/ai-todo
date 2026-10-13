@@ -2083,7 +2083,8 @@ mod tests {
     ];
 
     use super::*;
-    use chrono::TimeZone;
+    use chrono::{TimeZone, Weekday};
+    use todo_core::Recurrence;
 
     /// The user the contract suite writes as. Scoping is part of the contract now, so
     /// the tests have to name an owner like a real caller does.
@@ -2138,6 +2139,146 @@ mod tests {
             stored[0].due_tz.as_deref(),
             Some("America/New_York"),
             "a deadline's zone must survive a round trip"
+        );
+    }
+
+    /// A Monday and Thursday series at 07:00, for the store contract.
+    fn series(id: &str, order: i64) -> Series {
+        Series {
+            id: SeriesId(id.into()),
+            title: format!("Series {id}"),
+            duration_min: 45,
+            rule: Recurrence::new([Weekday::Mon, Weekday::Thu], None).unwrap(),
+            start_day: NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+            time_of_day: NaiveTime::from_hms_opt(7, 0, 0),
+            zone: "America/New_York".into(),
+            external_uid: None,
+            created: at(9),
+            order,
+        }
+    }
+
+    fn on(ymd: (i32, u32, u32)) -> NaiveDate {
+        NaiveDate::from_ymd_opt(ymd.0, ymd.1, ymd.2).unwrap()
+    }
+
+    /// A series and its exceptions survive a round trip through whichever store, one
+    /// exception is held per date, and deleting the series takes them with it
+    /// (docs/ARCHITECTURE.md 7.1).
+    fn series_round_trip(store: &dyn Store) {
+        let mut full = series("s1", 0);
+        full.rule = Recurrence::new(
+            [Weekday::Tue, Weekday::Fri],
+            Some(NaiveDate::from_ymd_opt(2026, 12, 18).unwrap()),
+        )
+        .unwrap();
+        full.external_uid = Some("series-uid@rambl".into());
+        store.put_series(USER, full.clone()).unwrap();
+
+        assert_eq!(
+            store.series(USER).unwrap(),
+            vec![full.clone()],
+            "every field of a series must survive"
+        );
+
+        let moved = ExceptionKind::Moved {
+            to: When::At(at(18)),
+            to_tz: Some("America/Los_Angeles".into()),
+        };
+        for (date, kind) in [
+            (on((2026, 10, 13)), ExceptionKind::Done),
+            (on((2026, 10, 16)), ExceptionKind::Skipped),
+            (on((2026, 10, 20)), moved.clone()),
+        ] {
+            store
+                .put_exception(USER, &full.id, SeriesException { date, kind })
+                .unwrap();
+        }
+        let held = store.exceptions(USER, &full.id).unwrap();
+        assert_eq!(held.len(), 3);
+        assert_eq!(
+            held[2].kind, moved,
+            "a moved occurrence keeps its new instant and its zone"
+        );
+
+        // One row per date: the same day answered twice is one answer, the later one.
+        store
+            .put_exception(
+                USER,
+                &full.id,
+                SeriesException {
+                    date: on((2026, 10, 13)),
+                    kind: ExceptionKind::Skipped,
+                },
+            )
+            .unwrap();
+        let held = store.exceptions(USER, &full.id).unwrap();
+        assert_eq!(held.len(), 3, "one date is never held twice");
+        assert_eq!(held[0].kind, ExceptionKind::Skipped);
+
+        // And clearing one puts the day back to the rule.
+        store
+            .delete_exception(USER, &full.id, on((2026, 10, 16)))
+            .unwrap();
+        assert_eq!(
+            store.exceptions(USER, &full.id).unwrap().len(),
+            2,
+            "a cleared exception is gone"
+        );
+
+        assert!(store.delete_series(USER, &full.id).unwrap());
+        assert!(store.series(USER).unwrap().is_empty());
+        assert!(
+            store.exceptions(USER, &full.id).unwrap().is_empty(),
+            "a deleted series leaves no exceptions behind"
+        );
+        assert!(!store.delete_series(USER, &full.id).unwrap());
+    }
+
+    /// A series is owned like a task: another person sees none of it, cannot delete it
+    /// by name, and cannot reach its exceptions.
+    fn series_are_isolated(store: &dyn Store) {
+        store.put_series(USER, series("mine", 0)).unwrap();
+        store.put_series(OTHER, series("theirs", 0)).unwrap();
+        store
+            .put_exception(
+                USER,
+                &SeriesId("mine".into()),
+                SeriesException {
+                    date: on((2026, 10, 12)),
+                    kind: ExceptionKind::Done,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(store.series(USER).unwrap().len(), 1);
+        assert_eq!(store.series(OTHER).unwrap().len(), 1);
+        assert!(
+            store
+                .exceptions(OTHER, &SeriesId("mine".into()))
+                .unwrap()
+                .is_empty(),
+            "bob read alice's exceptions"
+        );
+
+        assert!(
+            !store
+                .delete_series(OTHER, &SeriesId("mine".into()))
+                .unwrap(),
+            "bob cannot delete alice's series by name"
+        );
+        assert_eq!(
+            store.series(USER).unwrap().len(),
+            1,
+            "alice kept her series"
+        );
+        assert_eq!(
+            store
+                .exceptions(USER, &SeriesId("mine".into()))
+                .unwrap()
+                .len(),
+            1,
+            "alice kept her exceptions"
         );
     }
 
@@ -2380,6 +2521,17 @@ mod tests {
         store
             .put(USER, anonymous_task("u1", Some("uid-1")))
             .unwrap();
+        store.put_series(ANON, series("anon-series", 0)).unwrap();
+        store
+            .put_exception(
+                ANON,
+                &SeriesId("anon-series".into()),
+                SeriesException {
+                    date: on((2026, 10, 12)),
+                    kind: ExceptionKind::Done,
+                },
+            )
+            .unwrap();
 
         store.adopt_anonymous(ANON, USER).unwrap();
 
@@ -2402,6 +2554,19 @@ mod tests {
             "a duplicate of a signed-in event is dropped, not doubled"
         );
         assert!(store.tasks(ANON).unwrap().is_empty());
+        assert_eq!(
+            store.series(USER).unwrap().len(),
+            1,
+            "a series made while anonymous moves with the tasks"
+        );
+        assert_eq!(
+            store
+                .exceptions(USER, &SeriesId("anon-series".into()))
+                .unwrap()
+                .len(),
+            1,
+            "and its exceptions move with it"
+        );
         assert!(
             !store.anonymous_exists(ANON).unwrap(),
             "the anonymous id must stop working once it is adopted"
@@ -2525,6 +2690,8 @@ mod tests {
         users_are_isolated(&MemoryStore::new());
         store_contract(&MemoryStore::new());
         due_tz_round_trips(&MemoryStore::new());
+        series_round_trip(&MemoryStore::new());
+        series_are_isolated(&MemoryStore::new());
     }
 
     #[test]
@@ -2532,6 +2699,8 @@ mod tests {
         users_are_isolated(&SqliteStore::open_in_memory().unwrap());
         store_contract(&SqliteStore::open_in_memory().unwrap());
         due_tz_round_trips(&SqliteStore::open_in_memory().unwrap());
+        series_round_trip(&SqliteStore::open_in_memory().unwrap());
+        series_are_isolated(&SqliteStore::open_in_memory().unwrap());
     }
 
     // -- SQLite specifics the contract cannot cover through the trait.
@@ -2924,6 +3093,46 @@ mod tests {
         assert_eq!(store.expire_anonymous(before - DAY * 30).unwrap(), 0);
         assert!(store.anonymous_exists("anon_old").unwrap());
         assert_eq!(store.expire_anonymous(Utc::now() + DAY).unwrap(), 1);
+        let version: i64 = store
+            .conn
+            .lock()
+            .expect("db mutex")
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// A version-7 database gains the two series tables, keeps what it had, and can hold a
+    /// series from then on.
+    #[test]
+    fn a_version_7_database_gains_the_series_tables() {
+        let path = unique_temp_dir().join("rambl.db");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        {
+            let conn = database_at(&path, 7);
+            conn.execute_batch(
+                "INSERT INTO v2_users (id, email, name, picture, created_at, plan) VALUES
+                     ('dana', 'd@example.com', 'Dana', NULL, '2026-01-01T00:00:00+00:00', 'free');
+                 INSERT INTO v2_tasks (id, title, duration_min, when_kind, when_time, done,
+                     \"order\", label, priority, source, created, external_uid, updated_at,
+                     due_tz, user_id) VALUES
+                     ('d1', 'Dana task', 30, 'anytime', NULL, 0, 0, 'work', 'medium', 'text',
+                      '2026-02-03T04:05:06+00:00', NULL, '2026-02-03T04:05:06+00:00', NULL,
+                      'dana');",
+            )
+            .unwrap();
+        }
+
+        let store = SqliteStore::open(&path).expect("a v7 database must open and migrate");
+        assert_eq!(store.tasks("dana").unwrap().len(), 1, "her task survives");
+        assert!(
+            store.series("dana").unwrap().is_empty(),
+            "a database written before series existed starts with none"
+        );
+        store.put_series("dana", series("s1", 0)).unwrap();
+        assert_eq!(store.series("dana").unwrap().len(), 1, "and holds one now");
         let version: i64 = store
             .conn
             .lock()
