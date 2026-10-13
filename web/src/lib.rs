@@ -1215,6 +1215,8 @@ fn TaskList(
                         draggable="true"
                         on:dragstart=handle_drag_start
                         on:dragend=handle_drag_end
+                        on:touchstart=move |ev: leptos::ev::TouchEvent| { let _ = ev; }
+                        on:touchend=move |ev: leptos::ev::TouchEvent| { let _ = ev; }
                     >
                         <input
                             type="checkbox"
@@ -1645,7 +1647,30 @@ mod pane_tests {
     use super::pane_at;
 
     #[test]
-    fn a_phone_swipe_maps_to_the_nearest_pane() {
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SwipeAction { Delete, SnapBack }
+
+pub fn swipe_action(delta_x: f64, threshold: f64) -> SwipeAction {
+    if delta_x > threshold { SwipeAction::Delete } else { SwipeAction::SnapBack }
+}
+
+#[cfg(test)]
+mod swipe_tests {
+    use super::*;
+    #[test]
+    fn swipe_past_threshold_deletes() {
+        assert_eq!(swipe_action(80.0, 50.0), SwipeAction::Delete);
+    }
+    #[test]
+    fn short_swipe_snaps_back() {
+        assert_eq!(swipe_action(20.0, 50.0), SwipeAction::SnapBack);
+    }
+    #[test]
+    fn exactly_threshold_deletes() {
+        assert_eq!(swipe_action(50.0, 50.0), SwipeAction::Delete);
+    }
+}
+
         assert_eq!(pane_at(0.0, 400.0), 0);
         assert_eq!(pane_at(180.0, 400.0), 0);
         assert_eq!(pane_at(220.0, 400.0), 1);

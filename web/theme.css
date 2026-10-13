@@ -879,3 +879,10 @@ button {
   }
 }
 .placement { position: absolute; left: 0; right: 0; box-sizing: border-box; border: 1px solid var(--rule); background: var(--paper); }
+/* Section 4: row delete - desktop hover + phone swipe */
+li.task-row { position: relative; touch-action: pan-y; }
+li.task-row:hover .delete { opacity: 1; pointer-events: auto; }
+.delete { opacity: 0; pointer-events: none; transition: opacity .15s; position: absolute; right: .5em; top: 50%; transform: translateY(-50%); }
+@media (max-width: 720px) { .delete { opacity: 1; pointer-events: auto; font-size: .75rem; } }
+.swipe-deleted { transform: translateX(110%); transition: transform .22s ease-out; }
+.swipe-snapped { transform: translateX(0); transition: transform .18s ease-out; }
