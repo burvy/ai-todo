@@ -84,12 +84,15 @@ elsewhere, the page says so and reloads, and the reload keeps the day count you 
 edit against an older version is refused with `stale_update` and changes nothing (#146).
 
 **The server listens on this machine only.** It used to listen on every network
-interface, which put it on the LAN: someone on the network could reach it directly
-instead of through the tunnel, and on Windows every new build path popped a firewall
-prompt. It now listens on `127.0.0.1`, which is all the tunnel needs. `RAMBL_BIND` brings
-the old behaviour back on purpose (`0.0.0.0`, or one address), and a value that is not an
-IP address stops the server with an error rather than falling back. The window prints
-the address it actually bound (#185, merged after these notes were written).
+interface, which put it on the LAN where anything that could reach the box could talk to
+it, and on Windows every new build path popped a firewall prompt. It now listens on
+`127.0.0.1`, which is all the tunnel on this machine needs. `RAMBL_BIND` brings the old
+behaviour back on purpose (`0.0.0.0`, or one address), and a value that is not an IP
+address stops the server with an error rather than falling back. Widening the bind does
+not by itself let anyone name their own address — a peer's `CF-Connecting-IP` is still
+only read from a trusted proxy — but a tunnel arriving from outside then has to be named
+in `RAMBL_TRUSTED_PROXIES`. The window prints the address it actually bound (#185, merged
+after these notes were written).
 
 **Task ids cannot collide between accounts.** Two accounts cannot claim the same task
 id (#148).

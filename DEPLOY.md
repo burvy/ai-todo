@@ -88,8 +88,11 @@ The notes for what changed, and the PR behind each item, are in
      networks (`10.0.0.1, 10.0.0.0/8`). Entries that are not a real address or network
      are ignored.
    - `RAMBL_BIND=`, left empty. The server listens on `127.0.0.1`, which is all the
-     tunnel on this machine needs. Set `0.0.0.0` only if the server should also serve
-     the LAN, and expect the trust in `CF-Connecting-IP` to matter again from then on.
+     tunnel on this machine needs; that keeps the server off the LAN. Set `0.0.0.0`
+     only if the server should also serve the LAN, and set `RAMBL_TRUSTED_PROXIES` to
+     cloudflared's own address in the same edit: the tunnel will no longer arrive over
+     loopback, and a peer's `CF-Connecting-IP` is only read from a trusted proxy. Never
+     list a client's address or network there — that would let the client name itself.
      A value that is not an IP address stops the server instead of falling back.
 
 3. **Before swapping the exe**, copy `C:\Rambl\data\rambl.db` to `rambl.db.<date>`.
