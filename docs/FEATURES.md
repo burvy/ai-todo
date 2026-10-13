@@ -281,9 +281,9 @@ c. Code: `server/src/v2/admin_web.rs` (data lives in `server/src/v2/admin.rs` an
 d. Block and plan actions reuse the console's resolution: a user may be named by id or email, and the same `block`, `unblock`, `blocked` and `plan` storage calls serve both.
 
 ### 7. Data export
-a. Everything the caller owns can be downloaded as one JSON file: the task list with every field. Planner settings are not included; they are stored in the browser, not on the server.
-b. Call `GET /api/v1/export`, signed in or with the anonymous id; the download is named `rambl-export-YYYY-MM-DD.json` (the date is the caller's own).
-c. Code: `server/src/v2/http.rs:export`.
+a. Everything the caller owns can be downloaded as one JSON file: the task list with every field. Planner settings are not included; they are stored in the browser, not on the server. The response is `Cache-Control: no-store`, so a cache does not keep a person's task list.
+b. Call `GET /api/v1/export`, signed in or with the anonymous id; the download is named `rambl-export-YYYY-MM-DD.json` (the date is the caller's own). A request with no credentials at all is a brand-new anonymous account: it downloads an empty list, not a 401, exactly as the rest of the API treats a signed-out visitor.
+c. Code: `server/src/v2/http.rs:export`, reading through `App::tasks` rather than `App::snapshot`, so a download does not run the planner.
 
 ## VIII. DATES
 
