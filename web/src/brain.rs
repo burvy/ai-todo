@@ -201,6 +201,7 @@ mod overdue_tests {
             plan: Plan::default(),
             tz: "UTC".into(),
             generated: Utc::now(),
+            series: Vec::new(),
         }
     }
 

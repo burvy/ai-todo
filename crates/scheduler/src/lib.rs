@@ -3,7 +3,8 @@
 use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
 use chrono_tz::Tz;
 use std::collections::HashMap;
-use todo_core::When;
+use std::str::FromStr;
+use todo_core::{Occurrence, OccurrenceStatus, When};
 
 const MIN_BLOCK_MIN: u16 = 5;
 
@@ -106,6 +107,57 @@ pub fn plan(
         placements,
         unplaced,
     }
+}
+
+/// The weekly occurrences of one series between `window_start` (inclusive) and
+/// `window_end` (exclusive), with the exceptions applied (ARCHITECTURE.md 7.1).
+///
+/// Pure and deterministic: no wall clock, no store. Each occurrence's instant is
+/// derived in the zone stored on the series, so a series keeps its local time
+/// across DST: 07:00 stays 07:00 while the UTC instant shifts. An undone past
+/// occurrence is never carried forward — it stays a fixed block on its own day,
+/// and only one-shot tasks can become overdue.
+pub fn expand(
+    series: &todo_core::Series,
+    window_start: NaiveDate,
+    window_end: NaiveDate,
+    exceptions: &[todo_core::SeriesException],
+    ctx: &todo_core::LocalContext,
+) -> Vec<Occurrence> {
+    // A zone that will not parse (a hand-edited row) falls back to the zone the
+    // request came in; an occurrence at a slightly shifted time beats no data.
+    let zone = Tz::from_str(&series.zone).unwrap_or(ctx.tz);
+    let local = todo_core::LocalContext {
+        now: ctx.now,
+        tz: zone,
+    };
+    let at = |date: NaiveDate| match series.time_of_day {
+        Some(time) => When::At(local.at(date, time)),
+        None => When::Anytime,
+    };
+    (0..)
+        .map(|offset| window_start + Duration::days(offset))
+        .take_while(|date| *date < window_end)
+        .filter(|date| series.rule.covers(series.start_day, *date))
+        .filter_map(|date| {
+            let exception = exceptions.iter().find(|held| held.date == date);
+            let (status, when, due_tz) = match exception.map(|held| &held.kind) {
+                Some(todo_core::ExceptionKind::Skipped) => return None,
+                Some(todo_core::ExceptionKind::Done) => (OccurrenceStatus::Done, at(date), None),
+                Some(todo_core::ExceptionKind::Moved { to, to_tz }) => {
+                    (OccurrenceStatus::Moved, *to, to_tz.clone())
+                }
+                None => (OccurrenceStatus::Open, at(date), None),
+            };
+            Some(Occurrence {
+                series: series.id.clone(),
+                date,
+                when,
+                status,
+                due_tz,
+            })
+        })
+        .collect()
 }
 
 /// The latest allowed end for a flexible task; `None` when unconstrained
@@ -539,6 +591,254 @@ mod tests {
             result.placements[0].start,
             Utc.with_ymd_and_hms(2026, 1, 6, 9, 0, 0).unwrap(),
             "overdue should land on the next working day"
+        );
+    }
+
+    // ---- expansion (recurring tasks, ARCHITECTURE.md 7.1) --------
+
+    fn gym() -> todo_core::Series {
+        todo_core::Series {
+            id: todo_core::SeriesId("s1".into()),
+            title: "Gym".into(),
+            duration_min: 45,
+            rule: todo_core::Recurrence::new([Weekday::Mon, Weekday::Thu], None).unwrap(),
+            start_day: NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(), // Monday
+            time_of_day: Some(NaiveTime::from_hms_opt(7, 0, 0).unwrap()),
+            zone: "America/New_York".into(),
+            external_uid: None,
+            created: Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+            order: -1,
+        }
+    }
+
+    fn exception(date: NaiveDate, kind: todo_core::ExceptionKind) -> todo_core::SeriesException {
+        todo_core::SeriesException { date, kind }
+    }
+
+    fn days_of(occurrences: &[Occurrence]) -> Vec<chrono::Weekday> {
+        occurrences.iter().map(|o| o.date.weekday()).collect()
+    }
+
+    #[test]
+    fn occurrences_fall_on_the_series_weekdays_inside_the_window() {
+        // Mon 12th .. Sun 18th: Monday and Thursday only.
+        let occurrences = expand(
+            &gym(),
+            NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 10, 19).unwrap(),
+            &[],
+            &ctx(
+                Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+                chrono_tz::America::New_York,
+            ),
+        );
+        assert_eq!(days_of(&occurrences), vec![Weekday::Mon, Weekday::Thu]);
+        // 07:00 New York in October (EDT) is 11:00 UTC.
+        assert_eq!(
+            occurrences[0].when,
+            When::At(Utc.with_ymd_and_hms(2026, 10, 12, 11, 0, 0).unwrap())
+        );
+        assert!(
+            occurrences
+                .iter()
+                .all(|o| o.status == OccurrenceStatus::Open && o.series.0 == "s1")
+        );
+    }
+
+    #[test]
+    fn the_window_bounds_are_exact() {
+        // A window that opens on the occurrence day includes it; one that closes
+        // on it (exclusive end) does not.
+        let monday = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let now = Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap();
+        let new_york = ctx(now, chrono_tz::America::New_York);
+        assert_eq!(
+            expand(&gym(), monday, monday + Duration::days(1), &[], &new_york).len(),
+            1
+        );
+        // Tuesday to Wednesday: no occurrence days in between.
+        assert!(
+            expand(
+                &gym(),
+                monday + Duration::days(1),
+                monday + Duration::days(3),
+                &[],
+                &new_york
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn start_day_and_until_bound_the_rule() {
+        let mut held = gym();
+        held.start_day = NaiveDate::from_ymd_opt(2026, 10, 15).unwrap(); // Thursday
+        held.rule.until = Some(NaiveDate::from_ymd_opt(2026, 10, 26).unwrap());
+        let occurrences = expand(
+            &held,
+            NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 11, 2).unwrap(),
+            &[],
+            &ctx(
+                Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+                chrono_tz::America::New_York,
+            ),
+        );
+        // Nothing before the 15th, nothing after the 26th: Thu 15, Mon 19, Thu 22,
+        // Mon 26 (the until day, inclusive).
+        assert_eq!(
+            occurrences
+                .iter()
+                .map(|o| o.date.to_string())
+                .collect::<Vec<_>>(),
+            vec!["2026-10-15", "2026-10-19", "2026-10-22", "2026-10-26"]
+        );
+    }
+
+    #[test]
+    fn a_skipped_day_yields_nothing_and_a_done_day_stays_marked_done() {
+        let monday = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let thursday = NaiveDate::from_ymd_opt(2026, 10, 15).unwrap();
+        let occurrences = expand(
+            &gym(),
+            monday,
+            monday + Duration::days(7),
+            &[
+                exception(monday, todo_core::ExceptionKind::Skipped),
+                exception(thursday, todo_core::ExceptionKind::Done),
+            ],
+            &ctx(
+                Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+                chrono_tz::America::New_York,
+            ),
+        );
+        assert_eq!(days_of(&occurrences), vec![Weekday::Thu]);
+        assert_eq!(occurrences[0].status, OccurrenceStatus::Done);
+        // A done occurrence keeps its slot's instant but gets no placement in the
+        // plan (plan() skips done tasks).
+        assert_eq!(
+            occurrences[0].when,
+            When::At(Utc.with_ymd_and_hms(2026, 10, 15, 11, 0, 0).unwrap())
+        );
+    }
+
+    #[test]
+    fn a_moved_occurrence_sits_at_the_new_time_under_its_original_date() {
+        let monday = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let moved_to = Utc.with_ymd_and_hms(2026, 10, 14, 21, 0, 0).unwrap();
+        let occurrences = expand(
+            &gym(),
+            monday,
+            monday + Duration::days(7),
+            &[exception(
+                monday,
+                todo_core::ExceptionKind::Moved {
+                    to: When::At(moved_to),
+                    to_tz: None,
+                },
+            )],
+            &ctx(
+                Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+                chrono_tz::America::New_York,
+            ),
+        );
+        assert_eq!(days_of(&occurrences), vec![Weekday::Mon, Weekday::Thu]);
+        assert_eq!(occurrences[0].status, OccurrenceStatus::Moved);
+        assert_eq!(occurrences[0].when, When::At(moved_to));
+    }
+
+    #[test]
+    fn a_series_without_a_time_floats() {
+        let mut held = gym();
+        held.time_of_day = None;
+        let occurrences = expand(
+            &held,
+            NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 10, 19).unwrap(),
+            &[],
+            &ctx(
+                Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+                chrono_tz::America::New_York,
+            ),
+        );
+        assert!(
+            occurrences
+                .iter()
+                .all(|o| o.when == When::Anytime && o.status == OccurrenceStatus::Open)
+        );
+    }
+
+    #[test]
+    fn dst_shifts_the_utc_instant_but_never_the_local_time() {
+        // Mondays only, 07:00 New York. The week of the spring-forward change:
+        // March 2 is EST (UTC-5), March 9 is EDT (UTC-4).
+        let mut held = gym();
+        held.rule = todo_core::Recurrence::new([Weekday::Mon], None).unwrap();
+        held.start_day = NaiveDate::from_ymd_opt(2026, 3, 1).unwrap();
+        let occurrences = expand(
+            &held,
+            NaiveDate::from_ymd_opt(2026, 3, 2).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 3, 16).unwrap(),
+            &[],
+            &ctx(
+                Utc.with_ymd_and_hms(2026, 3, 2, 1, 0, 0).unwrap(),
+                chrono_tz::America::New_York,
+            ),
+        );
+        assert_eq!(occurrences.len(), 2);
+        assert_eq!(
+            occurrences[0].when,
+            When::At(Utc.with_ymd_and_hms(2026, 3, 2, 12, 0, 0).unwrap()),
+            "07:00 EST is 12:00 UTC"
+        );
+        assert_eq!(
+            occurrences[1].when,
+            When::At(Utc.with_ymd_and_hms(2026, 3, 9, 11, 0, 0).unwrap()),
+            "07:00 EDT is 11:00 UTC"
+        );
+    }
+
+    #[test]
+    fn a_time_inside_the_fall_back_overlap_takes_the_earlier_instant() {
+        // Sundays 01:30. November 1st happens twice; the first pass (EDT) wins,
+        // the same rule LocalContext::at applies to a pinned task.
+        let mut held = gym();
+        held.rule = todo_core::Recurrence::new([Weekday::Sun], None).unwrap();
+        held.time_of_day = Some(NaiveTime::from_hms_opt(1, 30, 0).unwrap());
+        let occurrences = expand(
+            &held,
+            NaiveDate::from_ymd_opt(2026, 11, 1).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 11, 2).unwrap(),
+            &[],
+            &ctx(
+                Utc.with_ymd_and_hms(2026, 11, 1, 1, 0, 0).unwrap(),
+                chrono_tz::America::New_York,
+            ),
+        );
+        assert_eq!(
+            occurrences[0].when,
+            When::At(Utc.with_ymd_and_hms(2026, 11, 1, 5, 30, 0).unwrap())
+        );
+    }
+
+    #[test]
+    fn an_unparsable_zone_falls_back_to_the_request_zone() {
+        let mut held = gym();
+        held.zone = "Not/AZone".into();
+        let occurrences = expand(
+            &held,
+            NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 10, 19).unwrap(),
+            &[],
+            &ctx(
+                Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+                chrono_tz::UTC,
+            ),
+        );
+        // 07:00 read as UTC.
+        assert_eq!(
+            occurrences[0].when,
+            When::At(Utc.with_ymd_and_hms(2026, 10, 12, 7, 0, 0).unwrap())
         );
     }
 

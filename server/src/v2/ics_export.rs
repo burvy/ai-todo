@@ -82,6 +82,7 @@ mod tests {
             },
             tz: "America/New_York".into(),
             generated: start,
+            series: Vec::new(),
         }
     }
 
