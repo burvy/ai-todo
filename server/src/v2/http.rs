@@ -964,9 +964,10 @@ async fn import(
         }
         let ics_text =
             ics_text.ok_or_else(|| bad_request("send the calendar as multipart field `file`"))?;
-        let events = ics_import::parse_ics(&ics_text).map_err(|error| bad_request(error.0))?;
+        let calendar =
+            ics_import::parse_calendar(&ics_text).map_err(|error| bad_request(error.0))?;
         let mut app = shared.app.lock().unwrap();
-        return Ok(Json(app.import(events, &user, tz)?));
+        return Ok(Json(app.import(calendar, &user, tz)?));
     }
 
     // JSON import path: same shape as GET /api/v1/export.
@@ -1049,6 +1050,8 @@ async fn import(
     Ok(Json(ImportResult {
         created,
         updated: Vec::new(),
+        series: Vec::new(),
+        unmapped: Vec::new(),
         snapshot,
     }))
 }
@@ -1728,6 +1731,219 @@ mod tests {
         assert_eq!(second["updated"].as_array().unwrap().len(), 2);
         let again: Snapshot = serde_json::from_value(second["snapshot"].clone()).unwrap();
         assert_eq!(again.tasks.len(), 2, "re-import must not duplicate");
+    }
+
+    /// A synthetic export shaped like a real Outlook calendar: CRLF, a VTIMEZONE, and
+    /// the VEVENT blocks the test needs. Nothing here is anyone's real calendar.
+    fn calendar(events: &[&str]) -> String {
+        let mut lines: Vec<&str> = vec![
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//Microsoft//OUTLOOK",
+            "BEGIN:VTIMEZONE",
+            "TZID:America/New_York",
+            "END:VTIMEZONE",
+        ];
+        lines.extend_from_slice(events);
+        lines.push("END:VCALENDAR");
+        format!("{}\r\n", lines.join("\r\n"))
+    }
+
+    /// One weekly event: Tuesdays at 09:30 New York, under the rule under test, plus
+    /// any extra properties (an `EXDATE`, say).
+    fn weekly_event(rule: &str, extra: &str) -> String {
+        format!(
+            "BEGIN:VEVENT\r\nUID:weekly-standup@example.com\r\nSUMMARY:Weekly standup\r\n\
+             DTSTART;TZID=America/New_York:20261013T093000\r\n\
+             DTEND;TZID=America/New_York:20261013T094500\r\nRRULE:{rule}\r\n{extra}END:VEVENT\r\n"
+        )
+    }
+
+    /// A weekly rule imports as one series with its occurrences in the snapshot, not as
+    /// a block for the one week the export covered; a re-import updates it by UID and
+    /// keeps what the user did to it (docs/ARCHITECTURE.md 7.1).
+    #[tokio::test]
+    async fn a_weekly_rule_imports_as_a_series_and_reimport_updates_it() {
+        let router = router_at(sunday_night());
+        let ics = calendar(&[&weekly_event(
+            "FREQ=WEEKLY;BYDAY=TU;UNTIL=20261215T035959Z",
+            "",
+        )]);
+        let (status, first) = import_ics(&router, &ics).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            first["created"].as_array().unwrap().is_empty(),
+            "a rule is not a task"
+        );
+        assert_eq!(first["series"].as_array().unwrap().len(), 1);
+        assert!(
+            first["unmapped"]
+                .as_array()
+                .is_none_or(|notes| notes.is_empty()),
+            "a weekly rule is one we follow"
+        );
+        let snapshot: Snapshot = serde_json::from_value(first["snapshot"].clone()).unwrap();
+        assert_eq!(snapshot.series.len(), 1);
+        let series = &snapshot.series[0];
+        assert_eq!(series.rule.weekdays, vec![chrono::Weekday::Tue]);
+        assert_eq!(series.zone, "America/New_York");
+        let rows: Vec<String> = snapshot
+            .tasks
+            .iter()
+            .filter(|task| task.source == Source::Series)
+            .map(|task| task.id.0.clone())
+            .collect();
+        assert_eq!(
+            rows,
+            vec![format!("{}:2026-10-13", series.id.0)],
+            "this week's occurrence, even though the export named only one week"
+        );
+        assert_invariant(&snapshot);
+
+        // The rule keeps going after the week the export covered.
+        let (_, next) = send(
+            &router,
+            "GET",
+            "/api/v1/snapshot?from=2026-10-19&days=7",
+            None,
+        )
+        .await;
+        let next: Snapshot = serde_json::from_value(next).unwrap();
+        assert!(
+            next.tasks
+                .iter()
+                .any(|task| task.id.0 == format!("{}:2026-10-20", series.id.0)),
+            "the Tuesday after the export is an occurrence too"
+        );
+
+        // The user marks one done, then the same calendar arrives again.
+        let id = series.id.0.clone();
+        send(
+            &router,
+            "PATCH",
+            &format!("/api/v1/series/{id}/dates/2026-10-13"),
+            Some(r#"{"kind":"done"}"#),
+        )
+        .await;
+        let (_, second) = import_ics(&router, &ics).await;
+        assert_eq!(
+            second["series"].as_array().unwrap().len(),
+            1,
+            "one series after two imports"
+        );
+        let again: Snapshot = serde_json::from_value(second["snapshot"].clone()).unwrap();
+        assert_eq!(again.series.len(), 1, "re-import must not duplicate");
+        assert!(
+            again
+                .tasks
+                .iter()
+                .any(|task| task.id.0 == format!("{}:2026-10-13", id) && task.done),
+            "re-import must not throw away what the user did"
+        );
+    }
+
+    /// An `EXDATE` stays excluded after the import: it is a skipped occurrence, not a
+    /// row the user has to ignore.
+    #[tokio::test]
+    async fn an_excluded_date_does_not_become_an_occurrence() {
+        let router = router_at(sunday_night());
+        let ics = calendar(&[&weekly_event(
+            "FREQ=WEEKLY;BYDAY=MO",
+            "EXDATE;TZID=America/New_York:20261019T093000\r\n",
+        )]);
+        let (status, body) = import_ics(&router, &ics).await;
+        assert_eq!(status, StatusCode::OK);
+        let id = serde_json::from_value::<Snapshot>(body["snapshot"].clone())
+            .unwrap()
+            .series[0]
+            .id
+            .0
+            .clone();
+
+        // A fortnight of Mondays, so the excluded one is inside the window.
+        let (_, body) = send(
+            &router,
+            "GET",
+            "/api/v1/snapshot?from=2026-10-12&days=21",
+            None,
+        )
+        .await;
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert!(
+            !snapshot
+                .tasks
+                .iter()
+                .any(|task| task.id.0 == format!("{id}:2026-10-19")),
+            "the excluded Monday is not a row"
+        );
+        assert!(
+            snapshot
+                .tasks
+                .iter()
+                .any(|task| task.id.0 == format!("{id}:2026-10-26")),
+            "the Monday after it still is"
+        );
+        assert_invariant(&snapshot);
+    }
+
+    /// A rule we cannot follow keeps today's behaviour: the event imports as one task,
+    /// and the answer says why it is not a series.
+    #[tokio::test]
+    async fn an_unsupported_rule_imports_one_task_and_says_so() {
+        let router = router_at(sunday_night());
+        let ics = calendar(&[&weekly_event("FREQ=MONTHLY;BYMONTHDAY=1", "")]);
+        let (status, body) = import_ics(&router, &ics).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body.get("series")
+                .is_none_or(|series| series.as_array().is_none_or(|s| s.is_empty())),
+            "a monthly rule is not a series"
+        );
+        assert_eq!(
+            body["created"].as_array().unwrap().len(),
+            1,
+            "its first month still imports as a task"
+        );
+        let notes = body["unmapped"].as_array().expect("the answer says so");
+        assert_eq!(notes.len(), 1);
+        assert!(
+            notes[0].as_str().unwrap().contains("Weekly standup"),
+            "the note names the event: {notes:?}"
+        );
+        let snapshot: Snapshot = serde_json::from_value(body["snapshot"].clone()).unwrap();
+        assert_invariant(&snapshot);
+    }
+
+    /// A one-off event and a weekly rule in the same calendar: one of each.
+    #[tokio::test]
+    async fn a_calendar_can_hold_both_kinds() {
+        let router = router_at(sunday_night());
+        let one_off = "BEGIN:VEVENT\r\nUID:one-off@example.com\r\nSUMMARY:One off\r\n\
+             DTSTART;TZID=America/New_York:20261014T170000\r\n\
+             DTEND;TZID=America/New_York:20261014T180000\r\nEND:VEVENT\r\n";
+        let ics = calendar(&[&weekly_event("FREQ=WEEKLY;BYDAY=TU", ""), one_off]);
+        let (status, body) = import_ics(&router, &ics).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["series"].as_array().unwrap().len(), 1);
+        assert_eq!(body["created"].as_array().unwrap().len(), 1);
+        let snapshot: Snapshot = serde_json::from_value(body["snapshot"].clone()).unwrap();
+        assert_eq!(
+            snapshot
+                .tasks
+                .iter()
+                .filter(|task| task.source == Source::Series)
+                .count(),
+            1
+        );
+        assert_eq!(
+            snapshot
+                .tasks
+                .iter()
+                .filter(|task| task.source == Source::Calendar)
+                .count(),
+            1
+        );
+        assert_invariant(&snapshot);
     }
 
     #[tokio::test]
