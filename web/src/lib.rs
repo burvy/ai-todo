@@ -452,25 +452,52 @@ fn Rambo(
     /// Capture form: Rambo calls requestSubmit on release
     form_ref: NodeRef<leptos::html::Form>,
 ) -> impl IntoView {
-    let start_return = move || {
+    let start_return_with = move |hard_drop: bool| {
         if mascot::prefers_reduced_motion() {
             set_state.set(mascot::State::Home);
             return;
         }
-        set_state.set(mascot::transition(
-            &state.get_untracked(),
-            mascot::Event::DropEmpty,
-        ));
-        let set_state = set_state;
-        Timeout::new(mascot::RECOVER_MS, move || {
-            set_state.set(mascot::State::Skittering);
+        if hard_drop {
+            // Splat → Recover → Skitter → Home
+            set_state.set(mascot::transition(
+                &state.get_untracked(),
+                mascot::Event::DropHard,
+            ));
             let set_state = set_state;
-            Timeout::new(mascot::SKITTER_MS, move || {
-                set_state.set(mascot::State::Home);
+            Timeout::new(mascot::SPLAT_MS, move || {
+                set_state.set(mascot::State::Recovering);
+                let set_state = set_state;
+                Timeout::new(mascot::RECOVER_MS, move || {
+                    set_state.set(mascot::State::Skittering);
+                    let set_state = set_state;
+                    Timeout::new(mascot::SKITTER_MS, move || {
+                        set_state.set(mascot::State::Home);
+                    })
+                    .forget();
+                })
+                .forget();
             })
             .forget();
-        })
-        .forget();
+        } else {
+            // Recover → Skitter → Home
+            set_state.set(mascot::transition(
+                &state.get_untracked(),
+                mascot::Event::DropEmpty,
+            ));
+            let set_state = set_state;
+            Timeout::new(mascot::RECOVER_MS, move || {
+                set_state.set(mascot::State::Skittering);
+                let set_state = set_state;
+                Timeout::new(mascot::SKITTER_MS, move || {
+                    set_state.set(mascot::State::Home);
+                })
+                .forget();
+            })
+            .forget();
+        }
+    };
+    let start_return = move || {
+        start_return_with(false);
     };
 
     let rambo_ref = NodeRef::<leptos::html::Button>::new();
@@ -481,10 +508,10 @@ fn Rambo(
     let moved_move = moved.clone();
     let moved_for_up = moved.clone();
 
-    // Grab state: track pointer position and pen offset at grab so drag follows
-    // the pointer exactly, even if the element's home position has shifted since mount.
-    // This matches the v1 approach (penDrag.base + dx/dy).
-    let grab_state = std::rc::Rc::new(std::cell::RefCell::new(None::<(f64, f64, f64, f64)>));
+    // Grab state: track pointer position, pen offset, and timestamp at grab so drag
+    // follows the pointer exactly and we can compute drop velocity for hard-drop detection.
+    // (gx, gy, ox, oy, timestamp_ms)
+    let grab_state = std::rc::Rc::new(std::cell::RefCell::new(None::<(f64, f64, f64, f64, u64)>));
     let grab_state_down = grab_state.clone();
     let grab_state_move = grab_state.clone();
     let grab_state_up = grab_state.clone();
@@ -565,11 +592,12 @@ fn Rambo(
                 }
                 set_brain_event.set(Some(rambl_brain::Event::Poked));
                 *moved_down.borrow_mut() = false;
-                // Save grab state: pointer position and current pen offset at grab
+                // Save grab state: pointer position, pen offset, and timestamp at grab
                 let gx = ev.client_x() as f64;
                 let gy = ev.client_y() as f64;
                 let (ox, oy) = pen_pos.get_untracked();
-                *grab_state_down.borrow_mut() = Some((gx, gy, ox, oy));
+                let t = js_sys::Date::now() as u64;
+                *grab_state_down.borrow_mut() = Some((gx, gy, ox, oy, t));
                 set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Grab));
                 set_talking.set(true);
                 start_speech_down();
@@ -580,7 +608,7 @@ fn Rambo(
             on:pointermove=move |ev| {
                 if matches!(state.get_untracked(), mascot::State::Dragging) {
                     *moved_move.borrow_mut() = true;
-                    if let Some((gx, gy, ox, oy)) = *grab_state_move.borrow() {
+                    if let Some((gx, gy, ox, oy, _t)) = *grab_state_move.borrow() {
                         let dx = ev.client_x() as f64 - gx;
                         let dy = ev.client_y() as f64 - gy;
                         pen_pos.set((ox + dx, oy + dy));
@@ -592,37 +620,48 @@ fn Rambo(
                 if !matches!(state.get_untracked(), mascot::State::Dragging) {
                     return;
                 }
-                // Clear grab state
-                *grab_state_up.borrow_mut() = None;
                 let did_move = *moved_for_up.borrow();
                 if !did_move {
                     // Release without moving: send transcript and go home
+                    *grab_state_up.borrow_mut() = None;
                     set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Release));
                     return;
                 }
-                // Update pen position one last time using delta from grab
-                if let Some((gx, gy, ox, oy)) = *grab_state_up.borrow() {
+                // Update pen position one last time using delta from grab; also compute
+                // drop velocity to detect hard drops (fast release → splat).
+                let hard_drop = if let Some((gx, gy, ox, oy, grab_time)) = *grab_state_up.borrow() {
                     let dx = ev.client_x() as f64 - gx;
                     let dy = ev.client_y() as f64 - gy;
                     pen_pos.set((ox + dx, oy + dy));
-                }
+                    let elapsed = (js_sys::Date::now() as u64).saturating_sub(grab_time) as f64;
+                    if elapsed > 0.0 {
+                        let distance = (dx * dx + dy * dy).sqrt();
+                        let velocity = distance / elapsed;
+                        velocity >= mascot::HARD_DROP_VELOCITY
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+                *grab_state_up.borrow_mut() = None;
                 let client_x = ev.client_x() as f64;
                 let client_y = ev.client_y() as f64;
 
                 // Check if dropped on a task row
                 let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
                     set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::DropEmpty));
-                    start_return();
+                    start_return_with(hard_drop);
                     return;
                 };
                 let Some(el) = doc.element_from_point(client_x as f32, client_y as f32) else {
                     set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::DropEmpty));
-                    start_return();
+                    start_return_with(hard_drop);
                     return;
                 };
                 let Some(li) = el.closest("li[data-id]").ok().flatten() else {
                     set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::DropEmpty));
-                    start_return();
+                    start_return_with(hard_drop);
                     return;
                 };
                 {
