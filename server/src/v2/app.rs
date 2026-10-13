@@ -16,6 +16,7 @@ use todo_core::{
     TaskDraft, TaskId, When,
 };
 
+use super::ics_import::ParsedCalendar;
 use super::store::{Store, StoreError};
 
 pub const MIN_DURATION_MIN: u16 = 5;
@@ -367,14 +368,20 @@ impl<S: Store> App<S> {
     /// updates that task; any other event becomes a new task.
     pub fn import(
         &mut self,
-        events: Vec<ImportedEvent>,
+        calendar: ParsedCalendar,
         user: &str,
         tz: Tz,
     ) -> Result<ImportResult, ApiError> {
+        let ParsedCalendar {
+            events,
+            series,
+            unmapped,
+        } = calendar;
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
         let mut created = Vec::new();
         let mut updated = Vec::new();
+        let series_ids = self.import_series(series, user, &ctx)?;
         for event in events {
             let duration_min = event_minutes(event.start, event.end);
             // The store owns the uid index, so this is one lookup per event
@@ -434,8 +441,106 @@ impl<S: Store> App<S> {
         Ok(ImportResult {
             created,
             updated,
+            series: series_ids,
+            unmapped,
             snapshot: self.snapshot_now(user, tasks, &ctx, tz)?,
         })
+    }
+
+    /// Stores the weekly recurrences an import found, returning their ids.
+    ///
+    /// A UID that is already held updates that series instead of adding a second one,
+    /// the same rule one-shot imports follow. An update keeps the series' id, list
+    /// position and exceptions: a re-import must not throw away what the user did to
+    /// past weeks. Excluded dates are recorded as skipped occurrences, which is how an
+    /// `EXDATE` stays excluded after a restart.
+    ///
+    /// Validates every series before writing any, so a bad series in the middle
+    /// does not leave a partial import.
+    fn import_series(
+        &mut self,
+        imported: Vec<ImportedSeries>,
+        user: &str,
+        ctx: &LocalContext,
+    ) -> Result<Vec<SeriesId>, ApiError> {
+        let held = self.store.series(user).map_err(Self::storage_error)?;
+        let mut next_order = held.iter().map(|series| series.order).min().unwrap_or(0) - 1;
+
+        // Validate everything first — all or nothing.
+        let validated: Vec<_> = imported
+            .into_iter()
+            .map(|series| {
+                check_title(&series.title)?;
+                check_duration(series.duration_min)?;
+                let rule =
+                    Recurrence::new(series.weekdays.clone(), series.until).ok_or_else(|| {
+                        ApiError {
+                            code: ErrorCode::BadRequest,
+                            message: "a series must repeat on at least one day".into(),
+                        }
+                    })?;
+                check_span(series.start_day, rule.until)?;
+                let existing = series
+                    .uid
+                    .as_deref()
+                    .and_then(|uid| {
+                        held.iter()
+                            .find(|other| other.external_uid.as_deref() == Some(uid))
+                    })
+                    .cloned();
+                let id = existing
+                    .as_ref()
+                    .map_or_else(Self::fresh_series_id, |h| h.id.clone());
+                let order = existing.as_ref().map_or_else(
+                    || {
+                        next_order -= 1;
+                        next_order
+                    },
+                    |h| h.order,
+                );
+                Ok((
+                    series,
+                    rule,
+                    id,
+                    order,
+                    existing.as_ref().map_or(ctx.now, |h| h.created),
+                ))
+            })
+            .collect::<Result<Vec<_>, ApiError>>()?;
+
+        // All validated — now write.
+        let mut ids = Vec::new();
+        for (series, rule, id, order, created) in validated {
+            let stored = Series {
+                id: id.clone(),
+                title: series.title.trim().to_owned(),
+                duration_min: series.duration_min,
+                rule,
+                start_day: series.start_day,
+                time_of_day: series.time_of_day,
+                zone: series.zone,
+                external_uid: series.uid,
+                created,
+                order,
+            };
+            self.store
+                .put_series(user, stored)
+                .map_err(Self::storage_error)?;
+            for date in series.exdates {
+                self.store
+                    .put_exception(
+                        user,
+                        &id,
+                        SeriesException {
+                            date,
+                            kind: ExceptionKind::Skipped,
+                        },
+                    )
+                    .map_err(Self::storage_error)?;
+            }
+            ids.push(id);
+        }
+        Ok(ids)
     }
 
     /// Adds the drafts a capture produced. Returns their ids and the new snapshot.
@@ -809,7 +914,35 @@ pub struct ImportedEvent {
 pub struct ImportResult {
     pub created: Vec<TaskId>,
     pub updated: Vec<TaskId>,
+    /// The series an import created or refreshed, by id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub series: Vec<SeriesId>,
+    /// One line per rule the import could not follow, naming the event and why. That
+    /// event is still imported, as one task.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unmapped: Vec<String>,
     pub snapshot: Snapshot,
+}
+
+/// A weekly recurrence from a calendar export, before it becomes a [`Series`].
+///
+/// The zone is the event's own TZID, not the importing user's: a lecture kept at 09:00
+/// New York stays at 09:00 New York for whoever imports it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImportedSeries {
+    pub uid: Option<String>,
+    pub title: String,
+    pub duration_min: u16,
+    pub weekdays: Vec<Weekday>,
+    /// The last local day an occurrence falls on, inclusive. `None` repeats forever.
+    pub until: Option<NaiveDate>,
+    /// The first local day an occurrence may fall on, inclusive.
+    pub start_day: NaiveDate,
+    /// The wall-clock time of each occurrence in `zone`; `None` floats it.
+    pub time_of_day: Option<NaiveTime>,
+    pub zone: String,
+    /// Dates the export excludes, each one a skipped occurrence.
+    pub exdates: Vec<NaiveDate>,
 }
 
 /// An event's length, kept inside the same limits as any task.
