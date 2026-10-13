@@ -15,6 +15,7 @@ use axum::{
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use todo_core::{ApiError, ErrorCode, Snapshot, Task, TaskDraft};
+use uuid::Uuid;
 
 use super::admin_web;
 use super::app::{self, App, ImportResult, Patch};
@@ -26,6 +27,11 @@ use capture::{Revision, capture_text};
 use chrono::{DateTime, NaiveDate, Utc};
 use judge::AnyJudge;
 use todo_core::{LocalContext, Source, TaskId};
+
+/// Maximum body size for a JSON import (2 MiB).
+const IMPORT_MAX_BODY: usize = 2 * 1024 * 1024;
+/// Maximum number of tasks in one JSON import.
+const IMPORT_MAX_TASKS: usize = 500;
 
 const TZ_HEADER: HeaderName = HeaderName::from_static("x-rambl-tz");
 const ANON_HEADER: HeaderName = HeaderName::from_static("x-rambl-anon");
@@ -106,10 +112,10 @@ impl CurrentUser {
             let token = auth::bearer(headers)
                 .ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
             let app = shared.app.lock().expect("app mutex");
-            return auth::session_user(app.store(), &token, Utc::now())
+            let user = auth::session_user(app.store(), &token, Utc::now())
                 .map_err(HttpError::from)?
-                .map(|user| user.id)
-                .ok_or_else(|| unauthorized("that session has expired"));
+                .ok_or_else(|| unauthorized("that session has expired"))?;
+            return Self::unpaused(app.store(), user.id);
         }
         let anonymous = headers
             .get(&ANON_HEADER)
@@ -122,11 +128,29 @@ impl CurrentUser {
                 app.store()
                     .touch_anonymous(id, app.now())
                     .map_err(store_failed)?;
-                Ok(id.to_owned())
+                Self::unpaused(app.store(), id.to_owned())
             }
             _ => Err(unauthorized("send Authorization: Bearer <token>")),
         }
     }
+
+    /// A paused account stops using the app: every user-facing call is refused, not just
+    /// the ones that spend Jev. The admin console and the admin page are separate
+    /// (`admin_of`), so the operator is never locked out by this.
+    fn unpaused(store: &dyn Store, user: String) -> Result<String, HttpError> {
+        if store.is_user_blocked(&user).map_err(store_failed)? {
+            return Err(paused());
+        }
+        Ok(user)
+    }
+}
+
+/// A paused account, told what to do about it.
+fn paused() -> HttpError {
+    HttpError(ApiError {
+        code: ErrorCode::Forbidden,
+        message: "this account is paused".into(),
+    })
 }
 
 fn unauthorized(message: &'static str) -> HttpError {
@@ -146,6 +170,9 @@ impl IntoResponse for HttpError {
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::Conflict | ErrorCode::StaleUpdate => StatusCode::CONFLICT,
             ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
+            // A paused account: the request was well-formed and the session is
+            // real, so neither 400 nor 401 would be true.
+            ErrorCode::Forbidden => StatusCode::FORBIDDEN,
             // A dependency being down is 503, "come back later"; our own
             // failure is 500. The two are different things to a client, which
             // is why they are different codes.
@@ -905,25 +932,125 @@ async fn clear_occurrence(
     Ok(Json(app.clear_occurrence(&id, date, &user, tz)?))
 }
 
-/// `POST /api/v1/import`: a multipart `file` holding an .ics calendar.
+/// `POST /api/v1/import`: either a multipart `file` with an .ics calendar or a
+/// JSON body matching `GET /api/v1/export` (`{ "tasks": [...] }`).
+///
+/// All imported tasks get fresh IDs and belong to the caller. Bad JSON or an
+/// invalid task returns 400 and writes nothing (all or nothing).
 async fn import(
     State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
-    mut multipart: Multipart,
+    request: axum::extract::Request,
 ) -> Result<Json<ImportResult>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let mut ics_text = None;
-    while let Some(field) = multipart.next_field().await.map_err(bad_request)? {
-        if field.name() == Some("file") {
-            ics_text = Some(field.text().await.map_err(bad_request)?);
+
+    // Decide based on Content-Type.
+    let ct = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if ct.starts_with("multipart/form-data") {
+        // Existing .ics import path.
+        let mut multipart = Multipart::from_request(request, &())
+            .await
+            .map_err(bad_request)?;
+        let mut ics_text = None;
+        while let Some(field) = multipart.next_field().await.map_err(bad_request)? {
+            if field.name() == Some("file") {
+                ics_text = Some(field.text().await.map_err(bad_request)?);
+            }
+        }
+        let ics_text =
+            ics_text.ok_or_else(|| bad_request("send the calendar as multipart field `file`"))?;
+        let events = ics_import::parse_ics(&ics_text).map_err(|error| bad_request(error.0))?;
+        let mut app = shared.app.lock().unwrap();
+        return Ok(Json(app.import(events, &user, tz)?));
+    }
+
+    // JSON import path: same shape as GET /api/v1/export.
+    let body = request.into_body();
+    let bytes = axum::body::to_bytes(body, IMPORT_MAX_BODY)
+        .await
+        .map_err(|e| bad_request(e.to_string()))?;
+    if bytes.len() > IMPORT_MAX_BODY {
+        return Err(bad_request(format!(
+            "request body too large (max {} bytes)",
+            IMPORT_MAX_BODY
+        )));
+    }
+
+    #[derive(Deserialize)]
+    struct ImportIn {
+        tasks: Vec<Task>,
+    }
+
+    let import_in: ImportIn =
+        serde_json::from_slice(&bytes).map_err(|e| bad_request(format!("invalid JSON: {}", e)))?;
+
+    if import_in.tasks.is_empty() {
+        return Err(bad_request("no tasks to import"));
+    }
+    if import_in.tasks.len() > IMPORT_MAX_TASKS {
+        return Err(bad_request(format!(
+            "too many tasks (max {})",
+            IMPORT_MAX_TASKS
+        )));
+    }
+
+    // Validate all tasks before writing any (all or nothing).
+    for (i, task) in import_in.tasks.iter().enumerate() {
+        if task.title.trim().is_empty() {
+            return Err(bad_request(format!("task {} has an empty title", i)));
+        }
+        if task.title.len() > 200 {
+            return Err(bad_request(format!("task {} title is too long", i)));
+        }
+        if task.duration_min < 1 || task.duration_min > 480 {
+            return Err(bad_request(format!(
+                "task {} duration_min must be 1..480, got {}",
+                i, task.duration_min
+            )));
         }
     }
-    let ics_text =
-        ics_text.ok_or_else(|| bad_request("send the calendar as multipart field `file`"))?;
-    let events = ics_import::parse_ics(&ics_text).map_err(|error| bad_request(error.0))?;
-    let mut app = shared.app.lock().unwrap();
-    Ok(Json(app.import(events, &user, tz)?))
+
+    // All valid — now write them.
+    let app = shared.app.lock().unwrap();
+    let now = app.now();
+    let tasks = app.store().tasks(&user).map_err(store_failed)?;
+    drop(app);
+    let min_order = tasks.iter().map(|t| t.order).min().unwrap_or(0);
+
+    let mut created = Vec::new();
+    for (offset, mut task) in import_in.tasks.into_iter().enumerate() {
+        // Assign fresh ID — never trust the file's id.
+        let new_id = TaskId(format!("t{}", Uuid::new_v4().simple()));
+        task.id = new_id.clone();
+        task.created = now;
+        task.updated_at = now;
+        // Newest-first ordering like new tasks.
+        task.order = min_order - 1 - offset as i64;
+        // Clear external_uid — this is not a calendar import.
+        task.external_uid = None;
+
+        let app = shared.app.lock().unwrap();
+        app.store().put(&user, task).map_err(|e| {
+            HttpError(ApiError {
+                code: ErrorCode::Internal,
+                message: format!("store error: {}", e),
+            })
+        })?;
+        created.push(new_id);
+    }
+
+    let app = shared.app.lock().unwrap();
+    let snapshot = app.snapshot(&user, tz)?;
+    Ok(Json(ImportResult {
+        created,
+        updated: Vec::new(),
+        snapshot,
+    }))
 }
 
 fn bad_request(message: impl std::fmt::Display) -> HttpError {
@@ -1642,6 +1769,191 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let snapshot: Snapshot = serde_json::from_value(body["snapshot"].clone()).unwrap();
         assert_invariant(&snapshot);
+    }
+
+    // ---- JSON import tests ----
+
+    /// Export from one user, import into another — the round trip creates fresh ids.
+    #[tokio::test]
+    async fn import_json_round_trip_export_then_import() {
+        let verifier = PerCredential(vec![
+            (
+                "sam-credential",
+                auth::TokenInfo::for_test("google-1", "sam@example.com"),
+            ),
+            (
+                "lee-credential",
+                auth::TokenInfo::for_test("google-2", "lee@example.com"),
+            ),
+        ]);
+        let router = super::router_with_verifier(
+            App::new(
+                Box::new(MemoryStore::default()) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(verifier),
+            false,
+            Caps::default(),
+            None,
+            TrustedProxies::default(),
+        );
+        let sam = sign_in_with(&router, "sam-credential").await;
+        let lee = sign_in_with(&router, "lee-credential").await;
+
+        // Sam creates a task and exports it.
+        let (status, _) = send_as(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(&draft_titled("Pick up dry cleaning")),
+            Some(&sam),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, export) = send_as(&router, "GET", "/api/v1/export", None, Some(&sam)).await;
+        assert_eq!(status, StatusCode::OK);
+        let export_json = serde_json::to_string(&export).unwrap();
+
+        // Lee imports Sam's export.
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/import")
+            .header("x-rambl-tz", "America/New_York")
+            .header("authorization", format!("Bearer {lee}"))
+            .header("content-type", "application/json")
+            .body(Body::from(export_json))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let result: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+
+        // Lee now has the task with a fresh id.
+        assert_eq!(result["created"].as_array().unwrap().len(), 1);
+        let snapshot: Snapshot = serde_json::from_value(result["snapshot"].clone()).unwrap();
+        assert_eq!(snapshot.tasks.len(), 1);
+        assert_eq!(snapshot.tasks[0].title, "Pick up dry cleaning");
+        // The id is different from Sam's original.
+        let sam_export_tasks: Vec<&serde_json::Value> =
+            export["tasks"].as_array().unwrap().iter().collect();
+        let original_id = &sam_export_tasks[0]["id"];
+        assert_ne!(
+            snapshot.tasks[0].id.0,
+            original_id.as_str().unwrap(),
+            "imported task must get a fresh id"
+        );
+        assert_invariant(&snapshot);
+    }
+
+    /// Malformed JSON returns 400 and writes nothing.
+    #[tokio::test]
+    async fn import_json_malformed_file_returns_400() {
+        let router = router_at(sunday_night());
+        let (status, body, _) = send_raw(
+            &router,
+            "POST",
+            "/api/v1/import",
+            "application/json",
+            "not json at all",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("invalid JSON")
+        );
+
+        // Empty tasks array is also rejected.
+        let (status, _, _) = send_raw(
+            &router,
+            "POST",
+            "/api/v1/import",
+            "application/json",
+            r#"{"tasks":[]}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// A file with too many tasks is rejected.
+    #[tokio::test]
+    async fn import_json_oversized_task_count_returns_400() {
+        let router = router_at(sunday_night());
+        let tasks: Vec<String> = (0..IMPORT_MAX_TASKS + 1)
+            .map(|i| format!(r#"{{"id":"t{i}","title":"Task {i}","duration_min":30,"when":{{"kind":"anytime"}},"done":false,"order":0,"label":"Other","priority":"low","source":"text","created":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","external_uid":null}}"#))
+            .collect();
+        let body = format!(r#"{{"tasks":[{}]}}"#, tasks.join(","));
+        let (status, _, _) =
+            send_raw(&router, "POST", "/api/v1/import", "application/json", &body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// A file naming another user's id leaves that user untouched.
+    #[tokio::test]
+    async fn import_json_does_not_affect_other_users() {
+        let verifier = PerCredential(vec![
+            (
+                "sam-credential",
+                auth::TokenInfo::for_test("google-1", "sam@example.com"),
+            ),
+            (
+                "lee-credential",
+                auth::TokenInfo::for_test("google-2", "lee@example.com"),
+            ),
+        ]);
+        let router = super::router_with_verifier(
+            App::new(
+                Box::new(MemoryStore::default()) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(verifier),
+            false,
+            Caps::default(),
+            None,
+            TrustedProxies::default(),
+        );
+        let sam = sign_in_with(&router, "sam-credential").await;
+        let lee = sign_in_with(&router, "lee-credential").await;
+
+        // Lee has a task.
+        let (status, _) = send_as(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(&draft_titled("Lee's task")),
+            Some(&lee),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Sam imports a task with Lee's id — Sam should get a fresh id, Lee untouched.
+        let body = r#"{"tasks":[{"id":"tlee-fake","title":"Sam's import","duration_min":30,"when":{"kind":"anytime"},"done":false,"order":0,"label":"Other","priority":"low","source":"text","created":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","external_uid":null}]}"#;
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/import")
+            .header("x-rambl-tz", "America/New_York")
+            .header("authorization", format!("Bearer {sam}"))
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_owned()))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Lee still has only their own task.
+        let (status, lee_export) =
+            send_as(&router, "GET", "/api/v1/export", None, Some(&lee)).await;
+        assert_eq!(status, StatusCode::OK);
+        let lee_titles: Vec<&str> = lee_export["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(lee_titles, vec!["Lee's task"]);
     }
 
     async fn send_raw(
@@ -3693,6 +4005,19 @@ mod tests {
         ) -> Result<crate::v2::store::Usage, StoreError> {
             self.inner.usage_today(day, top)
         }
+        fn usage_ranking(
+            &self,
+            order: crate::v2::store::UsageOrder,
+            top: usize,
+        ) -> Result<Vec<crate::v2::store::UsageRow>, StoreError> {
+            self.inner.usage_ranking(order, top)
+        }
+        fn is_user_blocked(&self, user: &str) -> Result<bool, StoreError> {
+            self.inner.is_user_blocked(user)
+        }
+        fn account_exists(&self, user: &str) -> Result<bool, StoreError> {
+            self.inner.account_exists(user)
+        }
         fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {
             self.inner.user_id_for_email(email)
         }
@@ -3879,9 +4204,12 @@ mod tests {
         assert_eq!(second["jev_fallback"], true, "{second}");
     }
 
-    /// A blocked user still uses the app, but capture is judged by `FakeJudge`.
+    /// A paused account stops using the app: every user-facing call is refused with 403,
+    /// including capture. (`pause` in the console writes a user block, which used to
+    /// mean only "judge with FakeJudge"; an *address* block still means that, and
+    /// `a_blocked_address_captures_with_fakejudge` covers it.)
     #[tokio::test]
-    async fn a_blocked_user_captures_with_fakejudge() {
+    async fn a_paused_account_is_refused_by_the_api() {
         let store = MemoryStore::default();
         store
             .block(&crate::v2::store::Block::User("google-1".into()))
@@ -3902,6 +4230,7 @@ mod tests {
         );
         let token = sign_in(&router).await;
         let bearer = format!("Bearer {token}");
+
         let (status, _, body) = call(
             &router,
             "POST",
@@ -3910,11 +4239,19 @@ mod tests {
             &[("authorization", &bearer)],
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(
-            body["jev_fallback"], true,
-            "a blocked user is not judged by Jev"
-        );
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"]["code"], "forbidden");
+
+        // Not only capture: the list is refused too.
+        let (status, _, body) = call(
+            &router,
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            &[("authorization", &bearer)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     }
 
     /// A blocked address is judged by `FakeJudge` whoever sends from it.
@@ -4079,5 +4416,289 @@ mod tests {
         assert!(!valid_anon_id("0123456789abcdef0123456789abcdef"));
         assert!(!valid_anon_id("anon_0123456789ABCDEF0123456789abcdef"));
         assert!(!valid_anon_id("anon_0123"));
+    }
+
+    // ---- edge cases: bad input fails cleanly, never panics or 500s ----
+
+    /// Garbage bytes with a JSON content-type are a 4xx, and the server answers
+    /// the next request afterwards: no panic, no 500, no poisoned lock.
+    #[tokio::test]
+    async fn malformed_json_body_is_a_4xx_and_the_server_survives() {
+        let router = router_at(sunday_night());
+        let (status, _) = send(&router, "POST", "/api/v1/tasks", Some("{not json")).await;
+        assert!(
+            status.is_client_error(),
+            "garbage JSON must fail cleanly, got {status}"
+        );
+        assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        let (status, _) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the server did not survive a bad body"
+        );
+    }
+
+    /// Fields the server does not know are ignored, so a newer client still creates
+    /// its task against an older server. What matters is no panic and no 500.
+    #[tokio::test]
+    async fn unknown_fields_are_ignored_on_create() {
+        let router = router_at(sunday_night());
+        // The extra field sits on the draft itself: `When` is an internally
+        // tagged enum and serde rejects trailing fields inside its object, so a
+        // client must never hide new data there.
+        let draft = r#"{"title":"Buy milk","duration_min":30,"when":{"kind":"anytime"},"label":"Other","priority":"low","source":"text","extra_field":1}"#;
+        let (status, body) = send(&router, "POST", "/api/v1/tasks", Some(draft)).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "unknown fields must be ignored: {body}"
+        );
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(snapshot.tasks[0].title, "Buy milk");
+        assert_invariant(&snapshot);
+    }
+
+    /// One anonymous user's task id is a 404 to another, for PATCH and DELETE
+    /// alike, and the owner's task is untouched by both attempts.
+    #[tokio::test]
+    async fn another_users_task_id_is_404_and_their_data_is_untouched() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let (status, headers, body) =
+            call(&router, "POST", "/api/v1/tasks", Some(DRAFT), &[]).await;
+        assert_eq!(status, StatusCode::OK);
+        let owner = anonymous_id_of(&headers);
+        let id = serde_json::from_value::<Snapshot>(body).unwrap().tasks[0]
+            .id
+            .0
+            .clone();
+        let path = format!("/api/v1/tasks/{id}");
+
+        // A second anonymous visitor is a different person on the same server.
+        let (_, stranger_headers, _) = call(&router, "GET", "/api/v1/snapshot", None, &[]).await;
+        let stranger = anonymous_id_of(&stranger_headers);
+        assert_ne!(owner, stranger);
+
+        let (status, _, body) = call(
+            &router,
+            "PATCH",
+            &path,
+            Some(r#"{"done":true}"#),
+            &[("x-rambl-anon", &stranger)],
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "a stranger patched a task: {body}"
+        );
+        assert_eq!(body["error"]["code"], "not_found");
+
+        let (status, _, body) = call(
+            &router,
+            "DELETE",
+            &path,
+            None,
+            &[("x-rambl-anon", &stranger)],
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "a stranger deleted a task: {body}"
+        );
+
+        // The stranger sees an empty list; the owner still sees the original task.
+        let (_, _, body) = call(
+            &router,
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            &[("x-rambl-anon", &stranger)],
+        )
+        .await;
+        assert!(body["tasks"].as_array().unwrap().is_empty());
+        let (_, _, body) = call(
+            &router,
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            &[("x-rambl-anon", &owner)],
+        )
+        .await;
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(snapshot.tasks.len(), 1);
+        assert_eq!(snapshot.tasks[0].title, "Write the report");
+        assert!(!snapshot.tasks[0].done);
+        assert_invariant(&snapshot);
+    }
+
+    /// An empty PATCH body is a 4xx; an empty object patches nothing and changes nothing.
+    #[tokio::test]
+    async fn patch_with_an_empty_body_is_a_4xx_and_an_empty_object_is_a_noop() {
+        let router = router_at(sunday_night());
+        let id = create_task(&router, "Read").await;
+        let path = format!("/api/v1/tasks/{id}");
+        let (status, _) = send(&router, "PATCH", &path, Some("")).await;
+        assert!(
+            status.is_client_error(),
+            "an empty PATCH body must fail cleanly, got {status}"
+        );
+        let (status, body) = send(&router, "PATCH", &path, Some("{}")).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "an empty object patches nothing: {body}"
+        );
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(snapshot.tasks[0].title, "Read");
+        assert_invariant(&snapshot);
+    }
+
+    /// A 1 MB title is accepted whole: no truncation, no panic, no 500.
+    #[tokio::test]
+    async fn a_one_megabyte_title_is_stored_whole() {
+        let router = router_at(sunday_night());
+        let title = "a".repeat(1024 * 1024);
+        let draft = format!(
+            r#"{{"title":"{title}","duration_min":30,"when":{{"kind":"anytime"}},"label":"Other","priority":"low","source":"text"}}"#
+        );
+        let (status, body) = send(&router, "POST", "/api/v1/tasks", Some(&draft)).await;
+        assert_ne!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "a 1 MB title must never be a 500"
+        );
+        assert_eq!(status, StatusCode::OK, "a 1 MB title was refused: {status}");
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(snapshot.tasks[0].title.len(), 1024 * 1024);
+        assert_invariant(&snapshot);
+    }
+
+    /// Durations outside 5 to 480 minutes are refused: a negative or out-of-range
+    /// number never parses (422), a big-but-parseable one fails validation (400).
+    #[tokio::test]
+    async fn out_of_range_durations_are_4xx() {
+        let router = router_at(sunday_night());
+        for (duration, want) in [
+            ("-5", StatusCode::UNPROCESSABLE_ENTITY),
+            ("999999", StatusCode::UNPROCESSABLE_ENTITY),
+            ("60000", StatusCode::BAD_REQUEST),
+            ("0", StatusCode::BAD_REQUEST),
+        ] {
+            let draft = format!(
+                r#"{{"title":"Big job","duration_min":{duration},"when":{{"kind":"anytime"}},"label":"Other","priority":"low","source":"text"}}"#
+            );
+            let (status, _) = send(&router, "POST", "/api/v1/tasks", Some(&draft)).await;
+            assert_eq!(status, want, "duration_min {duration} gave {status}");
+        }
+    }
+
+    /// A zone that is not IANA is a 400 on writes too, not just on snapshot.
+    #[tokio::test]
+    async fn an_unknown_zone_is_a_400_on_writes() {
+        let router = router_at(sunday_night());
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/tasks")
+            .header("x-rambl-tz", "Mars/Olympus")
+            .header("content-type", "application/json")
+            .body(Body::from(DRAFT))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["error"]["code"], "bad_request");
+    }
+
+    /// Deleting twice: the first delete answers 200, the second is a 404.
+    #[tokio::test]
+    async fn deleting_twice_is_ok_then_404() {
+        let router = router_at(sunday_night());
+        let id = create_task(&router, "Gone").await;
+        let path = format!("/api/v1/tasks/{id}");
+        let (status, _) = send(&router, "DELETE", &path, None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, body) = send(&router, "DELETE", &path, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body["error"]["code"], "not_found");
+    }
+
+    /// A session the store has expired is a 401 over HTTP, not just in the store
+    /// test: the request carries a real but dead token.
+    #[tokio::test]
+    async fn an_expired_bearer_token_is_401() {
+        let store = MemoryStore::default();
+        let user = auth::Me {
+            id: "google-1".into(),
+            email: "sam@example.com".into(),
+            name: "Sam".into(),
+            picture: None,
+            plan: auth::Plan::Free,
+        };
+        let token = auth::new_token();
+        // Sessions are checked against the wall clock, so an expiry an hour ago
+        // is dead whatever the app clock says.
+        let expired = sunday_night() - chrono::Duration::hours(1);
+        store
+            .upsert_user_and_session(&user, &token, expired)
+            .expect("store the expired session");
+        let router = super::router_with_verifier(
+            App::new(
+                Box::new(store) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(auth::FakeVerifier {
+                answer: Err("unused".into()),
+            }),
+            false,
+            Caps::default(),
+            None,
+            TrustedProxies::default(),
+        );
+        let (status, body) = send_as(&router, "GET", "/api/v1/snapshot", None, Some(&token)).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "an expired token worked: {body}"
+        );
+        assert_eq!(body["error"]["code"], "unauthorized");
+    }
+
+    /// A token the server never issued is a 401 with the JSON error body, on both
+    /// reads and writes.
+    #[tokio::test]
+    async fn a_forged_bearer_token_is_401() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let forged = auth::new_token();
+        let (status, body) = send_as(&router, "GET", "/api/v1/snapshot", None, Some(&forged)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"]["code"], "unauthorized");
+        let (status, _) =
+            send_as(&router, "POST", "/api/v1/tasks", Some(DRAFT), Some(&forged)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// A JSON body without a JSON content-type is a 415: axum refuses it before
+    /// the handler ever runs, and the server answers the next request.
+    #[tokio::test]
+    async fn a_missing_content_type_is_415_and_the_server_survives() {
+        let router = router_at(sunday_night());
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/tasks")
+            .header("x-rambl-tz", "America/New_York")
+            .body(Body::from(DRAFT))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "a body without a content-type must be refused"
+        );
+        let (status, _) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        assert_eq!(status, StatusCode::OK, "the server did not survive a 415");
     }
 }

@@ -417,7 +417,14 @@ fn CaptureBox(
                 placeholder="Say what you need to do…"
                 aria-label="Ramble"
             />
-            <button type="submit">"Add"</button>
+            // The nest: clicking it submits the form (replaces the Add button)
+            <button
+                type="submit"
+                class="nest"
+                aria-label="Submit task"
+            >
+                // Rambo sits here; his pointer-events:none at home lets clicks reach the nest
+            </button>
         </form>
     }
 }
@@ -466,11 +473,21 @@ fn Rambo(
         .forget();
     };
 
+    let rambo_ref = NodeRef::<leptos::html::Button>::new();
+
     // Track whether pointer moved (to distinguish Release from Drop)
     let moved = std::rc::Rc::new(std::cell::RefCell::new(false));
     let moved_down = moved.clone();
     let moved_move = moved.clone();
     let moved_for_up = moved.clone();
+
+    // Grab state: track pointer position and pen offset at grab so drag follows
+    // the pointer exactly, even if the element's home position has shifted since mount.
+    // This matches the v1 approach (penDrag.base + dx/dy).
+    let grab_state = std::rc::Rc::new(std::cell::RefCell::new(None::<(f64, f64, f64, f64)>));
+    let grab_state_down = grab_state.clone();
+    let grab_state_move = grab_state.clone();
+    let grab_state_up = grab_state.clone();
 
     // Speech session for grab-to-listen: transcript goes into capture_text so
     // the capture box can submit it when the user releases Rambo.
@@ -529,25 +546,6 @@ fn Rambo(
     let stop_speech_cancel = stop_speech_and_send.clone();
     let stop_speech_key = stop_speech_and_send.clone();
 
-    // Home position: Rambo's CSS-anchored spot (bottom-right). pen_pos stores
-    // OFFSETS from home so translate() places him correctly.
-    let home_pos = RwSignal::new((0.0_f64, 0.0));
-    let rambo_ref = NodeRef::<leptos::html::Button>::new();
-
-    // Measure home position on mount so drag offsets are correct
-    Effect::new(move |_| {
-        #[cfg(target_arch = "wasm32")]
-        if let Some(btn) = rambo_ref.get() {
-            let rect = btn.get_bounding_client_rect();
-            // Home is the center of the button
-            let hx = rect.left() + rect.width() / 2.0;
-            let hy = rect.top() + rect.height() / 2.0;
-            home_pos.set((hx, hy));
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        let _ = rambo_ref;
-    });
-
     view! {
         <button
             node_ref=rambo_ref
@@ -564,6 +562,11 @@ fn Rambo(
                 }
                 set_brain_event.set(Some(rambl_brain::Event::Poked));
                 *moved_down.borrow_mut() = false;
+                // Save grab state: pointer position and current pen offset at grab
+                let gx = ev.client_x() as f64;
+                let gy = ev.client_y() as f64;
+                let (ox, oy) = pen_pos.get_untracked();
+                *grab_state_down.borrow_mut() = Some((gx, gy, ox, oy));
                 set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Grab));
                 set_talking.set(true);
                 start_speech_down();
@@ -574,13 +577,10 @@ fn Rambo(
             on:pointermove=move |ev| {
                 if matches!(state.get_untracked(), mascot::State::Dragging) {
                     *moved_move.borrow_mut() = true;
-                    let client_x = ev.client_x() as f64;
-                    let client_y = ev.client_y() as f64;
-                    let home = home_pos.get_untracked();
-                    if home.0 != 0.0 || home.1 != 0.0 {
-                        let offset_x = client_x - home.0;
-                        let offset_y = client_y - home.1;
-                        pen_pos.set((offset_x, offset_y));
+                    if let Some((gx, gy, ox, oy)) = *grab_state_move.borrow() {
+                        let dx = ev.client_x() as f64 - gx;
+                        let dy = ev.client_y() as f64 - gy;
+                        pen_pos.set((ox + dx, oy + dy));
                     }
                 }
             }
@@ -589,20 +589,22 @@ fn Rambo(
                 if !matches!(state.get_untracked(), mascot::State::Dragging) {
                     return;
                 }
+                // Clear grab state
+                *grab_state_up.borrow_mut() = None;
                 let did_move = *moved_for_up.borrow();
                 if !did_move {
                     // Release without moving: send transcript and go home
                     set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Release));
                     return;
                 }
+                // Update pen position one last time using delta from grab
+                if let Some((gx, gy, ox, oy)) = *grab_state_up.borrow() {
+                    let dx = ev.client_x() as f64 - gx;
+                    let dy = ev.client_y() as f64 - gy;
+                    pen_pos.set((ox + dx, oy + dy));
+                }
                 let client_x = ev.client_x() as f64;
                 let client_y = ev.client_y() as f64;
-                let home = home_pos.get_untracked();
-                if home.0 != 0.0 || home.1 != 0.0 {
-                    let offset_x = client_x - home.0;
-                    let offset_y = client_y - home.1;
-                    pen_pos.set((offset_x, offset_y));
-                }
 
                 // Check if dropped on a task row
                 let Some(doc) = web_sys::window().and_then(|w| w.document()) else {
@@ -701,7 +703,7 @@ fn Rambo(
                                     set_state_clone.set(mascot::State::Home);
                                 });
                             }
-                        }>"Delete"</button>
+                        }>"×"</button>
                         <button type="button" on:click=move |_| set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Return))>"Never mind"</button>
                     </span>
                 }.into_any(),
@@ -1036,8 +1038,6 @@ fn TaskList(
                                 .ok()
                                 .flatten()
                             {
-                                // Remove pen-pending and add pen-writing: use separate arrays
-                                // so pen-pending doesn't get re-added.
                                 {
                                     let remove_arr = Array::new();
                                     remove_arr.push(&"pen-pending".into());
@@ -1215,6 +1215,8 @@ fn TaskList(
                         draggable="true"
                         on:dragstart=handle_drag_start
                         on:dragend=handle_drag_end
+                        on:touchstart=move |ev: leptos::ev::TouchEvent| { let _ = ev; }
+                        on:touchend=move |ev: leptos::ev::TouchEvent| { let _ = ev; }
                     >
                         <input
                             type="checkbox"
@@ -1259,11 +1261,11 @@ fn TaskList(
                         </span>
                         <span class="pen-underline"><img src="assets/pen-underline.svg" alt="" /></span>
                         <button
-                            class="delete"
+                            class="delete-mark"
                             type="button"
                             on:click=delete_task
                             aria-label=format!("Delete {}", task_title)
-                        >"Delete"</button>
+                        >"×"</button>
                     </li>
                         }
 
@@ -1375,7 +1377,7 @@ fn TaskList(
                                             });
                                         }
                                     }
-                                >"Delete"</button>
+                                >"×"</button>
                                 <button type="button" on:click=move |_| set_editing_task.set(None)>"Cancel"</button>
                                 <button
                                     type="button"
@@ -1652,5 +1654,43 @@ mod pane_tests {
         assert_eq!(pane_at(400.0, 400.0), 1);
         assert_eq!(pane_at(900.0, 400.0), 1, "never past the last pane");
         assert_eq!(pane_at(100.0, 0.0), 0, "no width yet, so the first pane");
+    }
+}
+
+/// Hook exposed for Chuan's Rambo scribble-out animation before removal.
+pub fn on_delete_requested(task_id: todo_core::TaskId) {
+    // Placeholder: the row's delete event handler will call the existing
+    // delete API; this function is the public hook for pre-delete effects.
+    let _ = task_id;
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SwipeAction {
+    Delete,
+    SnapBack,
+}
+
+pub fn swipe_action(delta_x: f64, threshold: f64) -> SwipeAction {
+    if delta_x >= threshold {
+        SwipeAction::Delete
+    } else {
+        SwipeAction::SnapBack
+    }
+}
+
+#[cfg(test)]
+mod swipe_tests {
+    use super::*;
+    #[test]
+    fn swipe_past_threshold_deletes() {
+        assert_eq!(swipe_action(80.0, 50.0), SwipeAction::Delete);
+    }
+    #[test]
+    fn short_swipe_snaps_back() {
+        assert_eq!(swipe_action(20.0, 50.0), SwipeAction::SnapBack);
+    }
+    #[test]
+    fn exactly_threshold_deletes() {
+        assert_eq!(swipe_action(50.0, 50.0), SwipeAction::Delete);
     }
 }
