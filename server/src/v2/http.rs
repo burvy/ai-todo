@@ -106,10 +106,10 @@ impl CurrentUser {
             let token = auth::bearer(headers)
                 .ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
             let app = shared.app.lock().expect("app mutex");
-            return auth::session_user(app.store(), &token, Utc::now())
+            let user = auth::session_user(app.store(), &token, Utc::now())
                 .map_err(HttpError::from)?
-                .map(|user| user.id)
-                .ok_or_else(|| unauthorized("that session has expired"));
+                .ok_or_else(|| unauthorized("that session has expired"))?;
+            return Self::unpaused(app.store(), user.id);
         }
         let anonymous = headers
             .get(&ANON_HEADER)
@@ -122,11 +122,29 @@ impl CurrentUser {
                 app.store()
                     .touch_anonymous(id, app.now())
                     .map_err(store_failed)?;
-                Ok(id.to_owned())
+                Self::unpaused(app.store(), id.to_owned())
             }
             _ => Err(unauthorized("send Authorization: Bearer <token>")),
         }
     }
+
+    /// A paused account stops using the app: every user-facing call is refused, not just
+    /// the ones that spend Jev. The admin console and the admin page are separate
+    /// (`admin_of`), so the operator is never locked out by this.
+    fn unpaused(store: &dyn Store, user: String) -> Result<String, HttpError> {
+        if store.is_user_blocked(&user).map_err(store_failed)? {
+            return Err(paused());
+        }
+        Ok(user)
+    }
+}
+
+/// A paused account, told what to do about it.
+fn paused() -> HttpError {
+    HttpError(ApiError {
+        code: ErrorCode::Forbidden,
+        message: "this account is paused".into(),
+    })
 }
 
 fn unauthorized(message: &'static str) -> HttpError {
@@ -146,6 +164,9 @@ impl IntoResponse for HttpError {
             ErrorCode::NotFound => StatusCode::NOT_FOUND,
             ErrorCode::Conflict | ErrorCode::StaleUpdate => StatusCode::CONFLICT,
             ErrorCode::Unauthorized => StatusCode::UNAUTHORIZED,
+            // A paused account: the request was well-formed and the session is
+            // real, so neither 400 nor 401 would be true.
+            ErrorCode::Forbidden => StatusCode::FORBIDDEN,
             // A dependency being down is 503, "come back later"; our own
             // failure is 500. The two are different things to a client, which
             // is why they are different codes.
@@ -3693,6 +3714,19 @@ mod tests {
         ) -> Result<crate::v2::store::Usage, StoreError> {
             self.inner.usage_today(day, top)
         }
+        fn usage_ranking(
+            &self,
+            order: crate::v2::store::UsageOrder,
+            top: usize,
+        ) -> Result<Vec<crate::v2::store::UsageRow>, StoreError> {
+            self.inner.usage_ranking(order, top)
+        }
+        fn is_user_blocked(&self, user: &str) -> Result<bool, StoreError> {
+            self.inner.is_user_blocked(user)
+        }
+        fn account_exists(&self, user: &str) -> Result<bool, StoreError> {
+            self.inner.account_exists(user)
+        }
         fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {
             self.inner.user_id_for_email(email)
         }
@@ -3879,9 +3913,12 @@ mod tests {
         assert_eq!(second["jev_fallback"], true, "{second}");
     }
 
-    /// A blocked user still uses the app, but capture is judged by `FakeJudge`.
+    /// A paused account stops using the app: every user-facing call is refused with 403,
+    /// including capture. (`pause` in the console writes a user block, which used to
+    /// mean only "judge with FakeJudge"; an *address* block still means that, and
+    /// `a_blocked_address_captures_with_fakejudge` covers it.)
     #[tokio::test]
-    async fn a_blocked_user_captures_with_fakejudge() {
+    async fn a_paused_account_is_refused_by_the_api() {
         let store = MemoryStore::default();
         store
             .block(&crate::v2::store::Block::User("google-1".into()))
@@ -3902,6 +3939,7 @@ mod tests {
         );
         let token = sign_in(&router).await;
         let bearer = format!("Bearer {token}");
+
         let (status, _, body) = call(
             &router,
             "POST",
@@ -3910,11 +3948,19 @@ mod tests {
             &[("authorization", &bearer)],
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
-        assert_eq!(
-            body["jev_fallback"], true,
-            "a blocked user is not judged by Jev"
-        );
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(body["error"]["code"], "forbidden");
+
+        // Not only capture: the list is refused too.
+        let (status, _, body) = call(
+            &router,
+            "GET",
+            "/api/v1/snapshot",
+            None,
+            &[("authorization", &bearer)],
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
     }
 
     /// A blocked address is judged by `FakeJudge` whoever sends from it.
