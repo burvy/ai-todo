@@ -351,6 +351,9 @@ pub fn App() -> impl IntoView {
     let (pane, set_pane) = signal(0_u8);
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
+    // Rambo peeks over at you while you type. The gear menu picks the tool
+    // (settings::Pen), and the pen decides which drawing of each pose he wears.
+    let (typing, set_typing) = signal(false);
     let pen_pos = RwSignal::new((0.0_f64, 0.0));
     // Transcript buffer: Rambo fills it while listening, CaptureBox reads it
     let capture_text = RwSignal::new(String::new());
@@ -372,75 +375,78 @@ pub fn App() -> impl IntoView {
     });
 
     view! {
-        <header>
-            <h1>"Rambl"</h1>
-            <account::HeaderLink />
-            <settings::GearMenu
-                settings=view_settings
-                set_settings=set_view_settings
-                set_snapshot=set_snapshot
-                set_error=set_error
-            />
-            <CaptureBox
-                form_ref
-                snapshot=snapshot
-                set_snapshot=set_snapshot
+            <header>
+                <h1>"Rambl"</h1>
+                <account::HeaderLink />
+                <settings::GearMenu
+                    settings=view_settings
+                    set_settings=set_view_settings
+                    set_snapshot=set_snapshot
+                    set_error=set_error
+                />
+                <CaptureBox
+                    form_ref
+                    snapshot=snapshot
+                    set_snapshot=set_snapshot
+                    state=mascot_state
+                    set_state=set_mascot_state
+                    view_settings
+                    pen_pos
+                    capture_text
+                    pen_queue
+                    set_typing
+                />
+            </header>
+            {move || error.get().map(|e| view! {
+                <div class="error" aria-live="polite">{e}</div>
+            })}
+            <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event set_speech=set_brain_speech set_pose=set_brain_pose />
+            <nav class="pane-switch" aria-label="Show">
+                <button
+                    type="button"
+                    class:active=move || pane.get() == 0
+                    aria-pressed=move || (pane.get() == 0).to_string()
+                    on:click=move |_| show_pane(main_ref, 0, set_pane)
+                >"To do"</button>
+                <button
+                    type="button"
+                    class:active=move || pane.get() == 1
+                    aria-pressed=move || (pane.get() == 1).to_string()
+                    on:click=move |_| show_pane(main_ref, 1, set_pane)
+                >"Planner"</button>
+            </nav>
+            <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
+                <div class="tasks-pane">
+                    <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
+                </div>
+                <week::WeekGrid
+                    snapshot=snapshot
+                    settings=view_settings
+                    set_snapshot=set_snapshot
+                    set_error=set_error
+                    capture_text
+                    set_mascot_state=set_mascot_state
+                />
+            </main>
+            <Rambo
                 state=mascot_state
                 set_state=set_mascot_state
+                talking
+                set_talking
+                snapshot
+                set_snapshot
+                set_error
                 view_settings
+                brain_speech
+                brain_pose
+                set_brain_event
                 pen_pos
                 capture_text
-                pen_queue
+                form_ref
+    pen=Signal::derive(move || view_settings.get().pen)
+                typing
             />
-        </header>
-        {move || error.get().map(|e| view! {
-            <div class="error" aria-live="polite">{e}</div>
-        })}
-        <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event set_speech=set_brain_speech set_pose=set_brain_pose />
-        <nav class="pane-switch" aria-label="Show">
-            <button
-                type="button"
-                class:active=move || pane.get() == 0
-                aria-pressed=move || (pane.get() == 0).to_string()
-                on:click=move |_| show_pane(main_ref, 0, set_pane)
-            >"To do"</button>
-            <button
-                type="button"
-                class:active=move || pane.get() == 1
-                aria-pressed=move || (pane.get() == 1).to_string()
-                on:click=move |_| show_pane(main_ref, 1, set_pane)
-            >"Planner"</button>
-        </nav>
-        <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
-            <div class="tasks-pane">
-                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
-            </div>
-            <week::WeekGrid
-                snapshot=snapshot
-                settings=view_settings
-                set_snapshot=set_snapshot
-                set_error=set_error
-                capture_text
-                set_mascot_state=set_mascot_state
-            />
-        </main>
-        <Rambo
-            state=mascot_state
-            set_state=set_mascot_state
-            talking
-            set_talking
-            snapshot
-            set_snapshot
-            set_error
-            view_settings
-            brain_speech
-            brain_pose
-            set_brain_event
-            pen_pos
-            capture_text
-            form_ref
-        />
-    }
+        }
 }
 
 /// The pane in view on a phone: 0 for tasks, 1 for the week. The two panes sit side by
@@ -550,6 +556,8 @@ fn CaptureBox(
     pen_pos: RwSignal<(f64, f64)>,
     capture_text: RwSignal<String>,
     pen_queue: RwSignal<Vec<TaskId>>,
+    /// True while you are typing, so Rambo peeks over at the box
+    set_typing: WriteSignal<bool>,
 ) -> impl IntoView {
     let (text, set_text) = signal(String::new());
 
@@ -584,6 +592,8 @@ fn CaptureBox(
 
     // Caret follow: on input, position pen at caret; after 2s of inactivity, fly home
     let linger_timer = std::rc::Rc::new(std::cell::RefCell::new(None::<Timeout>));
+    // Peeking: Rambo looks up while you type and stops when you stop.
+    let peek_timer = std::rc::Rc::new(std::cell::RefCell::new(None::<Timeout>));
     let restart_linger = {
         let linger_timer = linger_timer.clone();
         move || {
@@ -638,6 +648,17 @@ fn CaptureBox(
     let handle_input = move |ev: leptos::ev::Event| {
         // Keep the typed text first; the pen choreography below may bail out early.
         set_text.set(event_target_value(&ev));
+        // He looks up at you as you type, and goes back to what he was doing
+        // PEEK_MS after the last keystroke.
+        set_typing.set(true);
+        if let Some(timer) = peek_timer.borrow_mut().take() {
+            timer.cancel();
+        }
+        peek_timer
+            .borrow_mut()
+            .replace(Timeout::new(mascot::PEEK_MS, move || {
+                set_typing.set(false);
+            }));
         let st = state.get_untracked();
         if mascot::pen_busy(&st) {
             return;
@@ -740,6 +761,10 @@ fn Rambo(
     capture_text: RwSignal<String>,
     /// Capture form: Rambo calls requestSubmit on release
     form_ref: NodeRef<leptos::html::Form>,
+    /// The tool he holds: it decides which drawing of each pose he wears
+    pen: Signal<settings::Pen>,
+    /// True while you are typing, so he peeks over at the box
+    typing: ReadSignal<bool>,
 ) -> impl IntoView {
     let start_return_with = move |hard_drop: bool| {
         if mascot::prefers_reduced_motion() {
@@ -985,7 +1010,14 @@ fn Rambo(
                 }
             }
         >
-            <img src="assets/pen.svg" alt="Rambo" />
+            <img
+                src=move || mascot::art_for(pen.get(), &state.get(), &brain_pose.get(), typing.get())
+                alt="Rambo"
+            />
+            // The mood's little picture, when the mood has one and he is home.
+            {move || mascot::fx_for(&state.get(), &brain_pose.get(), typing.get()).map(|fx| view! {
+                <img class="rambo-fx" src=fx.art() alt="" aria-hidden="true" />
+            })}
         </button>
         <span class="mascot-status" aria-live="polite">
             {move || brain_speech.get().map(|line| view! { <span class="brain-line">{line}</span> })}

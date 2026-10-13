@@ -8,6 +8,22 @@
 //! Writing flight is part of the same state machine: when Rambo writes,
 //! he leaves home and returns. The view layer reads the state and places
 //! the element accordingly.
+//!
+//! [`Mood`] is the art side, also pure: the tool he holds decides which folder
+//! the drawing comes from, and the mood (what he feels) decides which drawing
+//! that is. Every path is built here so a missing file is a test failure, not a
+//! broken image in the corner of the page.
+
+use crate::settings::Pen;
+
+/// The folder a tool's drawings live in. The fountain pen is `fountain-pen` in
+/// the settings and in `data-pen`, and `fountain` on disk.
+fn art_folder(pen: Pen) -> &'static str {
+    match pen {
+        Pen::FountainPen => "fountain",
+        other => other.slug(),
+    }
+}
 
 /// Rambo's complete state: where he is and what he's doing.
 ///
@@ -68,6 +84,8 @@ pub const RECOVER_MS: u32 = 600;
 pub const SKITTER_MS: u32 = 900;
 /// Milliseconds the splat wobble lasts on a hard drop.
 pub const SPLAT_MS: u32 = 400;
+/// Milliseconds Rambo keeps peeking over at you after your last keystroke.
+pub const PEEK_MS: u32 = 1400;
 /// Minimum drop velocity (px/ms) to trigger a hard-drop splat.
 pub const HARD_DROP_VELOCITY: f64 = 0.5;
 
@@ -200,9 +218,190 @@ pub fn rambo_class(state: &State, pose: &str) -> String {
     }
 }
 
+/// One drawing per mood, shared by every tool: the file name inside that tool's
+/// folder. Every variant here has a file on disk —
+/// `assets_have_every_pose_for_every_tool` fails the moment that stops being
+/// true.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pose {
+    Idle,
+    /// Looking up from the page at you: peeking while you type, and the
+    /// quizzical tilt when he asks what you want with a task.
+    Teasing,
+    Listening,
+    Writing,
+    Flying,
+    Dozing,
+    Happy,
+    Sulking,
+    Worried,
+    Lobotomized,
+}
+
+impl Pose {
+    pub fn id(self) -> &'static str {
+        match self {
+            Pose::Idle => "idle",
+            Pose::Teasing => "teasing",
+            Pose::Listening => "listening",
+            Pose::Writing => "writing",
+            Pose::Flying => "flying",
+            Pose::Dozing => "dozing",
+            Pose::Happy => "happy",
+            Pose::Sulking => "sulking",
+            Pose::Worried => "worried",
+            Pose::Lobotomized => "lobotomized",
+        }
+    }
+
+    /// The drawing of Rambo in this pose, holding this tool.
+    pub fn art(self, pen: Pen) -> String {
+        format!("assets/rambo/{}/{}.svg", art_folder(pen), self.id())
+    }
+}
+
+/// The little pictures that float beside Rambo for a mood: `assets/rambo/fx/`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fx {
+    SleepyZ,
+    Sparks,
+    ScribbleCloud,
+}
+
+impl Fx {
+    pub fn id(self) -> &'static str {
+        match self {
+            Fx::SleepyZ => "sleepy-z",
+            Fx::Sparks => "sparks",
+            Fx::ScribbleCloud => "scribble-cloud",
+        }
+    }
+
+    pub fn art(self) -> String {
+        format!("assets/rambo/fx/{}.svg", self.id())
+    }
+}
+
+/// What Rambo is feeling while nothing else is happening.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Mood {
+    #[default]
+    Resting,
+    Peeking,
+    Dozing,
+    Celebrating,
+    Sulking,
+    Annoyed,
+}
+
+impl Mood {
+    /// The drawing this mood wears.
+    pub fn pose(self) -> Pose {
+        match self {
+            Mood::Resting => Pose::Idle,
+            // The art has no `peek` and no `annoyed`: the grinning look and the
+            // lowered brows are the nearest neighbours until Ping draws both.
+            Mood::Peeking => Pose::Teasing,
+            Mood::Annoyed => Pose::Worried,
+            Mood::Dozing => Pose::Dozing,
+            Mood::Celebrating => Pose::Happy,
+            Mood::Sulking => Pose::Sulking,
+        }
+    }
+
+    /// The picture that floats beside him for this mood, if it has one.
+    pub fn fx(self) -> Option<Fx> {
+        match self {
+            Mood::Dozing => Some(Fx::SleepyZ),
+            Mood::Celebrating => Some(Fx::Sparks),
+            Mood::Annoyed => Some(Fx::ScribbleCloud),
+            Mood::Resting | Mood::Peeking | Mood::Sulking => None,
+        }
+    }
+
+    /// What one of the brain's pose names means for his mood. The names come
+    /// from `rambl_brain`: `sleep` is night, `cheer` is a task ticked off,
+    /// `worried` is an overdue task. Every other name leaves him as he is.
+    pub fn from_brain_pose(pose: &str) -> Option<Self> {
+        match pose {
+            "sleep" => Some(Mood::Dozing),
+            "cheer" => Some(Mood::Celebrating),
+            "worried" => Some(Mood::Sulking),
+            _ => None,
+        }
+    }
+}
+
+/// The mood on screen. Typing wakes him and makes him look up at you, whether
+/// the brain is asleep or sulking; otherwise the brain's pose decides.
+pub fn mood_for(brain_pose: &str, typing: bool) -> Mood {
+    if typing {
+        Mood::Peeking
+    } else {
+        Mood::from_brain_pose(brain_pose).unwrap_or_default()
+    }
+}
+
+/// The drawing to show: what Rambo is doing beats how he feels, and a keystroke
+/// beats the mood — that is how he wakes up at night and looks over while you
+/// type. A lobotomized Rambl is vacant whatever you do, so it wins over both.
+pub fn pose_for(state: &State, brain_pose: &str, typing: bool) -> Pose {
+    match state {
+        State::Dragging => Pose::Listening,
+        State::WritingCaret | State::WritingRow => Pose::Writing,
+        State::Flying => Pose::Flying,
+        State::Asking { .. } => Pose::Teasing,
+        State::Home | State::Recovering | State::Splatting | State::Skittering => {
+            if typing {
+                Mood::Peeking.pose()
+            } else if brain_pose == "lobotomized" {
+                Pose::Lobotomized
+            } else {
+                mood_for(brain_pose, typing).pose()
+            }
+        }
+    }
+}
+
+/// The mood picture beside him. Away from the nest it is hidden: he is mid-flight
+/// or mid-drag, and a floating z would trail him across the page.
+pub fn fx_for(state: &State, brain_pose: &str, typing: bool) -> Option<Fx> {
+    if is_off_nest(state) {
+        None
+    } else {
+        mood_for(brain_pose, typing).fx()
+    }
+}
+
+/// The drawing of this tool, in this pose, at this moment: the one path the
+/// page's `<img>` needs.
+pub fn art_for(pen: Pen, state: &State, brain_pose: &str, typing: bool) -> String {
+    pose_for(state, brain_pose, typing).art(pen)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every pose the app can ask for. The path test walks this list, so a new
+    /// pose that ships without art fails the build.
+    const REACHABLE_POSES: [Pose; 10] = [
+        Pose::Idle,
+        Pose::Teasing,
+        Pose::Listening,
+        Pose::Writing,
+        Pose::Flying,
+        Pose::Dozing,
+        Pose::Happy,
+        Pose::Sulking,
+        Pose::Worried,
+        Pose::Lobotomized,
+    ];
+
+    /// Where a page-relative art path lives in the checkout.
+    fn art_file(path: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)
+    }
 
     #[test]
     fn grab_listens_and_release_goes_home() {
@@ -341,7 +540,156 @@ mod tests {
         let state = transition(&state, Event::FlyHome);
         assert_eq!(state, State::Flying);
         // And arrives home
-        let state = State::Home;
+        let state = transition(&state, Event::FlyHome);
         assert_eq!(state, State::Home);
+    }
+
+    #[test]
+    fn every_tool_draws_from_its_own_folder() {
+        assert_eq!(
+            Pose::Idle.art(Pen::FountainPen),
+            "assets/rambo/fountain/idle.svg"
+        );
+        assert_eq!(
+            Pose::Writing.art(Pen::Quill),
+            "assets/rambo/quill/writing.svg"
+        );
+        // The fountain pen is the one tool whose slug and folder differ.
+        assert_eq!(Pen::FountainPen.slug(), "fountain-pen");
+        assert_eq!(
+            [
+                Pen::FountainPen,
+                Pen::Pencil,
+                Pen::Ballpoint,
+                Pen::Quill,
+                Pen::Marker
+            ]
+            .map(art_folder),
+            ["fountain", "pencil", "ballpoint", "quill", "marker"]
+        );
+    }
+
+    #[test]
+    fn assets_have_every_pose_for_every_tool() {
+        // The paths are built from strings, so nothing stops them drifting from
+        // the art on disk. Every pose a mood or a state can reach must exist as
+        // a file, for every tool the gear menu offers.
+        for pen in [
+            Pen::FountainPen,
+            Pen::Pencil,
+            Pen::Ballpoint,
+            Pen::Quill,
+            Pen::Marker,
+        ] {
+            for pose in REACHABLE_POSES {
+                let file = art_file(&pose.art(pen));
+                assert!(file.is_file(), "missing art: {file:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_tool_in_settings_picks_the_drawing() {
+        // The whole point of the pen picker: the tool the page stores is the
+        // folder the drawing comes from.
+        let state = State::Home;
+        assert_eq!(
+            art_for(Pen::Marker, &state, "", false),
+            "assets/rambo/marker/idle.svg"
+        );
+        assert_eq!(
+            art_for(Pen::Ballpoint, &state, "cheer", false),
+            "assets/rambo/ballpoint/happy.svg"
+        );
+    }
+
+    #[test]
+    fn fx_art_lives_beside_the_skins() {
+        for fx in [Fx::SleepyZ, Fx::Sparks, Fx::ScribbleCloud] {
+            let file = art_file(&fx.art());
+            assert!(file.is_file(), "missing art: {file:?}");
+        }
+    }
+
+    #[test]
+    fn what_he_is_doing_beats_how_he_feels() {
+        // Being dragged is the held/listening pose, whatever the mood says.
+        assert_eq!(pose_for(&State::Dragging, "cheer", false), Pose::Listening);
+        assert_eq!(pose_for(&State::WritingRow, "sleep", false), Pose::Writing);
+        assert_eq!(pose_for(&State::Flying, "", false), Pose::Flying);
+        // Dropped on a task he asks: the quizzical tilt.
+        assert_eq!(
+            pose_for(
+                &State::Asking {
+                    task_id: "t1".into(),
+                    title: "Lab report".into()
+                },
+                "",
+                false
+            ),
+            Pose::Teasing
+        );
+    }
+
+    #[test]
+    fn he_doze_s_at_night_and_wakes_when_you_type() {
+        assert_eq!(pose_for(&State::Home, "sleep", false), Pose::Dozing);
+        assert_eq!(fx_for(&State::Home, "sleep", false), Some(Fx::SleepyZ));
+        // A keystroke wakes him even in the middle of the night.
+        assert_eq!(pose_for(&State::Home, "sleep", true), Pose::Teasing);
+        assert_eq!(fx_for(&State::Home, "sleep", true), None);
+    }
+
+    #[test]
+    fn he_peeks_and_celebrates_and_sulks() {
+        assert_eq!(pose_for(&State::Home, "", true), Pose::Teasing);
+        assert_eq!(pose_for(&State::Home, "cheer", false), Pose::Happy);
+        assert_eq!(fx_for(&State::Home, "cheer", false), Some(Fx::Sparks));
+        assert_eq!(pose_for(&State::Home, "worried", false), Pose::Sulking);
+        // Nothing to sulk about, nothing to draw.
+        assert_eq!(pose_for(&State::Home, "home", false), Pose::Idle);
+        assert_eq!(fx_for(&State::Home, "home", false), None);
+        // An unknown pose name is not a mood.
+        assert_eq!(mood_for("dangle", false), Mood::Resting);
+        assert_eq!(mood_for("cheer", false), Mood::Celebrating);
+    }
+
+    #[test]
+    fn tidying_up_makes_him_annoyed() {
+        assert_eq!(Mood::Annoyed.pose(), Pose::Worried);
+        assert_eq!(Mood::Annoyed.fx(), Some(Fx::ScribbleCloud));
+    }
+
+    #[test]
+    fn a_lobotomized_rambl_stands_vacant() {
+        for state in [State::Home, State::Recovering, State::Splatting] {
+            assert_eq!(pose_for(&state, "lobotomized", false), Pose::Lobotomized);
+        }
+    }
+
+    #[test]
+    fn no_mood_picture_follows_him_off_the_nest() {
+        for state in [
+            State::Dragging,
+            State::Recovering,
+            State::Splatting,
+            State::Skittering,
+            State::Asking {
+                task_id: "t1".into(),
+                title: "Lab report".into(),
+            },
+            State::Flying,
+            State::WritingCaret,
+            State::WritingRow,
+        ] {
+            assert_eq!(fx_for(&state, "sleep", false), None, "{state:?}");
+        }
+    }
+
+    #[test]
+    fn the_element_class_still_carries_the_pose() {
+        // The CSS keeps owning how a pose looks; the image src owns who Rambo is.
+        assert!(rambo_class(&State::Home, "dozing").contains("pose-dozing"));
+        assert!(!rambo_class(&State::Home, "").contains("pose-"));
     }
 }
