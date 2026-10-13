@@ -43,8 +43,7 @@ and `rambl.env.example` there. Copy `rambl.env.example` to `rambl.env` and fill 
 `rambl.env` is read only from the exe's own folder, and real environment
 variables override it. Tasks are stored in `data\rambl.db` next to the exe;
 updates never touch that folder's `data\`. Backups are in `data\backups`.
-Create a shortcut to `rambl-server.exe` in `shell:startup`. The firewall, router
-and Cloudflare forwarding are already configured for port 3160.
+Create a shortcut to `rambl-server.exe` in `shell:startup`. The firewall and Cloudflare tunnel are already configured for port 3160.
 
 The window prints the address it actually bound, for example `Rambl is listening on
 127.0.0.1:3160 — open http://127.0.0.1:3160`. Anything other than `127.0.0.1` there
@@ -146,7 +145,7 @@ the request arrived through the tunnel.
 |---|---|---|
 | The phone's public address | The tunnel is forwarding the header and the server believes it. Nothing to set. | none |
 | `127.0.0.1` | The request came from the tunnel over loopback but the header was not used, or the capture was made against `localhost` or the LAN rather than through Cloudflare. | Confirm the capture came from `https://rambl.burvy.dev` on mobile data, not from `http://localhost:3160`. If it did, check the exe is the current build, since this is what #168 changed. |
-| `192.168.x.x` or another LAN address | The request bypassed the tunnel and came straight to the server. | Not a setting problem: the server is reachable directly. Keep the firewall and router forwarding as they are. |
+| `192.168.x.x` or another LAN address | The request bypassed the tunnel and came straight to the server. | Only possible if `RAMBL_BIND` was widened. Set it back to empty (loopback) unless you meant to serve the LAN. |
 | No row for that capture at all | Nothing was captured, or the day has rolled over. | Capture again, then check `/api/v1/snapshot` from the same account. |
 
 If the tunnel ever moves to another machine, put that machine's address in

@@ -1,6 +1,14 @@
 # Rambl release notes
 
 Plain-language notes for the release built from `main` up to `#173`. Every item says
+**New merged PRs since then:**
+- #162 Rambo is one draggable pen that writes your tasks
+- #177 download your data as JSON
+- #178 recurring tasks on the server (no app UI yet)
+- #181 Rambo's personality file drops an unused setting
+- #182, #187 release script works on Windows PowerShell 5.1 and still stops on a failed step
+- #184 test clean-up
+- #185 server listens on 127.0.0.1 by default (RAMBL_BIND)
 which pull request (PR) it came from, so it can be found later. How to deploy is in
 [DEPLOY.md](../DEPLOY.md).
 
