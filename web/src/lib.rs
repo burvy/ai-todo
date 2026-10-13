@@ -958,20 +958,20 @@ fn TaskList(
 
     // Process pen queue: only write rows for tasks the client just created,
     // not every task on reload.
-    Effect::new(move |_| {
-        let mode = view_settings.get().mode;
-        if mascot::prefers_reduced_motion() || mode == settings::RamblMode::Lobotomized {
-            return;
-        }
-        let queue = pen_queue.get();
-        if queue.is_empty() {
-            return;
-        }
-        let current_state = mascot_state.get();
-        // Only start writing if Rambo is at Home
-        if matches!(current_state, mascot::State::Home) {
-            #[cfg(target_arch = "wasm32")]
-            {
+    #[cfg(target_arch = "wasm32")]
+    {
+        Effect::new(move |_| {
+            let mode = view_settings.get().mode;
+            if mascot::prefers_reduced_motion() || mode == settings::RamblMode::Lobotomized {
+                return;
+            }
+            let queue = pen_queue.get();
+            if queue.is_empty() {
+                return;
+            }
+            let current_state = mascot_state.get();
+            // Only start writing if Rambo is at Home
+            if matches!(current_state, mascot::State::Home) {
                 let set_state = set_mascot_state;
                 let pen_pos = pen_pos;
                 wasm_bindgen_futures::spawn_local(async move {
@@ -1038,8 +1038,10 @@ fn TaskList(
                     pen_queue.set(Vec::new());
                 });
             }
-        }
-    });
+        });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (pen_queue, mascot_state, set_mascot_state, view_settings);
 
     view! {
         <section aria-labelledby="tasks-heading">
