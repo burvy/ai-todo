@@ -122,6 +122,7 @@ impl<S: Store> App<S> {
             tasks,
             tz: tz.name().to_owned(),
             generated: ctx.now,
+            series: Vec::new(),
         }
     }
 
