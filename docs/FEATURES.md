@@ -280,6 +280,11 @@ b. Open `/admin` in a browser after signing in on the main page.
 c. Code: `server/src/v2/admin_web.rs` (data lives in `server/src/v2/admin.rs` and `server/src/v2/store.rs`); routes in `server/src/v2/http.rs:admin_page, admin_of`.
 d. Block and plan actions reuse the console's resolution: a user may be named by id or email, and the same `block`, `unblock`, `blocked` and `plan` storage calls serve both.
 
+### 7. Data export
+a. Everything the caller owns can be downloaded as one JSON file: the task list with every field. Planner settings are not included; they are stored in the browser, not on the server.
+b. Call `GET /api/v1/export`, signed in or with the anonymous id; the download is named `rambl-export-YYYY-MM-DD.json` (the date is the caller's own).
+c. Code: `server/src/v2/http.rs:export`.
+
 ## VIII. DATES
 
 ### 1. Local context

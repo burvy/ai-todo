@@ -14,7 +14,7 @@ use axum::{
 };
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
-use todo_core::{ApiError, ErrorCode, Snapshot, TaskDraft};
+use todo_core::{ApiError, ErrorCode, Snapshot, Task, TaskDraft};
 
 use super::admin_web;
 use super::app::{App, ImportResult, Patch};
@@ -334,6 +334,7 @@ fn build_router(
         .route("/api/v1/capture", post(capture))
         .route("/api/v1/tasks/{id}/revise", post(revise_task))
         .route("/api/v1/calendar.ics", get(calendar_ics))
+        .route("/api/v1/export", get(export))
         .route("/admin", get(admin_page))
         .route("/api/v1/admin/usage", get(admin_usage))
         .route("/api/v1/admin/blocks", get(admin_blocks))
@@ -1058,6 +1059,44 @@ async fn calendar_ics(
         )],
         build_ics(&snapshot),
     ))
+}
+
+#[derive(Serialize)]
+struct ExportOut {
+    tasks: Vec<Task>,
+}
+
+/// `GET /api/v1/export`: everything this caller owns as one JSON download.
+///
+/// Tasks are all the server stores of a person — the planner's settings live in
+/// the browser — so the file is `{ "tasks": [...] }`, shaped so a server-side
+/// settings section can join it later without breaking readers.
+async fn export(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+) -> Result<Response, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
+    let tz = zone(&headers)?;
+    let app = shared.app.lock().unwrap();
+    let snapshot = app.snapshot(&user, tz)?;
+    let today = app.now().with_timezone(&tz).date_naive();
+    let disposition = HeaderValue::from_str(&format!(
+        "attachment; filename=\"rambl-export-{today}.json\""
+    ))
+    .expect("a date and fixed words are valid header text");
+    Ok((
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            ),
+            (axum::http::header::CONTENT_DISPOSITION, disposition),
+        ],
+        Json(ExportOut {
+            tasks: snapshot.tasks,
+        }),
+    )
+        .into_response())
 }
 
 /// A Jev failure, split the way ARCHITECTURE.md section 6 splits it.
@@ -2469,6 +2508,161 @@ mod tests {
         let (status, _) = send_as(&second, "GET", "/api/v1/snapshot", None, Some(&sam)).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         let _ = sam;
+    }
+
+    /// Answers each credential with its own identity, so one test store can
+    /// hold two people signing in from one router.
+    struct PerCredential(Vec<(&'static str, auth::TokenInfo)>);
+
+    impl auth::TokenVerifier for PerCredential {
+        fn verify<'a>(
+            &'a self,
+            credential: &'a str,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<Output = Result<auth::TokenInfo, auth::AuthError>>
+                    + Send
+                    + 'a,
+            >,
+        > {
+            let info = self
+                .0
+                .iter()
+                .find(|(name, _)| *name == credential)
+                .map(|(_, info)| info.clone());
+            Box::pin(async move {
+                info.ok_or_else(|| auth::AuthError::Rejected("unknown credential".into()))
+            })
+        }
+    }
+
+    fn draft_titled(title: &str) -> String {
+        format!(
+            r#"{{"title":"{title}","duration_min":30,"when":{{"kind":"anytime"}},"label":"Other","priority":"low","source":"text"}}"#
+        )
+    }
+
+    async fn sign_in_with(router: &Router, credential: &str) -> String {
+        let (status, body) = send_as(
+            router,
+            "POST",
+            "/api/v1/auth/google",
+            Some(&format!(r#"{{"credential":"{credential}"}}"#)),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "sign in failed: {body}");
+        body["token"].as_str().expect("a session token").to_owned()
+    }
+
+    fn task_titles(value: &serde_json::Value) -> Vec<&str> {
+        value["tasks"]
+            .as_array()
+            .expect("a tasks list")
+            .iter()
+            .map(|task| task["title"].as_str().expect("a title"))
+            .collect()
+    }
+
+    /// `GET /api/v1/export` is a download of the caller's own rows and nothing
+    /// else: the file carries the attachment header and never another user's
+    /// task, and the filename date is the caller's own calendar date.
+    #[tokio::test]
+    async fn export_is_a_download_of_only_the_callers_tasks() {
+        let verifier = PerCredential(vec![
+            (
+                "sam-credential",
+                auth::TokenInfo::for_test("google-1", "sam@example.com"),
+            ),
+            (
+                "lee-credential",
+                auth::TokenInfo::for_test("google-2", "lee@example.com"),
+            ),
+        ]);
+        let router = super::router_with_verifier(
+            App::new(
+                Box::new(MemoryStore::default()) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(verifier),
+            false,
+            Caps::default(),
+            None,
+            TrustedProxies::default(),
+        );
+        let sam = sign_in_with(&router, "sam-credential").await;
+        let lee = sign_in_with(&router, "lee-credential").await;
+        for title in ["Sam one", "Sam two"] {
+            let (status, _) = send_as(
+                &router,
+                "POST",
+                "/api/v1/tasks",
+                Some(&draft_titled(title)),
+                Some(&sam),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        let (status, _) = send_as(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(&draft_titled("Lee one")),
+            Some(&lee),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Raw request so the download headers can be read.
+        let request = Request::builder()
+            .uri("/api/v1/export")
+            .header("x-rambl-tz", "America/New_York")
+            .header("authorization", format!("Bearer {sam}"))
+            .body(Body::empty())
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "application/json"
+        );
+        assert_eq!(
+            response.headers().get("content-disposition").unwrap(),
+            "attachment; filename=\"rambl-export-2026-10-11.json\"",
+            "sunday night is the evening of 2026-10-11 in New York"
+        );
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let export: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let titles = task_titles(&export);
+        assert_eq!(
+            titles.len(),
+            2,
+            "Sam's export holds only Sam's tasks: {titles:?}"
+        );
+        assert!(titles.contains(&"Sam one") && titles.contains(&"Sam two"));
+        assert!(
+            !titles.contains(&"Lee one"),
+            "another user's task leaked into the export: {titles:?}"
+        );
+
+        // Lee's download holds only Lee's task.
+        let (status, body) = send_as(&router, "GET", "/api/v1/export", None, Some(&lee)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(task_titles(&body), vec!["Lee one"]);
+    }
+
+    /// An account with nothing in it exports an empty list, not an error.
+    #[tokio::test]
+    async fn an_empty_account_exports_an_empty_task_list() {
+        let router = accounts_router(sunday_night(), "google-1", "sam@example.com");
+        let sam = sign_in(&router).await;
+        let (status, body) = send_as(&router, "GET", "/api/v1/export", None, Some(&sam)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body["tasks"].as_array().expect("a tasks list").is_empty(),
+            "a new account exported tasks: {body}"
+        );
     }
 
     /// A session past its expiry is not a session.
