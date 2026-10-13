@@ -11,6 +11,13 @@ and `rambl.env.example` there. Copy `rambl.env.example` to `rambl.env` and fill 
 
 - `TYPESAFE_API_KEY`, the Jev key.
 - `RAMBL_PORT=3160`, unless another port is wanted.
+- `RAMBL_BIND`, optional, and normally left empty. The server listens on `127.0.0.1`
+  only, which is enough because the Cloudflare tunnel runs on this machine. Set it to
+  `0.0.0.0` to serve the rest of the LAN as well, or to one address to serve only that
+  one. A value that is not an IP address stops the server with an error naming the
+  variable and the value, rather than quietly falling back. Loopback is also what keeps
+  the trust in `CF-Connecting-IP` meaningful: a visitor who reaches the server directly
+  can name their own address.
 - `RAMBL_DEFAULT_TZ=America/New_York`.
 - `GOOGLE_CLIENT_ID=138340425604-qagdhrfblj66i5s9i9icq07lb32sd2g2.apps.googleusercontent.com`,
   the public Google OAuth web client (its authorized origins are https://rambl.burvy.dev
@@ -33,6 +40,11 @@ updates never touch that folder's `data\`. Backups are in `data\backups`.
 Create a shortcut to `rambl-server.exe` in `shell:startup`. The firewall, router
 and Cloudflare forwarding are already configured for port 3160.
 
+The window prints the address it actually bound, for example `Rambl is listening on
+127.0.0.1:3160 — open http://127.0.0.1:3160`. Anything other than `127.0.0.1` there
+means `RAMBL_BIND` is set, and the site will only reach the tunnel if that address
+includes the one cloudflared connects from.
+
 Old installs are obsolete: the previous `C:\Rambl` build and `data\ai-todo.db`
 can be deleted once the new server runs and the page loads.
 
@@ -50,8 +62,12 @@ Close the server window, remove the failed `rambl-server.exe`, rename
 
 ## Troubleshooting
 
-- If the window exits, run `rambl-server.exe` from PowerShell to read the error.
+- If the window exits, run `rambl-server.exe` from PowerShell to read the error. A
+  refused `RAMBL_BIND` is one of the few reasons to do this.
 - If the page is unavailable, check that port 3160 is free and the server
   window is still open.
+- If the page works on `http://localhost:3160` but not through Cloudflare, the server
+  is bound somewhere the tunnel cannot reach: check the address in the window against
+  `RAMBL_BIND`.
 - If sign-in or Jev fails, check the values in `rambl.env` without committing or
   sharing them.

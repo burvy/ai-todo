@@ -1,6 +1,6 @@
 mod v2;
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
 
 use axum::{
@@ -66,12 +66,15 @@ async fn main() {
     v2::start_backups().unwrap_or_else(|problem| fatal(&problem));
     v2::admin::start_console(v2::store::data_path_from_env());
     let port = port_from_env();
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let addr = SocketAddr::from((
+        bind_from_env(std::env::var("RAMBL_BIND").ok()).unwrap_or_else(|problem| fatal(&problem)),
+        port,
+    ));
     let listener = match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => listener,
-        Err(e) => fatal(&format!("could not listen on port {port}: {e}")),
+        Err(e) => fatal(&format!("could not listen on {addr}: {e}")),
     };
-    println!("Rambl is running on http://localhost:{port} (close this window to stop it)");
+    println!("{}", running_on(addr));
     let service = app(store).into_make_service_with_connect_info::<SocketAddr>();
     if let Err(e) = axum::serve(listener, service).await {
         fatal(&format!("server stopped: {e}"));
@@ -99,9 +102,47 @@ fn port_from(rambl_port: Option<String>, port: Option<String>) -> u16 {
 
 const DEFAULT_PORT: u16 = 3160;
 
+/// The address the server listens on: `RAMBL_BIND`, else loopback.
+///
+/// Loopback by default, because the Cloudflare tunnel on this machine is the way in.
+/// Listening on every interface would put the server on the LAN, where a client could
+/// reach it directly and put any address it liked in `CF-Connecting-IP`, which is the
+/// header the per-address limits and blocks rely on. It also pops a firewall prompt on
+/// Windows every time a new build path runs the exe.
+///
+/// A value that is not an IP address stops the server rather than quietly falling back
+/// to loopback: an operator who asked for `0.0.0.0` and did not get it would rather be
+/// told than find out from a visitor.
+fn bind_from_env(raw: Option<String>) -> Result<IpAddr, String> {
+    match raw
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        None => Ok(IpAddr::V4(Ipv4Addr::LOCALHOST)),
+        Some(value) => value.parse().map_err(|_| {
+            format!("RAMBL_BIND is not an IP address: {value:?} (try 127.0.0.1 or 0.0.0.0)")
+        }),
+    }
+}
+
+/// What the window says once the socket is open, naming the address actually bound
+/// rather than the one that was asked for.
+fn running_on(addr: SocketAddr) -> String {
+    let open = if addr.ip().is_unspecified() {
+        format!("http://localhost:{}", addr.port())
+    } else {
+        format!("http://{addr}")
+    };
+    format!("Rambl is listening on {addr} — open {open} (close this window to stop it)")
+}
+
 #[cfg(test)]
-mod port_tests {
+mod settings_tests {
+    use super::bind_from_env;
     use super::port_from;
+    use super::running_on;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     fn text(value: &str) -> Option<String> {
         Some(value.to_owned())
@@ -118,6 +159,79 @@ mod port_tests {
     fn a_value_that_is_not_a_port_is_ignored() {
         assert_eq!(port_from(text("not-a-port"), text("8080")), 8080);
         assert_eq!(port_from(text(""), None), 3160);
+    }
+
+    /// Unset, empty or blank means the same thing: this machine only. The tunnel is
+    /// here, and a listener on every interface would also pop a firewall prompt on
+    /// Windows for every new build path.
+    #[test]
+    fn the_default_is_loopback() {
+        let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        for unset in [None, text(""), text("   ")] {
+            assert_eq!(
+                bind_from_env(unset.clone()),
+                Ok(loopback),
+                "{unset:?} should bind loopback"
+            );
+        }
+    }
+
+    #[test]
+    fn a_listened_address_is_honoured() {
+        for (given, want) in [
+            ("0.0.0.0", "0.0.0.0"),
+            (" 10.0.0.5 ", "10.0.0.5"),
+            ("::", "::"),
+            ("::1", "::1"),
+        ] {
+            assert_eq!(
+                bind_from_env(text(given)),
+                Ok(want.parse().unwrap()),
+                "{given} should be listened on as itself"
+            );
+        }
+    }
+
+    /// A value that is not an address stops the server. Falling back to loopback would
+    /// leave an operator who asked for `0.0.0.0` wondering why nothing was reachable.
+    #[test]
+    fn an_address_that_is_not_an_address_refuses_to_start() {
+        for given in [
+            "localhost",
+            "not-an-ip",
+            "0.0.0.0:3160",
+            "3160",
+            "999.1.1.1",
+        ] {
+            let refusal = bind_from_env(text(given)).unwrap_err();
+            assert!(
+                refusal.contains("RAMBL_BIND") && refusal.contains(given),
+                "{given} should be refused by name, got: {refusal}"
+            );
+        }
+    }
+
+    /// The window names the address that was bound, and points at one a browser can
+    /// open. `0.0.0.0` is what was listened on, `localhost` is what to type.
+    #[test]
+    fn the_window_names_the_address_actually_bound() {
+        let loopback: SocketAddr = "127.0.0.1:3160".parse().unwrap();
+        assert_eq!(
+            running_on(loopback),
+            "Rambl is listening on 127.0.0.1:3160 — open http://127.0.0.1:3160 \
+             (close this window to stop it)"
+        );
+        let everywhere: SocketAddr = "0.0.0.0:3160".parse().unwrap();
+        assert!(
+            running_on(everywhere).contains("open http://localhost:3160"),
+            "{}",
+            running_on(everywhere)
+        );
+        let six: SocketAddr = "[::1]:3160".parse().unwrap();
+        assert!(
+            running_on(six).contains("open http://[::1]:3160"),
+            "an IPv6 address needs its brackets",
+        );
     }
 }
 

@@ -77,7 +77,7 @@ All JSON. Every request carries the header `X-Rambl-TZ: America/New_York` (from 
 
 **Accounts.** Rambl is multi-user. Every request carries either `Authorization: Bearer <session token>` for signed-in users, or `X-Rambl-Anon: <anon_id>` for anonymous users. The token or anon_id names the user; **every task read and write is scoped to that user, in the store, not in the handler** — `Store` methods take the user id, so a handler cannot forget it. In local mode (`GOOGLE_CLIENT_ID` unset), the server uses the fixed local user for all requests regardless of headers. Each account has a persisted plan: anonymous, free, or paid. Daily Jev caps are `RAMBL_JEV_DAILY_CAP_ANON` (default 30), `RAMBL_JEV_DAILY_CAP` (default 200), and `RAMBL_JEV_DAILY_CAP_PAID` (default 1000); the admin console changes plans with `plan <email|id> <anon|free|paid>`, and the `/admin` page does the same over `POST /api/v1/admin/plan` for anyone whose email is in `RAMBL_ADMIN_EMAILS`. When a cap is exceeded, or the user or client address is blocked, capture falls back to `FakeJudge` with `jev_fallback: true`.
 
-**Client address.** The address a request came from is the socket peer, unless the peer is a trusted proxy — loopback, plus whatever `RAMBL_TRUSTED_PROXIES` lists — and then it is the `CF-Connecting-IP` header, and only if that parses as an address. Anything reaching the server directly therefore cannot name its own address and so cannot step past the per-address limits and blocks.
+**Client address.** The address a request came from is the socket peer, unless the peer is a trusted proxy — loopback, plus whatever `RAMBL_TRUSTED_PROXIES` lists — and then it is the `CF-Connecting-IP` header, and only if that parses as an address. Anything reaching the server directly therefore cannot name its own address and so cannot step past the per-address limits and blocks. The server listens on `127.0.0.1` unless `RAMBL_BIND` says otherwise, so "directly" means a caller on this machine, or an operator who has deliberately widened the listener.
 
 Anonymous users do not sign in. Their account and tasks are deleted after 30 days without a visit (`last_activity_at`, refreshed by a visit at most once an hour and cleared by the daily backup task, only after that backup succeeded); signed-in accounts are never deleted. *(planned)* Rambo nudges them to sign in before then.
 
@@ -118,6 +118,7 @@ Task edits use an `updated_at` field and last-write-wins per task. The server se
 | (config file) | `rambl.env` | Read from the working folder (the exe's folder on a server). Real environment variables win. |
 | `RAMBL_DEFAULT_TZ` | `America/New_York` | Zone for requests with no `X-Rambl-TZ`. `TZ_NAME` is read behind it. |
 | `RAMBL_PORT` | `3160` | HTTP port. `PORT` is read when it is unset. |
+| `RAMBL_BIND` | `127.0.0.1` | Address to listen on. Loopback, because the Cloudflare tunnel is the way in and a listener on every interface would let a visitor on the LAN name their own address in `CF-Connecting-IP`. Set `0.0.0.0` or one address to serve more. A value that is not an IP address stops the server rather than falling back. |
 | `GOOGLE_CLIENT_ID` | unset | The OAuth client ID tokens must be minted for. Unset means local mode: one user, no sign-in. |
 | `RAMBL_JEV_DAILY_CAP` | `200` | Captures per user per day before capture falls back to `FakeJudge`. |
 | `RAMBL_JEV_DAILY_CAP_ANON` | `30` | Captures per anonymous user per day before capture falls back to `FakeJudge` with `jev_fallback: true`. |
@@ -134,7 +135,7 @@ Working hours: 08:00 to 23:59:59 local time, every day.
 - `auth` module: Google sign-in, sessions and the `TokenVerifier` trait. Sign-in is verified **before** the store lock is taken — a handler holding a `MutexGuard` across an `await` has a non-`Send` future, which axum rejects.
 - `App { store, judge, clock }`: one method per endpoint, each taking the user id. It loads once, mutates and returns the snapshot built from that same list inside one critical section, so a snapshot is never half-updated and a write is never read back twice.
 - Handlers only parse input, build the `LocalContext` from the header and `clock`, call `App`, and map errors.
-- Config from env: `TYPESAFE_API_KEY`, `PORT`, `RAMBL_DATA` (db path), `RAMBL_DEFAULT_TZ` (when the header is missing).
+- Config from env: `TYPESAFE_API_KEY`, `PORT`, `RAMBL_BIND` (address to listen on), `RAMBL_DATA` (db path), `RAMBL_DEFAULT_TZ` (when the header is missing).
 
 ### 7.1 Recurring tasks (design, not built yet)
 
