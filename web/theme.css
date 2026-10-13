@@ -1001,7 +1001,13 @@ a {
   }
 
   .week {
-    grid-template-columns: repeat(var(--days, 7), minmax(9rem, 1fr));
+    /* On a wide screen the task list and the planner share the desk, so the
+       week must always fit the pane: every column flexes, none clips. */
+    grid-template-columns: repeat(var(--days, 7), minmax(0, 1fr));
+  }
+
+  .day {
+    min-width: 0;
   }
 
   .week-scroll {
