@@ -152,6 +152,8 @@ pub fn App() -> impl IntoView {
     let pen_pos = RwSignal::new((0.0_f64, 0.0));
     // Transcript buffer: Rambo fills it while listening, CaptureBox reads it
     let capture_text = RwSignal::new(String::new());
+    // Pen queue: task IDs the client just created, so the pen writes only those rows
+    let pen_queue = RwSignal::new(Vec::<TaskId>::new());
 
     window_event_listener(leptos::ev::keydown, move |event| {
         if event.key() == " "
@@ -168,11 +170,14 @@ pub fn App() -> impl IntoView {
             <h1>"Rambl"</h1>
             <account::HeaderLink />
             <CaptureBox
+                snapshot=snapshot
                 set_snapshot=set_snapshot
                 state=mascot_state
                 set_state=set_mascot_state
                 view_settings
                 pen_pos
+                capture_text
+                pen_queue
             />
         </header>
         {move || error.get().map(|e| view! {
@@ -197,7 +202,7 @@ pub fn App() -> impl IntoView {
         <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
             <div class="tasks-pane">
                 <ImportIcs set_snapshot set_error />
-                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_pos />
+                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
             </div>
             <week::WeekGrid snapshot=snapshot settings=view_settings set_mascot_state=set_mascot_state />
         </main>
@@ -263,13 +268,24 @@ fn track_pane(_main: NodeRef<leptos::html::Main>, _set_pane: WriteSignal<u8>) {}
 
 #[component]
 fn CaptureBox(
+    snapshot: ReadSignal<Snapshot>,
     set_snapshot: WriteSignal<Snapshot>,
     state: ReadSignal<mascot::State>,
     set_state: WriteSignal<mascot::State>,
     view_settings: ReadSignal<settings::Settings>,
     pen_pos: RwSignal<(f64, f64)>,
+    capture_text: RwSignal<String>,
+    pen_queue: RwSignal<Vec<TaskId>>,
 ) -> impl IntoView {
     let (text, set_text) = signal(String::new());
+
+    // Watch for speech transcript from Rambo: when capture_text changes, fill the input
+    Effect::new(move |_| {
+        let transcript = capture_text.get();
+        if !transcript.is_empty() {
+            set_text.set(transcript);
+        }
+    });
     let input_ref = NodeRef::<leptos::html::Input>::new();
 
     // Caret follow: on input, position pen at caret; after 2s of inactivity, fly home
@@ -347,11 +363,14 @@ fn CaptureBox(
                 if let Some(timer) = linger_timer.borrow_mut().take() {
                     timer.cancel();
                 }
+                // Record current task IDs so we can find the new one after capture
+                let old_ids: std::collections::HashSet<_> =
+                    snapshot.with_untracked(|s| s.tasks.iter().map(|t| t.id.clone()).collect());
                 let set_snapshot = set_snapshot;
                 let set_text = set_text;
                 wasm_bindgen_futures::spawn_local(async move {
                     let draft = TaskDraft {
-                        title: text_val,
+                        title: text_val.clone(),
                         duration_min: 30,
                         when: When::Anytime,
                         label: Label::Other,
@@ -359,9 +378,21 @@ fn CaptureBox(
                         source: Source::Text,
                     };
                     if let Ok(new_snapshot) = api::create_task(draft).await {
+                        // Find the new task ID (the one not in old_ids)
+                        let new_id: Option<TaskId> = new_snapshot
+                            .tasks
+                            .iter()
+                            .find(|t| !old_ids.contains(&t.id))
+                            .map(|t| t.id.clone());
+                        if let Some(id) = new_id {
+                            let mut queue = pen_queue.get_untracked();
+                            queue.push(id);
+                            pen_queue.set(queue);
+                        }
                         set_snapshot.set(new_snapshot);
                     }
                     set_text.set(String::new());
+                    capture_text.set(String::new());
                 });
             }
         }
@@ -887,8 +918,11 @@ fn TaskList(
     view_settings: ReadSignal<settings::Settings>,
     mascot_state: ReadSignal<mascot::State>,
     set_mascot_state: WriteSignal<mascot::State>,
+    pen_queue: RwSignal<Vec<TaskId>>,
     pen_pos: RwSignal<(f64, f64)>,
 ) -> impl IntoView {
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = pen_pos;
     let (dragged_task, set_dragged_task) = signal::<Option<TaskId>>(None);
     let (selected_label, set_selected_label) = signal(load_label_filter());
     let (editing_task, set_editing_task) = signal::<Option<TaskId>>(None);
@@ -920,102 +954,89 @@ fn TaskList(
             .collect::<Vec<_>>()
     };
 
-    // When capture text is submitted (speech or typed), the new task appears.
-    // Watch for new tasks in the snapshot and write them if Rambo is at Home.
-    let last_count = RwSignal::new(0usize);
+    // Process pen queue: only write rows for tasks the client just created,
+    // not every task on reload.
     Effect::new(move |_| {
         let mode = view_settings.get().mode;
         if mascot::prefers_reduced_motion() || mode == settings::RamblMode::Lobotomized {
             return;
         }
-        let tasks = snapshot.get().tasks.len();
-        let last = last_count.get();
-        let current_state = mascot_state.get();
-        // Only start writing if Rambo is at Home and there are new tasks
-        if tasks <= last || !matches!(current_state, mascot::State::Home) {
+        let queue = pen_queue.get();
+        if queue.is_empty() {
             return;
         }
-        let new_ids: Vec<TaskId> = snapshot
-            .get()
-            .tasks
-            .iter()
-            .rev()
-            .take(tasks - last)
-            .map(|t| t.id.clone())
-            .collect();
-        last_count.set(tasks);
-        let set_state = set_mascot_state;
-        #[allow(unused_variables)]
-        let pen_pos = pen_pos;
-        wasm_bindgen_futures::spawn_local(async move {
-            #[allow(unused_variables)]
-            for _task_id in new_ids {
-                // Check Rambo is still at Home before each row
-                if !matches!(mascot_state.get_untracked(), mascot::State::Home) {
-                    break;
-                }
-                set_state.set(mascot::transition(
-                    &mascot::State::Home,
-                    mascot::Event::WriteRow,
-                ));
-                #[cfg(target_arch = "wasm32")]
-                {
-                    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                        if let Some(row) = doc
-                            .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
-                            .ok()
-                            .flatten()
-                        {
+        let current_state = mascot_state.get();
+        // Only start writing if Rambo is at Home
+        if matches!(current_state, mascot::State::Home) {
+            #[cfg(target_arch = "wasm32")]
+            {
+                let set_state = set_mascot_state;
+                let pen_pos = pen_pos;
+                wasm_bindgen_futures::spawn_local(async move {
+                    for task_id in queue {
+                        // Check Rambo is still at Home before each row
+                        if !matches!(mascot_state.get_untracked(), mascot::State::Home) {
+                            break;
+                        }
+                        set_state.set(mascot::transition(
+                            &mascot::State::Home,
+                            mascot::Event::WriteRow,
+                        ));
+                        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                            if let Some(row) = doc
+                                .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
+                                .ok()
+                                .flatten()
                             {
-                                let arr = Array::new();
-                                arr.push(&"pen-pending".into());
-                                row.class_list().add(&arr).ok();
-                            }
-                            let rect = row.get_bounding_client_rect();
-                            let center = pen::writing_pen_center(
-                                rect.left() + 40.0,
-                                rect.top() + rect.height() / 2.0,
-                            );
-                            // Convert to offset from Rambo's home position
-                            if let Some(rambo) = doc.query_selector(".rambo").ok().flatten() {
-                                let rrect = rambo.get_bounding_client_rect();
-                                let hx = rrect.left() + rrect.width() / 2.0;
-                                let hy = rrect.top() + rrect.height() / 2.0;
-                                pen_pos.set((center.0 - hx, center.1 - hy));
+                                {
+                                    let arr = Array::new();
+                                    arr.push(&"pen-pending".into());
+                                    row.class_list().add(&arr).ok();
+                                }
+                                let rect = row.get_bounding_client_rect();
+                                let center = pen::writing_pen_center(
+                                    rect.left() + 40.0,
+                                    rect.top() + rect.height() / 2.0,
+                                );
+                                // Convert to offset from Rambo's home position
+                                if let Some(rambo) = doc.query_selector(".rambo").ok().flatten() {
+                                    let rrect = rambo.get_bounding_client_rect();
+                                    let hx = rrect.left() + rrect.width() / 2.0;
+                                    let hy = rrect.top() + rrect.height() / 2.0;
+                                    pen_pos.set((center.0 - hx, center.1 - hy));
+                                }
                             }
                         }
-                    }
-                }
-                gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
-                set_state.set(mascot::State::WritingRow);
-                #[cfg(target_arch = "wasm32")]
-                {
-                    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                        if let Some(row) = doc
-                            .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
-                            .ok()
-                            .flatten()
-                        {
+                        gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
+                        set_state.set(mascot::State::WritingRow);
+                        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                            if let Some(row) = doc
+                                .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
+                                .ok()
+                                .flatten()
                             {
-                                let arr = Array::new();
-                                arr.push(&"pen-pending".into());
-                                row.class_list().remove(&arr).ok();
-                                arr.push(&"pen-writing".into());
-                                row.class_list().add(&arr).ok();
+                                {
+                                    let arr = Array::new();
+                                    arr.push(&"pen-pending".into());
+                                    row.class_list().remove(&arr).ok();
+                                    arr.push(&"pen-writing".into());
+                                    row.class_list().add(&arr).ok();
+                                }
                             }
                         }
+                        gloo_timers::future::TimeoutFuture::new(pen::WRITE_MS).await;
+                        // Fly home after this row
+                        set_state.set(mascot::transition(
+                            &mascot::State::WritingRow,
+                            mascot::Event::FlyHome,
+                        ));
+                        gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
+                        set_state.set(mascot::State::Home);
                     }
-                }
-                gloo_timers::future::TimeoutFuture::new(pen::WRITE_MS).await;
-                // Fly home after this row
-                set_state.set(mascot::transition(
-                    &mascot::State::WritingRow,
-                    mascot::Event::FlyHome,
-                ));
-                gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
-                set_state.set(mascot::State::Home);
+                    pen_queue.set(Vec::new());
+                });
             }
-        });
+        }
     });
 
     view! {
