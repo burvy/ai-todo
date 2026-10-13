@@ -5,7 +5,7 @@ pub mod clock;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 
-use chrono::{DateTime, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc, Weekday};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 
@@ -89,6 +89,10 @@ pub enum Source {
     Email,
     Text,
     Calendar,
+    /// One occurrence of a [`Series`]. The occurrence rows in a snapshot are
+    /// built on the fly and never stored; a done occurrence is stored as a
+    /// [`SeriesException`] on the series instead.
+    Series,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -146,6 +150,123 @@ pub struct Snapshot {
     pub plan: Plan,
     pub tz: String,
     pub generated: DateTime<Utc>,
+    /// The user's weekly series (ARCHITECTURE.md 7.1). Their occurrences are
+    /// already in `tasks`; this is the rules, for the edit dialogs.
+    /// `#[serde(default)]` keeps snapshots written before this field parse.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub series: Vec<Series>,
+}
+
+/// A weekly series (ARCHITECTURE.md 7.1): one repeated thing.
+///
+/// The rows are never stored per week; the server expands occurrences for the
+/// planner window at snapshot time. Ids are one namespace with [`TaskId`], and
+/// an occurrence's id is `"{series_id}:{date}"` — a valid [`TaskId`], so a
+/// placement can name it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Series {
+    pub id: SeriesId,
+    pub title: String,
+    pub duration_min: u16,
+    /// The repeat rule: which weekdays, until when.
+    pub rule: Recurrence,
+    /// The first local date an occurrence may fall on, inclusive.
+    pub start_day: NaiveDate,
+    /// The wall-clock time of each occurrence, in `zone`. `None` floats the
+    /// occurrence into the week's free time.
+    pub time_of_day: Option<NaiveTime>,
+    /// The IANA zone the weekly time was set in, like `due_tz` for a deadline.
+    pub zone: String,
+    /// iCalendar UID for an imported recurring event.
+    pub external_uid: Option<String>,
+    pub created: DateTime<Utc>,
+    /// List position, same key as [`Task::order`].
+    pub order: i64,
+}
+
+/// Which weekdays a series repeats on, and until when.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Recurrence {
+    /// Kept sorted Monday-first and deduplicated; serde as `"Mon"`, `"Thu"`,
+    /// ... (chrono's spelling). Empty never reaches the store:
+    /// [`Recurrence::new`] refuses it. (`Weekday` is not `Ord`, so this cannot
+    /// be a set type.)
+    pub weekdays: Vec<Weekday>,
+    /// The last local date an occurrence falls on, inclusive. `None` repeats
+    /// forever.
+    pub until: Option<NaiveDate>,
+}
+
+impl Recurrence {
+    /// A rule on the given weekdays. Empty is a mistake the type system cannot
+    /// hold, so the constructor refuses it here.
+    pub fn new(
+        weekdays: impl IntoIterator<Item = Weekday>,
+        until: Option<NaiveDate>,
+    ) -> Option<Self> {
+        let mut weekdays: Vec<Weekday> = weekdays.into_iter().collect();
+        weekdays.sort_by_key(|day| day.num_days_from_monday());
+        weekdays.dedup();
+        if weekdays.is_empty() {
+            return None;
+        }
+        Some(Self { weekdays, until })
+    }
+
+    /// Does an occurrence exist on this local date?
+    /// `start_day` bounds it from below, `until` from above, both inclusive.
+    pub fn covers(&self, start_day: NaiveDate, date: NaiveDate) -> bool {
+        self.weekdays.contains(&date.weekday())
+            && start_day <= date
+            && self.until.is_none_or(|until| date <= until)
+    }
+}
+
+/// A series id. One namespace with [`TaskId`], so an id is unique across the
+/// whole database, not just one user's.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SeriesId(pub String);
+
+/// One occurrence that deviates from its series' rule, keyed by local date.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SeriesException {
+    /// The occurrence's original local date.
+    pub date: NaiveDate,
+    pub kind: ExceptionKind,
+}
+
+/// What happened to one occurrence. A skipped day produces no occurrence at
+/// all; a done one keeps its row, marked done; a moved one sits at the new
+/// time, still named by its original date.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "when", rename_all = "snake_case")]
+pub enum ExceptionKind {
+    Done,
+    Skipped,
+    Moved {
+        to: When,
+        /// The zone the move was made in, so a `DueBy` target keeps its local
+        /// time, like `due_tz` on a task.
+        to_tz: Option<String>,
+    },
+}
+
+/// The pure expansion result for one day of a series.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Occurrence {
+    pub series: SeriesId,
+    /// The occurrence's local date (the original one for a moved occurrence).
+    pub date: NaiveDate,
+    pub when: When,
+    pub status: OccurrenceStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OccurrenceStatus {
+    Open,
+    Done,
+    Moved,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,9 +372,104 @@ mod tests {
             plan: Plan::default(),
             tz: "America/New_York".into(),
             generated: at,
+            series: Vec::new(),
         };
         let json = serde_json::to_string(&snapshot).unwrap();
         let back: Snapshot = serde_json::from_str(&json).unwrap();
         assert_eq!(back, snapshot);
+    }
+
+    fn series(id: &str, created: DateTime<Utc>) -> Series {
+        Series {
+            id: SeriesId(id.into()),
+            title: "Gym".into(),
+            duration_min: 45,
+            rule: Recurrence::new([Weekday::Mon, Weekday::Thu], None).unwrap(),
+            start_day: NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(),
+            time_of_day: Some(NaiveTime::from_hms_opt(7, 0, 0).unwrap()),
+            zone: "America/New_York".into(),
+            external_uid: None,
+            created,
+            order: -1,
+        }
+    }
+
+    #[test]
+    fn a_weekday_serializes_as_chrono_spells_it() {
+        let json = serde_json::to_string(&Recurrence::new([Weekday::Mon, Weekday::Thu], None).unwrap())
+            .unwrap();
+        assert_eq!(json, r#"{"weekdays":["Mon","Thu"],"until":null}"#);
+    }
+
+    #[test]
+    fn a_series_round_trips_through_json() {
+        let created = Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap();
+        let mut held = series("s1", created);
+        held.rule.until = Some(NaiveDate::from_ymd_opt(2026, 12, 15).unwrap());
+        let json = serde_json::to_string(&held).unwrap();
+        assert_eq!(serde_json::from_str::<Series>(&json).unwrap(), held);
+    }
+
+    #[test]
+    fn an_empty_weekday_set_is_refused() {
+        assert!(Recurrence::new([], None).is_none());
+        assert!(Recurrence::new([Weekday::Fri], None).is_some());
+    }
+
+    #[test]
+    fn the_rule_covers_only_its_own_days_inside_its_bounds() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(); // Monday
+        let rule = Recurrence::new([Weekday::Mon, Weekday::Thu], None).unwrap();
+        assert!(rule.covers(start, start));
+        assert!(rule
+            .covers(start, NaiveDate::from_ymd_opt(2026, 10, 15).unwrap())); // Thursday
+        assert!(!rule
+            .covers(start, NaiveDate::from_ymd_opt(2026, 10, 13).unwrap())); // Tuesday
+        assert!(!rule
+            .covers(start, NaiveDate::from_ymd_opt(2026, 10, 11).unwrap())); // before start_day
+        let bounded = Recurrence::new(
+            [Weekday::Mon],
+            Some(NaiveDate::from_ymd_opt(2026, 10, 12).unwrap()),
+        )
+        .unwrap();
+        assert!(bounded.covers(start, start));
+        assert!(!bounded
+            .covers(start, NaiveDate::from_ymd_opt(2026, 10, 19).unwrap())); // after until
+    }
+
+    #[test]
+    fn an_exception_round_trips_through_json() {
+        let exception = SeriesException {
+            date: NaiveDate::from_ymd_opt(2026, 10, 15).unwrap(),
+            kind: ExceptionKind::Moved {
+                to: When::At(Utc.with_ymd_and_hms(2026, 10, 16, 14, 0, 0).unwrap()),
+                to_tz: None,
+            },
+        };
+        let json = serde_json::to_string(&exception).unwrap();
+        assert_eq!(serde_json::from_str::<SeriesException>(&json).unwrap(), exception);
+    }
+
+    #[test]
+    fn a_snapshot_with_a_series_round_trips_through_json() {
+        let created = Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap();
+        let snapshot = Snapshot {
+            tasks: Vec::new(),
+            plan: Plan::default(),
+            tz: "UTC".into(),
+            generated: created,
+            series: vec![series("s1", created)],
+        };
+        let json = serde_json::to_string(&snapshot).unwrap();
+        assert_eq!(serde_json::from_str::<Snapshot>(&json).unwrap(), snapshot);
+    }
+
+    #[test]
+    fn a_snapshot_written_before_series_still_parses() {
+        // The web may hold a snapshot from an older server; the field is
+        // optional on the wire.
+        let json = r#"{"tasks":[],"plan":{"placements":[],"unplaced":[]},"tz":"UTC","generated":"1970-01-01T00:00:00+00:00"}"#;
+        let back: Snapshot = serde_json::from_str(json).unwrap();
+        assert!(back.series.is_empty());
     }
 }

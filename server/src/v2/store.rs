@@ -1533,6 +1533,7 @@ fn source_to_stored(source: Source) -> &'static str {
         Source::Email => "email",
         Source::Text => "text",
         Source::Calendar => "calendar",
+        Source::Series => "series",
     }
 }
 
@@ -1563,12 +1564,13 @@ mod tests {
         Priority::High,
         Priority::Critical,
     ];
-    const SOURCES: [Source; 5] = [
+    const SOURCES: [Source; 6] = [
         Source::Voice,
         Source::Pdf,
         Source::Email,
         Source::Text,
         Source::Calendar,
+        Source::Series,
     ];
 
     use super::*;
