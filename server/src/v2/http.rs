@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use todo_core::{ApiError, ErrorCode, Snapshot, TaskDraft};
 
 use super::admin_web;
-use super::app::{App, ImportResult, Patch};
+use super::app::{self, App, ImportResult, Patch};
 use super::auth::{self, TokenVerifier};
 use super::ics_export::build_ics;
 use super::ics_import;
@@ -331,6 +331,15 @@ fn build_router(
         .route("/api/v1/tasks/order", put(reorder))
         .route("/api/v1/import", post(import))
         .route("/api/v1/tasks/{id}", patch(update).delete(remove))
+        .route("/api/v1/series", post(create_series))
+        .route(
+            "/api/v1/series/{id}",
+            patch(update_series).delete(remove_series),
+        )
+        .route(
+            "/api/v1/series/{id}/dates/{date}",
+            patch(patch_occurrence).delete(clear_occurrence),
+        )
         .route("/api/v1/capture", post(capture))
         .route("/api/v1/tasks/{id}/revise", post(revise_task))
         .route("/api/v1/calendar.ics", get(calendar_ics))
@@ -829,6 +838,70 @@ async fn remove(
     let tz = zone(&headers)?;
     let mut app = shared.app.lock().unwrap();
     Ok(Json(app.delete(&id, &user, tz)?))
+}
+
+/// `POST /api/v1/series`: a weekly series (ARCHITECTURE.md 7.1).
+async fn create_series(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+    Json(draft): Json<app::SeriesDraft>,
+) -> Result<Json<Snapshot>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
+    let tz = zone(&headers)?;
+    let mut app = shared.app.lock().unwrap();
+    Ok(Json(app.create_series(draft, &user, tz)?))
+}
+
+/// `PATCH /api/v1/series/{id}`: edit the rule every occurrence follows.
+async fn update_series(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(patch): Json<app::SeriesPatch>,
+) -> Result<Json<Snapshot>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
+    let tz = zone(&headers)?;
+    let mut app = shared.app.lock().unwrap();
+    Ok(Json(app.update_series(&id, patch, &user, tz)?))
+}
+
+/// `DELETE /api/v1/series/{id}`: the whole series, exceptions with it.
+async fn remove_series(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<Snapshot>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
+    let tz = zone(&headers)?;
+    let mut app = shared.app.lock().unwrap();
+    Ok(Json(app.delete_series(&id, &user, tz)?))
+}
+
+/// `PATCH /api/v1/series/{id}/dates/{date}`: done / skipped / moved for one
+/// occurrence. `{date}` is `YYYY-MM-DD`, the occurrence's local date.
+async fn patch_occurrence(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+    axum::extract::Path((id, date)): axum::extract::Path<(String, NaiveDate)>,
+    Json(body): Json<app::OccurrencePatch>,
+) -> Result<Json<Snapshot>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
+    let tz = zone(&headers)?;
+    let mut app = shared.app.lock().unwrap();
+    Ok(Json(app.patch_occurrence(&id, date, body, &user, tz)?))
+}
+
+/// `DELETE /api/v1/series/{id}/dates/{date}`: clear one occurrence's
+/// exception, so the day falls back to the rule.
+async fn clear_occurrence(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+    axum::extract::Path((id, date)): axum::extract::Path<(String, NaiveDate)>,
+) -> Result<Json<Snapshot>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
+    let tz = zone(&headers)?;
+    let mut app = shared.app.lock().unwrap();
+    Ok(Json(app.clear_occurrence(&id, date, &user, tz)?))
 }
 
 /// `POST /api/v1/import`: a multipart `file` holding an .ics calendar.
@@ -2788,6 +2861,38 @@ mod tests {
             uid: &str,
         ) -> Result<Option<todo_core::Task>, StoreError> {
             self.inner.find_by_uid(user, uid)
+        }
+        fn series(&self, user: &str) -> Result<Vec<todo_core::Series>, StoreError> {
+            self.inner.series(user)
+        }
+        fn put_series(&self, user: &str, series: todo_core::Series) -> Result<(), StoreError> {
+            self.inner.put_series(user, series)
+        }
+        fn delete_series(&self, user: &str, id: &todo_core::SeriesId) -> Result<bool, StoreError> {
+            self.inner.delete_series(user, id)
+        }
+        fn exceptions(
+            &self,
+            user: &str,
+            id: &todo_core::SeriesId,
+        ) -> Result<Vec<todo_core::SeriesException>, StoreError> {
+            self.inner.exceptions(user, id)
+        }
+        fn put_exception(
+            &self,
+            user: &str,
+            id: &todo_core::SeriesId,
+            exception: todo_core::SeriesException,
+        ) -> Result<(), StoreError> {
+            self.inner.put_exception(user, id, exception)
+        }
+        fn delete_exception(
+            &self,
+            user: &str,
+            id: &todo_core::SeriesId,
+            date: chrono::NaiveDate,
+        ) -> Result<bool, StoreError> {
+            self.inner.delete_exception(user, id, date)
         }
         fn upsert_user_and_session(
             &self,

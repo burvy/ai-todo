@@ -139,19 +139,20 @@ pub fn expand(
         .filter(|date| series.rule.covers(series.start_day, *date))
         .filter_map(|date| {
             let exception = exceptions.iter().find(|held| held.date == date);
-            let (status, when) = match exception.map(|held| &held.kind) {
+            let (status, when, due_tz) = match exception.map(|held| &held.kind) {
                 Some(todo_core::ExceptionKind::Skipped) => return None,
-                Some(todo_core::ExceptionKind::Done) => (OccurrenceStatus::Done, at(date)),
-                Some(todo_core::ExceptionKind::Moved { to, .. }) => {
-                    (OccurrenceStatus::Moved, *to)
+                Some(todo_core::ExceptionKind::Done) => (OccurrenceStatus::Done, at(date), None),
+                Some(todo_core::ExceptionKind::Moved { to, to_tz }) => {
+                    (OccurrenceStatus::Moved, *to, to_tz.clone())
                 }
-                None => (OccurrenceStatus::Open, at(date)),
+                None => (OccurrenceStatus::Open, at(date), None),
             };
             Some(Occurrence {
                 series: series.id.clone(),
                 date,
                 when,
                 status,
+                due_tz,
             })
         })
         .collect()
@@ -635,9 +636,11 @@ mod tests {
             occurrences[0].when,
             When::At(Utc.with_ymd_and_hms(2026, 10, 12, 11, 0, 0).unwrap())
         );
-        assert!(occurrences
-            .iter()
-            .all(|o| o.status == OccurrenceStatus::Open && o.series.0 == "s1"));
+        assert!(
+            occurrences
+                .iter()
+                .all(|o| o.status == OccurrenceStatus::Open && o.series.0 == "s1")
+        );
     }
 
     #[test]
@@ -652,7 +655,16 @@ mod tests {
             1
         );
         // Tuesday to Wednesday: no occurrence days in between.
-        assert!(expand(&gym(), monday + Duration::days(1), monday + Duration::days(3), &[], &new_york).is_empty());
+        assert!(
+            expand(
+                &gym(),
+                monday + Duration::days(1),
+                monday + Duration::days(3),
+                &[],
+                &new_york
+            )
+            .is_empty()
+        );
     }
 
     #[test]
@@ -747,9 +759,11 @@ mod tests {
                 chrono_tz::America::New_York,
             ),
         );
-        assert!(occurrences
-            .iter()
-            .all(|o| o.when == When::Anytime && o.status == OccurrenceStatus::Open));
+        assert!(
+            occurrences
+                .iter()
+                .all(|o| o.when == When::Anytime && o.status == OccurrenceStatus::Open)
+        );
     }
 
     #[test]
