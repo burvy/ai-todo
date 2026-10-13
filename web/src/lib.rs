@@ -1033,16 +1033,33 @@ fn TaskList(
                                 .ok()
                                 .flatten()
                             {
+                                // Remove pen-pending and add pen-writing: use separate arrays
+                                // so pen-pending doesn't get re-added.
                                 {
-                                    let arr = Array::new();
-                                    arr.push(&"pen-pending".into());
-                                    row.class_list().remove(&arr).ok();
-                                    arr.push(&"pen-writing".into());
-                                    row.class_list().add(&arr).ok();
+                                    let remove_arr = Array::new();
+                                    remove_arr.push(&"pen-pending".into());
+                                    row.class_list().remove(&remove_arr).ok();
+                                }
+                                {
+                                    let add_arr = Array::new();
+                                    add_arr.push(&"pen-writing".into());
+                                    row.class_list().add(&add_arr).ok();
                                 }
                             }
                         }
                         gloo_timers::future::TimeoutFuture::new(pen::WRITE_MS).await;
+                        // Remove pen-writing class so the title becomes fully visible
+                        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+                            if let Some(row) = doc
+                                .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
+                                .ok()
+                                .flatten()
+                            {
+                                let remove_arr = Array::new();
+                                remove_arr.push(&"pen-writing".into());
+                                row.class_list().remove(&remove_arr).ok();
+                            }
+                        }
                         // Fly home after this row
                         set_state.set(mascot::transition(
                             &mascot::State::WritingRow,
