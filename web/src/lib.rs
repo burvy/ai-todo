@@ -307,7 +307,10 @@ fn CaptureBox(
                 });
                 let set_state = set_state;
                 let timer = Timeout::new(pen::FLY_MS, move || {
-                    set_state.set(mascot::State::Home);
+                    // Use transition() so a grab during flight is not overridden.
+                    set_state.update(|s| {
+                        *s = mascot::transition(s, mascot::Event::FlyHome);
+                    });
                 });
                 timer.forget();
             });
