@@ -5,6 +5,6 @@
     <feTurbulence type="fractalNoise" baseFrequency="0.7" numOctaves="4" stitchTiles="stitch" result="n"/>
     <feColorMatrix in="n" type="matrix" values="0 0 0 0 0.75  0 0 0 0 0.68  0 0 0 0 0.55  0 0 0 0.05 0"/>
   </filter>
-  <rect width="512" height="512" fill="#1e1811"/>
+  <rect width="512" height="512" fill="#241c11"/>
   <rect width="512" height="512" filter="url(#grain)"/>
 </svg>

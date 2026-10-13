@@ -1,7 +1,0 @@
-<!-- PLACEHOLDER: replace me, see web/assets/theme/README.md -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <rect width="256" height="256" fill="transparent"/>
-  <ellipse cx="128" cy="128" rx="60" ry="40" fill="#8b6f47" opacity="0.15" transform="rotate(30 128 128)"/>
-  <ellipse cx="156" cy="96" rx="30" ry="18" fill="#a67c3d" opacity="0.12" transform="rotate(-15 156 96)"/>
-  <ellipse cx="96" cy="160" rx="25" ry="15" fill="#6e5636" opacity="0.1" transform="rotate(45 96 160)"/>
-</svg>
