@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, Weekday};
 use gloo_net::http::{Request, RequestBuilder, Response};
 #[cfg(target_arch = "wasm32")]
 use js_sys;
@@ -452,6 +452,114 @@ pub async fn export_calendar() -> Result<String, ApiError> {
         .send_checked()
         .await?
         .text()
+        .await
+        .map_err(|e| ApiError::Decode(e.to_string()))
+}
+
+/// Body for `POST /api/v1/series` — make a thing repeat weekly
+/// (docs/ARCHITECTURE.md 7.1). Dates and times travel as `YYYY-MM-DD` / `HH:MM`
+/// strings, the spelling chrono's serde uses on the server.
+#[derive(Clone, Debug, Serialize)]
+pub struct SeriesBody {
+    pub title: String,
+    pub duration_min: u16,
+    /// chrono weekday names, Monday-first: `["Mon", "Thu"]`.
+    pub weekdays: Vec<Weekday>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_of_day: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+}
+
+/// Body for `PATCH /api/v1/series/{id}`: absent fields stay as they are. The
+/// server cannot clear a field (`null` reads as absent), so an emptied time or
+/// end date in the dialog simply keeps the series' current one.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SeriesPatchBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_min: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weekdays: Option<Vec<Weekday>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_of_day: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+}
+
+/// `POST /api/v1/series`: create a weekly series. Answers with the snapshot,
+/// occurrences already expanded.
+pub async fn create_series(body: SeriesBody) -> Result<Snapshot, ApiError> {
+    Request::post("/api/v1/series")
+        .identity()
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
+        .json::<Snapshot>()
+        .await
+        .map_err(|e| ApiError::Decode(e.to_string()))
+}
+
+/// `PATCH /api/v1/series/{id}`: edit the rule every occurrence follows.
+pub async fn patch_series(id: &str, body: SeriesPatchBody) -> Result<Snapshot, ApiError> {
+    let url = format!("/api/v1/series/{id}");
+    Request::patch(&url)
+        .identity()
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
+        .json::<Snapshot>()
+        .await
+        .map_err(|e| ApiError::Decode(e.to_string()))
+}
+
+/// `DELETE /api/v1/series/{id}`: the whole series, its exceptions with it.
+pub async fn delete_series(id: &str) -> Result<Snapshot, ApiError> {
+    let url = format!("/api/v1/series/{id}");
+    Request::delete(&url)
+        .identity()
+        .send_checked()
+        .await?
+        .json::<Snapshot>()
+        .await
+        .map_err(|e| ApiError::Decode(e.to_string()))
+}
+
+/// `PATCH /api/v1/series/{id}/dates/{date}` with `{"kind": ...}`: mark ONE
+/// occurrence of the series `"done"` or `"skipped"` (a move needs a `when` and
+/// is not offered by this page yet).
+pub async fn mark_occurrence(
+    series_id: &str,
+    date: &str,
+    kind: &str,
+) -> Result<Snapshot, ApiError> {
+    let url = format!("/api/v1/series/{series_id}/dates/{date}");
+    Request::patch(&url)
+        .identity()
+        .header("Content-Type", "application/json")
+        .json(&serde_json::json!({ "kind": kind }))
+        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
+        .json::<Snapshot>()
+        .await
+        .map_err(|e| ApiError::Decode(e.to_string()))
+}
+
+/// `DELETE /api/v1/series/{id}/dates/{date}`: clear one occurrence's
+/// exception, putting that day back to the rule — how a marked day is undone.
+pub async fn clear_occurrence(series_id: &str, date: &str) -> Result<Snapshot, ApiError> {
+    let url = format!("/api/v1/series/{series_id}/dates/{date}");
+    Request::delete(&url)
+        .identity()
+        .send_checked()
+        .await?
+        .json::<Snapshot>()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
 }
