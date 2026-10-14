@@ -53,6 +53,8 @@ pub(crate) fn Rambo(
     // Where he is drawn, and how squashed by a hop: see the hop mover below.
     let shown = RwSignal::new(pen_pos.get_untracked());
     let squash = RwSignal::new(0.0_f64);
+    // The face he makes in the beat before he sets off (`mascot::notice`).
+    let noticing = RwSignal::new(None::<mascot::Pose>);
     // At home he sits on the nest wherever the page has carried it. He is a
     // fixed layer and the nest is not, so every time the page moves he
     // measures it again.
@@ -116,6 +118,7 @@ pub(crate) fn Rambo(
             }
             shown.set(at);
             squash.set(0.0);
+            noticing.set(None);
             let now = state.get_untracked();
             settled_home.set(now == mascot::State::Home);
             if now == mascot::State::Skittering {
@@ -123,11 +126,20 @@ pub(crate) fn Rambo(
             }
         }
     };
+    // The state the mover last saw, and the beat the last change of state owes: a
+    // caller often changes his state first and sets his spot a moment later, so
+    // the beat waits for the first run that sets off.
+    let last_state = std::rc::Rc::new(std::cell::RefCell::new(state.get_untracked()));
+    let owed = std::rc::Rc::new(std::cell::Cell::new(None::<mascot::Pose>));
     Effect::new({
         let (run, settled_home, arrive) = (run.clone(), settled_home.clone(), arrive.clone());
         move |_| {
             pen_pos.track();
             let now = state.get();
+            let before = last_state.replace(now.clone());
+            if before != now {
+                owed.set(mascot::notice(&before, &now));
+            }
             let to = spot(&now);
             let hops =
                 mascot::hops_there(&now, settled_home.get()) && !mascot::prefers_reduced_motion();
@@ -144,11 +156,22 @@ pub(crate) fn Rambo(
                 return;
             };
             settled_home.set(false);
+            // He never moves instantly: setting off, he first notices and reacts
+            // where he stands, then hops.
+            let face = owed.take();
+            let beat = face.map_or(0, |_| tuning::NOTICE_BEAT_MS);
+            noticing.set(face);
             let begun = js_sys::Date::now();
             let arrive = arrive.clone();
             let handle = set_interval_with_handle(
                 move || {
-                    let elapsed = (js_sys::Date::now() - begun) as u32;
+                    let since = (js_sys::Date::now() - begun) as u32;
+                    if since < beat {
+                        squash.set(mascot::notice_squash(since));
+                        return;
+                    }
+                    noticing.set(None);
+                    let elapsed = since - beat;
                     let to = spot(&state.get_untracked());
                     if elapsed >= hop.ms() {
                         arrive(to);
@@ -618,7 +641,10 @@ pub(crate) fn Rambo(
             }
         >
             <img
-                src=move || mascot::art_for(pen.get(), &state.get(), &brain_pose.get(), typing.get())
+                src=move || match noticing.get() {
+                    Some(face) => face.art(pen.get()),
+                    None => mascot::art_for(pen.get(), &state.get(), &brain_pose.get(), typing.get()),
+                }
                 alt="Rambo"
             />
             // The mood's little picture, when the mood has one and he is home.
