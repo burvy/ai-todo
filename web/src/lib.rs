@@ -69,6 +69,32 @@ fn reorder_ids(snapshot: &Snapshot, dragged: &TaskId, target: &TaskId) -> Option
     Some(new_order)
 }
 
+/// What the task list keys a row on: the whole task as the row draws it.
+///
+/// `<For>` keeps a row for as long as its key holds, so a key of the id alone kept the
+/// row's first-drawn task: an edited title still showed the old one, and the dialog it
+/// opened saved those old fields back over the edit. Any change to the task now draws a
+/// fresh row.
+#[derive(Clone)]
+struct RowKey(todo_core::Task);
+
+impl PartialEq for RowKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+// A task holds no floats, so its equality is total.
+impl Eq for RowKey {}
+
+impl std::hash::Hash for RowKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // Equal tasks share an id and a version, so this agrees with `eq`.
+        self.0.id.hash(state);
+        self.0.updated_at.hash(state);
+    }
+}
+
 /// The body that flips `id` between done and not done, against the version held now.
 pub(crate) fn toggle_done_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBody> {
     let task = held(snapshot, id)?;
@@ -1489,7 +1515,7 @@ fn TaskList(
                 </For>
             </div>
             <ul class="task-list">
-                <For each=visible_tasks key=|task| task.id.clone() let:task>
+                <For each=visible_tasks key=|task| RowKey(task.clone()) let:task>
                     {
                         let task_id = task.id.clone();
                         let task_title = task.title.clone();
@@ -1645,7 +1671,12 @@ fn TaskList(
                     >
                         <input
                             type="checkbox"
-                            checked=task.done
+                            // The browser ticks the box before the server answers; a
+                            // refused tick must untick it again from what the list holds.
+                            prop:checked={
+                                let id = task.id.0.clone();
+                                move || snapshot.with(|s| held(s, &id).is_some_and(|task| task.done))
+                            }
                             on:change=toggle_done
                             aria-label=task_done_label
                         />
@@ -2233,6 +2264,33 @@ mod tests {
             assert!(!refused_note(&refused, reloaded).contains("reach"));
             assert!(refused_note(&refused, reloaded).contains("not saved"));
         }
+    }
+
+    /// A row is drawn again whenever anything it shows changes, and only then.
+    #[test]
+    fn a_row_is_keyed_on_the_task_as_it_is_now() {
+        use std::hash::{BuildHasher, RandomState};
+        let task = api::fixture_snapshot().tasks[0].clone();
+        let hasher = RandomState::new();
+        let same = RowKey(task.clone());
+        assert!(RowKey(task.clone()) == same);
+        assert_eq!(
+            hasher.hash_one(RowKey(task.clone())),
+            hasher.hash_one(&same)
+        );
+
+        let mut renamed = task.clone();
+        renamed.title = "A new title".into();
+        assert!(RowKey(renamed) != same, "an edited title draws a new row");
+
+        let mut ticked = task.clone();
+        ticked.done = !task.done;
+        assert!(RowKey(ticked) != same, "a tick draws a new row");
+
+        let mut moved = task;
+        moved.when = When::At(moved.created);
+        moved.updated_at += chrono::Duration::seconds(1);
+        assert!(RowKey(moved) != same, "a new time draws a new row");
     }
 
     #[test]
