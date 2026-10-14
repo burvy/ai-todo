@@ -157,6 +157,17 @@ pub fn sheet_path(tear: &Tear, width: f64, height: f64, scroll: f64) -> String {
     )
 }
 
+/// How far left the planner slides to lie under the list while a tear lasts: on a desk
+/// the pages are side by side, so it moves by the gap between their left edges; on a phone
+/// it is under the list already, and it stays put, as it does when nothing is torn.
+pub fn slide_px(torn: bool, phone: bool, planner_left: f64, list_left: f64) -> f64 {
+    if torn && !phone {
+        (planner_left - list_left).max(0.0)
+    } else {
+        0.0
+    }
+}
+
 /// When the page is whole again, in ms after the finger let go.
 pub const fn total_ms() -> u32 {
     TAPE_AT_MS + TAPE_LAY_MS + TEAR_HOLD_MS + TEAR_FADE_MS
@@ -301,6 +312,30 @@ mod tests {
         assert!(path.starts_with("path(evenodd, \"M0 0H390.0V800.0H0Z"));
         assert!(path.ends_with("Z\")"));
         assert_eq!(path.matches('Z').count(), 2, "the page, and the one hole");
+    }
+
+    #[test]
+    fn on_a_desk_the_planner_slides_under_the_list_only_while_a_page_is_torn() {
+        assert_eq!(
+            slide_px(true, false, 420.0, 20.0),
+            400.0,
+            "side by side: under the list"
+        );
+        assert_eq!(
+            slide_px(false, false, 420.0, 20.0),
+            0.0,
+            "whole page: it stays in the spread"
+        );
+        assert_eq!(
+            slide_px(true, true, 0.0, 0.0),
+            0.0,
+            "a phone has it beneath already"
+        );
+        assert_eq!(
+            slide_px(true, false, 10.0, 20.0),
+            0.0,
+            "never slides away from the list"
+        );
     }
 
     #[test]

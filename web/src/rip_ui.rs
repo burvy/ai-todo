@@ -18,6 +18,8 @@ use crate::tuning::{TAPE_AT_MS, TAPE_LAY_MS, TEAR_FADE_MS, TEAR_HOLD_MS};
 pub(crate) struct Ripper {
     tear: RwSignal<Option<Tear>>,
     scroll: RwSignal<f64>,
+    /// Where the list page sits in `main`: the tear is drawn in the page's coordinates.
+    offset: RwSignal<(f64, f64)>,
     released: RwSignal<bool>,
     #[cfg(target_arch = "wasm32")]
     dom: std::rc::Rc<imp::Dom>,
@@ -37,6 +39,7 @@ impl Ripper {
         Ripper {
             tear: RwSignal::new(None),
             scroll: RwSignal::new(0.0),
+            offset: RwSignal::new((0.0, 0.0)),
             released: RwSignal::new(false),
         }
     }
@@ -54,6 +57,7 @@ pub(crate) fn TearLayer(ripper: Ripper) -> impl IntoView {
     let Ripper {
         tear,
         scroll,
+        offset,
         released,
         ..
     } = ripper;
@@ -69,7 +73,8 @@ pub(crate) fn TearLayer(ripper: Ripper) -> impl IntoView {
         >
             {move || {
                 tear.get().map(|tear| {
-                    let shift = format!("translateY({:.1}px)", -scroll.get());
+                    let (left, top) = offset.get();
+                    let shift = format!("translate({left:.1}px, {:.1}px)", top - scroll.get());
                     let heal = rip::ring_path(&tear.outline());
                     view! {
                         <div class="tear-sheet" style:transform=shift>
@@ -102,14 +107,15 @@ fn tape(tape: Tape) -> impl IntoView {
 mod imp {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
-    use std::time::Duration;
 
     use leptos::prelude::*;
+    use wasm_bindgen::JsCast;
     use web_sys::Element;
 
     use super::Ripper;
     use crate::mascot::{self, Event, State};
     use crate::rip::{self, Tear};
+    use crate::tuning::TEAR_SLIDE_MS;
     use crate::turn_util::{el_style, element_of, phone};
 
     /// What a press on the list page may not start a rip on: a task, or anything with a
@@ -155,6 +161,7 @@ mod imp {
             let ripper = Ripper {
                 tear: RwSignal::new(None),
                 scroll: RwSignal::new(0.0),
+                offset: RwSignal::new((0.0, 0.0)),
                 released: RwSignal::new(false),
                 dom: Rc::new(Dom {
                     pane,
@@ -168,12 +175,29 @@ mod imp {
             };
             // The page is torn while a tear lasts: the planner shows beneath, and the list,
             // paper, has the slit cut out of it.
-            let (tear, scroll) = (ripper.tear, ripper.scroll);
+            let (tear, scroll, offset) = (ripper.tear, ripper.scroll, ripper.offset);
             Effect::new(move |_| {
                 let torn = tear.get();
                 let scrolled = scroll.get();
                 if let Some(main) = main.get() {
                     let _ = main.class_list().toggle_with_force("torn", torn.is_some());
+                    el_style(&main, "--tear-slide-ms", &format!("{TEAR_SLIDE_MS}ms"));
+                    // On a desk the planner is the other page of the spread, not under the
+                    // list: for the length of a tear it slides under it, so the hole shows
+                    // the live planner there too. On a phone it is under it already.
+                    if let (Some(pane), Some(planner)) = (pane.get(), planner_in(&main)) {
+                        let slide = rip::slide_px(
+                            torn.is_some(),
+                            phone(),
+                            f64::from(planner.offset_left()),
+                            f64::from(pane.offset_left()),
+                        );
+                        el_style(
+                            &planner,
+                            "transform",
+                            &format!("translateX({:.1}px)", -slide),
+                        );
+                    }
                 }
                 if let Some(pane) = pane.get() {
                     let clip = torn.map_or_else(
@@ -188,6 +212,9 @@ mod imp {
                         },
                     );
                     el_style(&pane, "clip-path", &clip);
+                    if torn_now(&tear) {
+                        offset.set((f64::from(pane.offset_left()), f64::from(pane.offset_top())));
+                    }
                 }
             });
             ripper
@@ -204,7 +231,7 @@ mod imp {
             let dom = &self.dom;
             if !matches!(*dom.phase.borrow(), Phase::Idle)
                 || !ev.is_primary()
-                || !phone()
+                || ev.button() != 0
                 || dom.shown.get_untracked() != 0
                 || self.tear.with_untracked(Option::is_some)
             {
@@ -316,13 +343,12 @@ mod imp {
                     .set(mascot::transition(&State::Home, Event::Mend));
             }
             let (tear_signal, released) = (self.tear, self.released);
-            set_timeout(
-                move || {
-                    tear_signal.set(None);
-                    released.set(false);
-                },
-                Duration::from_millis(u64::from(rip::total_ms())),
-            );
+            // On the engine's clock, with everything else that moves.
+            crate::engine::every(f64::from(rip::total_ms()), move || {
+                tear_signal.set(None);
+                released.set(false);
+                crate::engine::Flow::Stop
+            });
         }
 
         pub(crate) fn scrolled(&self) {
@@ -339,6 +365,18 @@ mod imp {
                 self.dom.pen_pos.set((left + mx, top + my));
             }
         }
+    }
+
+    /// The planner page in `main`.
+    fn planner_in(main: &Element) -> Option<web_sys::HtmlElement> {
+        main.query_selector(".planner-page")
+            .ok()
+            .flatten()
+            .and_then(|planner| planner.dyn_into().ok())
+    }
+
+    fn torn_now(tear: &RwSignal<Option<Tear>>) -> bool {
+        tear.with_untracked(Option::is_some)
     }
 
     /// Each row's `(top, bottom)` in the page's coordinates, `top` being where the page's

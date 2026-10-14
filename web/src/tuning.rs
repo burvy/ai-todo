@@ -499,6 +499,9 @@ pub const TEAR_HOLD_MS: u32 = 4000;
 pub const TEAR_FADE_MS: u32 = 1500;
 /// How long he stays at the tear, in ms: until the tape is on, and a moment more to
 /// look it over, so he is never walking off with the tape half laid.
+/// How long the planner takes to slide under the list on a desk while a page is torn, and
+/// back, in ms; the page reads it as `--tear-slide-ms`. Safe range 150 to 500.
+pub const TEAR_SLIDE_MS: u32 = 280;
 pub const MEND_MS: u32 = TAPE_AT_MS + TAPE_LAY_MS + 300;
 
 const _: () = assert!(RIP_GAP_PX / 2.0 + RIP_JAG_PX < 20.0);

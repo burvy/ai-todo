@@ -1070,6 +1070,22 @@ main.torn > .planner-page {
   pointer-events: none;
 }
 
+/* On a desk the two pages are a spread, side by side. For the length of a tear the planner
+   slides left under the list (rip_ui.rs sets its transform), so the hole shows it there too.
+   The list is always the upper of the two, so the planner sliding back never crosses over it. */
+@media (min-width: 701px) {
+  main > .planner-page {
+    position: relative;
+    z-index: var(--layer-turn-under);
+    transition: transform var(--tear-slide-ms, 280ms) ease-in-out;
+  }
+
+  main > .tasks-pane {
+    position: relative;
+    z-index: var(--layer-turn-front);
+  }
+}
+
 @media (max-width: 700px) {
   main.torn[data-pane="0"] > .planner-page {
     display: flex;
