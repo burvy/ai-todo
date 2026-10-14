@@ -695,6 +695,12 @@ li.task-row.row-lifted {
     translate var(--scrap-ms) cubic-bezier(0.23, 1, 0.32, 1);
 }
 
+/* The edges under the top strip keep their title in the layout, so promoting one to the
+   top does not change its size; the title only shows on the top strip. */
+.scrap-undo.done:not(.on-top) s {
+  visibility: hidden;
+}
+
 /* Dragged by the finger: it follows at once, with no lag. Over the bin corner it leans
    toward the bin. Released there it crumples and drops off the page's bottom edge; released
    anywhere else it swings back to the pin (the transition above). */

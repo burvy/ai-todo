@@ -128,10 +128,12 @@ fn done_newest_first(snapshot: &Snapshot) -> Vec<&Task> {
     done
 }
 
-/// Every done task hangs at the pin, newest first.
+/// The done tasks mounted at the pin, newest first: the stack's edges, and two more so a
+/// strip that moves up is already there. Older ones stay done and unmounted.
 fn hung_at_the_pin(snapshot: &Snapshot) -> Vec<Hung> {
     done_newest_first(snapshot)
         .into_iter()
+        .take(PIN_EDGES + 2)
         .map(|task| Hung {
             id: task.id.clone(),
             title: task.title.clone(),
@@ -144,6 +146,22 @@ fn stack_rank(snapshot: &Snapshot, id: &TaskId) -> Option<usize> {
     done_newest_first(snapshot)
         .iter()
         .position(|task| task.id == *id)
+}
+
+/// Gives the keyboard to the top strip of the pin, if there is one.
+fn focus_top_strip() {
+    let top = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| {
+            document
+                .query_selector(".scrap-undo.done:not([disabled])")
+                .ok()
+                .flatten()
+        })
+        .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok());
+    if let Some(top) = top {
+        let _ = top.focus();
+    }
 }
 
 /// The scraps lying in the corner, oldest first. A newer delete lays a new scrap
@@ -540,8 +558,8 @@ pub fn ScrapCorner(
                     let task_id = StoredValue::new(hung.id.clone());
                     let deletable = occurrence_parts(&hung.id.0).is_none();
                     let rank_id = hung.id.clone();
-                    let rank = Memo::new(move |_| snapshot.with(|held| stack_rank(held, &rank_id)).unwrap_or(0));
-                    let top = Memo::new(move |_| rank.get() == 0);
+                    let rank = Memo::new(move |_| snapshot.with(|held| stack_rank(held, &rank_id)));
+                    let top = Memo::new(move |_| rank.get() == Some(0));
                     let label = format!("Tape \"{}\" back: not done after all", hung.title);
                     // Only the top strip carries its title; the edges under it are plain paper.
                     let title = hung.title.clone();
@@ -557,8 +575,9 @@ pub fn ScrapCorner(
                             class:dragging=move || dragging.get()
                             class:over-bin=move || binned.get() && dragging.get()
                             class:binned=move || binned.get() && !dragging.get()
-                            style:--depth=move || edge_depth(rank.get()).to_string()
-                            style:z-index=move || (PIN_EDGES + 1 - edge_depth(rank.get())).to_string()
+                            style:--depth=move || edge_depth(rank.get().unwrap_or(PIN_EDGES)).to_string()
+                            style:z-index=move || (PIN_EDGES + 1 - edge_depth(rank.get().unwrap_or(PIN_EDGES))).to_string()
+                            class:on-top=move || top.get()
                             aria-label=label
                             aria-hidden=move || (!top.get()).to_string()
                             disabled=move || !top.get()
@@ -647,10 +666,12 @@ pub fn ScrapCorner(
                                 wasm_bindgen_futures::spawn_local(async move {
                                     crate::tasks::apply_tick(&id, action, sink).await;
                                     forget_return(&id.0);
+                                    // The strip is gone: keep the keyboard on the new top strip.
+                                    request_animation_frame(focus_top_strip);
                                 });
                             }
                         >
-                            <s>{move || if top.get() { title.clone() } else { String::new() }}</s>
+                            <s>{title.clone()}</s>
                         </button>
                     }
                 }
@@ -909,6 +930,18 @@ mod tests {
         assert_eq!(edge_depth(1), 1);
         assert_eq!(edge_depth(PIN_EDGES), PIN_EDGES);
         assert_eq!(edge_depth(40), PIN_EDGES, "deeper ones share the last edge");
+    }
+
+    #[test]
+    fn the_pin_mounts_the_edges_and_two_more_and_no_further() {
+        let snapshot = done_snapshot(10);
+        assert_eq!(hung_at_the_pin(&snapshot).len(), PIN_EDGES + 2);
+    }
+
+    #[test]
+    fn a_strip_that_is_not_in_the_stack_has_no_rank() {
+        let snapshot = done_snapshot(3);
+        assert_eq!(stack_rank(&snapshot, &TaskId("gone".into())), None);
     }
 
     #[test]
