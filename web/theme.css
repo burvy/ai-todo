@@ -2171,22 +2171,35 @@ svg {
 /* Nothing pops in or out (SPEC-ANSWERS, Interview 4 item 12). Each arrival has a
    physical motion: a row drops in, a sheet rises, a landing unfolds. Only ink and
    Rambo's cut-and-patch fade. Motion is off for prefers-reduced-motion. */
-/* Nothing fades except ink and Rambo's cut-and-patch: arrivals move. */
+/* Nothing fades except ink and Rambo's cut-and-patch: arrivals move. A new row
+   falls in from above the list line and settles with a small bounce. */
 @keyframes row-drop {
-  from { transform: translateY(-6px); }
+  0% { transform: translateY(-28px); }
+  70% { transform: translateY(4px); }
+  100% { transform: translateY(0); }
 }
 
 @keyframes landing-unfold {
-  from { transform: scaleY(0.6); }
+  from { transform: scaleY(0); }
 }
 
-@keyframes arrive-rise {
-  from { transform: translateY(8px); }
+/* The gear menu unfolds from the gear, the account block and the overdue tag
+   slide in from their own edge. */
+@keyframes menu-unfold {
+  from { transform: scaleY(0.4); }
+}
+
+@keyframes slide-from-top {
+  from { transform: translateY(-16px); }
+}
+
+@keyframes slide-from-left {
+  from { transform: translateX(-12px); }
 }
 
 @media (prefers-reduced-motion: no-preference) {
   li.task-row {
-    animation: row-drop var(--arrive-ms) var(--arrive-ease) backwards;
+    animation: row-drop 320ms var(--arrive-ease) backwards;
   }
 
   .landing {
@@ -2195,23 +2208,24 @@ svg {
   }
 
   .account {
-    animation: arrive-rise var(--arrive-ms) var(--arrive-ease) backwards;
+    animation: slide-from-top var(--arrive-ms) var(--arrive-ease) backwards;
   }
 
   .gear-menu {
-    animation: arrive-rise var(--arrive-ms) var(--arrive-ease) backwards;
+    transform-origin: top right;
+    animation: menu-unfold var(--arrive-ms) var(--arrive-ease) backwards;
   }
 
   .overdue {
-    animation: arrive-rise var(--arrive-ms) var(--arrive-ease) backwards;
+    animation: slide-from-left var(--arrive-ms) var(--arrive-ease) backwards;
   }
 
   /* The edit sheet is a native dialog, so it can animate in and out: the
      discrete display and overlay properties keep it on screen until the close
-     finishes. The sheet is offset down by its own `translate`, which composes
-     with the centring transform on wide screens. */
+     finishes. It starts fully below the screen (100vh, which clears the
+     bottom edge on a phone and the centring on wide screens) and slides up. */
   .task-dialog {
-    translate: 0 12px;
+    translate: 0 100vh;
     transition:
       translate var(--arrive-ms) var(--arrive-ease),
       display var(--arrive-ms) allow-discrete,
@@ -2224,7 +2238,7 @@ svg {
 
   @starting-style {
     .task-dialog[open] {
-      translate: 0 12px;
+      translate: 0 100vh;
     }
   }
 
