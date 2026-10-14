@@ -2,17 +2,16 @@
 //! (ARCHITECTURE.md section 5). Code makes every candidate and every date; Jev chooses.
 
 use anyhow::Result;
-use chrono::NaiveTime;
 use dates::{Candidate, Value, candidates};
 use judge::{ClauseAnswer, ClauseQuestion, Judge};
-use todo_core::{LocalContext, Source, TaskDraft, When};
+use todo_core::{LocalContext, Source, TaskDraft};
 
 use crate::segment::split_clauses;
 
 /// Used when Jev has no duration candidate to choose.
 pub const DEFAULT_DURATION_MIN: u16 = 30;
-const MIN_DURATION_MIN: i64 = 5;
-const MAX_DURATION_MIN: i64 = 480;
+const MIN_DURATION_MIN: u16 = 5;
+const MAX_DURATION_MIN: u16 = 480;
 
 /// Turn a capture into task drafts. Clauses Jev does not judge to be tasks are dropped.
 pub async fn capture_text<J: Judge>(
@@ -225,23 +224,12 @@ fn draft(
 
     Some(TaskDraft {
         title,
-        duration_min: duration.clamp(MIN_DURATION_MIN as u16, MAX_DURATION_MIN as u16),
-        when: when(day, time, ctx),
+        duration_min: duration.clamp(MIN_DURATION_MIN, MAX_DURATION_MIN),
+        when: dates::when_from(day, time, ctx),
         label: answer.label,
         priority: answer.priority,
         source,
     })
-}
-
-/// Day + time pins the task, a day alone makes it due by 17:00 that day, and
-/// anything else floats (the same rule as `dates::when`).
-fn when(day: Option<chrono::NaiveDate>, time: Option<NaiveTime>, ctx: &LocalContext) -> When {
-    let end_of_day = NaiveTime::from_hms_opt(17, 0, 0).expect("17:00 is a valid time");
-    match (day, time) {
-        (Some(day), Some(time)) => When::At(ctx.at(day, time)),
-        (Some(day), None) => When::DueBy(ctx.at(day, end_of_day)),
-        _ => When::Anytime,
-    }
 }
 
 fn values<T>(found: &[Candidate], pick: impl Fn(&Value) -> Option<T>) -> Vec<T> {
@@ -254,9 +242,9 @@ fn values<T>(found: &[Candidate], pick: impl Fn(&Value) -> Option<T>) -> Vec<T> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{NaiveDate, TimeZone, Utc};
+    use chrono::{NaiveDate, NaiveTime, TimeZone, Utc};
     use judge::{ClauseAnswer, ClauseQuestion};
-    use todo_core::{Label, Priority};
+    use todo_core::{Label, Priority, When};
 
     /// Answers every clause with a fixed answer, whatever the clause says.
     struct Scripted(ClauseAnswer);
@@ -437,7 +425,7 @@ mod tests {
         let day = NaiveDate::from_ymd_opt(2026, 10, 15).unwrap();
         let time = NaiveTime::from_hms_opt(14, 0, 0).unwrap();
         assert_eq!(
-            when(Some(day), Some(time), &ctx()),
+            dates::when_from(Some(day), Some(time), &ctx()),
             When::At(Utc.with_ymd_and_hms(2026, 10, 15, 18, 0, 0).unwrap())
         );
     }
