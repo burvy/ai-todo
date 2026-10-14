@@ -2,7 +2,7 @@
 
 The spec for how Rambl looks. Code lives in `web/theme.css` (linked from `web/index.html` with `<link data-trunk rel="css" href="theme.css">`, so trunk copies it into `web/dist`, which the server embeds). Components must use the tokens below rather than raw colours.
 
-The look is **one page of parchment, written on in ink** (owner brief, `docs/REDESIGN.md`): space and ruled lines divide the page — no boxes, borders or stacked cards. Controls are words on the page until hover or focus underlines them; inputs are written on a rule. Only two things may look like objects: the edit dialog (a loose sheet laid over the page) and Rambo's ask (a speech bubble).
+The look is **one page of parchment, written on in ink** (owner brief, `docs/REDESIGN.md`): space and ruled lines divide the page — no boxes, borders or stacked cards. Controls are words on the page until hover or focus underlines them; inputs are written on a rule. Only two things may look like objects: the edit dialog (a loose sheet laid over the page) and Rambo's speech (a paper bubble — his ask menu and his spoken lines share it, anchored beside his nest).
 
 ## Palette
 
