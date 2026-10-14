@@ -50,9 +50,9 @@ mod imp {
     use crate::bend::{self, Ease, Pt, Settle, Turn};
     use crate::pane::{nearest_pane, show_pane};
     use crate::tuning::{
-        BEND_BUTTON_ARC, BEND_BUTTON_MS, BEND_COMPLETE_MS, BEND_FULL_TURN, BEND_LIFT,
-        BEND_LIFT_CAP, BEND_SHADOW_FAR_PX, BEND_SHADOW_NEAR_PX, BEND_SLIDE_MS, BEND_SPRING_MS,
-        PHONE_MEDIA,
+        BEND_BUTTON_ARC, BEND_BUTTON_LIFT, BEND_BUTTON_LIFT_CAP, BEND_BUTTON_MS, BEND_COMPLETE_MS,
+        BEND_FULL_TURN, BEND_LIFT, BEND_LIFT_CAP, BEND_SHADOW_FAR_PX, BEND_SHADOW_NEAR_PX,
+        BEND_SLIDE_MS, BEND_SPRING_MS, PHONE_MEDIA,
     };
 
     /// Presses that start here are not page turns: they have their own scroll or swipe.
@@ -90,6 +90,9 @@ mod imp {
         corner: Pt,
         /// The corner is at the bottom of what shows, so it rises toward the middle.
         low: bool,
+        /// How far the corner rises per px it travels sideways, and the most it rises as a
+        /// share of the page's height: a finger's, or a button's lower one.
+        lift: (f64, f64),
         turn: Turn,
         /// Reduced motion: slide the page instead of bending it.
         slide: bool,
@@ -121,11 +124,34 @@ mod imp {
         velocity: f64,
     }
 
+    /// The parts of the fx layer a frame draws into, found once when a turn begins.
+    struct Parts {
+        away: Element,
+        kept: Element,
+        flap: Element,
+        shadow_near: Element,
+        shadow_far: Element,
+    }
+
+    impl Parts {
+        fn find(fx: &Element) -> Option<Parts> {
+            let part = |selector: &str| fx.query_selector(selector).ok().flatten();
+            Some(Parts {
+                away: part(".bend-away")?,
+                kept: part(".bend-kept")?,
+                flap: part(".bend-flap")?,
+                shadow_near: part(".bend-shadow-near")?,
+                shadow_far: part(".bend-shadow-far")?,
+            })
+        }
+    }
+
     struct Inner {
         main: NodeRef<leptos::html::Main>,
         fx: NodeRef<leptos::html::Div>,
         set_pane: WriteSignal<u8>,
         phase: RefCell<Phase>,
+        parts: RefCell<Option<Parts>>,
     }
 
     #[derive(Clone)]
@@ -160,6 +186,7 @@ mod imp {
                 fx,
                 set_pane,
                 phase: RefCell::new(Phase::Idle),
+                parts: RefCell::new(None),
             }))
         }
 
@@ -375,6 +402,10 @@ mod imp {
             el_style(&main, "scroll-behavior", "");
             let _ = front.class_list().add_1("bend-front");
             let _ = under.class_list().add_1("bend-under");
+            // Nothing below the screen is seen during a turn, so the turning page is cut
+            // there: a long list is not repainted whole on every frame.
+            el_style(&front, "max-height", &format!("{bottom:.0}px"));
+            *self.0.parts.borrow_mut() = Parts::find(&fx);
             let (w, h) = (f64::from(fx.client_width()), f64::from(fx.client_height()));
             let finger = match grip {
                 Grip::Finger(at) => at,
@@ -392,6 +423,10 @@ mod imp {
                     h,
                     corner,
                     low,
+                    lift: match grip {
+                        Grip::Finger(_) => (BEND_LIFT, BEND_LIFT_CAP),
+                        Grip::Button => (BEND_BUTTON_LIFT, BEND_BUTTON_LIFT_CAP),
+                    },
                     turn,
                     slide: crate::mascot::prefers_reduced_motion(),
                 },
@@ -419,7 +454,7 @@ mod imp {
                 );
                 return;
             }
-            let drag = bend::lifted(drag, stage.low, stage.h, BEND_LIFT, BEND_LIFT_CAP);
+            let drag = bend::lifted(drag, stage.low, stage.h, stage.lift.0, stage.lift.1);
             let finger = Pt::new(stage.corner.x + drag.x, stage.corner.y + drag.y);
             let Some(shapes) = bend::bend(stage.w, stage.h, stage.corner, finger) else {
                 el_style(&front, "clip-path", "none");
@@ -431,24 +466,24 @@ mod imp {
             el_style(&fx, "--bend-x", &format!("{:.1}px", shapes.fold.x));
             el_style(&fx, "--bend-y", &format!("{:.1}px", shapes.fold.y));
             el_style(&fx, "--bend-angle", &format!("{:.4}rad", shapes.angle));
-            let clip = |part: &str, poly: &[Pt]| {
-                if let Some(el) = fx.query_selector(part).ok().flatten() {
-                    el_style(&el, "clip-path", &bend::polygon_css(poly));
-                }
+            el_style(
+                &fx,
+                "--bend-roll",
+                &format!("{:.1}px", bend::roll_px(drag.len())),
+            );
+            let parts = self.0.parts.borrow();
+            let Some(parts) = parts.as_ref() else {
+                return;
             };
-            clip(".bend-away", &shapes.away);
-            clip(".bend-kept", &shapes.kept);
-            clip(".bend-flap", &shapes.flap);
+            let clip =
+                |part: &Element, poly: &[Pt]| el_style(part, "clip-path", &bend::polygon_css(poly));
+            clip(&parts.away, &shapes.away);
+            clip(&parts.kept, &shapes.kept);
+            clip(&parts.flap, &shapes.flap);
             // The flap's shadow on the page below: two copies of the flap pushed a little
             // away from the fold, instead of a blur that is redrawn every frame.
-            clip(
-                ".bend-shadow-near",
-                &bend::shifted(&shapes.flap, shapes.angle, BEND_SHADOW_NEAR_PX),
-            );
-            clip(
-                ".bend-shadow-far",
-                &bend::shifted(&shapes.flap, shapes.angle, BEND_SHADOW_FAR_PX),
-            );
+            clip(&parts.shadow_near, &shapes.flap_shadow(BEND_SHADOW_NEAR_PX));
+            clip(&parts.shadow_far, &shapes.flap_shadow(BEND_SHADOW_FAR_PX));
         }
 
         /// Animates the corner along `flight` and then ends the turn.
@@ -471,9 +506,8 @@ mod imp {
                 started,
             } = flight;
             let t = ((now() - started) / ms).clamp(0.0, 1.0);
-            let mut at = bend::eased(from, to, t, ease);
-            // A button's turn lifts the corner on the way and sets it down at the end.
-            at.y -= arc * stage.h * 4.0 * t * (1.0 - t);
+            let e = ease.at(t);
+            let at = bend::arced(bend::along(from, to, e), e, arc, stage.h);
             self.draw(&stage, at);
             if t < 1.0 {
                 let this = self.clone();
@@ -492,6 +526,7 @@ mod imp {
                         let _ = pane.class_list().remove_2("bend-front", "bend-under");
                         el_style(&pane, "clip-path", "");
                         el_style(&pane, "transform", "");
+                        el_style(&pane, "max-height", "");
                     }
                 }
                 let _ = main.class_list().remove_1("bending");
@@ -499,6 +534,7 @@ mod imp {
             if let Some(fx) = self.0.fx.get() {
                 el_style(&fx, "visibility", "hidden");
             }
+            *self.0.parts.borrow_mut() = None;
             let shown = match outcome {
                 Settle::Complete => stage.turn.revealed_pane(),
                 Settle::SpringBack => stage.turn.turning_pane(),

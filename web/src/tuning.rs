@@ -99,6 +99,18 @@ pub const BEND_BOUNCE: f64 = 0.06;
 /// The share of a spring-back at which the page first lies flat, before it rebounds.
 /// Safe range 0.6 to 0.8.
 pub const BEND_BOUNCE_AT: f64 = 0.7;
+/// The lift for a button's turn, which has no finger to set the path: far lower than
+/// `BEND_LIFT`, so the fold stays steep (never more than about 40 degrees off vertical)
+/// and the page leaves to the side instead of rolling up from the bottom.
+pub const BEND_BUTTON_LIFT: f64 = 0.15;
+/// The most a button's turn lifts the corner, as a share of the page's height.
+pub const BEND_BUTTON_LIFT_CAP: f64 = 0.15;
+/// How wide the curl at the fold is, in px, for each px the corner has been dragged: a
+/// tight roll at the start of a turn, a looser one past halfway. Safe range 0.08 to 0.2.
+pub const BEND_ROLL_PER_PX: f64 = 0.12;
+/// The tightest and the loosest the curl gets, in px. Safe range 8 to 16 and 30 to 48.
+pub const BEND_ROLL_MIN_PX: f64 = 12.0;
+pub const BEND_ROLL_MAX_PX: f64 = 40.0;
 /// How far, in px, the flap's soft shadow is cast onto the page below: a near and a far
 /// copy of the flap, drawn instead of a per-frame blur. Safe range 2 to 10 and 8 to 20.
 pub const BEND_SHADOW_NEAR_PX: f64 = 4.0;

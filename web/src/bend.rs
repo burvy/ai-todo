@@ -12,7 +12,7 @@
 
 use crate::tuning::{
     BEND_BOUNCE, BEND_BOUNCE_AT, BEND_COMMIT_SHARE, BEND_FLICK_MIN_PX, BEND_FLICK_PX_PER_MS,
-    BEND_SLOP_PX,
+    BEND_ROLL_MAX_PX, BEND_ROLL_MIN_PX, BEND_ROLL_PER_PX, BEND_SLOP_PX,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -37,7 +37,7 @@ impl Pt {
     fn dot(self, other: Pt) -> f64 {
         self.x * other.x + self.y * other.y
     }
-    fn len(self) -> f64 {
+    pub(crate) fn len(self) -> f64 {
         self.dot(self).sqrt()
     }
 }
@@ -227,9 +227,22 @@ impl Ease {
     }
 }
 
-/// Where a drag of `from` has got to `t` (0 to 1) of the way to `to`.
-pub(crate) fn eased(from: Pt, to: Pt, t: f64, ease: Ease) -> Pt {
-    from.plus(to.minus(from).times(ease.at(t)))
+/// The point `e` (0 to 1) of the way from `from` to `to`.
+pub(crate) fn along(from: Pt, to: Pt, e: f64) -> Pt {
+    from.plus(to.minus(from).times(e))
+}
+
+/// A button's turn lifts the corner on its way and sets it down at the end: `arc` of the
+/// page's height `h` at most, in step with how far (`e`) the corner has travelled, not
+/// with the clock, so the fold keeps the same lean however slowly the turn starts.
+pub(crate) fn arced(at: Pt, e: f64, arc: f64, h: f64) -> Pt {
+    Pt::new(at.x, at.y - arc * h * 4.0 * e * (1.0 - e))
+}
+
+/// How wide the curl at the fold is for a corner dragged `len` px: tight at the start of a
+/// turn, looser later.
+pub(crate) fn roll_px(len: f64) -> f64 {
+    (len * BEND_ROLL_PER_PX).clamp(BEND_ROLL_MIN_PX, BEND_ROLL_MAX_PX)
 }
 
 /// The drag with the corner lifted: it rises `lift` px for each px it travels sideways
@@ -242,9 +255,19 @@ pub(crate) fn lifted(drag: Pt, low: bool, h: f64, lift: f64, cap: f64) -> Pt {
 }
 
 /// `poly` moved `by` px along the direction `angle` (radians).
-pub(crate) fn shifted(poly: &[Pt], angle: f64, by: f64) -> Vec<Pt> {
+fn shifted(poly: &[Pt], angle: f64, by: f64) -> Vec<Pt> {
     let step = Pt::new(angle.cos() * by, angle.sin() * by);
     poly.iter().map(|&p| p.plus(step)).collect()
+}
+
+impl Bend {
+    /// The flap's shadow on the page below: the flap pushed `by` px away from the fold and
+    /// cut to the kept side, so it never falls on the part the page has left, which already
+    /// has the cast shadow.
+    pub(crate) fn flap_shadow(&self, by: f64) -> Vec<Pt> {
+        let normal = Pt::new(self.angle.cos(), self.angle.sin());
+        clip(&shifted(&self.flap, self.angle, by), self.fold, normal)
+    }
 }
 
 /// Polygon points as a CSS `polygon(...)`, or an empty clip when there is none.
@@ -393,11 +416,11 @@ mod tests {
         assert_eq!(near, Pt::new(-30.0, 4.0));
         let (from, to) = (Pt::new(0.0, 0.0), Pt::new(100.0, 0.0));
         for ease in [Ease::Out, Ease::InOut, Ease::Fall] {
-            assert_eq!(eased(from, to, 0.0, ease), from);
-            assert_eq!(eased(from, to, 1.0, ease), to);
+            assert_eq!(along(from, to, ease.at(0.0)), from);
+            assert_eq!(along(from, to, ease.at(1.0)), to);
         }
         assert!(
-            eased(from, to, 0.5, Ease::Out).x > 50.0,
+            along(from, to, Ease::Out.at(0.5)).x > 50.0,
             "eased out: more than half done at half time"
         );
     }
@@ -469,6 +492,60 @@ mod tests {
     fn a_shifted_polygon_moves_along_the_angle() {
         let moved = shifted(&[Pt::new(1.0, 1.0)], std::f64::consts::FRAC_PI_2, 5.0);
         assert!((moved[0].x - 1.0).abs() < 1e-9 && (moved[0].y - 6.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_buttons_fold_stays_within_forty_degrees_of_vertical() {
+        use crate::tuning::{
+            BEND_BUTTON_ARC, BEND_BUTTON_LIFT, BEND_BUTTON_LIFT_CAP, BEND_FULL_TURN,
+        };
+        // A forward turn from the bottom corner, as `turn_to` runs it, at every share of
+        // the way and at every pace the ease can give.
+        let (w, h) = (390.0, 800.0);
+        let corner = Pt::new(w, h);
+        let end = Pt::new(-BEND_FULL_TURN * w, 0.0);
+        for ease in [Ease::InOut, Ease::Out] {
+            for step in 1..=100 {
+                let e = ease.at(f64::from(step) / 100.0);
+                let at = arced(along(Pt::new(0.0, 0.0), end, e), e, BEND_BUTTON_ARC, h);
+                let drag = lifted(at, true, h, BEND_BUTTON_LIFT, BEND_BUTTON_LIFT_CAP);
+                let Some(shapes) = bend(w, h, corner, corner.plus(drag)) else {
+                    continue;
+                };
+                let lean = shapes
+                    .angle
+                    .sin()
+                    .abs()
+                    .atan2(shapes.angle.cos().abs())
+                    .to_degrees();
+                assert!(
+                    lean <= 40.0,
+                    "{ease:?} at {step}%: fold leans {lean} degrees"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_curl_is_tight_at_first_and_looser_later() {
+        assert_eq!(roll_px(10.0), BEND_ROLL_MIN_PX);
+        assert_eq!(roll_px(5000.0), BEND_ROLL_MAX_PX);
+        assert!(roll_px(150.0) < roll_px(300.0));
+    }
+
+    #[test]
+    fn the_flaps_shadow_never_falls_on_the_part_the_page_has_left() {
+        let (w, h) = (390.0, 800.0);
+        let corner = Pt::new(0.0, h);
+        let shapes = bend(w, h, corner, Pt::new(80.0, h - 100.0)).expect("a fold");
+        let normal = Pt::new(shapes.angle.cos(), shapes.angle.sin());
+        let shadow = shapes.flap_shadow(11.0);
+        assert!(!shadow.is_empty());
+        assert!(
+            shadow
+                .iter()
+                .all(|p| p.minus(shapes.fold).dot(normal) >= -1e-6)
+        );
     }
 
     #[test]

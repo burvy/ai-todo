@@ -109,15 +109,16 @@
      that decide a turn are in web/src/tuning.rs. */
   /* Shadows are black in both modes: dark paper has light ink, so mixing from the ink
      would glow. Only the ridge's highlight comes from the paper. */
-  --bend-shade: color-mix(in srgb, black 32%, transparent);
-  --bend-rise-shade: color-mix(in srgb, black 14%, transparent);
+  --bend-shade: color-mix(in srgb, black 22%, transparent);
+  --bend-rise-shade: color-mix(in srgb, black 8%, transparent);
   --bend-flap-shadow: color-mix(in srgb, black 9%, transparent);
   --bend-ridge: color-mix(in srgb, var(--paper) 92%, white);
   --bend-underside: color-mix(in srgb, var(--paper) 96%, var(--ink));
   --bend-shadow: 3.5rem; /* how far the page's shadow reaches onto the next page */
   --bend-foot: 0.5rem; /* the cast starts this far past the fold: the curl's foot */
-  --bend-rise: 1.25rem; /* how far the kept paper darkens as it rises into the fold */
-  --bend-ridge-w: 0.75rem; /* the bright ridge on the flap at the fold */
+  /* The curl's width is set by the turner as --bend-roll (tight at first, looser later):
+     the kept paper darkens over twice that into the fold, the ridge is as wide as it. */
+  --bend-roll: 16px;
 
   /* Motion. */
   --dur-fast: 120ms;
@@ -341,12 +342,15 @@ main.bending > .bend-under {
   z-index: var(--layer-turn-under);
   isolation: isolate;
   pointer-events: none;
+  /* The big panes get layers of their own, so only their clip mask is redrawn. */
+  will-change: transform;
 }
 
 main.bending > .bend-front {
   position: relative;
   z-index: var(--layer-turn-front);
-  will-change: clip-path;
+  overflow: hidden; /* cut at the height the turner sets: what shows of a long list */
+  will-change: transform;
 }
 
 .bend-fx {
@@ -406,7 +410,7 @@ main.bending > .bend-fx {
 }
 
 .bend-rise {
-  width: var(--bend-rise);
+  width: calc(var(--bend-roll) * 2);
   background: linear-gradient(to right, var(--bend-rise-shade), transparent);
 }
 
@@ -422,8 +426,14 @@ main.bending > .bend-fx {
 }
 
 .bend-ridge {
-  width: var(--bend-ridge-w);
-  background: linear-gradient(to right, var(--bend-ridge), transparent);
+  width: calc(var(--bend-roll) * 1.5);
+  /* The highlight peaks a little inside the fold, not on its edge. */
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--bend-ridge) 45%, transparent),
+    var(--bend-ridge) 25%,
+    transparent
+  );
 }
 
 .tasks-pane {
