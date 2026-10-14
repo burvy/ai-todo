@@ -66,8 +66,7 @@ pub fn App() -> impl IntoView {
     // Load snapshot from API on mount
     Effect::new(move |_| {
         wasm_bindgen_futures::spawn_local(async move {
-            let days = view_settings.get_untracked().days;
-            match api::fetch_snapshot(&api::today_date(), days).await {
+            match api::fetch_snapshot(&api::today_date()).await {
                 Ok(loaded) => set_snapshot.set(loaded),
                 Err(error) => set_error.set(Some(format!("Could not load your tasks: {error}"))),
             }

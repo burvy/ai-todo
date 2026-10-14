@@ -14,6 +14,7 @@ use axum::{
 };
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
+use todo_core::tuning::DEFAULT_WINDOW_DAYS;
 use todo_core::{ApiError, DaySettings, ErrorCode, Snapshot, Task, TaskDraft};
 use uuid::Uuid;
 
@@ -26,7 +27,7 @@ use super::ics_import;
 use super::store::{Store, StoreError};
 use super::tuning::{
     CAPTURE_MAX_CHARS, CAPTURE_MAX_CLAUSES, DEFAULT_ANON_IDS_PER_IP, DEFAULT_ANON_JEV_DAILY_CAP,
-    DEFAULT_JEV_DAILY_CAP, DEFAULT_PAID_JEV_DAILY_CAP, DEFAULT_SIGNINS_PER_IP, DEFAULT_WINDOW_DAYS,
+    DEFAULT_JEV_DAILY_CAP, DEFAULT_PAID_JEV_DAILY_CAP, DEFAULT_SIGNINS_PER_IP,
     IMPORT_MAX_BODY_BYTES, IMPORT_MAX_TASKS, MAX_WINDOW_DAYS,
 };
 use capture::{Revision, capture_text};
