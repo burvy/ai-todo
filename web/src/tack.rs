@@ -12,8 +12,8 @@
 //! Rambo's own choreography (cutting the strip out, grumpy tidying) belongs to
 //! the mascot code; this board only reports [`Cue`]s on a signal it is handed.
 
-use std::cell::RefCell;
-use std::collections::HashSet;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use gloo_timers::callback::Timeout;
@@ -54,9 +54,9 @@ pub struct Phys {
 /// Pendulum stiffness, chosen for a paper-strip swing period of about 0.8 s:
 /// `sqrt(K)` is the small-angle angular frequency in rad/s.
 const K: f64 = 61.0;
-/// Damping: strong enough to settle in a couple of seconds, weak enough to
-/// swing a few times first.
-const C: f64 = 1.15;
+/// Damping: strong enough to settle inside about two and a half seconds,
+/// weak enough to swing through three or four arcs first.
+const C: f64 = 5.0;
 /// The fixed physics timestep. The animation loop accumulates real frame time
 /// and steps in multiples of this, so a strip moves identically at any fps.
 pub const PHYS_DT: f64 = 1.0 / 120.0;
@@ -71,11 +71,12 @@ impl Phys {
     /// energy at the timesteps used here.
     pub fn step(self, dt: f64, rest: f64) -> Phys {
         let vel = self.vel + (-(self.angle - rest).sin() * K - self.vel * C) * dt;
-        let mut angle = self.angle + vel * dt;
-        let mut vel = vel;
+        let angle = self.angle + vel * dt;
         if (angle - rest).abs() < SETTLED_ANGLE && vel.abs() < SETTLED_VEL {
-            angle = rest;
-            vel = 0.0;
+            return Phys {
+                angle: rest,
+                vel: 0.0,
+            };
         }
         Phys { angle, vel }
     }
@@ -85,6 +86,7 @@ impl Phys {
     }
 
     /// Mechanical energy in units of `K`, for tests: it must never grow.
+    #[cfg(test)]
     fn energy(self, rest: f64) -> f64 {
         0.5 * self.vel * self.vel / K + (1.0 - (self.angle - rest).cos())
     }
@@ -158,6 +160,9 @@ pub const MAX_HANGING: usize = 30;
 /// The pause between the tick and the strip appearing. The mascot's
 /// cut-the-strip choreography is timed against this same constant.
 pub const PAUSE_MS: u32 = 650;
+/// How long the paper takes to ball up and fade. Matches `tack-crumple` in
+/// tack.css, and the strip is deleted once it is over.
+pub const CRUMPLE_MS: u32 = 360;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Strip {
@@ -177,13 +182,23 @@ pub struct Strip {
 /// Deterministic small value for a strip, so a given task always hangs from
 /// the same offset on the pin and lies at the same jaunty angle. FNV-1a.
 pub fn hash_unit(id: &str, salt: u8) -> f64 {
+    // The top 24 bits mapped to -1..=1.
+    (f64::from(hash32(id, salt) >> 8) / 16_777_215.0 - 0.5) * 2.0
+}
+
+fn hash32(id: &str, salt: u8) -> u32 {
     let mut hash: u32 = 2166136261;
     for byte in id.bytes().chain([salt]) {
         hash ^= u32::from(byte);
         hash = hash.wrapping_mul(16777619);
     }
-    // The top 24 bits mapped to -1..=1.
-    (f64::from(hash >> 8) / 16_777_215.0 - 0.5) * 2.0
+    hash
+}
+
+/// Which of the three torn-paper edges this strip is cut with, so the board
+/// does not read as thirty identical bands.
+pub fn tear_index(id: &str) -> usize {
+    hash32(id, 4) as usize % 3
 }
 
 /// Where the pin sits, given the board's width.
@@ -193,8 +208,8 @@ pub fn pin_at(board_w: f64) -> (f64, f64) {
 
 /// The pin's attach slots centre a strip ([`STRIP_W`] / 2 to the left) a few
 /// px around the pin so hanging strips do not perfectly overlap; `hash_unit`
-/// makes each task's slot stable.
-const STRIP_W: f64 = 140.0;
+/// makes each task's slot stable. Mirrors `--tack-strip-w` in tack.css.
+const STRIP_W: f64 = 128.0;
 
 fn attach_point(board_w: f64, id: &str) -> (f64, f64) {
     let (pin_x, pin_y) = pin_at(board_w);
@@ -206,15 +221,24 @@ fn pile_at(board_w: f64, index: usize, id: &str) -> (f64, f64, f64) {
     let (pin_x, pin_y) = pin_at(board_w);
     let jitter = hash_unit(id, 3);
     (
-        pin_x - 62.0 + (index % 4) as f64 * 32.0 + jitter * 7.0,
+        pin_x - 54.0 + (index % 4) as f64 * 28.0 + jitter * 6.0,
         pin_y + 118.0 + (index / 4) as f64 * 20.0 + jitter * 4.0,
-        jitter * 7.0,
+        jitter * 6.0,
     )
+}
+
+/// Put every strip hanging from the pin back on its own slot of a board
+/// `board_w` wide, so a board that changed width (a rotated phone) carries its
+/// strips with it. Strips lying loose and strips in the pile keep their places.
+pub fn reattach(strips: &mut [Strip], board_w: f64) {
+    for strip in strips.iter_mut().filter(|s| s.tacked && !s.stacked) {
+        (strip.x, strip.y) = attach_point(board_w, &strip.id);
+    }
 }
 
 /// Newest strips hang; once more than [`MAX_HANGING`] are in view, the oldest
 /// ones join the stack under the pin.
-pub fn apply_cap(strips: &mut Vec<Strip>) {
+pub fn apply_cap(strips: &mut [Strip]) {
     let hanging = strips.iter().filter(|s| !s.stacked).count();
     if hanging <= MAX_HANGING {
         return;
@@ -240,26 +264,49 @@ fn renumber(strips: &mut [Strip]) {
     }
 }
 
+/// What one pass over the server's done tasks tells the board to do.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pass {
+    /// The strips that stay, with their titles brought up to date.
+    pub kept: Vec<Strip>,
+    /// Done tasks with no strip yet, in the order the server lists them.
+    pub fresh: Vec<(String, String)>,
+    /// Which of `fresh` the board watched go from listed to done: the ones that
+    /// get the cut-out-and-tack ceremony rather than going up quietly.
+    pub just_done: Vec<String>,
+}
+
 /// Server truth wins: a strip whose task is no longer done (restored, deleted,
-/// gone) leaves the board, and a renamed task renames its strip. Returns the
-/// strips to keep and the done tasks that have no strip yet, oldest-first.
-pub fn reconcile(
-    strips: Vec<Strip>,
-    done: &[(String, String)],
-) -> (Vec<Strip>, Vec<(String, String)>) {
-    let mut kept = strips;
-    kept.retain(|strip| done.iter().any(|(id, _)| *id == strip.id));
-    for strip in &mut kept {
-        if let Some((_, title)) = done.iter().find(|(id, _)| *id == strip.id) {
+/// gone) leaves the board, and a renamed task renames its strip.
+///
+/// `listed` is the ids the previous snapshot still showed as to-do. A fresh
+/// task that is in there was ticked while the page was open — that is the
+/// strip Rambo cuts out. One that is not was already done when the board
+/// opened, so it goes straight up on the pin without the ceremony.
+pub fn reconcile(strips: Vec<Strip>, done: &[(String, String)], listed: &HashSet<String>) -> Pass {
+    let kept: Vec<Strip> = strips
+        .into_iter()
+        .filter_map(|mut strip| {
+            let (_, title) = done.iter().find(|(id, _)| *id == strip.id)?;
             strip.title = title.clone();
-        }
-    }
-    let missing = done
+            Some(strip)
+        })
+        .collect();
+    let fresh: Vec<(String, String)> = done
         .iter()
         .filter(|(id, _)| !kept.iter().any(|strip| strip.id == *id))
         .cloned()
         .collect();
-    (kept, missing)
+    let just_done = fresh
+        .iter()
+        .map(|(id, _)| id.clone())
+        .filter(|id| listed.contains(id))
+        .collect();
+    Pass {
+        kept,
+        fresh,
+        just_done,
+    }
 }
 
 /// Best-effort sound: Ping's recording when it exists, silence otherwise
@@ -304,9 +351,7 @@ fn load_stored() -> Option<Stored> {
 }
 
 fn save_stored(open: bool, strips: &[Strip]) {
-    let Some(storage) = web_sys::window()
-        .and_then(|w| w.local_storage().ok().flatten())
-    else {
+    let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) else {
         return;
     };
     let stored = Stored {
@@ -342,6 +387,7 @@ pub fn TackBoard(
     set_cue: WriteSignal<Option<Cue>>,
 ) -> impl IntoView {
     let board_ref = NodeRef::<leptos::html::Section>::new();
+    let strips_ref = NodeRef::<leptos::html::Div>::new();
     let bin_ref = NodeRef::<leptos::html::Div>::new();
     let strips = RwSignal::new(Vec::<Strip>::new());
     let (open, set_open) = signal(false);
@@ -368,30 +414,29 @@ pub fn TackBoard(
     }
 
     // Runtime-only state the animation loop owns; never reactive, so per-frame
-    // physics costs the framework nothing. Strip nodes are cached by id so the
-    // loop writes transforms straight to the DOM.
-    let phys = Rc::new(RefCell::new(std::collections::HashMap::<String, Phys>::new()));
-    let nodes =
-        Rc::new(RefCell::new(std::collections::HashMap::<String, web_sys::HtmlElement>::new()));
-    let board_w = Rc::new(std::cell::Cell::new(180.0_f64));
-    let loop_alive = Rc::new(std::cell::Cell::new(false));
+    // physics costs the framework nothing. Strip elements are re-read from the
+    // DOM after every render (`refresh_nodes`) so the loop can write transforms
+    // straight to them without any node cache inside the render closure, which
+    // `<For>` requires to be `Send`.
+    let phys = Rc::new(RefCell::new(HashMap::<String, Phys>::new()));
+    let nodes = Rc::new(RefCell::new(HashMap::<String, web_sys::HtmlElement>::new()));
+    let board_w = Rc::new(Cell::new(180.0_f64));
+    let loop_alive = Rc::new(Cell::new(false));
+    // Strips whose ceremony is counting down, so a snapshot landing mid-pause
+    // does not queue a second one.
+    let pending = Rc::new(RefCell::new(HashSet::<String>::new()));
 
     let reduced = crate::mascot::prefers_reduced_motion();
 
-    // Tasks already done when the board first renders get strips without
-    // ceremony; only ones that flip done while the page is open get the
-    // pause, the swing-in and the cue for Rambo.
-    let seen_done = Rc::new(RefCell::new(HashSet::<String>::new()));
-    let first_run = Rc::new(std::cell::Cell::new(true));
-
     let measure = {
-        let board_ref = board_ref;
         let board_w = board_w.clone();
         move || {
             if let Some(el) = board_ref.get() {
                 let w = el.get_bounding_client_rect().width();
-                if w > 0.0 {
+                if w > 0.0 && w != board_w.get() {
                     board_w.set(w);
+                    // The pin moved, so the strips hanging off it move with it.
+                    strips.update(|list| reattach(list, w));
                 }
             }
         }
@@ -403,19 +448,14 @@ pub fn TackBoard(
         let board_w = board_w.clone();
         move |strip: &Strip, list: &[Strip], swing: Option<Phys>| -> String {
             if strip.stacked {
-                let index = list
-                    .iter()
-                    .filter(|s| s.stacked && s.z < strip.z)
-                    .count();
+                let index = list.iter().filter(|s| s.stacked && s.z < strip.z).count();
                 let (x, y, rest) = pile_at(board_w.get(), index, &strip.id);
                 return format!(
                     "translate({x:.1}px, {y:.1}px) rotate({:.1}deg)",
                     rest.to_degrees()
                 );
             }
-            let angle = swing
-                .map(|p| p.angle)
-                .unwrap_or(strip.rest);
+            let angle = swing.map(|p| p.angle).unwrap_or(strip.rest);
             format!(
                 "translate({x:.1}px, {y:.1}px) rotate({angle:.2}deg)",
                 x = strip.x,
@@ -425,40 +465,71 @@ pub fn TackBoard(
         }
     };
 
-    // Write transforms straight to the DOM: 30 strips at 60 fps must not go
-    // through fine-grained reactivity.
-    let sync_transforms = {
+    // The one place a strip's placement reaches the DOM, so a frame of physics
+    // and a re-render can never disagree about where a strip is. The strip
+    // under the pointer is left out: it follows the pointer, not the pendulum.
+    let place = {
         let phys = phys.clone();
         let nodes = nodes.clone();
         let strip_transform = strip_transform.clone();
+        move |list: &[Strip], strip: &Strip| {
+            if dragging.get_untracked().as_deref() == Some(strip.id.as_str()) {
+                return;
+            }
+            let swing = phys.borrow().get(&strip.id).copied();
+            let nodes = nodes.borrow();
+            let Some(el) = nodes.get(&strip.id) else {
+                return;
+            };
+            let transform = strip_transform(strip, list, swing);
+            let _ = el.set_attribute("style", &placement(strip, &transform));
+        }
+    };
+
+    // Write transforms straight to the DOM: 30 strips at 60 fps must not go
+    // through fine-grained reactivity.
+    let sync_transforms = {
+        let place = place.clone();
         move || {
             let list = strips.get_untracked();
-            let phys = phys.borrow();
-            let mut nodes = nodes.borrow_mut();
-            nodes.retain(|id, _| list.iter().any(|s| &s.id == id));
             for strip in &list {
-                if let Some(el) = nodes.get(&strip.id) {
-                    let swing = strip
-                        .tacked
-                        .then(|| phys.get(&strip.id).copied())
-                        .flatten();
-                    let transform = strip_transform(strip, &list, swing);
-                    let _ = el.set_attribute(
-                        "style",
-                        &format!("transform: {transform}; z-index: {};", strip.z),
-                    );
-                }
+                place(&list, strip);
             }
         }
     };
+
+    // Measure the board, re-read the strip elements and place everything. Run
+    // after any render that added, removed or resized a strip; `after_render`
+    // keeps it off the reactive path.
+    let relayout = {
+        let measure = measure.clone();
+        let place = place.clone();
+        let nodes = nodes.clone();
+        Rc::new(move || {
+            let measure = measure.clone();
+            let place = place.clone();
+            let nodes = nodes.clone();
+            after_render(move || {
+                measure();
+                refresh_nodes(strips_ref, &nodes);
+                let list = strips.get_untracked();
+                for strip in &list {
+                    place(&list, strip);
+                }
+            });
+        })
+    };
+
+    /// The animation frame callback, held so it can re-arm itself until every
+    /// strip has come to rest.
+    type Frame = Rc<RefCell<Option<wasm_bindgen::prelude::Closure<dyn FnMut(f64)>>>>;
 
     // The animation loop: accumulate frame time, step every strip a whole
     // number of PHYS_DTs, write transforms, then sleep until an impulse wakes
     // it again.
     let start_loop = {
         let phys = phys.clone();
-        let nodes = nodes.clone();
-        let board_w = board_w.clone();
+        let place = place.clone();
         let loop_alive = loop_alive.clone();
         Rc::new(move || {
             if reduced || loop_alive.get() {
@@ -466,16 +537,14 @@ pub fn TackBoard(
             }
             loop_alive.set(true);
             let phys = phys.clone();
-            let nodes = nodes.clone();
-            let board_w = board_w.clone();
+            let place = place.clone();
             let loop_alive = loop_alive.clone();
-            let closure: Rc<RefCell<Option<wasm_bindgen::prelude::Closure<dyn FnMut(f64)>>>> =
-                Rc::new(RefCell::new(None));
+            let closure: Frame = Rc::new(RefCell::new(None));
             let tick = closure.clone();
             let mut last: Option<f64> = None;
             let mut acc = 0.0_f64;
-            *closure.borrow_mut() =
-                Some(wasm_bindgen::prelude::Closure::wrap(Box::new(move |now: f64| {
+            *closure.borrow_mut() = Some(wasm_bindgen::prelude::Closure::wrap(Box::new(
+                move |now: f64| {
                     let dt = last
                         .map(|l| ((now - l) / 1000.0).clamp(0.0, 0.1))
                         .unwrap_or(0.0);
@@ -487,32 +556,20 @@ pub fn TackBoard(
                         let mut phys = phys.borrow_mut();
                         for strip in &list {
                             let rest = if strip.tacked { 0.0 } else { strip.rest };
-                            let entry = phys
-                                .entry(strip.id.clone())
-                                .or_insert(Phys { angle: rest, vel: 0.0 });
+                            let entry = phys.entry(strip.id.clone()).or_insert(Phys {
+                                angle: rest,
+                                vel: 0.0,
+                            });
                             *entry = entry.step(PHYS_DT, rest);
                         }
                     }
                     let phys = phys.borrow();
-                    let mut awake = false;
-                    let mut nodes = nodes.borrow_mut();
-                    nodes.retain(|id, _| list.iter().any(|s| &s.id == id));
-                    for strip in &list {
+                    let awake = list.iter().any(|strip| {
                         let rest = if strip.tacked { 0.0 } else { strip.rest };
-                        let swing = phys.get(&strip.id).copied();
-                        if swing.is_some_and(|p| !p.settled(rest)) {
-                            awake = true;
-                        }
-                        if let Some(el) = nodes.get(&strip.id) {
-                            let transform = strip_transform(strip, &list, swing);
-                            let _ = el.set_attribute(
-                                "style",
-                                &format!(
-                                    "transform: {transform}; z-index: {};",
-                                    strip.z
-                                ),
-                            );
-                        }
+                        phys.get(&strip.id).is_some_and(|p| !p.settled(rest))
+                    });
+                    for strip in &list {
+                        place(&list, strip);
                     }
                     if awake
                         && let (Some(tick), Some(window)) =
@@ -525,7 +582,8 @@ pub fn TackBoard(
                         loop_alive.set(false);
                         *tick.borrow_mut() = None;
                     }
-                })));
+                },
+            )));
             if let (Some(start), Some(window)) = (closure.borrow().as_ref(), web_sys::window()) {
                 window
                     .request_animation_frame(start.as_ref().unchecked_ref())
@@ -539,7 +597,6 @@ pub fn TackBoard(
     let add_strip = {
         let phys = phys.clone();
         let board_w = board_w.clone();
-        let set_cue = set_cue;
         let start_loop = start_loop.clone();
         let sync = sync_transforms.clone();
         move |id: &str, title: &str, swing_in: bool| {
@@ -560,19 +617,34 @@ pub fn TackBoard(
             });
             if swing_in {
                 if !reduced {
-                    phys.borrow_mut()
-                        .insert(id.to_owned(), Phys { angle: -1.1, vel: 0.35 });
+                    phys.borrow_mut().insert(
+                        id.to_owned(),
+                        Phys {
+                            angle: -1.1,
+                            vel: 0.35,
+                        },
+                    );
                     start_loop();
                 }
                 play_sound("pin");
-                set_cue.set(Some(Cue::CutAndTack { task_id: id.to_owned() }));
+                set_cue.set(Some(Cue::CutAndTack {
+                    task_id: id.to_owned(),
+                }));
             }
             sync();
         }
     };
 
-    // Follow the server: reconcile strips with the tasks that are done now,
-    // and celebrate the ones that just became done.
+    // Four places below need to re-measure and re-place; each takes its own handle
+    // so none of them fights the others for it.
+    let on_snapshot = relayout.clone();
+    let on_open = relayout.clone();
+    let on_crumple = relayout.clone();
+    let on_toggle = relayout.clone();
+
+    // Follow the server: strips live exactly as long as their task is done, and
+    // a task the board watched get ticked is cut out and tacked after the
+    // pause instead of appearing out of nowhere.
     Effect::new(move |_| {
         let snap = snapshot.get();
         let done: Vec<(String, String)> = snap
@@ -581,48 +653,52 @@ pub fn TackBoard(
             .filter(|t| t.done)
             .map(|t| (t.id.0.clone(), t.title.clone()))
             .collect();
-        let (mut kept, missing) = reconcile(strips.get_untracked(), &done);
+        let listed: HashSet<String> = snap
+            .tasks
+            .iter()
+            .filter(|t| !t.done)
+            .map(|t| t.id.0.clone())
+            .collect();
+        let Pass {
+            mut kept,
+            fresh,
+            just_done,
+        } = reconcile(strips.get_untracked(), &done, &listed);
         renumber(&mut kept);
         strips.set(kept);
 
-        if first_run.get() {
-            first_run.set(false);
-            seen_done
-                .borrow_mut()
-                .extend(missing.iter().map(|(id, _)| id.clone()));
-            for (id, title) in &missing {
-                add_strip(id, title, false);
-            }
-            sync_transforms();
-            return;
-        }
-
-        for (id, title) in missing {
-            if seen_done.borrow().contains(&id) {
+        for (id, title) in fresh {
+            if !just_done.contains(&id) {
+                // Already done when the page opened: it goes straight up.
+                add_strip(&id, &title, false);
                 continue;
             }
-            seen_done.borrow_mut().insert(id.clone());
+            if !pending.borrow_mut().insert(id.clone()) {
+                continue;
+            }
             let add_strip = add_strip.clone();
+            let pending = pending.clone();
             // The spec's moment's pause, then Rambo cuts the strip out and
             // tacks it: the strip swings in and the cue goes out together.
             Timeout::new(PAUSE_MS, move || {
-                add_strip(&id, &title, true);
+                pending.borrow_mut().remove(&id);
+                // Unticked again during the pause: nothing to cut out.
+                if snapshot.with_untracked(|s| s.tasks.iter().any(|t| t.done && t.id.0 == id)) {
+                    add_strip(&id, &title, true);
+                }
             })
             .forget();
         }
-        sync_transforms();
+        let relayout = on_snapshot.clone();
+        relayout();
     });
 
     // Measure the board once mounted and whenever the phone pull-up opens
     // (which changes its width), then re-place every strip.
+    let relayout = on_open.clone();
     Effect::new(move |_| {
         let _ = open.get();
-        let measure = measure.clone();
-        let sync = sync_transforms.clone();
-        after_render(move || {
-            measure();
-            sync();
-        });
+        relayout();
     });
 
     // Persist presentation state whenever it changes.
@@ -637,7 +713,6 @@ pub fn TackBoard(
     let tidy = {
         let phys = phys.clone();
         let board_w = board_w.clone();
-        let set_cue = set_cue;
         let start_loop = start_loop.clone();
         let sync = sync_transforms.clone();
         move |_| {
@@ -657,7 +732,9 @@ pub fn TackBoard(
                     any = true;
                     re_tack.push((strip.id.clone(), i as u32));
                 }
-                renumber(list);
+                // Back on the tack, the board is over-full again, so the
+                // longest-waiting strips go into the pile.
+                apply_cap(list);
             });
             if !any {
                 return;
@@ -668,8 +745,13 @@ pub fn TackBoard(
                     let phys = phys.clone();
                     let start_loop = start_loop.clone();
                     Timeout::new(i * 90, move || {
-                        phys.borrow_mut()
-                            .insert(id, Phys { angle: -0.8, vel: 0.2 });
+                        phys.borrow_mut().insert(
+                            id,
+                            Phys {
+                                angle: -0.8,
+                                vel: 0.2,
+                            },
+                        );
                         start_loop();
                     })
                     .forget();
@@ -683,27 +765,49 @@ pub fn TackBoard(
 
     // Dragging: the strip follows the pointer; the release decides. Velocity
     // is measured over the last ~120 ms of pointer samples.
+    //
+    // The three handlers sit on the container, not on each strip: the strip a
+    // pointer event belongs to is read off the element it started on. That
+    // keeps the render closure holding nothing but plain data, which `<For>`
+    // requires, and gives the drag one pointer capture for the whole gesture.
     let samples: Rc<RefCell<Vec<(f64, f64, f64)>>> = Rc::new(RefCell::new(Vec::new()));
+
+    let strip_under = move |ev: &leptos::ev::PointerEvent| -> Option<String> {
+        let target = ev.target()?.dyn_into::<web_sys::Element>().ok()?;
+        target
+            .closest(".tack-strip")
+            .ok()??
+            .get_attribute("data-strip-id")
+    };
 
     let strip_pointer_down = {
         let samples = samples.clone();
         let phys = phys.clone();
         move |ev: leptos::ev::PointerEvent| {
-            let Some(target) = ev
-                .current_target()
-                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-            else {
+            // Only the primary button picks a strip up, and only one strip at
+            // a time; a right-click opens nothing and must not start a drag
+            // the release would then act on.
+            if ev.button() != 0 || dragging.get_untracked().is_some() {
                 return;
-            };
-            let Some(id) = target.get_attribute("data-strip-id") else {
+            }
+            let Some(id) = strip_under(&ev) else {
                 return;
             };
             ev.prevent_default();
-            let _ = target.set_pointer_capture(ev.pointer_id());
+            // Captured on the container, so the drag keeps reporting even once
+            // the pointer leaves the board.
+            if let Some(board) = ev
+                .current_target()
+                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            {
+                let _ = board.set_pointer_capture(ev.pointer_id());
+            }
             samples.borrow_mut().clear();
-            samples
-                .borrow_mut()
-                .push((js_sys::Date::now(), f64::from(ev.client_x()), f64::from(ev.client_y())));
+            samples.borrow_mut().push((
+                js_sys::Date::now(),
+                f64::from(ev.client_x()),
+                f64::from(ev.client_y()),
+            ));
             phys.borrow_mut().remove(&id);
             set_dragging.set(Some(id));
         }
@@ -712,7 +816,6 @@ pub fn TackBoard(
     let strip_pointer_move = {
         let samples = samples.clone();
         let nodes = nodes.clone();
-        let board_ref = board_ref;
         move |ev: leptos::ev::PointerEvent| {
             if dragging.get_untracked().is_none() {
                 return;
@@ -733,7 +836,8 @@ pub fn TackBoard(
                 })
                 .unwrap_or((0.0, 0.0));
             let id = dragging.get_untracked();
-            if let Some(el) = id.as_deref().and_then(|id| nodes.borrow().get(id)) {
+            let nodes = nodes.borrow();
+            if let Some(el) = id.as_deref().and_then(|id| nodes.get(id)) {
                 let x = client_x - origin.0 - STRIP_W / 2.0;
                 let y = client_y - origin.1 - 6.0;
                 let _ = el.set_attribute(
@@ -745,18 +849,12 @@ pub fn TackBoard(
     };
 
     let strip_pointer_up = {
-        let snapshot = snapshot;
-        let set_snapshot = set_snapshot;
-        let set_error = set_error;
-        let view_settings = view_settings;
-        let set_cue = set_cue;
         let phys = phys.clone();
         let nodes = nodes.clone();
-        let board_ref = board_ref;
-        let bin_ref = bin_ref;
         let board_w = board_w.clone();
         let start_loop = start_loop.clone();
         let sync = sync_transforms.clone();
+        let relayout = on_crumple.clone();
         move |ev: leptos::ev::PointerEvent| {
             let Some(id) = dragging.get_untracked() else {
                 return;
@@ -764,16 +862,22 @@ pub fn TackBoard(
             let (client_x, client_y) = (f64::from(ev.client_x()), f64::from(ev.client_y()));
             let samples = samples.borrow().clone();
             let (vx, vy) = match (samples.first(), samples.last()) {
-                (Some((t0, x0, y0)), Some((t1, x1, y1))) if t1 > t0 => {
-                    ((x1 - x0) * 1000.0 / (t1 - t0), (y1 - y0) * 1000.0 / (t1 - t0))
-                }
+                (Some((t0, x0, y0)), Some((t1, x1, y1))) if t1 > t0 => (
+                    (x1 - x0) * 1000.0 / (t1 - t0),
+                    (y1 - y0) * 1000.0 / (t1 - t0),
+                ),
                 _ => (0.0, 0.0),
             };
 
             let board_rect = board_ref
                 .get()
                 .map(|el| dom_rect(el.get_bounding_client_rect()))
-                .unwrap_or(Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+                .unwrap_or(Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.0,
+                    h: 0.0,
+                });
             let list_rect = web_sys::window()
                 .and_then(|w| w.document())
                 .and_then(|doc| {
@@ -783,19 +887,41 @@ pub fn TackBoard(
                         .or_else(|| doc.query_selector("main").ok().flatten())
                 })
                 .map(|el| dom_rect(el.get_bounding_client_rect()))
-                .unwrap_or(Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+                .unwrap_or(Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 0.0,
+                    h: 0.0,
+                });
             // An impossible rect when the bin is not on screen.
             let bin_rect = bin_ref
                 .get()
                 .map(|el| dom_rect(el.get_bounding_client_rect()))
-                .unwrap_or(Rect { x: -10.0, y: -10.0, w: 0.0, h: 0.0 });
+                .unwrap_or(Rect {
+                    x: -10.0,
+                    y: -10.0,
+                    w: 0.0,
+                    h: 0.0,
+                });
 
             set_dragging.set(None);
 
-            match drop_action(client_x, client_y, vx, vy, &list_rect, &board_rect, &bin_rect) {
+            match drop_action(
+                client_x,
+                client_y,
+                vx,
+                vy,
+                &list_rect,
+                &board_rect,
+                &bin_rect,
+            ) {
                 DropAction::Restore => {
                     let body = snapshot.with_untracked(|s| crate::toggle_done_body(s, &id));
-                    let sink = crate::EditSink { set_snapshot, set_error, view_settings };
+                    let sink = crate::EditSink {
+                        set_snapshot,
+                        set_error,
+                        view_settings,
+                    };
                     wasm_bindgen_futures::spawn_local(async move {
                         if let Some(body) = body {
                             // The snapshot effect reconciles the strip away
@@ -827,7 +953,10 @@ pub fn TackBoard(
                         let impulse = (vx / 4000.0).clamp(-3.0, 3.0);
                         phys.borrow_mut().insert(
                             id,
-                            Phys { angle: rest + impulse * 0.15, vel: impulse },
+                            Phys {
+                                angle: rest + impulse * 0.15,
+                                vel: impulse,
+                            },
                         );
                         start_loop();
                     }
@@ -845,9 +974,8 @@ pub fn TackBoard(
                         let _ = el.class_list().add(&arr);
                     }
                     let nodes = nodes.clone();
-                    let set_error = set_error;
-                    let set_snapshot = set_snapshot;
-                    Timeout::new(360, move || {
+                    let sync = sync.clone();
+                    Timeout::new(CRUMPLE_MS, move || {
                         let arr = js_sys::Array::new();
                         arr.push(&"crumpling".into());
                         if let Some(el) = nodes.borrow().get(&id) {
@@ -862,32 +990,31 @@ pub fn TackBoard(
                         wasm_bindgen_futures::spawn_local(async move {
                             match api::delete_task(&TaskId(delete_id)).await {
                                 Ok(snap) => set_snapshot.set(snap),
-                                Err(_) => set_error.set(Some(
-                                    "Could not delete that task.".to_owned(),
-                                )),
+                                Err(_) => {
+                                    set_error.set(Some("Could not delete that task.".to_owned()))
+                                }
                             }
                         });
                     })
                     .forget();
+                    relayout();
                 }
             }
         }
     };
 
     let toggle_open = {
-        let measure = measure.clone();
+        let relayout = on_toggle.clone();
         move |_| {
             set_open.update(|o| *o = !*o);
-            let measure = measure.clone();
-            let sync = sync_transforms.clone();
-            after_render(move || {
-                measure();
-                sync();
-            });
+            relayout();
         }
     };
 
     let done_count = move || strips.get().iter().filter(|s| !s.stacked).count();
+
+    // A pointercancel ends the drag the same way any other release would.
+    let cancelled = strip_pointer_up.clone();
 
     view! {
         <section
@@ -898,47 +1025,38 @@ pub fn TackBoard(
             aria-label="Tack board of done tasks"
         >
             <button class="tack-pin" type="button" aria-label="Tidy up: put the set-aside strips back on the tack" on:click=tidy>
-                <span class="tack-pin-head" aria-hidden="true"></span>
+                <img class="tack-pin-up" src="assets/tackboard/pin.svg" alt="" />
+                <img class="tack-pin-down" src="assets/tackboard/pin-pressed.svg" alt="" />
             </button>
-            <div class="tack-strips">
+            <div
+                class="tack-strips"
+                node_ref=strips_ref
+                on:pointerdown=strip_pointer_down
+                on:pointermove=strip_pointer_move
+                on:pointerup=strip_pointer_up
+                on:pointercancel=cancelled
+            >
                 <For each=move || strips.get() key=|s| s.id.clone() let:strip>
-                    {let strip_id = strip.id.clone();
-                     let label = format!(
+                    {let label = format!(
                         "Done: {}. Drag back to the list to restore, onto the bin to delete.",
                         strip.title
                     );
-                     let title = strip.title.clone();
-                     let nodes = nodes.clone();
-                     let r = NodeRef::<leptos::html::Div>::new();
-                     let track = move || {
-                         if let Some(el) = r.get() {
-                             // An HtmlDivElement upcast to HtmlElement: the
-                             // cache holds one type for every strip.
-                             let el: web_sys::HtmlElement = el.unchecked_into();
-                             nodes.borrow_mut().insert(strip_id.clone(), el);
-                         }
-                     };
-                     track();
-                     after_render(track.clone());
+                     let tear = tear_index(&strip.id) + 1;
                      view! {
                         <div
-                            node_ref=r
                             class="tack-strip"
                             class:stacked=strip.stacked
                             class:aside=!strip.tacked && !strip.stacked
                             data-strip-id=strip.id.clone()
+                            data-strip-tear=tear
                             role="button"
                             tabindex="0"
                             aria-label=label
-                            title=title
-                            on:pointerdown=strip_pointer_down.clone()
-                            on:pointermove=strip_pointer_move.clone()
-                            on:pointerup=strip_pointer_up.clone()
-                            on:pointercancel=strip_pointer_up.clone()
+                            title=strip.title.clone()
                         >
                             <s class="tack-strip-title">{strip.title.clone()}</s>
                         </div>
-                    }}
+                     }}
                 </For>
             </div>
             {move || {
@@ -955,7 +1073,48 @@ pub fn TackBoard(
 
 /// Run once the current render has flushed to the DOM.
 fn dom_rect(r: web_sys::DomRect) -> Rect {
-    Rect { x: r.left(), y: r.top(), w: r.width(), h: r.height() }
+    Rect {
+        x: r.left(),
+        y: r.top(),
+        w: r.width(),
+        h: r.height(),
+    }
+}
+
+/// The inline style a placed strip carries: where it is, which way up, and how
+/// far it is faded into the pile.
+fn placement(strip: &Strip, transform: &str) -> String {
+    let alpha = if strip.stacked { 0.92 } else { 1.0 };
+    format!(
+        "transform: {transform}; z-index: {}; opacity: {alpha};",
+        strip.z
+    )
+}
+
+/// Re-read the strip elements out of the DOM, keyed by the task each one
+/// belongs to. Done after a render rather than during it, so the render closure
+/// holds nothing but plain data.
+fn refresh_nodes(
+    strips_ref: NodeRef<leptos::html::Div>,
+    nodes: &RefCell<HashMap<String, web_sys::HtmlElement>>,
+) {
+    let Some(container) = strips_ref.get() else {
+        return;
+    };
+    let children = container.children();
+    let mut found = HashMap::with_capacity(children.length() as usize);
+    for index in 0..children.length() {
+        let Some(element) = children
+            .item(index)
+            .and_then(|child| child.dyn_into::<web_sys::HtmlElement>().ok())
+        else {
+            continue;
+        };
+        if let Some(id) = element.get_attribute("data-strip-id") {
+            found.insert(id, element);
+        }
+    }
+    *nodes.borrow_mut() = found;
 }
 
 fn after_render(f: impl FnOnce() + 'static) {
@@ -971,13 +1130,16 @@ mod tests {
 
     #[test]
     fn a_swing_settles_and_never_gains_energy() {
-        let mut p = Phys { angle: 1.2, vel: 0.0 };
+        let mut p = Phys {
+            angle: 1.2,
+            vel: 0.0,
+        };
         let mut last_energy = p.energy(0.0);
         let mut steps = 0_u32;
         while !p.settled(0.0) {
             p = p.step(PHYS_DT, 0.0);
             steps += 1;
-            if steps % 30 == 0 {
+            if steps.is_multiple_of(30) {
                 let e = p.energy(0.0);
                 assert!(e <= last_energy + 1e-12, "energy grew: {e} > {last_energy}");
                 last_energy = e;
@@ -985,36 +1147,74 @@ mod tests {
             assert!(steps < 60_000, "never settled");
         }
         assert_eq!(p.angle, 0.0);
-        // Firmly damped: settled inside about six seconds.
-        assert!(f64::from(steps) * PHYS_DT < 6.0);
+        // Firmly damped: settled inside about two and a half seconds, and not
+        // so damped that it drops straight to rest.
+        assert!(
+            f64::from(steps) * PHYS_DT < 3.0,
+            "took {}s",
+            f64::from(steps) * PHYS_DT
+        );
     }
 
     #[test]
     fn a_strip_at_rest_stays_exactly_at_rest() {
-        let p = Phys { angle: 0.0, vel: 0.0 };
+        let p = Phys {
+            angle: 0.0,
+            vel: 0.0,
+        };
         assert_eq!(p.step(PHYS_DT, 0.0), p);
-        let aside = Phys { angle: 0.21, vel: 0.0 };
+        let aside = Phys {
+            angle: 0.21,
+            vel: 0.0,
+        };
         assert_eq!(aside.step(PHYS_DT, 0.21), aside);
+    }
+
+    /// How long a strip released from `angle` takes to swing through the
+    /// bottom. The discriminator between a real pendulum and a linear spring:
+    /// `sin` makes the period grow with the swing, so a wide release takes
+    /// noticeably longer to get there than a narrow one.
+    fn time_to_bottom(angle: f64) -> f64 {
+        let mut p = Phys { angle, vel: 0.0 };
+        for steps in 1..100_000 {
+            p = p.step(PHYS_DT, 0.0);
+            if p.angle <= 0.0 {
+                return f64::from(steps) * PHYS_DT;
+            }
+        }
+        panic!("a strip released at {angle} never came down");
     }
 
     #[test]
     fn the_swing_is_a_real_pendulum_not_a_linear_spring() {
-        // A big swing has a longer period than a small one (sin, not its
-        // argument): after a quarter of the small-swing period, a strip
-        // released from 90° is still well on its way down.
-        let mut big = Phys { angle: std::f64::consts::FRAC_PI_2, vel: 0.0 };
-        let quarter = (0.2 / PHYS_DT) as usize;
-        for _ in 0..quarter {
-            big = big.step(PHYS_DT, 0.0);
-        }
-        assert!(big.angle > 0.9, "linear spring behaviour: {}", big.angle);
+        let small = time_to_bottom(0.17);
+        let wide = time_to_bottom(std::f64::consts::FRAC_PI_2);
+        assert!(
+            wide > small * 1.1,
+            "a strip swinging wide ({wide}s) should outlast one released gently ({small}s)"
+        );
     }
 
     #[test]
     fn the_bin_wins_the_list_restores_and_a_fling_is_a_throw() {
-        let list = Rect { x: 0.0, y: 0.0, w: 400.0, h: 700.0 };
-        let board = Rect { x: 1100.0, y: 0.0, w: 190.0, h: 700.0 };
-        let bin = Rect { x: 1130.0, y: 600.0, w: 60.0, h: 60.0 };
+        let list = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 400.0,
+            h: 700.0,
+        };
+        let board = Rect {
+            x: 1100.0,
+            y: 0.0,
+            w: 190.0,
+            h: 700.0,
+        };
+        let bin = Rect {
+            x: 1130.0,
+            y: 600.0,
+            w: 60.0,
+            h: 60.0,
+        };
         // On the bin.
         assert_eq!(
             drop_action(1160.0, 630.0, 0.0, 0.0, &list, &board, &bin),
@@ -1047,8 +1247,18 @@ mod tests {
         );
         // When board and list overlap (phone, board pulled up over the list),
         // the board wins so the strip can still be set aside onto it.
-        let overlapped_list = Rect { x: 0.0, y: 0.0, w: 390.0, h: 844.0 };
-        let phone_board = Rect { x: 0.0, y: 500.0, w: 390.0, h: 344.0 };
+        let overlapped_list = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 390.0,
+            h: 844.0,
+        };
+        let phone_board = Rect {
+            x: 0.0,
+            y: 500.0,
+            w: 390.0,
+            h: 344.0,
+        };
         assert_eq!(
             drop_action(100.0, 600.0, 0.0, 0.0, &overlapped_list, &phone_board, &bin),
             DropAction::SetAside
@@ -1070,11 +1280,15 @@ mod tests {
 
     #[test]
     fn beyond_thirty_strips_the_oldest_stack_under_the_pin() {
-        let mut strips: Vec<Strip> =
-            (0..32).map(|i| strip(&format!("t{i}"), i + 1, false)).collect();
+        let mut strips: Vec<Strip> = (0..32)
+            .map(|i| strip(&format!("t{i}"), i + 1, false))
+            .collect();
         apply_cap(&mut strips);
         assert_eq!(strips.iter().filter(|s| !s.stacked).count(), MAX_HANGING);
-        assert!(strips[0].stacked && strips[1].stacked, "oldest two stack first");
+        assert!(
+            strips[0].stacked && strips[1].stacked,
+            "oldest two stack first"
+        );
         assert!(!strips[31].stacked, "newest stays in view");
 
         let mut all = (0..35)
@@ -1097,10 +1311,74 @@ mod tests {
             ("b".to_owned(), "B".to_owned()),
             ("new".to_owned(), "N".to_owned()),
         ];
-        let (kept, missing) = reconcile(strips, &done);
+        let Pass { kept, fresh, .. } = reconcile(strips, &done, &HashSet::new());
         assert_eq!(kept.len(), 2);
         assert_eq!(kept[0].title, "new name", "titles follow the server");
-        assert_eq!(missing, vec![("new".to_owned(), "N".to_owned())]);
+        assert_eq!(fresh, vec![("new".to_owned(), "N".to_owned())]);
+    }
+
+    #[test]
+    fn only_a_task_ticked_in_front_of_you_gets_cut_out() {
+        let done = vec![
+            ("already".to_owned(), "Done yesterday".to_owned()),
+            ("just".to_owned(), "Ticked now".to_owned()),
+        ];
+        // Page load: the board has seen nothing but the tasks it was given, so
+        // the done ones go straight up on the pin.
+        let load = reconcile(Vec::new(), &done, &HashSet::new());
+        assert_eq!(load.just_done, Vec::<String>::new());
+        assert_eq!(load.fresh.len(), 2, "both still need a strip");
+
+        // The user ticks a task the list was showing: that one is cut out.
+        let listed = HashSet::from(["just".to_owned()]);
+        let ticked = reconcile(Vec::new(), &done, &listed);
+        assert_eq!(ticked.just_done, vec!["just".to_owned()]);
+    }
+
+    #[test]
+    fn a_reattached_board_carries_its_hanging_strips() {
+        let mut strips = vec![
+            strip("a", 1, false),
+            strip("loose", 2, false),
+            strip("pile", 3, true),
+        ];
+        strips[1].tacked = false;
+        let (loose_x, loose_y) = (strips[1].x, strips[1].y);
+        reattach(&mut strips, 400.0);
+        assert_eq!((strips[0].x, strips[0].y), attach_point(400.0, "a"));
+        assert_eq!(
+            (strips[1].x, strips[1].y),
+            (loose_x, loose_y),
+            "loose stays put"
+        );
+        assert_eq!(
+            (strips[2].x, strips[2].y),
+            (0.0, 0.0),
+            "the pile is placed by the render"
+        );
+    }
+
+    #[test]
+    fn every_task_gets_a_stable_tear_and_it_is_one_of_three() {
+        assert_eq!(tear_index("task-7"), tear_index("task-7"));
+        assert!(tear_index("task-7") < 3);
+        // Three tasks in a row, not all the same paper.
+        let tears: HashSet<usize> = (0..9).map(|i| tear_index(&format!("t{i}"))).collect();
+        assert_eq!(tears.len(), 3, "all three tears are used: {tears:?}");
+    }
+
+    #[test]
+    fn a_placed_strip_carries_its_own_pile_fade() {
+        let mut hanging = strip("a", 7, false);
+        assert_eq!(
+            placement(&hanging, "translate(0px, 0px)"),
+            "transform: translate(0px, 0px); z-index: 7; opacity: 1;"
+        );
+        hanging.stacked = true;
+        assert!(
+            placement(&hanging, "translate(0px, 0px)").ends_with("opacity: 0.92;"),
+            "a strip in the pile sits back"
+        );
     }
 
     #[test]
