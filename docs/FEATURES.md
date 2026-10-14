@@ -566,7 +566,7 @@ c. Code: `server/src/v2/ics_import.rs:parse_calendar, weekly_series`;
 Tests: `server/src/v2/ics_import.rs` (38 parsing tests incl. hand-written `.ics`
 strings); `server/src/v2/http.rs` (integration: import, re-import, EXDATE).
 
-### 8. Accepted import formats
+### 6. Accepted import formats
 a. Calendars use `.ics`; capture accepts PDF, email and text; Outlook `.pst` is
 not read.
 b. Not visible; covered by the capture and HTTP tests.
