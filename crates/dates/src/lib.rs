@@ -95,12 +95,6 @@ pub fn resolve(text: &str, ctx: &LocalContext) -> Resolved {
     resolved
 }
 
-/// A day and a time together: the exact instant. Without both, `None`.
-pub fn pinned_start(text: &str, ctx: &LocalContext) -> Option<DateTime<Utc>> {
-    let resolved = resolve(text, ctx);
-    Some(ctx.at(resolved.day?, resolved.time?))
-}
-
 /// A day alone: 17:00 local on that day. Without a day, `None`.
 pub fn due_by(text: &str, ctx: &LocalContext) -> Option<DateTime<Utc>> {
     let day = resolve(text, ctx).day?;
@@ -111,7 +105,12 @@ pub fn due_by(text: &str, ctx: &LocalContext) -> Option<DateTime<Utc>> {
 /// due by 17:00 that day, and anything else floats.
 pub fn when(text: &str, ctx: &LocalContext) -> When {
     let resolved = resolve(text, ctx);
-    match (resolved.day, resolved.time) {
+    when_from(resolved.day, resolved.time, ctx)
+}
+
+/// [`when`] for a day and time already chosen, such as the ones Jev picked.
+pub fn when_from(day: Option<NaiveDate>, time: Option<NaiveTime>, ctx: &LocalContext) -> When {
+    match (day, time) {
         (Some(day), Some(time)) => When::At(ctx.at(day, time)),
         (Some(day), None) => When::DueBy(ctx.at(day, end_of_day())),
         _ => When::Anytime,
@@ -167,6 +166,12 @@ fn push_token(text: &str, begin: usize, end: usize, tokens: &mut Vec<Token>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A day and a time together: the exact instant. Without both, `None`.
+    fn pinned_start(text: &str, ctx: &LocalContext) -> Option<DateTime<Utc>> {
+        let resolved = resolve(text, ctx);
+        Some(ctx.at(resolved.day?, resolved.time?))
+    }
     use chrono::{Datelike, TimeZone, Weekday};
 
     fn ny(now: DateTime<Utc>) -> LocalContext {

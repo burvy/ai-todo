@@ -15,10 +15,6 @@ impl AnyJudge {
             Err(_) => Self::Fake(FakeJudge),
         }
     }
-
-    pub fn is_live(&self) -> bool {
-        matches!(self, Self::Jev(_))
-    }
 }
 
 impl Judge for AnyJudge {

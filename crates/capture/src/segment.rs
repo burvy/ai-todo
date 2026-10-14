@@ -42,7 +42,10 @@ fn ends_sentence(line: &str) -> bool {
 
 /// A list item (`- `, `* `, `+ `, `1. `, `2) `) always begins a new clause.
 fn starts_list_item(line: &str) -> bool {
-    if ["- ", "* ", "+ "].contains(&&line[..line.len().min(2)]) {
+    if ["- ", "* ", "+ "]
+        .iter()
+        .any(|bullet| line.starts_with(bullet))
+    {
         return true;
     }
     let digits = line.chars().take_while(char::is_ascii_digit).count();
@@ -221,6 +224,14 @@ mod tests {
     fn sentence_punctuation_ends_a_clause() {
         let joined = join_wrapped_lines("one thing done.\ntwo things left");
         assert_eq!(joined, "one thing done.\ntwo things left");
+    }
+
+    #[test]
+    fn a_multibyte_character_in_the_first_two_bytes_is_not_a_list_item() {
+        // Slicing the line at byte 2 used to land inside the "é" and panic.
+        assert!(!starts_list_item("aé buy milk"));
+        assert!(!starts_list_item("é"));
+        assert_eq!(join_wrapped_lines("aé buy\nmilk"), "aé buy milk");
     }
 
     #[test]
