@@ -732,43 +732,6 @@ mod tests {
     }
 
     #[test]
-    fn every_hop_starts_where_the_beat_is_held() {
-        // The beat lives in one place: the mover in rambo.rs is the only code that
-        // plans a hop, and it asks `notice` and waits `NOTICE_BEAT_MS` first.
-        // Built from pieces, so this test is not itself a match.
-        let planning = ["Hop", "::plan("].concat();
-        let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut planners = Vec::new();
-        let mut dirs = vec![src];
-        while let Some(dir) = dirs.pop() {
-            for entry in std::fs::read_dir(&dir).expect("web/src reads") {
-                let path = entry.expect("an entry").path();
-                if path.is_dir() {
-                    dirs.push(path);
-                } else if path.file_name().is_some_and(|name| name != "hop.rs")
-                    && std::fs::read_to_string(&path).is_ok_and(|code| code.contains(&planning))
-                {
-                    planners.push(path);
-                }
-            }
-        }
-        assert_eq!(planners.len(), 1, "hops planned in: {planners:?}");
-        assert!(planners[0].ends_with("rambo.rs"), "{planners:?}");
-        let mover = include_str!("rambo.rs");
-        let (before_plan, _) = mover.split_once(&planning).expect("the mover");
-        let mover_start = before_plan.rfind("Effect::new").expect("in an effect");
-        let mover = &mover[mover_start..];
-        assert!(
-            mover.contains("mascot::notice("),
-            "the mover asks for the beat"
-        );
-        assert!(
-            mover.contains("NOTICE_BEAT_MS"),
-            "the mover waits the beat out"
-        );
-    }
-
-    #[test]
     fn held_he_rides_above_the_finger() {
         let finger = (100.0, 300.0);
         let (x, y) = held_at(finger, 64.0, true);

@@ -128,7 +128,9 @@ pub(crate) fn Rambo(
     };
     // The state the mover last saw, and the beat the last change of state owes: a
     // caller often changes his state first and sets his spot a moment later, so
-    // the beat waits for the first run that sets off.
+    // the beat waits for the first run that sets off. `arrive` leaves it alone for
+    // that reason; a change that ends in a step leaves it owed, and the next change
+    // of state replaces it.
     let last_state = std::rc::Rc::new(std::cell::RefCell::new(state.get_untracked()));
     let owed = std::rc::Rc::new(std::cell::Cell::new(None::<mascot::Pose>));
     Effect::new({
