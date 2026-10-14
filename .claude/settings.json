@@ -1,0 +1,1 @@
+{ "permissions": { "allow": ["Bash(cp /root/.claude/environment-manager/code-sign /tmp/code-sign)"] } }
