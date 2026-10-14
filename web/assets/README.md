@@ -29,8 +29,8 @@ as `--rambo-*` CSS variables with a `prefers-color-scheme: dark` variant.
 | `sulking.svg` | dedicated: sulking at overdue |
 | `lobotomized.svg` | no-brain mode |
 
-Shared, skin-independent: `rambo/nest.svg` (viewBox `0 0 96 56`, the bubble
-he rests in; tapping it submits) and the mood fx in `rambo/fx/` below.
+Shared, skin-independent: the mood fx in `rambo/fx/` below. His nest has its
+own slot, `nest/` (two layers, `back.svg` and `rim.svg`; see `nest/ABOUT.md`).
 `rambo/sheet.html` previews every skin × pose on light and dark paper —
 open it in a browser to check art.
 

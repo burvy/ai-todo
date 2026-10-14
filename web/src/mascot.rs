@@ -275,7 +275,7 @@ pub fn prefers_reduced_motion() -> bool {
 pub fn rambo_class(state: &State, pose: &str) -> String {
     let base = "rambo";
     let extra = match state {
-        State::Home => "",
+        State::Home => " is-home",
         State::Dragging => " is-dragging",
         State::Dazed => " is-dazed",
         State::Inking => " is-inking",
@@ -657,8 +657,37 @@ mod tests {
     }
 
     #[test]
+    fn he_sits_in_the_nest_between_its_back_and_its_rim() {
+        // The order of the nest's layers is data in :root: its back is drawn with
+        // the capture bar, he is above that, and the rim is above him.
+        let theme = include_str!("../theme.css");
+        let layer = |name: &str| -> i32 {
+            let at = theme
+                .find(&format!("--layer-{name}:"))
+                .unwrap_or_else(|| panic!("--layer-{name} in :root"));
+            theme[at..]
+                .split([':', ';'])
+                .nth(1)
+                .and_then(|value| value.trim().parse().ok())
+                .unwrap_or_else(|| panic!("--layer-{name} is a number"))
+        };
+        assert!(
+            layer("capture") < layer("rambo"),
+            "the nest's back is behind him"
+        );
+        assert!(
+            layer("rambo") < layer("nest-rim"),
+            "the rim is in front of him"
+        );
+        assert!(
+            layer("nest-rim") < layer("rambo-bubble"),
+            "the rim never covers what he says"
+        );
+    }
+
+    #[test]
     fn rambo_classes_cover_every_state() {
-        assert_eq!(rambo_class(&State::Home, ""), "rambo");
+        assert_eq!(rambo_class(&State::Home, ""), "rambo is-home");
         assert!(rambo_class(&State::Dragging, "").contains("is-dragging"));
         assert!(rambo_class(&State::Splatting, "").contains("is-splatting"));
         assert!(rambo_class(&State::Dazed, "").contains("is-dazed"));
