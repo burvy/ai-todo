@@ -92,5 +92,6 @@ obvious:
 | `crates/capture/src/tuning.rs` | How sure Jev must be that a clause is a task; how short a time fragment is; how an email's quoted header is told from a signature |
 | `crates/dates/src/tuning.rs` | When "Friday", said on a Friday, stops meaning today |
 | `crates/scheduler` | No values of its own: it plans with the working day and task lengths from `todo_core::tuning` |
-| `crates/judge`, `crates/rambl-brain` | (planned) the next sweep: Jev's answer scales, the mascot's mood weights |
+| `crates/rambl-brain/content/personality.toml` | Everything that shapes the mascot: starting moods, how fast they drift, what each event does to them, when he gets restless and how he picks what to do |
+| `crates/judge` | No values of its own: Jev's answer scales follow the label and priority lists in `judge/src/lib.rs` |
 | `web/src/tuning.rs`, `web/theme.css` `:root` | (planned) front-end restructure |

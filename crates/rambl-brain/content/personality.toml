@@ -1,5 +1,14 @@
-# How Rambl feels and how quickly. Rates are per step; cooldowns are in steps
-# before he will do that thing again. Lower `sass` for fewer idle lines.
+# How Rambl feels and how quickly. Every number that shapes him is here (see
+# docs/TUNING.md). Moods run from 0.0 to 1.0. Rates are per step; cooldowns are in
+# steps before he will do that thing again. Lower `sass` for fewer idle lines.
+
+[start]
+# How he feels when the page opens.
+energy = 0.7
+cheer = 0.5
+boredom = 0.2
+# The local hour he assumes until the page tells him the real one.
+hour = 9
 
 [rates]
 # How fast energy drains. He sleeps it off faster than he burns it in daylight.
@@ -11,6 +20,42 @@ boredom_drift = 0.05
 # How much finishing a task lifts him, and how much an overdue one sinks him.
 cheer_gain = 0.25
 cheer_loss = 0.2
+# A night step drains energy this many times faster, and builds boredom this many
+# times slower, than a day step.
+night_drain = 2.0
+
+[events]
+# Boredom a new task takes away, and the smaller amount finishing one takes away.
+# (An emptied list lifts cheer by half of cheer_gain.)
+task_added_relief = 0.2
+task_done_relief = 0.1
+# Cheer from being poked, and from being put back in his nest after a drag: he
+# forgives you, a little, less than a poke.
+poke_cheer = 0.05
+put_back_cheer = 0.03
+# Energy he gets back each time the page reports a night hour while he dozes.
+doze_energy = 0.05
+
+[idle]
+# Quiet steps before he starts doing something of his own.
+after = 3
+# He only wanders with at least this much energy, and only plays with this much cheer.
+wander_min_energy = 0.25
+play_min_cheer = 0.4
+# How much each idle choice appeals, as base + or - mood x weight. A choice worth
+# zero or less is never picked; otherwise the odds follow the worth.
+# Staying home: base, minus boredom x home_boredom, plus energy x home_energy.
+home_base = 0.6
+home_boredom = 0.7
+home_energy = 0.2
+# Wandering: base, plus boredom x wander_boredom, minus energy x wander_energy.
+wander_base = 0.5
+wander_boredom = 0.8
+wander_energy = 0.3
+# Playing: base, plus cheer x play_cheer, plus boredom x play_boredom.
+play_base = 0.4
+play_cheer = 0.5
+play_boredom = 0.5
 
 [cooldowns]
 wander = 8
