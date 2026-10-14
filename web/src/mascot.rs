@@ -1074,5 +1074,7 @@ mod tests {
         assert!(layer("rambo-bubble") < layer("menu"));
         assert!(layer("menu") < layer("sheet"));
         assert!(layer("note") < layer("rambo"));
+        // The capture bar is above everything sticky: the phone tack board, day names.
+        assert!(layer("sticky") < layer("capture"));
     }
 }

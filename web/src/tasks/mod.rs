@@ -339,6 +339,22 @@ pub(crate) fn TaskList(
     let picker_today = Signal::derive(|| {
         NaiveDate::parse_from_str(&api::today_date(), "%Y-%m-%d").unwrap_or_default()
     });
+    // The sheet is a real modal: `show_modal` traps focus inside it, makes the page
+    // behind it inert, lifts it into the top layer (above Rambo) and lets Escape
+    // close it (the `cancel` event). It follows `editing_task`.
+    let sheet = NodeRef::<leptos::html::Dialog>::new();
+    Effect::new(move |_| {
+        let wanted = editing_task.get().is_some();
+        if let Some(dialog) = sheet.get() {
+            match (wanted, dialog.open()) {
+                (true, false) => {
+                    let _ = dialog.show_modal();
+                }
+                (false, true) => dialog.close(),
+                _ => {}
+            }
+        }
+    });
     // Open the edit sheet on a row: from a click on it, or from Rambo's "Edit".
     // What the sheet was last filled with: a refill after Rambo's heard change keeps
     // any field the user has typed in since.
@@ -736,8 +752,9 @@ pub(crate) fn TaskList(
         </section>
         <dialog
             class="task-dialog"
-            open=move || editing_task.get().is_some()
+            node_ref=sheet
             on:cancel=move |_: leptos::ev::Event| set_editing_task.set(None)
+            on:close=move |_: leptos::ev::Event| set_editing_task.set(None)
         >
             <form method="dialog">
                 <h3>{move || match editing_task.get() {
@@ -1122,6 +1139,20 @@ fn task_time(snapshot: &Snapshot, id: &str, clock: Clock) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// FRONTEND-PLAN 1.8 item 7: the edit sheet is a real modal (focus trapped, page
+    /// inert, Escape closes), not a dialog merely given the `open` attribute.
+    #[test]
+    fn the_edit_sheet_opens_as_a_modal_not_with_the_open_attribute() {
+        let source = include_str!("mod.rs");
+        let sheet = &source[source.find("<dialog").expect("the sheet")..];
+        let tag = &sheet[..sheet.find('>').expect("end of the tag")];
+        assert!(
+            !tag.contains("open="),
+            "the sheet must not be opened by attribute: {tag}"
+        );
+        assert!(source.contains("dialog.show_modal()"));
+    }
+
     use super::*;
     use chrono::TimeZone;
 
