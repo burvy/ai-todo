@@ -85,12 +85,13 @@
   --hour-h: 64px;
 
   /* Layers, lowest to highest: the one scale every z-index reads (docs/FRONTEND-PLAN.md
-     1.5). Rambo and his bubbles sit under the edit sheet, whose paper pickers open
-     inside it, and under the gear menu; only a drag in progress rides above him. */
+     1.5). Rambo and his bubbles sit under the gear menu and the edit sheet (which is a
+     modal in the browser's top layer, so --layer-sheet only orders it should that
+     change); only a drag in progress rides above him. */
   --layer-behind: -1;
   --layer-page: 2; /* ink, curl, placements, a lifted row, the desktop tack board */
-  --layer-capture: 3; /* the capture bar, the landing */
-  --layer-sticky: 4; /* day names, the phone tack board */
+  --layer-sticky: 4; /* day names, the phone tack board and its tab */
+  --layer-capture: 6; /* the capture bar, the landing: above the sticky things that scroll or sit beside it */
   --layer-note: 40; /* the page note */
   --layer-rambo: 50;
   --layer-rambo-bubble: 51; /* his ask bubble */
