@@ -204,6 +204,26 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
   - Gate green, with the wasm32 check.
 - Do not touch: the planner drop behaviour (dropping Rambo on a planner block is a later fix), anything the audit did not name.
 
+### Queue: one GLM agent at a time
+
+Several GLM agents at once drain the usage budget, so only one builds at a time (owner, interview 2). God dispatches the next ticket when the last one is reviewed. Keep tickets small. Current order:
+
+1. FE-4: state changes through `transition` (Huang, running).
+2. Ping: paper and nest art (journal paper, DESIGN-DIRECTION §9).
+3. FE-3: CSS tidy (Chuan).
+4. FE-2: art follows the page theme (Zhipu).
+5. Then: BUG-9, BUG-1 to BUG-3 (one agent, in turn), FE-5 (Funny), BUG-4 to BUG-8, then the later steps.
+
+**BUG-9: the planner cannot scroll forward to every day** · Rust or CSS · small
+- The bug (owner's phone test, on b005174): on the phone the planner does not scroll right far enough to show Friday.
+- Files: `web/src/week.rs` and the planner rules in `web/theme.css`. Find the cause first and say it in the PR; if it lies elsewhere, stop and ask god.
+- Do: every day the planner shows can be scrolled to, at 390x844 with touch and at 1366x800.
+- Accept:
+  - A test where the cause can be tested in Rust (for example a width calculation); otherwise the PR shows how the cause was found.
+  - Before and after screenshots at 390x844 with the last day in view. Emilio checks them with the pixel-diff script.
+  - Scrolling back before today stays as it is.
+- Do not touch: the day count setting, the planner's look.
+
 ### 2.4 Later steps: intent only
 
 Each becomes a ticket when the steps before it have landed, written with what they taught us. The order is a guess, and so is the split into steps. Fable's review of #268 and the owner's answers (DESIGN-DIRECTION §9) are the guidance.
@@ -218,6 +238,12 @@ Each becomes a ticket when the steps before it have landed, written with what th
 - **Listening:** the pose, riding above the finger, the page dimmed.
 - **Phone:** list page first, capture bar on the planner page, a + button.
 - **The notebook look** (with Ping's art): one notebook page per page, the gear in the paper's corner, handwriting-style wrapping, tiny symbolic tags. These replace the "desktop widths" step: wrapping fixes the squeezed column.
+- **Capture box: tap Rambo to submit, and the paper cut-out × to clear it.** Tapping him with text in the box submits it. The × slides out beside the box; tapping it makes him scribble the text out and lays down fresh paper.
+- **A real page turn:** the paper bends and curls (a CSS 3D fold, or a mesh of strips driven by the ticker), with no gradient popping in and out.
+- **A physical dark-mode switch:** the day page is swapped for a night page.
+- **Sound engine and presets A, B and C** (DESIGN-DIRECTION §9): one module that plays named sounds, a preset choice in the settings, the mute in the gear menu.
+- **Preset C: music and dancing.** Calm classical background music from CC0 or public-domain recordings, and Rambo dancing to its beat. After the sound engine.
+- **Full calendar view** (owner: later): scrolling back in time and further ahead.
 - **One animation clock, then one gesture module.**
 - **Split the big files**, move-only, last.
 
@@ -322,12 +348,21 @@ Rambo's ask bubble (dropping him on a task) offers Edit, Move, Done and Never mi
 - Phone width and touch were not reproduced in a browser (the window would not shrink below 905px here); the off-pane flight is read from code and layout. QA should confirm FE-0 on a phone.
 - That content shown through `<use>` picks up the page's `--rambo-*` tokens (FE-2) is how browsers specify it; the ticket's screenshots are the check.
 
+### Ideas to offer the owner
+
+Not planned; for god to put to the owner when the time is right.
+- **Ink dries.** A freshly written row stays slightly glossy for a few seconds, and a tap smudges it. It shows the row is new, physically.
+- **Rambo's nib runs dry.** After a long run of writing, he taps his nib on the dish's rim before the next row.
+- **Bookmark ribbon.** A cloth ribbon down the page edge marks today in the planner; pull it to jump back to today.
+- **Torn-off corner for undo.** A deleted row's scrap lies on the page corner for a few seconds; tap it to tape it back.
+- **Night page:** in dark mode, a small desk lamp in the corner is the theme switch, and pulling its chain swaps the page.
+
 ## 4. Spec questions: answered
 
 The owner answered the twelve questions on 2026-10-14. The answers are in DESIGN-DIRECTION §9 and win over this plan. Two are open.
 
 1. **Re-asked in plain words:** "On a computer, should the box you type tasks into stay visible at the bottom while you scroll, like on a phone?"
-2. **Motion and sound.** Three options for the owner. All keep every motion; reduced motion still makes them instant. Sound stays on by default with a mute in the gear menu (§8).
+2. **Motion and sound: decided.** The owner chose all three, as presets in the settings (DESIGN-DIRECTION §9); C became the most immersive, with music and dancing. The options as first put: All keep every motion; reduced motion still makes them instant. Sound stays on by default with a mute in the gear menu (§8).
    - **A. Quiet desk.** Sound only where paper or ink really makes a noise: the scratch while the nib moves, the page turn, the crumple, the pin, the smack and the flatten. Flights, hops, idle breathing and the daze are silent. Calm, and never tiring after a hundred tasks.
    - **B. Every touch answers.** Each motion has its own soft sound: pick-up, the flight's whoosh, the landing tap, the scratch, the flick at the end, the splat, the smack, the page turn, the pin, the crumple. The most alive, and the most to tune and to tire of.
    - **C. Writing only, plus the hits.** The scratch while writing, the page turn, and the smack and flatten, because those are the moments that need a sound to read. Everything else is silent. The smallest set to build and keep in sync.
