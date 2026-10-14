@@ -1533,16 +1533,6 @@ a {
       background-color var(--dur) var(--ease);
   }
 
-  .rambo {
-    transition: transform var(--dur) var(--ease);
-  }
-
-  /* In hand he is exactly under the finger, never easing after it. */
-  .rambo.is-dragging,
-  .rambo.is-inking {
-    transition: none;
-  }
-
   /* Pressed like a pen nib: the gear tilts while its menu is open. */
   .gear {
     transition: transform var(--dur) var(--ease), color var(--dur) var(--ease);

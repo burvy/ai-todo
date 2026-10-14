@@ -822,8 +822,10 @@ mod tests {
         assert!(!rambo_class(&State::Home, "").contains("pose-"));
     }
 
-    /// Every rule that moves the Rambo button itself, in any state.
-    fn rambo_transforms(css: &str) -> Vec<(String, String)> {
+    /// Each `property` set on the Rambo button itself, in any state, as
+    /// (selector, value).
+    fn rambo_rules(css: &str, property: &str) -> Vec<(String, String)> {
+        let property = format!("{property}:");
         let mut bare = String::new();
         let mut rest = css;
         while let Some((before, after)) = rest.split_once("/*") {
@@ -848,7 +850,7 @@ mod tests {
                     .filter(|one| is_button(one))
                     .flat_map(|one| {
                         body.split(';')
-                            .filter_map(|decl| decl.trim().strip_prefix("transform:"))
+                            .filter_map(|decl| decl.trim().strip_prefix(property.as_str()))
                             .map(|value| (one.to_owned(), value.trim().to_owned()))
                     })
                     .collect::<Vec<_>>()
@@ -860,7 +862,7 @@ mod tests {
     fn every_state_of_the_button_keeps_him_where_he_is() {
         // He is a fixed layer placed by --pen-x/--pen-y alone: a transform
         // without them sends him to the top-left corner of the window.
-        let found = rambo_transforms(include_str!("../theme.css"));
+        let found = rambo_rules(include_str!("../theme.css"), "transform");
         assert!(
             found.len() > 5,
             "the parser found the Rambo rules: {found:?}"
@@ -870,5 +872,20 @@ mod tests {
             .filter(|(_, value)| !value.contains("--pen-x"))
             .collect();
         assert!(lost.is_empty(), "moved off his place: {lost:?}");
+    }
+
+    #[test]
+    fn only_a_flight_eases_him_from_place_to_place() {
+        // A transform transition on the button also runs when a state's
+        // animation ends, and Chrome starts it near the window's corner: every
+        // drop sent him to the top-left and back. Only a flight may ease.
+        let eased: Vec<_> = rambo_rules(include_str!("../theme.css"), "transition")
+            .into_iter()
+            .filter(|(selector, value)| {
+                (value.contains("transform") || value.contains("all"))
+                    && !selector.contains(".is-flying")
+            })
+            .collect();
+        assert!(eased.is_empty(), "eases outside a flight: {eased:?}");
     }
 }
