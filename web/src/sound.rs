@@ -34,10 +34,6 @@ impl Cue {
     }
 }
 
-/// Where the gear menu's mute switch keeps the flag is
-/// [`settings::Settings::sounds`](crate::settings::Settings::sounds); this
-/// module only asks it whether to play.
-
 /// A cue that keeps going until the movement it belongs to is over.
 #[cfg(target_arch = "wasm32")]
 pub struct Loop {

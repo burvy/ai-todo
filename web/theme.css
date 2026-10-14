@@ -24,7 +24,7 @@
   /* Rambo's inks, one per tool in the gear menu: a row he writes with a
      quill is brown, with a ballpoint blue, with a marker heavy black. */
   --ink-pencil: #4a4034;
-  --ink-ballpoint: #2f4f7a;
+  --ink-ballpoint: #2f4560;
   --ink-quill: #6b4a2a;
   --ink-marker: #1d1b18;
 
@@ -1473,7 +1473,7 @@ a {
 
 .scribbling .pen-title {
   text-decoration: line-through;
-  text-decoration-color: var(--now);
+  text-decoration-color: var(--danger);
   text-decoration-thickness: 2px;
   opacity: 0.6;
   animation: scribble-out var(--scribble-ms, 420ms) ease-in forwards;

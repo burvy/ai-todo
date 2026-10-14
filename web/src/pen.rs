@@ -236,9 +236,9 @@ mod tests {
             })
             .collect();
         assert_eq!(strokes[0], strokes[2], "the two m's are one letter");
-        // Proportional to width, not a flat share: an `m` five times wider
-        // than an `i` takes far more than five times as long... no: at least
-        // three times as long, with room for the rounding.
+        // Proportional to width, not a flat share, so a wide m takes far
+        // longer than a thin i. MIN_GLYPH_W floors the i, so the ratio is
+        // about 3.3x rather than the raw width ratio.
         assert!(
             strokes[0] >= 3 * strokes[1],
             "a wide m takes far longer than a thin i: {strokes:?}"
