@@ -1,5 +1,6 @@
-//! The scrap a swiped-out row leaves in the page corner (DESIGN-DIRECTION §9,
-//! "Undo is the scrap"). Tap it within [`SCRAP_UNDO_MS`] and the task is taped
+//! The scrap a deleted row tears into (DESIGN-DIRECTION §9, "Undo is the scrap"): it flies
+//! from where the row was to the pin at the right of the list's page and hangs there,
+//! sideways, so a row never just vanishes. Tap it within [`SCRAP_UNDO_MS`] and the task is taped
 //! back as it was; after that it slides away and the delete stands. Every delete
 //! lays one, whichever control made it: the undo belongs to the delete, not the
 //! gesture. Scraps pile up, newest at the bottom, up to [`SCRAP_MAX`]: two quick
@@ -26,6 +27,28 @@ pub enum Undo {
     Day { series: String, date: NaiveDate },
 }
 
+/// A box on the page, in viewport pixels: where a deleted row stood, or where a scrap hangs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spot {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl Spot {
+    fn centre(self) -> (f64, f64) {
+        (self.x + self.w / 2.0, self.y + self.h / 2.0)
+    }
+}
+
+/// How far, in px across and down, a scrap hung at `hung` starts from the middle of the
+/// row that stood at `row`: the flight runs from this offset back to nothing.
+pub fn fly_offset(row: Spot, hung: Spot) -> (f64, f64) {
+    let ((row_x, row_y), (hung_x, hung_y)) = (row.centre(), hung.centre());
+    (row_x - hung_x, row_y - hung_y)
+}
+
 /// The scraps lying in the corner, oldest first. A newer delete lays a new scrap
 /// beside the others, and each one's timers only ever clear their own (`ticket`).
 #[derive(Clone, Debug, PartialEq)]
@@ -37,6 +60,8 @@ pub struct Scrap {
     /// Tapped, and waiting for the server to take the task back: its clock stops,
     /// and it stays until the server says yes.
     pub taping: bool,
+    /// Where the row it tore from stood, so it can fly from there to its place.
+    pub from: Option<Spot>,
     ticket: u32,
 }
 
@@ -115,7 +140,7 @@ fn page_hidden() -> bool {
 }
 
 /// Lay the scrap of a row just deleted, under the scraps already there.
-pub fn lay(scraps: RwSignal<Vec<Scrap>>, title: String, undo: Undo) {
+pub fn lay(scraps: RwSignal<Vec<Scrap>>, title: String, undo: Undo, from: Option<Spot>) {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let ticket = NEXT.fetch_add(1, Ordering::Relaxed);
     let scrap = Scrap {
@@ -123,6 +148,7 @@ pub fn lay(scraps: RwSignal<Vec<Scrap>>, title: String, undo: Undo) {
         undo,
         leaving: false,
         taping: false,
+        from,
         ticket,
     };
     let mut pushed = Vec::new();
@@ -156,6 +182,52 @@ pub fn lay(scraps: RwSignal<Vec<Scrap>>, title: String, undo: Undo) {
     });
 }
 
+/// Where the list shows row `id`, if it does.
+fn row_spot(id: &str) -> Option<Spot> {
+    let row = web_sys::window()?
+        .document()?
+        .query_selector(&format!("li[data-id=\"{id}\"]"))
+        .ok()??;
+    let rect = row.get_bounding_client_rect();
+    Some(Spot {
+        x: rect.left(),
+        y: rect.top(),
+        w: rect.width(),
+        h: rect.height(),
+    })
+}
+
+/// Fly a scrap that has just been laid from the row it tore from to its place: it starts
+/// at the row, turned flat like the row's own line, and the page's transition carries it
+/// to where it hangs. Done in one task (move, read, release) so the start is never drawn
+/// in the wrong place; with reduced motion it simply hangs.
+fn fly(scrap: &web_sys::HtmlElement, from: Spot) {
+    if crate::mascot::prefers_reduced_motion() {
+        return;
+    }
+    let rect = scrap.get_bounding_client_rect();
+    let hung = Spot {
+        x: rect.left(),
+        y: rect.top(),
+        w: rect.width(),
+        h: rect.height(),
+    };
+    let (dx, dy) = fly_offset(from, hung);
+    let style = scrap.style();
+    let _ = style.set_property("--fly-x", &format!("{dx:.1}px"));
+    let _ = style.set_property("--fly-y", &format!("{dy:.1}px"));
+    let classes = scrap.class_list();
+    let _ = classes.add_1("flying");
+    // Reading a layout value makes the browser settle the start before the release.
+    let _ = scrap.offset_width();
+    let _ = classes.remove_1("flying");
+}
+
+/// How far a scrap hangs off true, in degrees: each swings a little differently.
+fn sway_deg(ticket: u32) -> i32 {
+    (ticket * 37 % 9) as i32 - 4
+}
+
 /// Delete `task_id` with `delete`, then lay its scrap. The undo is read from the
 /// list before the delete, so it tapes the row back as the list held it.
 pub async fn delete_and_lay<F>(
@@ -168,9 +240,11 @@ where
     F: std::future::Future<Output = Result<Snapshot, api::ApiError>>,
 {
     let undo = snapshot.with_untracked(|held| undo_for(held, &task_id.0));
+    // Where the row stands now, before the list loses it: the scrap flies from there.
+    let from = row_spot(&task_id.0);
     let result = delete.await;
     if let (Ok(_), Some((title, undo))) = (&result, undo) {
-        lay(scraps, title, undo);
+        lay(scraps, title, undo, from);
     }
     result
 }
@@ -195,8 +269,8 @@ async fn tape_back(
     }
 }
 
-/// The corner the scraps lie in. Nothing is drawn while there is none. Each scrap is
-/// kept by its ticket, so a new one sliding in does not replay the others' entrance.
+/// The pin's side of the list's page, where the scraps hang. Nothing is drawn while there is
+/// none. Each scrap is kept by its ticket, so a new one arriving does not replay the others.
 #[component]
 pub fn ScrapCorner(
     scraps: RwSignal<Vec<Scrap>>,
@@ -214,14 +288,28 @@ pub fn ScrapCorner(
                         scraps.with(|pile| pile.iter().any(|s| s.ticket == ticket && read(s)))
                     };
                     let label = format!("Tape \"{}\" back", scrap.title);
+                    let hung = NodeRef::<leptos::html::Button>::new();
+                    if let Some(from) = scrap.from {
+                        Effect::new(move |flown: Option<bool>| {
+                            let ready = hung.get().inspect(|button| {
+                                if flown != Some(true) {
+                                    fly(button, from);
+                                }
+                            });
+                            ready.is_some()
+                        });
+                    }
                     view! {
                         <button
                             type="button"
                             class="scrap-undo"
+                            node_ref=hung
                             class:leaving=move || state(|s| s.leaving)
                             class:taping=move || state(|s| s.taping)
                             style:--scrap-ms=format!("{SCRAP_SLIDE_MS}ms")
+                            style:--hang=format!("{}deg", sway_deg(ticket))
                             aria-label=label
+                            title="Tap to tape it back"
                             aria-busy=move || state(|s| s.taping).to_string()
                             disabled=move || state(|s| s.leaving || s.taping)
                             on:click={
@@ -238,7 +326,6 @@ pub fn ScrapCorner(
                             }
                         >
                             <s>{scrap.title.clone()}</s>
-                            <small>"Tap to tape it back"</small>
                         </button>
                     }
                 }
@@ -304,6 +391,7 @@ mod tests {
             },
             leaving: false,
             taping: false,
+            from: None,
             ticket,
         }
     }
@@ -385,6 +473,35 @@ mod tests {
             SCRAP_UNDO_MS,
             "paused while taping"
         );
+    }
+
+    #[test]
+    fn a_scrap_flies_from_the_middle_of_its_row_to_where_it_hangs() {
+        let row = Spot {
+            x: 16.0,
+            y: 200.0,
+            w: 340.0,
+            h: 50.0,
+        };
+        let hung = Spot {
+            x: 340.0,
+            y: 50.0,
+            w: 30.0,
+            h: 100.0,
+        };
+        // The row's middle is (186, 225), the hung scrap's (355, 100).
+        assert_eq!(fly_offset(row, hung), (-169.0, 125.0));
+        assert_eq!(
+            fly_offset(hung, hung),
+            (0.0, 0.0),
+            "already there: no flight"
+        );
+    }
+
+    #[test]
+    fn each_scrap_swings_a_little_and_never_far() {
+        assert!((0..200).all(|ticket| sway_deg(ticket).abs() <= 4));
+        assert_ne!(sway_deg(1), sway_deg(2), "neighbours do not hang alike");
     }
 
     #[test]

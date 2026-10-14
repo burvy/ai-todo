@@ -177,6 +177,7 @@ pub fn App() -> impl IntoView {
             <div class="tasks-pane">
                 <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request open_sheet scraps />
                 <tack::TackBoard snapshot set_snapshot set_error view_settings set_cue=set_tack_cue />
+                <scrap::ScrapCorner scraps set_snapshot set_error />
                 <PageFoot
                     page=0
                     turn=std::rc::Rc::new({
@@ -207,7 +208,6 @@ pub fn App() -> impl IntoView {
                 <div class="bend-flap"><i class="bend-strip bend-ridge"></i></div>
             </div>
         </main>
-        <scrap::ScrapCorner scraps set_snapshot set_error />
         // The ink a dazed Rambo leaves: above the page, below him.
         <inklayer::InkLayer strokes />
         // Rambo: independent fixed layer above everything, not part of the capture form

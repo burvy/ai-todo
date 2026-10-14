@@ -104,7 +104,7 @@
   --layer-page: 2; /* ink, curl, placements, a lifted row, the desktop tack board */
   --layer-sticky: 4; /* day names, the phone tack board and its tab */
   --layer-capture: 6; /* the capture bar, the landing: above the sticky things that scroll or sit beside it */
-  --layer-note: 40; /* the page note, a deleted row's scrap */
+  --layer-note: 40; /* the page note, the scraps hanging at the pin */
   --layer-rambo: 50;
   --layer-nest-rim: 51; /* the nest's front rim, over his tip (its back is the capture bar's) */
   --layer-rambo-bubble: 52; /* his ask bubble */
@@ -617,48 +617,64 @@ li.task-row.row-lifted {
   stroke-linejoin: round;
 }
 
-/* The corner the scraps pile in, newest at the bottom; it takes no taps itself. */
+/* The scraps hang from the pin at the right of the list's page, side by side and sideways
+   so they fit, the newest nearest the pin. The pile sits in the page, so it turns with it,
+   and takes no taps itself. */
 .scrap-pile {
-  position: fixed;
-  left: var(--gutter);
-  bottom: var(--capture-clear);
+  position: absolute;
+  top: 44px;
+  right: 0;
   z-index: var(--layer-note);
   display: flex;
-  flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-2);
+  gap: var(--space-1);
   pointer-events: none;
 }
 
-/* The deleted row's scrap: torn paper laid in the corner above the capture line,
-   tapped to tape the task back. It slides in from the edge and away again; paper
-   slides, only ink fades (DESIGN-DIRECTION §9). */
+/* A deleted row's scrap: torn paper hanging from its top edge, the title running down it
+   and struck through; a tap tapes the task back. It flies in from the row (`fly` in
+   scrap.rs sets `--fly-x` and `--fly-y`), and slides off the page's edge when its time is
+   up. Paper moves; only ink fades (DESIGN-DIRECTION §9). */
 .scrap-undo {
   pointer-events: auto;
-  display: grid;
-  gap: 0.1em;
-  max-width: min(18em, 70vw);
-  padding: 0.55em 1em 0.6em;
+  position: relative;
+  display: block;
+  writing-mode: vertical-rl;
+  max-height: 9em;
+  padding: 0.8em 0.4em 0.5em;
   border: 0;
   color: var(--ink);
   font: inherit;
-  text-align: left;
   background: var(--wheat);
   box-shadow: 0 6px 14px -8px rgba(0, 0, 0, 0.45);
-  clip-path: polygon(0 6%, 9% 0, 22% 5%, 37% 0, 52% 4%, 68% 0, 83% 5%, 100% 1%, 98% 30%, 100% 62%, 97% 100%, 80% 95%, 63% 100%, 47% 96%, 30% 100%, 14% 95%, 0 100%, 2% 55%);
-  transform: rotate(-3deg);
+  clip-path: polygon(6% 0, 100% 3%, 97% 28%, 100% 55%, 96% 80%, 100% 100%, 55% 97%, 28% 100%, 0 96%, 4% 66%, 0 38%, 4% 14%);
+  transform-origin: top center;
+  transform: rotate(var(--hang, 0deg));
   transition: transform var(--scrap-ms) cubic-bezier(0.23, 1, 0.32, 1);
   cursor: pointer;
 }
 
-@starting-style {
-  .scrap-undo {
-    transform: translateX(calc(-100% - var(--gutter))) rotate(-8deg);
-  }
+/* The start of the flight: at the row, laid flat as its line was, with no transition so
+   the browser settles it before the release carries the scrap to where it hangs. */
+.scrap-undo.flying {
+  transition: none;
+  transform: translate(var(--fly-x, 0), var(--fly-y, 0)) rotate(90deg);
+}
+
+/* The pin it hangs from. */
+.scrap-undo::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translateX(-50%);
+  background: url("assets/tackboard/pin.svg") center / contain no-repeat;
 }
 
 .scrap-undo.leaving {
-  transform: translateX(calc(-100% - var(--gutter))) rotate(-8deg);
+  transform: translateX(calc(100% + var(--gutter))) rotate(14deg);
 }
 
 /* Tapped, waiting for the server: it stays put until the task is back. */
@@ -667,7 +683,7 @@ li.task-row.row-lifted {
 }
 
 .scrap-undo:active {
-  transform: rotate(-3deg) scale(0.97);
+  transform: rotate(var(--hang, 0deg)) scale(0.97);
 }
 
 .scrap-undo s {
@@ -677,15 +693,11 @@ li.task-row.row-lifted {
   text-decoration-color: var(--ink);
 }
 
-.scrap-undo small {
-  opacity: 0.75;
-}
-
-/* No motion: the scrap simply appears, and is simply gone. */
+/* No motion: the scrap simply hangs, and is simply gone. */
 @media (prefers-reduced-motion: reduce) {
   .scrap-undo,
   .scrap-undo.leaving {
-    transform: rotate(-3deg);
+    transform: rotate(var(--hang, 0deg));
     transition: none;
   }
 }
