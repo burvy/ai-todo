@@ -618,13 +618,13 @@ impl<S: Store> App<S> {
         let mut tasks = self.load(user)?;
         let task = Self::held(&mut tasks, id)?;
         check_fresh(task, seen)?;
-        match (revision.day, revision.time) {
-            (Some(day), Some(time)) => set_when(task, When::At(ctx.at(day, time)), tz),
-            (Some(day), None) => {
-                let end_of_day = NaiveTime::from_hms_opt(17, 0, 0).expect("17:00 is valid");
-                set_when(task, When::DueBy(ctx.at(day, end_of_day)), tz);
-            }
-            _ => {}
+        // Without a day the revision leaves the task's time alone.
+        if revision.day.is_some() {
+            set_when(
+                task,
+                dates::when_from(revision.day, revision.time, &ctx),
+                tz,
+            );
         }
         if let Some(minutes) = revision.duration_min {
             task.duration_min = minutes.clamp(MIN_DURATION_MIN, MAX_DURATION_MIN);
@@ -1608,6 +1608,28 @@ mod tests {
             When::At(Utc.with_ymd_and_hms(2026, 10, 16, 13, 0, 0).unwrap())
         );
         assert_eq!(task.due_tz, None);
+    }
+
+    /// A time with no day names no date to put it on, so the task keeps its own.
+    #[test]
+    fn a_revision_with_a_time_but_no_day_leaves_the_deadline_alone() {
+        let clock = Arc::new(FixedClock(
+            Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+        ));
+        let mut app = App::new(MemoryStore::new(), clock);
+        let due = Utc.with_ymd_and_hms(2026, 10, 16, 21, 0, 0).unwrap();
+        let mut draft = draft("Deadline");
+        draft.when = When::DueBy(due);
+        let created = app.create(draft, USER, NEW_YORK).expect("create");
+        let id = created.tasks[0].id.0.clone();
+
+        let time_only = Revision {
+            time: NaiveTime::from_hms_opt(9, 0, 0),
+            ..Revision::default()
+        };
+        app.apply_revision(&id, &time_only, None, USER, NEW_YORK)
+            .expect("revised");
+        assert_eq!(app.find(USER, &id).unwrap().when, When::DueBy(due));
     }
 
     /// Newest first (docs/ARCHITECTURE.md 4.1): each new task takes a smaller
