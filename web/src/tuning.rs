@@ -93,6 +93,18 @@ const _: () =
 
 // ---- Rambo writing a new row (UI-BUGS #11, v1's writing)
 
+/// How often the ink and the nib move while a title is written, in ms: one frame,
+/// so the ink never jumps a letter and the pen never looks stalled. Safe range 8
+/// to 33.
+pub const INK_TICK_MS: u32 = 16;
+/// His flight between two spots (caret, row, home), in ms. Safe range 300 to 700.
+pub const FLY_MS: u32 = 450;
+/// Quiet time at the capture box after typing stops before he flies home, in ms.
+/// Safe range 800 to 4000.
+pub const LINGER_MS: u32 = 2000;
+/// Extra width, in px of glyph advance, that the pen lift over a space costs: the
+/// nib hops the gap and pauses before the next word. Safe range 0 to 24.
+pub const WORD_GAP_W: f64 = 10.0;
 /// Stroke time per glyph: the pace of his hand. Safe range 70 to 160 ms; v1 wrote at
 /// about this pace, slower than typing so it reads as considered writing.
 pub const WRITE_PER_GLYPH_MS: u32 = 110;
@@ -117,3 +129,5 @@ pub const WRITE_HOLD_MAX_MS: u32 = 15_000;
 pub const INK_BLEED_PX: f64 = 2.0;
 
 const _: () = assert!(WRITE_MIN_MS < WRITE_MAX_MS);
+// A title that is merely slow to write is never cut short as "waited too long".
+const _: () = assert!(WRITE_MAX_MS < WRITE_HOLD_MAX_MS);

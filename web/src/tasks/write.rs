@@ -175,7 +175,7 @@ async fn fly(
     event: mascot::Event,
 ) {
     set_state.set(mascot::transition(&state.get_untracked(), event.clone()));
-    gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
+    gloo_timers::future::TimeoutFuture::new(crate::tuning::FLY_MS).await;
     set_state.set(mascot::transition(&state.get_untracked(), event));
 }
 
@@ -271,22 +271,22 @@ pub async fn write_row_title(
                     gloo_timers::future::TimeoutFuture::new(WRITE_FINISH_MS).await;
                     break;
                 }
-                elapsed += pen::INK_TICK_MS;
+                elapsed += crate::tuning::INK_TICK_MS;
             }
-            Beat::Hold => held += pen::INK_TICK_MS,
+            Beat::Hold => held += crate::tuning::INK_TICK_MS,
             Beat::FlyHome => {
-                held += pen::FLY_MS;
+                held += crate::tuning::FLY_MS;
                 fly(state, set_state, mascot::Event::FlyHome).await;
             }
             Beat::FlyBack => {
-                held += pen::FLY_MS;
+                held += crate::tuning::FLY_MS;
                 set_state.set(mascot::transition(
                     &state.get_untracked(),
                     mascot::Event::WriteRow,
                 ));
                 // He lands on the letter he stopped at.
                 ink_to(&lines, elapsed);
-                gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
+                gloo_timers::future::TimeoutFuture::new(crate::tuning::FLY_MS).await;
                 set_state.set(mascot::transition(
                     &state.get_untracked(),
                     mascot::Event::WriteRow,
@@ -294,7 +294,7 @@ pub async fn write_row_title(
             }
             Beat::Finish => break,
         }
-        gloo_timers::future::TimeoutFuture::new(pen::INK_TICK_MS).await;
+        gloo_timers::future::TimeoutFuture::new(crate::tuning::INK_TICK_MS).await;
     }
     if let Some(sound) = scratch {
         sound.stop();

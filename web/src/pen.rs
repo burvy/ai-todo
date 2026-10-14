@@ -6,32 +6,23 @@
 //! A fresh row's title is inked under the nib: each glyph is given time in
 //! proportion to the width it occupies on the page, and every word gap also
 //! pays for the pen's lift. A title that wraps is written line after line, the
-//! nib riding each line's baseline. The pen lingers [`LINGER_MS`] at the capture
-//! caret after typing stops before flying home.
+//! nib riding each line's baseline. The pen lingers [`LINGER_MS`](crate::tuning::LINGER_MS) at the capture
+//! caret after typing stops before flying home. Its timings are in
+//! [`crate::tuning`].
 
 use crate::mascot::State;
 use crate::tuning::{
-    INK_BLEED_PX, WRITE_HOLD_MAX_MS, WRITE_MAX_MS, WRITE_MIN_MS, WRITE_PER_GLYPH_MS,
+    INK_BLEED_PX, WORD_GAP_W, WRITE_HOLD_MAX_MS, WRITE_MAX_MS, WRITE_MIN_MS, WRITE_PER_GLYPH_MS,
 };
-/// Extra width, in the same units as glyph widths, that the pen lift over a
-/// space costs: the nib hops the gap and pauses before the next word.
-pub const WORD_GAP_W: f64 = 10.0;
 /// Even the narrowest glyph costs this much of the schedule (an `i` is
 /// quick, not free), so a run of thin glyphs never flashes by.
 pub const MIN_GLYPH_W: f64 = 6.0;
 
-/// Quiet time at the capture box before the pen flies home.
-pub const LINGER_MS: u32 = 2000;
-/// Flight time between two spots (caret, row, home).
-pub const FLY_MS: u32 = 450;
 /// The pen's drawn height in CSS pixels; must mirror `.rambo img` in
 /// theme.css. Scaled up 1.25x for the redesign.
 pub const PEN_H: f64 = 65.0;
 /// The scale the pen writes at (shrunk so it does not cover the words).
 pub const WRITE_SCALE: f64 = 0.78;
-/// How often the ink and the nib move while a title is written: one frame,
-/// so the ink never jumps a letter and the pen never looks stalled.
-pub const INK_TICK_MS: u32 = 16;
 
 /// A title crossed out takes at least [`SCRIBBLE_BASE_MS`], and every written
 /// glyph adds [`SCRIBBLE_MS_PER_GLYPH_MS`] up to [`MAX_SCRIBBLE_MS`] — long

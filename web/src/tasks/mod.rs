@@ -12,8 +12,6 @@ use todo_core::{Label, Snapshot, Source, TaskId, When};
 
 use crate::clock::Clock;
 use crate::edits::{EditSink, confirmed, held, patch_and_show, series_note, toggle_done_body};
-#[cfg(target_arch = "wasm32")]
-use crate::pen;
 use crate::pickers::{PaperDate, PaperDateTime, PaperRadios, PaperTime};
 use crate::{api, mascot, row, scrap, settings, tuning, week};
 use fields::{
@@ -507,7 +505,7 @@ pub(crate) fn TaskList(
                         if let Some(row) = row.as_ref() {
                             write::park_nib(row, pen_pos);
                         }
-                        gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
+                        gloo_timers::future::TimeoutFuture::new(crate::tuning::FLY_MS).await;
                         set_state.set(mascot::transition(
                             &mascot_state.get_untracked(),
                             mascot::Event::WriteRow,
@@ -522,7 +520,7 @@ pub(crate) fn TaskList(
                                 &mascot::State::WritingRow,
                                 mascot::Event::FlyHome,
                             ));
-                            gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
+                            gloo_timers::future::TimeoutFuture::new(crate::tuning::FLY_MS).await;
                             set_state.set(mascot::transition(
                                 &mascot_state.get_untracked(),
                                 mascot::Event::FlyHome,
