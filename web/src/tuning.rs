@@ -124,6 +124,14 @@ pub const SCRAP_TICK_MS: u32 = 100;
 
 const _: () = assert!(SCRIBBLE_BAND.0 < SCRIBBLE_BAND.1 && SCRAP_MAX >= 1);
 
+// ---- the nest
+
+/// Where Rambo rests in the nest's box, as shares of its width and height from its top
+/// left: the middle of the bowl, a little above the middle of the box. The box is the
+/// `.nest` button (web/theme.css); the back layer, the front rim and his home are all read
+/// from it, so there is one nest and nothing to drift apart.
+pub const NEST_HOME: (f64, f64) = (0.5, 0.40);
+
 // ---- the page turn (web/src/fold.rs, flip.rs)
 
 /// The phone layout's media query, the one `web/theme.css` switches the two panes into

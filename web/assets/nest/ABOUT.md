@@ -18,15 +18,16 @@ capture bar (`--layer-capture`), Rambo is `--layer-rambo`, and the rim is
 
 - SVG, both files **viewBox `0 0 170 100`**, the same frame, so the two layers
   always line up. Transparent background.
-- The nest's centre (where the tap target is, and where Rambo's centre rests) is
-  the point **(85, 40)** of that frame (`--nest-anchor-x` 50%, `--nest-anchor-y`
-  40%). Draw the bowl around it.
-- Drawn at `--nest-art-w` × `--nest-art-h`: 200 × 118 px on a phone, 180 × 106 px (smaller there: the settings gear sits just below it)
-  on a desktop. On a phone it runs off the bottom and right edges of the screen:
-  that is meant, the nest fills the corner.
-- Rambo (64 × 64 px on a phone, 80 × 80 on a desktop) rests with his centre on the
-  anchor, sunk `--nest-sink` lower. The rim's top edge must cross his lower
-  quarter (from y 62 in the middle of the frame) so his tip is inside the bowl.
+- Rambo's rest point is the point **(85, 40)** of that frame (`tuning::NEST_HOME`: 50% across,
+  40% down). Draw the bowl around it.
+- Drawn to fill **the nest's box**: the `.nest` button, `--nest-w` by `--nest-h` in `web/theme.css`
+  (104 px wide on a phone, as tall as the capture bar, so it sits wholly on screen in the
+  bottom-right corner; 112 x 96 px on a desktop, at the right end of the capture line). The
+  art is stretched to the box (`100% 100%`), so it need not be 170 x 100.
+- Rambo (64 x 64 px on a phone, 80 x 80 on a desktop) rests at `tuning::NEST_HOME` of the box
+  (the middle across, 40% down), sunk `--nest-sink` lower. His home, the back layer and the
+  front rim all come from that one box (`mascot::nest_home`); there is no other measurement.
+  The rim's top edge must cross his lower quarter so his tip is inside the bowl.
 - Each layer turns about the middle of its base (`transform-origin: 50% 100%`), so
   the nest can sag and rock later without redrawing.
 - Colours as `--nest-*` CSS variables in the file, with a
