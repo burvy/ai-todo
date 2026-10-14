@@ -117,6 +117,25 @@ pub fn App() -> impl IntoView {
     // Nest ref so Rambo (independent fixed layer) can measure where to sit at home
     let nest_ref = NodeRef::<leptos::html::Button>::new();
 
+    // Every touch answers: a press on any button ticks, and a page that turns rustles.
+    // What actually plays is the gear menu's Sound preset (sound.rs).
+    window_event_listener(leptos::ev::pointerdown, move |event| {
+        if let Some(target) = event
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            && target.closest("button").ok().flatten().is_some()
+        {
+            sound::play(sound::Cue::Tap);
+        }
+    });
+    Effect::new(move |previous: Option<u8>| {
+        let now = pane.get();
+        if previous.is_some_and(|before| before != now) {
+            sound::play(sound::Cue::Page);
+        }
+        now
+    });
+
     window_event_listener(leptos::ev::keydown, move |event| {
         if event.key() == " "
             && !matches!(
@@ -165,7 +184,7 @@ pub fn App() -> impl IntoView {
         {move || error.get().map(|e| view! {
             <div class="error page-note" aria-live="polite">{e}</div>
         })}
-        <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event audible=Signal::derive(move || voice::audible(view_settings.get().sounds, view_settings.get().rambo_talks)) quiet=Signal::derive(move || mascot::speaks_later(&mascot_state.get()) || pen_queue.with(|queue| !queue.is_empty())) set_speech=set_brain_speech set_pose=set_brain_pose />
+        <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event audible=Signal::derive(move || voice::audible(view_settings.get().sound, view_settings.get().rambo_talks)) quiet=Signal::derive(move || mascot::speaks_later(&mascot_state.get()) || pen_queue.with(|queue| !queue.is_empty())) set_speech=set_brain_speech set_pose=set_brain_pose />
         <main
                 node_ref=main_ref
                 data-pane=move || pane.get().to_string()

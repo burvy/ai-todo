@@ -14,6 +14,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use crate::settings::SoundPreset;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 
@@ -44,9 +45,9 @@ pub fn bubble_ms(spoke: bool) -> u32 {
 type OnEnd = Rc<RefCell<Option<Box<dyn Fn()>>>>;
 
 /// Whether a line is heard as well as shown. Both switches are off-switches: the
-/// gear menu's sound mute, and Rambo's own `Rambo talks` toggle.
-pub fn audible(sound_on: bool, rambl_talks: bool) -> bool {
-    sound_on && rambl_talks
+/// gear menu's quiet desk, and Rambo's own `Rambo talks` toggle.
+pub fn audible(sound: SoundPreset, rambl_talks: bool) -> bool {
+    sound.allows_voice() && rambl_talks
 }
 
 /// Voice names that read warm rather than newsy, best first. Any other English
@@ -206,14 +207,24 @@ pub fn cancel() {
 
 #[cfg(test)]
 mod tests {
-    use super::{audible, bubble_ms, pick_voice};
+    use super::{SoundPreset, audible, bubble_ms, pick_voice};
 
     #[test]
     fn either_switch_stops_him_and_they_are_alone_enough() {
-        assert!(audible(true, true), "both on: he speaks");
-        assert!(!audible(false, true), "sounds muted: he does not");
-        assert!(!audible(true, false), "Rambo talks off: he does not");
-        assert!(!audible(false, false), "both off: he does not");
+        assert!(audible(SoundPreset::Touch, true), "both on: he speaks");
+        assert!(
+            audible(SoundPreset::Music, true),
+            "music still lets him speak"
+        );
+        assert!(
+            !audible(SoundPreset::Quiet, true),
+            "a quiet desk: he does not"
+        );
+        assert!(
+            !audible(SoundPreset::Touch, false),
+            "Rambo talks off: he does not"
+        );
+        assert!(!audible(SoundPreset::Quiet, false), "both off: he does not");
     }
 
     #[test]

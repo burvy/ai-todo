@@ -617,6 +617,7 @@ pub fn ScrapCorner(
                                 dragging.set(false);
                                 just_dragged.set_value(true);
                                 if binned.get_untracked() {
+                                    crate::sound::play(crate::sound::Cue::Crumple);
                                     let id = task_id.get_value();
                                     set_timeout(
                                         move || {

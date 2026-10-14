@@ -84,8 +84,35 @@ impl PageTurn {
     }
 }
 
-fn sounds_on() -> bool {
-    true
+/// How much the page makes noise, the gear menu's Sound choice. It replaces the old
+/// on/off flag: off became `Quiet`, on became `Touch`.
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SoundPreset {
+    /// A quiet desk: only what paper and ink really make a noise doing, and Rambo keeps
+    /// his voice to himself.
+    Quiet,
+    /// Every touch answers: the pen, the page, the tack, the bin.
+    #[default]
+    Touch,
+    /// Everything, with calm music under it.
+    Music,
+}
+
+impl SoundPreset {
+    pub const ALL: [SoundPreset; 3] = [SoundPreset::Quiet, SoundPreset::Touch, SoundPreset::Music];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SoundPreset::Quiet => "A quiet desk",
+            SoundPreset::Touch => "Every touch answers",
+            SoundPreset::Music => "Everything + music",
+        }
+    }
+
+    /// Whether Rambo may speak aloud: not at a quiet desk.
+    pub fn allows_voice(self) -> bool {
+        self != SoundPreset::Quiet
+    }
 }
 
 const DEFAULTS: Settings = Settings {
@@ -96,7 +123,7 @@ const DEFAULTS: Settings = Settings {
     days: 7,
     mode: RamblMode::Interactive,
     theme: Theme::Light,
-    sounds: true,
+    sound: SoundPreset::Touch,
     rambo_talks: true,
     pen: Pen::FountainPen,
     clock: Clock::Twelve,
@@ -116,9 +143,10 @@ pub struct Settings {
     pub pen: Pen,
     #[serde(default)]
     pub theme: Theme,
-    /// Sounds are on by default (DESIGN-DIRECTION); the gear menu mutes.
-    #[serde(default = "sounds_on")]
-    pub sounds: bool,
+    /// What makes noise (`SoundPreset`). Settings stored with the old on/off flag are
+    /// read by `parse_or_default`.
+    #[serde(default)]
+    pub sound: SoundPreset,
     /// Times are written as `9 am` by default; `24:00` style is a gear choice.
     #[serde(default)]
     pub clock: Clock,
@@ -157,7 +185,7 @@ impl Settings {
             mode: self.mode,
             pen: self.pen,
             theme: self.theme,
-            sounds: self.sounds,
+            sound: self.sound,
             clock: self.clock,
             rambo_talks: self.rambo_talks,
             page_turn: self.page_turn,
@@ -166,9 +194,30 @@ impl Settings {
 
     pub fn parse_or_default(value: &str) -> Self {
         serde_json::from_str(value)
-            .map(|settings: Self| settings.clamped())
+            .ok()
+            .map(with_migrated_sound)
+            .and_then(|stored| serde_json::from_value::<Self>(stored).ok())
+            .map(Self::clamped)
             .unwrap_or_default()
     }
+}
+
+/// Settings stored before the presets carry `"sounds": true|false`; that becomes the
+/// preset it stood for unless a preset is already stored.
+fn with_migrated_sound(mut stored: serde_json::Value) -> serde_json::Value {
+    if let Some(object) = stored.as_object_mut()
+        && let Some(old) = object.remove("sounds").and_then(|flag| flag.as_bool())
+    {
+        let preset = if old {
+            SoundPreset::Touch
+        } else {
+            SoundPreset::Quiet
+        };
+        object
+            .entry("sound")
+            .or_insert_with(|| serde_json::json!(preset));
+    }
+    stored
 }
 
 /// One of the two times the server keeps per user for a task with a day and no time.
@@ -312,14 +361,13 @@ pub fn GearMenu(
             ..settings.get()
         })
     };
-    let toggle_sounds = move || {
-        let next = Settings {
-            sounds: !settings.get().sounds,
+    let set_sound = move |sound: SoundPreset| {
+        update(Settings {
+            sound,
             ..settings.get()
-        };
-        update(next);
-        // Muting the page cuts him off mid-sentence too, not just the next one.
-        if !next.sounds {
+        });
+        // A quiet desk cuts him off mid-sentence too, not just the next one.
+        if !sound.allows_voice() {
             crate::voice::cancel();
         }
     };
@@ -330,7 +378,7 @@ pub fn GearMenu(
         };
         update(next);
         // Turning him off mid-sentence should stop the sentence, not the next one.
-        if !next.rambo_talks || !next.sounds {
+        if !next.rambo_talks || !next.sound.allows_voice() {
             crate::voice::cancel();
         }
     };
@@ -423,15 +471,16 @@ pub fn GearMenu(
                                 >{page_turn.label()}</button>
                             </For>
                         </div>
-                        <h3>"Sounds"</h3>
-                        <div class="gear-choices" role="group" aria-label="Sounds">
-                            <button
-                                type="button"
-                                aria-pressed=move || settings.get().sounds.to_string()
-                                class:active=move || settings.get().sounds
-                                on:click=move |_| toggle_sounds()
-                            >{move || if settings.get().sounds { "On" } else { "Off" }}
-                            </button>
+                        <h3>"Sound"</h3>
+                        <div class="gear-choices" role="group" aria-label="Sound">
+                            <For each=|| SoundPreset::ALL key=|preset| *preset let:preset>
+                                <button
+                                    type="button"
+                                    aria-pressed=move || (settings.get().sound == preset).to_string()
+                                    class:active=move || settings.get().sound == preset
+                                    on:click=move |_| set_sound(preset)
+                                >{preset.label()}</button>
+                            </For>
                         </div>
                         <label>
                             "Rambo talks "
@@ -734,7 +783,7 @@ mod tests {
             }
         );
         assert_eq!(Settings::default().theme, Theme::Light);
-        assert!(Settings::default().sounds);
+        assert_eq!(Settings::default().sound, SoundPreset::Touch);
         assert_eq!(Settings::default().pen, Pen::FountainPen);
     }
 
@@ -785,10 +834,28 @@ mod tests {
     }
 
     #[test]
+    fn the_old_sound_flag_becomes_a_preset() {
+        let stored = |flag: &str| {
+            Settings::parse_or_default(&format!(
+                r#"{{"start_hour":8,"end_hour":18,"days":7,"sounds":{flag}}}"#
+            ))
+            .sound
+        };
+        assert_eq!(stored("false"), SoundPreset::Quiet, "off is a quiet desk");
+        assert_eq!(stored("true"), SoundPreset::Touch, "on is every touch");
+        let both = r#"{"start_hour":8,"end_hour":18,"days":7,"sounds":false,"sound":"Music"}"#;
+        assert_eq!(
+            Settings::parse_or_default(both).sound,
+            SoundPreset::Music,
+            "a stored preset wins"
+        );
+    }
+
+    #[test]
     fn a_stored_pick_survives_the_round_trip() {
         let stored = Settings {
             theme: Theme::Dark,
-            sounds: false,
+            sound: SoundPreset::Music,
             pen: Pen::Quill,
             ..Settings::default()
         };
