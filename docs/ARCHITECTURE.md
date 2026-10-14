@@ -67,7 +67,7 @@ An unfinished task past its `DueBy` remains in the list marked **Overdue**. The 
 ## 5. Capture pipeline (`crates/capture`)
 
 1. **Segment** (code): split text into clauses.
-2. **Candidates** (code, `dates`): per clause, title spans, date phrases ("tomorrow", "Wednesday", "Oct 30"), time phrases ("at 3", "10am"), duration phrases. Each candidate already carries its resolved value from `LocalContext`.
+2. **Candidates** (code, `dates`): per clause, title spans, date phrases ("tomorrow", "Wednesday", "Oct 30"), time phrases ("at 3", "10am"), duration phrases. Each candidate already carries its resolved value from `LocalContext`. The title candidates include the clause without a lead-in such as "Add a task to" (`capture::leadin`, measured in `docs/experiments/title-leadin.md`); Jev chooses, and a judge with no opinion takes the first, which is the grammar's cut.
 3. **Judge** (one Jev request per capture, all questions in parallel): per clause `is_task` (Noul), `title` (Choice of spans), `day` (Choice of date candidates + none), `time` (Choice of time candidates + none), `duration` (Choice), `label` (Choice), `priority` (Score). Jev gets the local time as text for context only.
 4. **Resolve** (code): build `TaskDraft`. Day + time -> `When::At`; day only -> `DueBy(day at the user's deadline setting, 23:59 by default, local)`; neither -> `Anytime`.
 

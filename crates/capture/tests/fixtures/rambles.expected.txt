@@ -6,7 +6,7 @@ Oh, and can someone remind me to buy printer ink | 30 min | Anytime | Errands | 
 Clean up the chemistry lab data | 30 min | DueBy(2026-10-13T03:59:00Z) | School | Low
 Send the graph to my lab partner before class | 30 min | Anytime | School | Low
 I also have a quiz sometime | 30 min | DueBy(2026-10-16T03:59:00Z) | School | Low
-Please make a task to review chapters six and seven | 60 min | Anytime | Other | Low
+Review chapters six and seven | 60 min | Anytime | Other | Low
 And I need groceries just basics | 30 min | DueBy(2026-10-18T03:59:00Z) | Errands | Low
 ## ramble 3
 I still need to make my slides probably three of them | 30 min | Anytime | Other | Low

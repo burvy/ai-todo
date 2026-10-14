@@ -1,0 +1,59 @@
+# Held-out set, written after the code rule was fixed, in phrasings it was not built for.
+# Same format as leadins.txt.
+# -- lead-ins that must go
+Hey Rambl, add a task to call the bank => Call the bank
+Hey, can you put a reminder in for me to renew the lease => Renew the lease
+Throw a task on there to pick up the parcel => Pick up the parcel
+Could you please create a task to book the venue => Book the venue
+Add a task for me to email the professor => Email the professor
+Add a task so I remember to water the ferns => Water the ferns
+Make a note to self to call the vet => Call the vet
+Note to self: pay the electric bill => Pay the electric bill
+I should add a task to clean the gutters => Clean the gutters
+I need a reminder to send the invoice => Send the invoice
+I need to set a reminder to defrost the chicken => Defrost the chicken
+Please remind me to bring the charger => Bring the charger
+Remind me to stretch every hour => Stretch every hour
+Put it on my to-do list to file the claim => File the claim
+Put down a task to renew the domain => Renew the domain
+Can we add a task to review the budget => Review the budget
+Add a task: call the electrician => Call the electrician
+Add the task of mowing the lawn => Mowing the lawn
+Please schedule a task to defragment the drive => Defragment the drive
+Create a task titled order new filters => Order new filters
+Create a task named water the plants => Water the plants
+Add a task that says call Dana => Call Dana
+Open a task to follow up with the client => Follow up with the client
+Queue up a task to proofread the essay => Proofread the essay
+Another task: wipe down the counters => Wipe down the counters
+Make a new reminder to take the bins out => Take the bins out
+Add a task to my list to buy a gift for Maya => Buy a gift for Maya
+New reminder: call the pharmacy => Call the pharmacy
+I want to add a reminder to book a table => Book a table
+Add an item to renew the parking permit => Renew the parking permit
+# -- no lead-in
+Clean the gutters => Clean the gutters
+Pick up the parcel from the post office => Pick up the parcel from the post office
+Call the vet => Call the vet
+Send the invoice to the client => Send the invoice to the client
+# -- tricky: looks like a lead-in but is the task
+Add a task manager to the project => Add a task manager to the project
+Add a reminder section to the app => Add a reminder section to the app
+Schedule a call with Maya => Schedule a call with Maya
+Schedule a task force meeting => Schedule a task force meeting
+Create a reminder email template => Create a reminder email template
+Set a reminder on the shared calendar for the team => Set a reminder on the shared calendar for the team
+Make a note of the budget changes => Make a note of the budget changes
+Write a note to the landlord => Write a note to the landlord
+Put a note on the fridge => Put a note on the fridge
+Add a note to the file about the delivery => Add a note to the file about the delivery
+Add an item to the menu => Add an item to the menu
+Remind the team about the deadline => Remind the team about the deadline
+# -- added after review (Fabio): ordinary words that are also task nouns; the whole clause is the title
+Write note cards for the talk => Write note cards for the talk
+Put note cards in the bag => Put note cards in the bag
+Write item descriptions for the shop => Write item descriptions for the shop
+Set reminder alarms for Friday => Set reminder alarms
+Make todo list => Make todo list
+Make task force plans => Make task force plans
+Add note to self to call Mom => Add note to self to call Mom
