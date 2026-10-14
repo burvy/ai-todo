@@ -930,8 +930,13 @@ a {
 .week-scroll {
   max-height: 65vh;
   overflow-y: auto;
+  /* The planner scrolls itself vertically and never hands that to the page:
+     reaching past the first or last hour must not drag the list along. */
   overscroll-behavior: contain;
-  overscroll-behavior-x: contain;
+  /* Sideways it must chain. The planner's own column scroll runs out long
+     before a day does, and when it does a right swipe on empty paper has to
+     reach main's snap scroll and turn back to the list. */
+  overscroll-behavior-x: auto;
 }
 
 .day {
