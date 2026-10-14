@@ -5,9 +5,12 @@ use todo_core::Snapshot;
 use todo_core::{Label, Priority, Source, TaskDraft, TaskId, When};
 use wasm_bindgen::JsCast;
 
+use crate::clock::Clock;
+
 pub mod account;
 pub mod api;
 pub mod brain;
+pub mod clock;
 pub mod mascot;
 pub mod pen;
 pub mod settings;
@@ -2068,7 +2071,7 @@ fn TaskList(
                                 {repeat_mark}
                             </span> " — " {task.duration_min} " min"
                             {move || {
-                                let time = task_time(&snapshot.get(), &render_task_id);
+                                let time = task_time(&snapshot.get(), &render_task_id, view_settings.get().clock);
                                 (!time.is_empty()).then(|| view! { <span class="task-time">" · " {time}</span> })
                             }}
                             {is_overdue(&task).then(|| view! { <span class="overdue">"Overdue"</span> })}
@@ -2175,6 +2178,22 @@ fn TaskList(
                                         prop:value=edit_time
                                         on:input=move |event| edit_time.set(event_target_value(&event))
                                     />
+                                    // The native field's rendering follows the browser's
+                                    // locale, not the paper's clock, so the chosen time is
+                                    // also written out in it beside the field.
+                                    <span class="dialog-time-written">
+                                        {move || {
+                                            let clock = view_settings.get().clock;
+                                            parse_hhmm(&edit_time.get()).map(|value| {
+                                                let (hour, minute) = value.split_once(':').unwrap_or(("0", "0"));
+                                                clock::format_time(
+                                                    hour.parse::<u16>().unwrap_or(0) * 60
+                                                        + minute.parse::<u16>().unwrap_or(0),
+                                                    clock,
+                                                )
+                                            })
+                                        }}
+                                    </span>
                                 </label>
                                 {(!recurring).then(|| view! {
                                     <p class="dialog-hint">
@@ -2455,13 +2474,13 @@ fn TaskList(
     }
 }
 
-fn task_time(snapshot: &Snapshot, id: &str) -> String {
+fn task_time(snapshot: &Snapshot, id: &str, clock: Clock) -> String {
     snapshot
         .plan
         .placements
         .iter()
         .find(|p| p.task.0 == id)
-        .map(|p| week::local_time_label(&week::planner_context(&snapshot.tz), p.start))
+        .map(|p| week::local_time_label(&week::planner_context(&snapshot.tz), p.start, clock))
         .unwrap_or_default()
 }
 
@@ -2685,16 +2704,25 @@ mod tests {
     fn list_and_week_use_the_same_task_time() {
         let snapshot: Snapshot =
             serde_json::from_str(include_str!("../fixtures/snapshot.json")).unwrap();
-        for task in &snapshot.tasks {
-            let list_time = task_time(&snapshot, &task.id.0);
-            let week_time = snapshot
-                .plan
-                .placements
-                .iter()
-                .find(|p| p.task == task.id)
-                .map(|placement| placement.start.format("%a %H:%M").to_string())
-                .unwrap_or_default();
-            assert_eq!(list_time, week_time);
+        let clocks = [Clock::Twelve, Clock::TwentyFour];
+        for clock in clocks {
+            for task in &snapshot.tasks {
+                let list_time = task_time(&snapshot, &task.id.0, clock);
+                let week_time = snapshot
+                    .plan
+                    .placements
+                    .iter()
+                    .find(|p| p.task == task.id)
+                    .map(|placement| {
+                        week::local_time_label(
+                            &week::planner_context(&snapshot.tz),
+                            placement.start,
+                            clock,
+                        )
+                    })
+                    .unwrap_or_default();
+                assert_eq!(list_time, week_time);
+            }
         }
     }
 
