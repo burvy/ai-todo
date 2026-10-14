@@ -143,6 +143,12 @@
   --dur: 200ms;
   --dur-slow: 450ms;
   --ease: ease;
+  /* Things that arrive (a row, a note, the sheet) rise in this time; things that
+     leave go faster, so a removal never lingers. Motion-free users get none of it. */
+  --arrive-ms: 220ms;
+  --leave-ms: 160ms;
+  --arrive-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --leave-ease: cubic-bezier(0.55, 0, 1, 0.45);
   /* Rambo's lean while he writes, at the caret and on a row. */
   --write-lean: 34deg;
 
@@ -1350,10 +1356,19 @@ li.task-row:focus-within .delete-mark {
   background: color-mix(in srgb, var(--ink) 55%, transparent);
 }
 
-/* The slip in hand: half faint while it is over the board... its shadow
-   rides the pointer as the ghost, also drawn on paper. */
+/* The slip in hand is lifted off the board, not faded: its shadow grows and it
+   tilts a little, as a card does when it is picked up. `translate` and `rotate`
+   compose with the slip's own transform. */
 .placement.dragging {
-  opacity: 0.45;
+  translate: 0 -3px;
+  rotate: -1deg;
+  box-shadow: var(--sheet-shadow);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .placement.dragging {
+    transition: translate var(--arrive-ms) var(--arrive-ease), rotate var(--arrive-ms) var(--arrive-ease), box-shadow var(--arrive-ms) ease;
+  }
 }
 
 /* The time the held slip would get, riding the ghost beside its title. */
@@ -2085,8 +2100,9 @@ li.task-row:focus-within .delete-mark {
   transform-origin: top left;
   animation: paper-page-in var(--dur-fast) ease-out both;
 }
+/* The paper drops onto the page: it moves, it does not fade or grow. */
 @keyframes paper-page-in {
-  from { opacity: 0; transform: translateY(calc(-1 * var(--space-1))) scale(0.97); }
+  from { translate: 0 calc(-1 * var(--space-2)); }
 }
 .paper-month { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .paper-month-name { font-family: var(--font-hand); font-size: var(--text-xl); }
@@ -2211,4 +2227,105 @@ svg {
 ::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--ink) 30%, transparent);
   border-radius: 3px;
+}
+
+/* Nothing pops in or out (SPEC-ANSWERS, Interview 4 item 12). Each arrival has a
+   physical motion: a row drops in, a sheet rises, a landing unfolds. Only ink and
+   Rambo's cut-and-patch fade. Motion is off for prefers-reduced-motion. */
+/* Nothing fades except ink and Rambo's cut-and-patch: arrivals move. Nothing
+   pops: every arrival starts out of sight and grows or slides into view.
+
+   A new row makes room first (its slot opens from zero height, the rows below
+   step down), then its contents fall from above the slot, clipped by the slot,
+   and settle with a 2px bounce. */
+@keyframes row-make-room {
+  from { max-height: 0; overflow: hidden; }
+  to { max-height: 200px; overflow: hidden; }
+}
+
+@keyframes row-fall {
+  0% { transform: translateY(-100%); }
+  80% { transform: translateY(2px); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes landing-unfold {
+  from { transform: scaleY(0); }
+}
+
+/* The gear menu unfolds from the gear, the account block from its top edge, the
+   overdue tag from its left edge. */
+@keyframes unfold-down {
+  from { transform: scaleY(0); }
+}
+
+@keyframes unfold-across {
+  from { transform: scaleX(0); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  li.task-row {
+    animation: row-make-room 180ms var(--arrive-ease) backwards;
+  }
+
+  li.task-row > * {
+    animation: row-fall 260ms var(--arrive-ease) backwards;
+  }
+
+  .landing {
+    transform-origin: top;
+    animation: landing-unfold var(--arrive-ms) var(--arrive-ease) backwards;
+  }
+
+  .account {
+    transform-origin: top;
+    animation: unfold-down var(--arrive-ms) var(--arrive-ease) backwards;
+  }
+
+  .gear-menu {
+    transform-origin: top right;
+    animation: unfold-down var(--arrive-ms) var(--arrive-ease) backwards;
+  }
+
+  .overdue {
+    transform-origin: left;
+    animation: unfold-across var(--arrive-ms) var(--arrive-ease) backwards;
+  }
+
+  /* The edit sheet is a native dialog, so it can animate in and out: the
+     discrete display and overlay properties keep it on screen until the close
+     finishes. It starts fully below the screen (100vh, which clears the
+     bottom edge on a phone and the centring on wide screens) and slides up. */
+  .task-dialog {
+    translate: 0 100vh;
+    transition:
+      translate var(--arrive-ms) var(--arrive-ease),
+      display var(--arrive-ms) allow-discrete,
+      overlay var(--arrive-ms) allow-discrete;
+  }
+
+  .task-dialog[open] {
+    translate: 0 0;
+  }
+
+  @starting-style {
+    .task-dialog[open] {
+      translate: 0 100vh;
+    }
+  }
+
+  .task-dialog::backdrop {
+    transition: opacity var(--arrive-ms) ease;
+  }
+
+  @starting-style {
+    .task-dialog[open]::backdrop {
+      opacity: 0;
+    }
+  }
+
+  .task-dialog:not([open]) {
+    transition-duration: var(--leave-ms);
+    transition-timing-function: var(--leave-ease);
+  }
 }
