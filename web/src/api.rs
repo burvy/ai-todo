@@ -312,6 +312,42 @@ fn snapshot_url(from: &str) -> String {
     format!("/api/v1/snapshot?from={from}&days={DEFAULT_WINDOW_DAYS}")
 }
 
+/// Body for `PATCH /api/v1/settings`: only the fields sent change, each `HH:MM`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct DaySettingsBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placement: Option<String>,
+}
+
+/// GET /api/v1/settings: when "by Friday" is due, and where a task with no time goes.
+pub async fn fetch_day_settings() -> Result<todo_core::DaySettings, ApiError> {
+    Request::get("/api/v1/settings")
+        .identity()
+        .send_checked()
+        .await?
+        .json::<todo_core::DaySettings>()
+        .await
+        .map_err(|e| ApiError::Decode(e.to_string()))
+}
+
+/// PATCH /api/v1/settings: answers with both times as they now stand.
+pub async fn patch_day_settings(
+    body: &DaySettingsBody,
+) -> Result<todo_core::DaySettings, ApiError> {
+    Request::patch("/api/v1/settings")
+        .identity()
+        .header("Content-Type", "application/json")
+        .json(body)
+        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
+        .json::<todo_core::DaySettings>()
+        .await
+        .map_err(|e| ApiError::Decode(e.to_string()))
+}
+
 /// GET /api/v1/snapshot for the default window from `from`.
 pub async fn fetch_snapshot(from: &str) -> Result<Snapshot, ApiError> {
     let response = Request::get(&snapshot_url(from))

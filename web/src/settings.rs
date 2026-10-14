@@ -1,6 +1,7 @@
 use crate::clock::Clock;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
+use todo_core::DaySettings;
 use todo_core::tuning::DEFAULT_WINDOW_DAYS;
 
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -167,6 +168,118 @@ impl Settings {
         serde_json::from_str(value)
             .map(|settings: Self| settings.clamped())
             .unwrap_or_default()
+    }
+}
+
+/// One of the two times the server keeps per user for a task with a day and no time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DayTime {
+    /// When "by Friday" is due on that day.
+    Deadline,
+    /// Where on its day a task goes when there are no times of the user's own to learn from.
+    Placement,
+}
+
+impl DayTime {
+    fn of(self, settings: &DaySettings) -> chrono::NaiveTime {
+        match self {
+            DayTime::Deadline => settings.deadline,
+            DayTime::Placement => settings.placement,
+        }
+    }
+
+    /// `settings` with this one time changed.
+    fn set(self, settings: DaySettings, time: chrono::NaiveTime) -> DaySettings {
+        match self {
+            DayTime::Deadline => DaySettings {
+                deadline: time,
+                ..settings
+            },
+            DayTime::Placement => DaySettings {
+                placement: time,
+                ..settings
+            },
+        }
+    }
+
+    /// The patch that changes only this time, so a change made elsewhere is not undone.
+    fn patch(self, time: chrono::NaiveTime) -> crate::api::DaySettingsBody {
+        let written = Some(time.format("%H:%M").to_string());
+        match self {
+            DayTime::Deadline => crate::api::DaySettingsBody {
+                deadline: written,
+                placement: None,
+            },
+            DayTime::Placement => crate::api::DaySettingsBody {
+                deadline: None,
+                placement: written,
+            },
+        }
+    }
+}
+
+/// The two day-only times, kept by the server: a change is saved at once and the plan
+/// is read again, since the planner places tasks by them. A refused change (the server
+/// does not take a 00:00 deadline) puts the old time back and says why.
+#[component]
+fn DayTimes(
+    clock: Signal<Clock>,
+    set_snapshot: WriteSignal<crate::Snapshot>,
+    set_error: WriteSignal<Option<String>>,
+) -> impl IntoView {
+    // The defaults show until the server's own answer comes in, so nothing jumps.
+    let held = RwSignal::new(DaySettings::default());
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Ok(loaded) = crate::api::fetch_day_settings().await {
+            held.set(loaded);
+        }
+    });
+    let change = move |which: DayTime, written: String| {
+        // These always have a time: clearing one is not an option the picker offers.
+        let Ok(time) = chrono::NaiveTime::parse_from_str(&written, "%H:%M") else {
+            return;
+        };
+        let before = held.get_untracked();
+        held.set(which.set(before, time));
+        wasm_bindgen_futures::spawn_local(async move {
+            match crate::api::patch_day_settings(&which.patch(time)).await {
+                Ok(saved) => {
+                    held.set(saved);
+                    if let Ok(plan) = crate::api::fetch_snapshot(&crate::api::today_date()).await {
+                        set_snapshot.set(plan);
+                    }
+                }
+                Err(error) => {
+                    held.set(before);
+                    set_error.set(Some(format!("Could not save that time: {error}")));
+                }
+            }
+        });
+    };
+    let shown = move |which: DayTime| {
+        Signal::derive(move || which.of(&held.get()).format("%H:%M").to_string())
+    };
+    view! {
+        <div class="gear-row">
+            <span class="gear-row-name">"Due by"</span>
+            <crate::pickers::PaperTime
+                label="Due by"
+                value=shown(DayTime::Deadline)
+                set=Callback::new(move |written| change(DayTime::Deadline, written))
+                clock
+                clearable=false
+            />
+        </div>
+        <div class="gear-row">
+            <span class="gear-row-name">"Placed near"</span>
+            <crate::pickers::PaperTime
+                label="Placed near"
+                value=shown(DayTime::Placement)
+                set=Callback::new(move |written| change(DayTime::Placement, written))
+                clock
+                clearable=false
+            />
+        </div>
     }
 }
 
@@ -385,6 +498,12 @@ pub fn GearMenu(
                                     }
                                 } />
                         </label>
+                        <h3>"A day with no time"</h3>
+                        <DayTimes
+                            clock=Signal::derive(move || settings.get().clock)
+                            set_snapshot
+                            set_error
+                        />
                         <div class="gear-rule"></div>
                         <button
                             type="button"
@@ -532,6 +651,30 @@ fn save(settings: Settings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(hour: u32, minute: u32) -> chrono::NaiveTime {
+        chrono::NaiveTime::from_hms_opt(hour, minute, 0).unwrap()
+    }
+
+    #[test]
+    fn a_day_time_changes_only_its_own_field() {
+        let settings = DaySettings::default();
+        let moved = DayTime::Deadline.set(settings, at(17, 0));
+        assert_eq!(moved.deadline, at(17, 0));
+        assert_eq!(moved.placement, settings.placement);
+        let moved = DayTime::Placement.set(settings, at(9, 30));
+        assert_eq!(moved.placement, at(9, 30));
+        assert_eq!(moved.deadline, settings.deadline);
+        assert_eq!(DayTime::Placement.of(&moved), at(9, 30));
+    }
+
+    #[test]
+    fn the_patch_for_a_day_time_names_only_that_field_in_hh_mm() {
+        let deadline = serde_json::to_string(&DayTime::Deadline.patch(at(17, 5))).unwrap();
+        assert_eq!(deadline, r#"{"deadline":"17:05"}"#);
+        let placement = serde_json::to_string(&DayTime::Placement.patch(at(9, 0))).unwrap();
+        assert_eq!(placement, r#"{"placement":"09:00"}"#);
+    }
 
     #[test]
     fn the_working_day_defaults_to_eight_until_six() {
