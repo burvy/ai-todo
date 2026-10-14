@@ -167,14 +167,22 @@ c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics: `web/assets/theme/pap
 
 ### 1. Talk button
 a. The pen beside the capture box is Rambo's send and talk control.
-b. Click the pen to send or press and hold it to show the listening state.
+b. Click the pen to send, or press and hold it to talk. Only a Rambo resting in
+his nest listens: picked up while dazed (below), he writes instead.
 c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:State, Event, transition`.
 
-### 2. Drag, fall and return
-a. Rambo can be dragged; when dropped away from a target he falls and returns home.
-b. Drag the pen to empty space and release it.
-c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:transition`;
-`web/index.html`.
+### 2. Drag, daze, write and return
+a. The first drag listens. Dropped on the page (not on a task or his nest), Rambo
+is dazed: he stays where he landed, tipped over, and does not listen. Dragging a
+dazed Rambo writes on the page in his tool's ink. He skitters home on his own
+after 8 seconds untouched, or comes home at once when dropped on his nest, and
+forgives you a little for putting him back (a small lift in the brain's cheer).
+Home again, his writing is tidied away and he listens again.
+b. Drag the pen to empty space and release it; drag it again to write; drop it on
+the nest, or leave it 8 seconds.
+c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:transition, listens_on_grab,
+put_back, over_nest, DAZED_MS`; `web/src/inklayer.rs:InkLayer`; `web/src/ink.rs`;
+`crates/rambl-brain/src/lib.rs:Event::PutBack`.
 
 ### 3. Drop actions
 a. Dropping Rambo on a task opens a prompt with Edit, Move, Done, Delete and
