@@ -8,7 +8,7 @@
 //! landed is the one shown.
 //! A press is only a page turn once it is a sideways swipe the right way on a page that
 //! has a page to turn to; everything else, the task rows' own swipes, the planner grid's
-//! scroll, the tack board, the edit sheet, is left alone. The planner grid is the one
+//! scroll, the edit sheet, is left alone. The planner grid is the one
 //! exception: on its earliest day, a right swipe that starts on empty paper turns back.
 
 #[cfg(target_arch = "wasm32")]

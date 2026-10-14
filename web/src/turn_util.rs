@@ -7,7 +7,7 @@ use web_sys::{Element, HtmlElement};
 use crate::tuning::PHONE_MEDIA;
 
 /// Presses that start here are not page turns: they have their own scroll or swipe.
-const OWN_GESTURE: &str = ".task-dialog, .tack-board, input, textarea, select, .paper-picker";
+const OWN_GESTURE: &str = ".task-dialog, input, textarea, select, .paper-picker";
 /// Things on the planner's grid that a press picks up or taps, so it is not empty paper.
 const ON_THE_GRID: &str = ".placement, .landing";
 

@@ -7,7 +7,7 @@
 //! the page that landed is the one shown.
 //! A press is only a page turn once it is a sideways swipe the right way on a pane that
 //! has a page to turn to; everything else, the task rows' own swipes, the planner grid's
-//! scroll, the tack board, the edit sheet, is left alone.
+//! scroll, the edit sheet, is left alone.
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) use imp::Turner;
