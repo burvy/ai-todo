@@ -1092,8 +1092,11 @@ fn Rambo(
                 }
                 let did_move = *moved_for_up.borrow();
                 if !did_move {
-                    // Release without moving: send transcript and go home
+                    // Tap (no drag): submit the form (sends typed text) and go home
                     *grab_state_up.borrow_mut() = None;
+                    if let Some(form) = form_ref.get() {
+                        let _ = form.request_submit();
+                    }
                     set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Release));
                     return;
                 }
@@ -1174,69 +1177,67 @@ fn Rambo(
             {move || mascot::fx_for(&state.get(), &brain_pose.get(), typing.get()).map(|fx| view! {
                 <img class="rambo-fx" src=fx.art() alt="" aria-hidden="true" />
             })}
+            // Speech bubble: inside the button so it follows Rambo everywhere
+            <span class="mascot-status" aria-live="polite">
+                {move || brain_speech.get().map(|line| view! { <span class="brain-line">{line}</span> })}
+                {move || match state.get() {
+                    mascot::State::Asking { ref title, .. } => view! {
+                        <span class="ask">
+                            <span>{format!("Hey! What do you want with \"{title}\"?")}</span>
+                            <button type="button" on:click=move |_| {
+                                if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
+                                    let task_id_str = task_id.clone();
+                                    let body = snapshot.with_untracked(|s| next_priority_body(s, &task_id_str));
+                                    let sink = EditSink { set_snapshot, set_error, view_settings };
+                                    let set_state_clone = set_state;
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        if let Some(body) = body {
+                                            patch_and_show(&todo_core::TaskId(task_id_str), body, sink).await;
+                                        }
+                                        set_state_clone.set(mascot::State::Home);
+                                    });
+                                }
+                            }>"Edit"</button>
+                            <button type="button" on:click=move |_| {
+                                set_state.set(mascot::State::Home);
+                            }>"Move"</button>
+                            <button type="button" on:click=move |_| {
+                                if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
+                                    let task_id = task_id.clone();
+                                    let body = snapshot.with_untracked(|s| toggle_done_body(s, &task_id));
+                                    let sink = EditSink { set_snapshot, set_error, view_settings };
+                                    let set_state_clone = set_state;
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        if let Some(body) = body {
+                                            patch_and_show(&todo_core::TaskId(task_id), body, sink).await;
+                                        }
+                                        set_state_clone.set(mascot::State::Home);
+                                    });
+                                }
+                            }>"Done"</button>
+                            <button type="button" on:click=move |_| {
+                                if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
+                                    let task_id = task_id.clone();
+                                    let set_snapshot_clone = set_snapshot;
+                                    let set_state_clone = set_state;
+                                    wasm_bindgen_futures::spawn_local(async move {
+                                        if let Ok(new_snap) = api::delete_task(&TaskId(task_id)).await {
+                                            set_snapshot_clone.set(new_snap);
+                                        }
+                                        set_state_clone.set(mascot::State::Home);
+                                    });
+                                }
+                            }>"×"</button>
+                            <button type="button" on:click=move |_| set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Return))>"Never mind"</button>
+                        </span>
+                    }.into_any(),
+                    _ => view! { <span></span> }.into_any(),
+                }}
+                {move || talking.get().then(|| view! {
+                    <span class="talking">"I'm listening."</span>
+                })}
+            </span>
         </button>
-        <span class="mascot-status" aria-live="polite">
-            {move || brain_speech.get().map(|line| view! { <span class="brain-line">{line}</span> })}
-            {move || match state.get() {
-                mascot::State::Asking { ref title, .. } => view! {
-                    <span class="ask">
-                        <span>{format!("Hey! What do you want with \"{title}\"?")}</span>
-                        <button type="button" on:click=move |_| {
-                            if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
-                                let task_id_str = task_id.clone();
-                                let body = snapshot.with_untracked(|s| next_priority_body(s, &task_id_str));
-                                let sink = EditSink { set_snapshot, set_error, view_settings };
-                                let set_state_clone = set_state;
-                                wasm_bindgen_futures::spawn_local(async move {
-                                    if let Some(body) = body {
-                                        patch_and_show(&todo_core::TaskId(task_id_str), body, sink).await;
-                                    }
-                                    set_state_clone.set(mascot::State::Home);
-                                });
-                            }
-                        }>"Edit"</button>
-                        <button type="button" on:click=move |_| {
-                            set_state.set(mascot::State::Home);
-                        }>"Move"</button>
-                        <button type="button" on:click=move |_| {
-                            if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
-                                let task_id = task_id.clone();
-                                let body = snapshot.with_untracked(|s| toggle_done_body(s, &task_id));
-                                let sink = EditSink { set_snapshot, set_error, view_settings };
-                                let set_state_clone = set_state;
-                                wasm_bindgen_futures::spawn_local(async move {
-                                    if let Some(body) = body {
-                                        patch_and_show(&todo_core::TaskId(task_id), body, sink).await;
-                                    }
-                                    set_state_clone.set(mascot::State::Home);
-                                });
-                            }
-                        }>"Done"</button>
-                        <button type="button" on:click=move |_| {
-                            if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
-                                let task_id = task_id.clone();
-                                let set_snapshot_clone = set_snapshot;
-                                let set_state_clone = set_state;
-                                wasm_bindgen_futures::spawn_local(async move {
-                                    // Rambo's own "x", not a row delete: the row is
-                                    // not what the user clicked, so it does not
-                                    // get crossed out.
-                                    if let Ok(new_snap) = api::delete_task(&TaskId(task_id)).await {
-                                        set_snapshot_clone.set(new_snap);
-                                    }
-                                    set_state_clone.set(mascot::State::Home);
-                                });
-                            }
-                        }>"×"</button>
-                        <button type="button" on:click=move |_| set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Return))>"Never mind"</button>
-                    </span>
-                }.into_any(),
-                _ => view! { <span></span> }.into_any(),
-            }}
-            {move || talking.get().then(|| view! {
-                <span class="talking">"I'm listening."</span>
-            })}
-        </span>
     }
 }
 

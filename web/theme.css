@@ -838,22 +838,19 @@ a {
   );
 }
 
-/* Rambo's speech strip: his lines and his ask menu, anchored to the capture
-   bar just left of his nest, so both read as spoken beside him — and nothing
-   behind them but the capture line itself, never a task row. The strip never
-   catches a tap (the ask menu turns them back on), and its width is capped
-   inside the bar, so it can never leave the screen. A bubble is the one thing
-   on this page allowed to be round. */
+/* Status text: speech bubble anchored to Rambo, follows him everywhere.
+   Reuses Phyllis's .brain-line paper bubble styles. */
 .mascot-status {
   position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  right: calc(var(--tap) * 1.25 + var(--space-2));
+  bottom: calc(100% + var(--space-1));
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 50;
   display: block;
   text-align: right;
   font-size: var(--text-sm);
-  max-width: min(24rem, calc(100% - var(--tap) * 1.25 - 3 * var(--space-2)));
+  max-width: 20rem;
+  white-space: nowrap;
   pointer-events: none;
 }
 
@@ -864,8 +861,7 @@ a {
   color: var(--ink-soft);
 }
 
-/* His lines are written in the paper bubble, the same sheet as the ask menu:
-   bare italic text floating at the page corner read as a glitch (Fable's QA). */
+/* Brain lines inside the paper bubble (Phyllis's styles). */
 .brain-line {
   display: inline-block;
   max-width: 100%;
@@ -876,11 +872,15 @@ a {
   box-shadow: var(--shadow);
 }
 
-/* Rambo's ask: Edit / Move / Done for the task he was dropped on. */
+/* Rambo's ask: a speech bubble above him. */
 .ask {
-  display: inline-block;
-  max-width: 100%;
-  margin-top: var(--space-2);
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 51;
+  width: max-content;
+  max-width: 24rem;
   padding: var(--space-3);
   font-family: var(--font-heading);
   font-style: italic;
@@ -888,8 +888,8 @@ a {
   border: 1px solid var(--rule);
   border-radius: 12px;
   box-shadow: var(--shadow);
+  white-space: nowrap;
   pointer-events: auto;
-  text-align: left;
 }
 
 .ask button {
