@@ -104,7 +104,7 @@ pub(crate) fn Rambo(
             let rect = bubble.get_bounding_client_rect();
             let bubble_width = rect.width();
             let rambo_x = pen_pos.get().0;
-            let viewport = web_sys::window().unwrap().inner_width().unwrap() as f64;
+            let viewport = web_sys::window().unwrap().inner_width().unwrap().as_f64().unwrap_or(0.0);
             // Margin: --space-2 (0.5rem = 8px) from each edge.
             let margin = 8.0;
             let offset = clamp_bubble_left(rambo_x, bubble_width, viewport, margin);
@@ -122,11 +122,11 @@ pub(crate) fn Rambo(
             mascot::Event::Return,
         ));
         let Some(home) = nest_centre(nest_ref) else {
-            set_state.set(mascot::State::Home);
+            set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Return));
             return;
         };
         if mascot::prefers_reduced_motion() {
-            set_state.set(mascot::State::Home);
+            set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Return));
             return;
         }
         let start = pen_pos.get_untracked();
@@ -549,7 +549,7 @@ pub(crate) fn Rambo(
                         land_dazed(false);
                     }
                     mascot::State::Inking => {
-                        set_state.set(mascot::State::Dazed);
+                        set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::DropEmpty));
                         arm_daze();
                     }
                     _ => {}
@@ -596,26 +596,28 @@ pub(crate) fn Rambo(
                                 }
                             }>"Edit"</button>
                             <button type="button" on:click=move |_| {
-                                set_state.set(mascot::State::Home);
+                                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Return));
                             }>"Move"</button>
                             <button type="button" on:click=move |_| {
                                 if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
                                     let task_id = task_id.clone();
+                                    let before = state.get_untracked();
                                     // The list's tick, so a repeat's day is marked on its own date.
                                     let action = snapshot.with_untracked(|s| tick_action(s, &task_id));
-                                    let sink = EditSink { set_snapshot, set_error, view_settings };
+                                    let sink = EditSink { set_snapshot, set_error };
                                     let set_state_clone = set_state;
                                     wasm_bindgen_futures::spawn_local(async move {
                                         if let Some(action) = action {
                                             apply_tick(&TaskId(task_id), action, sink).await;
                                         }
-                                        set_state_clone.set(mascot::State::Home);
+                                        set_state_clone.set(mascot::transition(&before, mascot::Event::Return));
                                     });
                                 }
                             }>"Done"</button>
                             <button type="button" on:click=move |_| {
                                 if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
                                     let task_id = task_id.clone();
+                                    let before = state.get_untracked();
                                     let set_snapshot_clone = set_snapshot;
                                     let set_state_clone = set_state;
                                     wasm_bindgen_futures::spawn_local(async move {
@@ -625,7 +627,7 @@ pub(crate) fn Rambo(
                                             Ok(new_snap) => set_snapshot_clone.set(new_snap),
                                             Err(e) => set_error.set(Some(series_note(&e))),
                                         }
-                                        set_state_clone.set(mascot::State::Home);
+                                        set_state_clone.set(mascot::transition(&before, mascot::Event::Return));
                                     });
                                 }
                             }>"×"</button>
@@ -700,7 +702,8 @@ fn row_under(x: f64, y: f64) -> Option<web_sys::Element> {
 /// - `bubble_width`: measured width of the bubble
 /// - `viewport_width`: inner width of the browser window
 /// - `margin`: minimum padding from the viewport edge
-pub fn clamp_bubble_left(rambo_x: f64, bubble_width: f64, viewport_width: f64, margin: f64) -> f64 {
+#[cfg(any(target_arch = "wasm32", test))]
+fn clamp_bubble_left(rambo_x: f64, bubble_width: f64, viewport_width: f64, margin: f64) -> f64 {
     // The bubble is centered on Rambo. Compute its left and right edges.
     let bubble_left = rambo_x - bubble_width / 2.0;
     let bubble_right = rambo_x + bubble_width / 2.0;
@@ -742,9 +745,9 @@ mod tests {
     #[test]
     fn bubble_clamped_to_right_edge() {
         // Rambo at 970, bubble 200px, viewport 1000px, margin 16px.
-        // Bubble spans 870 to 1070. Right edge is 1070, needs -70 to reach 984.
+        // Bubble spans 870 to 1070. Right edge 1070 > 984 (1000-16), needs -86.
         let offset = clamp_bubble_left(970.0, 200.0, 1000.0, 16.0);
-        assert!((offset - (-70.0)).abs() < f64::EPSILON);
+        assert!((offset - (-86.0)).abs() < f64::EPSILON);
     }
 
     #[test]
