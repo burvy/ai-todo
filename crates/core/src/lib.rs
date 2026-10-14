@@ -238,41 +238,114 @@ pub struct Series {
     pub order: i64,
 }
 
-/// Which weekdays a series repeats on, and until when.
+/// Which weekdays a series repeats on, how often, and until when.
+///
+/// A non-empty `weekdays` means a weekly rule: the series fires on those days,
+/// every `interval` weeks. An empty `weekdays` means a daily rule: the series
+/// fires every `interval` days from `start_day`. In both cases `interval` is 1
+/// or more (1 = every week/day).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Recurrence {
     /// Kept sorted Monday-first and deduplicated; serde as `"Mon"`, `"Thu"`,
-    /// ... (chrono's spelling). Empty never reaches the store:
-    /// [`Recurrence::new`] refuses it. (`Weekday` is not `Ord`, so this cannot
-    /// be a set type.)
+    /// ... (chrono's spelling). Empty means a daily rule (no specific weekdays).
+    /// (`Weekday` is not `Ord`, so this cannot be a set type.)
     pub weekdays: Vec<Weekday>,
+    /// How often the rule fires: every `interval` weeks (weekly) or every
+    /// `interval` days (daily). Always 1 or more.
+    #[serde(default = "default_interval")]
+    pub interval: u32,
     /// The last local date an occurrence falls on, inclusive. `None` repeats
     /// forever.
     pub until: Option<NaiveDate>,
 }
 
+fn default_interval() -> u32 {
+    1
+}
+
 impl Recurrence {
-    /// A rule on the given weekdays. Empty is a mistake the type system cannot
-    /// hold, so the constructor refuses it here.
+    /// A rule on the given weekdays, every `interval` weeks.
+    ///
+    /// `weekdays` must not be empty: a weekly rule needs at least one day.
+    /// For a daily rule (no weekdays), use [`Recurrence::daily`].
     pub fn new(
         weekdays: impl IntoIterator<Item = Weekday>,
         until: Option<NaiveDate>,
     ) -> Option<Self> {
+        Self::with_interval(weekdays, 1, until)
+    }
+
+    /// A weekly rule with an interval greater than 1.
+    ///
+    /// `weekdays` must not be empty and `interval` must be 1 or more.
+    pub fn with_interval(
+        weekdays: impl IntoIterator<Item = Weekday>,
+        interval: u32,
+        until: Option<NaiveDate>,
+    ) -> Option<Self> {
+        if interval < 1 {
+            return None;
+        }
         let mut weekdays: Vec<Weekday> = weekdays.into_iter().collect();
         weekdays.sort_by_key(|day| day.num_days_from_monday());
         weekdays.dedup();
         if weekdays.is_empty() {
             return None;
         }
-        Some(Self { weekdays, until })
+        Some(Self {
+            weekdays,
+            interval,
+            until,
+        })
+    }
+
+    /// A daily rule: fires every `interval` days from `start_day`.
+    ///
+    /// `interval` must be 1 or more. The resulting `weekdays` is empty, which
+    /// marks this as a daily rule.
+    pub fn daily(interval: u32, until: Option<NaiveDate>) -> Option<Self> {
+        if interval < 1 {
+            return None;
+        }
+        Some(Self {
+            weekdays: Vec::new(),
+            interval,
+            until,
+        })
+    }
+
+    /// Whether this is a daily rule (empty weekdays) rather than a weekly one.
+    pub fn is_daily(&self) -> bool {
+        self.weekdays.is_empty()
     }
 
     /// Does an occurrence exist on this local date?
     /// `start_day` bounds it from below, `until` from above, both inclusive.
     pub fn covers(&self, start_day: NaiveDate, date: NaiveDate) -> bool {
-        self.weekdays.contains(&date.weekday())
-            && start_day <= date
-            && self.until.is_none_or(|until| date <= until)
+        if date < start_day {
+            return false;
+        }
+        if self.until.is_some_and(|until| date > until) {
+            return false;
+        }
+        if self.is_daily() {
+            // Daily: fires every `interval` days from start_day
+            let days_since = (date - start_day).num_days();
+            days_since >= 0 && days_since % (self.interval as i64) == 0
+        } else {
+            // Weekly: fires on matching weekdays, every `interval` weeks
+            if !self.weekdays.contains(&date.weekday()) {
+                return false;
+            }
+            if self.interval == 1 {
+                return true;
+            }
+            // Count full weeks from start_day to the week that contains `date`.
+            // The week number determines whether this week fires.
+            let days_since = (date - start_day).num_days();
+            let weeks_since = days_since / 7;
+            weeks_since >= 0 && weeks_since % (self.interval as i64) == 0
+        }
     }
 }
 
@@ -477,7 +550,10 @@ mod tests {
         let json =
             serde_json::to_string(&Recurrence::new([Weekday::Mon, Weekday::Thu], None).unwrap())
                 .unwrap();
-        assert_eq!(json, r#"{"weekdays":["Mon","Thu"],"until":null}"#);
+        assert_eq!(
+            json, r#"{"weekdays":["Mon","Thu"],"interval":1,"until":null}"#,
+            "interval defaults to 1"
+        );
     }
 
     #[test]
@@ -496,6 +572,27 @@ mod tests {
     }
 
     #[test]
+    fn a_daily_rule_has_no_weekdays() {
+        let rule = Recurrence::daily(2, None).unwrap();
+        assert!(rule.weekdays.is_empty());
+        assert!(rule.is_daily());
+        assert_eq!(rule.interval, 2);
+    }
+
+    #[test]
+    fn weekly_with_interval() {
+        let rule = Recurrence::with_interval([Weekday::Mon], 2, None).unwrap();
+        assert_eq!(rule.interval, 2);
+        assert!(!rule.is_daily());
+    }
+
+    #[test]
+    fn interval_zero_is_refused() {
+        assert!(Recurrence::with_interval([Weekday::Mon], 0, None).is_none());
+        assert!(Recurrence::daily(0, None).is_none());
+    }
+
+    #[test]
     fn the_rule_covers_only_its_own_days_inside_its_bounds() {
         let start = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(); // Monday
         let rule = Recurrence::new([Weekday::Mon, Weekday::Thu], None).unwrap();
@@ -510,6 +607,67 @@ mod tests {
         .unwrap();
         assert!(bounded.covers(start, start));
         assert!(!bounded.covers(start, NaiveDate::from_ymd_opt(2026, 10, 19).unwrap())); // after until
+    }
+
+    #[test]
+    fn weekly_interval_skips_weeks() {
+        // Mon Oct 12, every 2 weeks: Oct 12, Oct 26, Nov 9, ...
+        let start = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap(); // Monday
+        let rule = Recurrence::with_interval([Weekday::Mon], 2, None).unwrap();
+        assert!(rule.covers(start, start), "week 0");
+        assert!(
+            !rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, 19).unwrap()),
+            "week 1 skipped"
+        );
+        assert!(
+            rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, 26).unwrap()),
+            "week 2 fires"
+        );
+        assert!(
+            !rule.covers(start, NaiveDate::from_ymd_opt(2026, 11, 2).unwrap()),
+            "week 3 skipped"
+        );
+        assert!(
+            rule.covers(start, NaiveDate::from_ymd_opt(2026, 11, 9).unwrap()),
+            "week 4 fires"
+        );
+    }
+
+    #[test]
+    fn daily_covers_every_n_days() {
+        // Daily, interval=2: Oct 12, 14, 16, 18, ...
+        let start = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let rule = Recurrence::daily(2, None).unwrap();
+        assert!(rule.covers(start, start), "day 0");
+        assert!(
+            !rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, 13).unwrap()),
+            "day 1 skipped"
+        );
+        assert!(
+            rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, 14).unwrap()),
+            "day 2 fires"
+        );
+        assert!(
+            !rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, 15).unwrap()),
+            "day 3 skipped"
+        );
+        assert!(
+            rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, 16).unwrap()),
+            "day 4 fires"
+        );
+    }
+
+    #[test]
+    fn daily_interval_3() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let rule = Recurrence::daily(3, None).unwrap();
+        assert!(rule.covers(start, start), "day 0");
+        assert!(!rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, 13).unwrap()));
+        assert!(!rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, 14).unwrap()));
+        assert!(
+            rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, 15).unwrap()),
+            "day 3"
+        );
     }
 
     #[test]
