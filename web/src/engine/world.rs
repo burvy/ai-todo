@@ -9,7 +9,7 @@
 use super::sched::ENGINE_DT_S;
 use crate::hop::Hop;
 use crate::mascot::{self, Event, Pose, State};
-use crate::tuning::{NOTICE_BEAT_MS, RIDE_OMEGA};
+use crate::tuning::{self, NOTICE_BEAT_MS, RIDE_OMEGA};
 
 /// A point on the page in px, or a velocity in px per second.
 pub(crate) type Vec2 = (f64, f64);
@@ -21,6 +21,45 @@ const STEP_MS: f64 = ENGINE_DT_S * 1000.0;
 /// state: from then on he follows it exactly.
 const CAUGHT_UP_PX: f64 = 0.5;
 
+/// The page's leaf as the page measured it this frame: the one the turn swings.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Leaf {
+    /// How far it is open (`flip.rs`): 0 lying flat, 1 stood on its edge.
+    pub(crate) open: f64,
+    /// Whether it is swinging shut. Only a closing leaf catches him, and only one that has
+    /// come down from beyond what he can lift (`COVERED_LIFT_REACH`): the leaf falling back
+    /// from his own push is not a new catch.
+    pub(crate) closing: bool,
+    /// The page's top left corner in window px, its size, and the viewer's distance.
+    pub(crate) origin: Vec2,
+    pub(crate) size: Vec2,
+    pub(crate) distance: f64,
+}
+
+impl Leaf {
+    /// Whether the leaf lies over the window point `at`.
+    fn covers(&self, at: Vec2) -> bool {
+        crate::flip::leaf_covers(
+            self.open,
+            self.size,
+            self.distance,
+            (at.0 - self.origin.0, at.1 - self.origin.1),
+        )
+    }
+
+    /// Where the leaf's free edge is on the screen, in window x: where he heads to push
+    /// its corner up from underneath.
+    fn free_edge_x(&self) -> f64 {
+        self.origin.0
+            + crate::flip::edge_px(self.size.0, crate::flip::angle(self.open), self.distance)
+    }
+
+    /// Whether it is closing over `at` now, from beyond his reach.
+    fn catches(&self, at: Vec2) -> bool {
+        self.closing && self.open > tuning::COVERED_LIFT_REACH && self.covers(at)
+    }
+}
+
 /// What the page measured this frame, in window px.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Anchors {
@@ -31,6 +70,9 @@ pub(crate) struct Anchors {
     pub(crate) spot: Vec2,
     /// The reader asked for less motion: he is simply where he goes, with no hops.
     pub(crate) reduced_motion: bool,
+    /// The page's leaf as the turner last showed it: none before any turn, and after one
+    /// the leaf lying where it landed (flat, not closing, or turned away).
+    pub(crate) leaf: Option<Leaf>,
 }
 
 /// How his body follows his brain.
@@ -50,7 +92,7 @@ pub(crate) enum Drive {
 /// How his body follows `state`, given what the page measured: he hops between spots
 /// (`mascot::hops_there`, the rule the notice beat is guarded by), rides the finger
 /// that holds him, and is exactly on whatever else he tracks.
-pub(crate) fn behaviour(state: &State, settled_home: bool, anchors: &Anchors) -> Drive {
+pub(crate) fn behaviour(state: &State, settled_home: bool, here: Vec2, anchors: &Anchors) -> Drive {
     let target = match state {
         State::Home | State::Skittering => anchors.nest,
         _ => anchors.spot,
@@ -58,6 +100,14 @@ pub(crate) fn behaviour(state: &State, settled_home: bool, anchors: &Anchors) ->
     match state {
         _ if mascot::hops_there(state, settled_home) => Drive::HopTo(target),
         State::Dragging => Drive::Ride(target),
+        // Under the leaf he works his way along to its free corner, level with where he
+        // was caught (not with a finger that may still be moving), and pushes it up from
+        // there.
+        State::Covered => Drive::Ride(
+            anchors
+                .leaf
+                .map_or(here, |leaf| (leaf.free_edge_x(), here.1)),
+        ),
         _ => Drive::Follow(target),
     }
 }
@@ -182,7 +232,10 @@ impl World {
     /// holding him keeps it awake while he rides after it.
     pub(crate) fn at_rest(&self) -> bool {
         let rambo = &self.rambo;
-        let timed = matches!(rambo.brain, State::Splatting | State::Dazed);
+        let timed = matches!(
+            rambo.brain,
+            State::Splatting | State::Dazed | State::Covered
+        );
         !timed
             && rambo.brain != State::Dragging
             && !mascot::hops_there(&rambo.brain, rambo.settled_home)
@@ -201,10 +254,18 @@ impl World {
     /// follows what his state asks.
     fn step(&mut self, anchors: &Anchors) {
         self.now += STEP_MS;
+        if let Some(event) = self.cover_event(anchors.leaf) {
+            self.tell(event);
+        }
         if let Some(event) = self.timer_due() {
             self.tell(event);
         }
-        let drive = behaviour(&self.rambo.brain, self.rambo.settled_home, anchors);
+        let drive = behaviour(
+            &self.rambo.brain,
+            self.rambo.settled_home,
+            self.rambo.pos,
+            anchors,
+        );
         if !matches!(drive, Drive::HopTo(_)) {
             self.rambo.run = None;
         }
@@ -233,17 +294,42 @@ impl World {
         rambo.draw = Draw::at(pos);
     }
 
+    /// The push he gives the leaf's corner from underneath while he is caught: the page
+    /// steps its spring with it (`Spring::step_with_push`), and it can lift the leaf a
+    /// little but never turn it.
+    pub(crate) fn leaf_push(&self) -> Option<crate::flip::Push> {
+        (self.rambo.brain == State::Covered).then_some(crate::flip::Push {
+            accel: tuning::COVERED_PUSH_ACCEL,
+            reach: tuning::COVERED_LIFT_REACH,
+        })
+    }
+
+    /// The event the leaf raises this step: it closes over him where he stands out on the
+    /// page, or lifts away from where he is stuck.
+    fn cover_event(&self, leaf: Option<Leaf>) -> Option<Event> {
+        let at = self.rambo.pos;
+        match self.rambo.brain {
+            // No leaf in motion means it lies flat over him: only its lifting away, or the
+            // timer, lets him out.
+            State::Covered if leaf.is_some_and(|leaf| !leaf.covers(at)) => Some(Event::Uncovered),
+            _ if leaf.is_some_and(|leaf| leaf.catches(at)) => Some(Event::Covered),
+            _ => None,
+        }
+    }
+
     /// The event one of his timers raises this step, if one has run out: the splat
-    /// settles into a daze, and a daze left untouched sends him home.
+    /// settles into a daze, a daze left untouched sends him home, and the leaf lets go of
+    /// him once he has pushed his way out.
     fn timer_due(&self) -> Option<Event> {
         let time_in_state = self.now - self.rambo.since;
-        let after = match self.rambo.brain {
-            State::Splatting => mascot::SPLAT_MS,
-            State::Dazed => mascot::DAZED_MS,
+        let (after, event) = match self.rambo.brain {
+            State::Splatting => (mascot::SPLAT_MS, Event::Return),
+            State::Dazed => (mascot::DAZED_MS, Event::Return),
+            State::Covered => (mascot::COVERED_MS, Event::Uncovered),
             _ => return None,
         };
         // Steps of 1/120 s add up a hair short of whole ms.
-        (time_in_state + 1e-6 >= f64::from(after)).then_some(Event::Return)
+        (time_in_state + 1e-6 >= f64::from(after)).then_some(event)
     }
 
     /// One step of a run of hops toward `to`, planned when the run starts. He lands on
@@ -339,6 +425,7 @@ mod tests {
             nest: NEST,
             spot,
             reduced_motion: false,
+            leaf: None,
         }
     }
 
@@ -449,6 +536,7 @@ mod tests {
         let spot = (100.0, 200.0);
         let still = Anchors {
             reduced_motion: true,
+            leaf: None,
             ..anchors(spot)
         };
         let mut world = World::new(NEST);
@@ -463,6 +551,7 @@ mod tests {
             1,
             &Anchors {
                 reduced_motion: true,
+                leaf: None,
                 ..anchors(letter)
             },
         );
@@ -668,11 +757,170 @@ mod tests {
         let mut world = dropped_at(fell);
         let still = Anchors {
             reduced_motion: true,
+            leaf: None,
             ..anchors(fell)
         };
         world.advance(steps(f64::from(mascot::DAZED_MS)) + 1, &still);
         world.advance(1, &still);
         assert_eq!(world.rambo.brain, State::Home);
         assert_eq!(world.draw(), Draw::at(NEST));
+    }
+
+    fn leaf(open: f64, closing: bool) -> Leaf {
+        Leaf {
+            open,
+            closing,
+            origin: (0.0, 0.0),
+            size: (390.0, 800.0),
+            distance: crate::tuning::FLIP_PERSPECTIVE * 390.0,
+        }
+    }
+
+    fn under(spot: Vec2, leaf: Option<Leaf>) -> Anchors {
+        Anchors {
+            leaf,
+            ..anchors(spot)
+        }
+    }
+
+    const FELL: Vec2 = (60.0, 300.0);
+
+    #[test]
+    fn a_leaf_closing_over_him_where_he_stands_on_the_page_catches_him() {
+        for brain_to_covered in [Event::DropEmpty, Event::DropHard] {
+            let mut world = World::new(NEST);
+            world.tell(Event::Grab);
+            world.advance(steps(500.0), &anchors(FELL));
+            world.tell(brain_to_covered);
+            world.advance(1, &under(FELL, Some(leaf(0.7, true))));
+            assert_eq!(world.rambo.brain, State::Covered);
+        }
+    }
+
+    #[test]
+    fn a_leaf_that_is_not_closing_over_him_does_not() {
+        let caught_by = |leaf: Option<Leaf>, spot: Vec2| {
+            let mut world = dropped_at(spot);
+            world.advance(1, &under(spot, leaf));
+            world.rambo.brain == State::Covered
+        };
+        assert!(caught_by(Some(leaf(0.7, true)), FELL), "closing over him");
+        assert!(
+            !caught_by(Some(leaf(0.7, false)), FELL),
+            "opening: it is leaving him"
+        );
+        assert!(!caught_by(None, FELL), "lying still");
+        assert!(
+            !caught_by(Some(leaf(0.7, true)), (300.0, 300.0)),
+            "past its free edge"
+        );
+        assert!(
+            !caught_by(Some(leaf(0.7, true)), (60.0, 900.0)),
+            "below the page"
+        );
+        assert!(
+            !caught_by(Some(leaf(crate::tuning::COVERED_LIFT_REACH, true)), FELL),
+            "the leaf falling back from his own push is not a new catch"
+        );
+        // At home he is in the nest, in the bar and on no page.
+        let mut home = World::new(NEST);
+        home.advance(1, &under(NEST, Some(leaf(0.7, true))));
+        assert_eq!(home.rambo.brain, State::Home);
+    }
+
+    #[test]
+    fn caught_he_pushes_the_leaf_up_a_little_and_never_turns_it() {
+        use crate::flip::{Pull, Spring};
+        let mut world = dropped_at(FELL);
+        assert_eq!(world.leaf_push(), None, "no push while he is free");
+        world.advance(1, &under(FELL, Some(leaf(0.7, true))));
+        let push = world.leaf_push().expect("pushing while caught");
+        assert!(
+            push.reach < 0.5,
+            "a corner lifted, not a turn: {}",
+            push.reach
+        );
+        let pull = Pull {
+            omega: crate::tuning::FLIP_FALL_OMEGA,
+            zeta: crate::tuning::FLIP_FALL_DAMPING,
+        };
+        let mut open = Spring::new(crate::tuning::COVERED_LIFT_REACH / 3.0, 0.0);
+        for _ in 0..240 {
+            open.step_with_push(0.0, pull, Some(push), 1.0 / 60.0);
+        }
+        assert!(
+            open.x > 0.05 && open.x <= push.reach + 1e-9,
+            "lifted a little, never past the reach: {}",
+            open.x
+        );
+    }
+
+    #[test]
+    fn he_pushes_his_way_out_after_his_time_and_hops_home_undazed() {
+        let mut world = dropped_at(FELL);
+        world.advance(1, &under(FELL, Some(leaf(0.7, true))));
+        assert_eq!(world.rambo.brain, State::Covered);
+        // The leaf now lies on him, pushed up a little: still over him, no longer closing.
+        let lying = under(FELL, Some(leaf(0.02, false)));
+        world.advance(steps(f64::from(mascot::COVERED_MS)) - 2, &lying);
+        assert_eq!(
+            world.rambo.brain,
+            State::Covered,
+            "still stuck just before the time"
+        );
+        let (x, y) = world.draw().pos;
+        assert!(
+            (x - Leaf::free_edge_x(&leaf(0.02, false))).abs() < 2.0 && y == FELL.1,
+            "he has worked his way to the leaf's free corner, level with where he stood: {x}"
+        );
+        world.advance(2, &lying);
+        assert_eq!(
+            world.rambo.brain,
+            State::Home,
+            "out, not dazed and not skittering"
+        );
+        assert!(!world.at_rest(), "he is on his way: hopping to the nest");
+        assert_eq!(world.leaf_push(), None);
+        // The leaf falling flat behind him cannot catch him again, and he hops to the nest
+        // and settles in it.
+        world.advance(1, &under(FELL, Some(leaf(0.1, true))));
+        assert_eq!(world.rambo.brain, State::Home);
+        let falling = under(FELL, Some(leaf(0.0, false)));
+        world.advance(steps(f64::from(crate::tuning::FLY_MS) + 400.0), &falling);
+        assert_eq!(world.draw().pos, NEST);
+        assert!(world.at_rest());
+    }
+
+    #[test]
+    fn if_the_leaf_lifts_away_he_is_out_at_once() {
+        let mut world = dropped_at(FELL);
+        world.advance(1, &under(FELL, Some(leaf(0.7, true))));
+        assert_eq!(world.rambo.brain, State::Covered);
+        world.advance(1, &under(FELL, Some(leaf(0.95, false))));
+        assert_eq!(world.rambo.brain, State::Home, "he hops home, undazed");
+        // No leaf shown at all, or one lying flat over him, does not let him go.
+        let mut stuck = dropped_at(FELL);
+        stuck.advance(1, &under(FELL, Some(leaf(0.7, true))));
+        stuck.advance(steps(500.0), &under(FELL, None));
+        assert_eq!(stuck.rambo.brain, State::Covered);
+    }
+
+    #[test]
+    fn caught_while_inking_he_stays_level_with_where_he_was_caught_not_with_the_finger() {
+        let mut world = dropped_at(FELL);
+        world.tell(Event::Grab);
+        assert_eq!(world.rambo.brain, State::Inking);
+        world.advance(steps(300.0), &anchors((60.0, 400.0)));
+        world.advance(1, &under((60.0, 400.0), Some(leaf(0.7, true))));
+        assert_eq!(world.rambo.brain, State::Covered);
+        let caught_y = world.rambo.pos.1;
+        // The finger carries on down the page while he is stuck under the leaf.
+        for y in [450.0, 520.0, 600.0] {
+            world.advance(steps(200.0), &under((60.0, y), Some(leaf(0.02, false))));
+            assert!(
+                (world.rambo.pos.1 - caught_y).abs() < 1e-6,
+                "level with where he was caught"
+            );
+        }
     }
 }

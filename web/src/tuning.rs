@@ -237,6 +237,15 @@ pub const FLIP_FINISH_OMEGA: f64 = 14.0;
 /// no rebound; lower swings). Safe range 12 to 20, and 0.4 to 0.8.
 pub const FLIP_FALL_OMEGA: f64 = 16.0;
 pub const FLIP_FALL_DAMPING: f64 = 0.55;
+/// How hard a Rambo caught under the leaf pushes its corner up, in `open` per second
+/// squared: it must beat the leaf's own pull (`FLIP_FALL_OMEGA` squared, about 256 per
+/// unit of `open`) to lift it at all. Safe range 100 to 300: lower and he cannot lift it,
+/// higher and the leaf pops up like a lid.
+pub const COVERED_PUSH_ACCEL: f64 = 160.0;
+/// How far his push can open the leaf, in `open`: a corner lifted a little (about 28
+/// degrees), never a turn. A leaf closing from beyond it is what catches him; one falling
+/// back from a push is not. Safe range 0.05 to 0.3.
+pub const COVERED_LIFT_REACH: f64 = 0.15;
 /// How much of its speed the leaf keeps when it meets the table or the spine. Safe range
 /// 0.4 to 0.8.
 pub const FLIP_WALL_BOUNCE: f64 = 0.65;

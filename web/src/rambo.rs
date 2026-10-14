@@ -168,11 +168,13 @@ pub(crate) fn Rambo(
                     .unwrap_or_else(|| pen_pos.get_untracked()),
                 spot: pen_pos.get_untracked(),
                 reduced_motion: mascot::prefers_reduced_motion(),
+                leaf: crate::engine::leaf(),
             };
             let (brain, draw, at_rest) = {
                 let mut world = world.borrow_mut();
                 world.adopt(state.get_untracked());
                 world.advance(tick.steps, &anchors);
+                crate::engine::set_push(world.leaf_push());
                 (world.rambo.brain.clone(), world.draw(), world.at_rest())
             };
             if brain != state.get_untracked() {
@@ -196,6 +198,13 @@ pub(crate) fn Rambo(
             }
         });
     };
+    let wake = std::rc::Rc::new(wake);
+    // The page turn moving its leaf wakes him, so a leaf closing over him is seen even
+    // while his loop sleeps.
+    crate::engine::on_leaf({
+        let wake = wake.clone();
+        move || wake()
+    });
     Effect::new(move |_| {
         state.track();
         pen_pos.track();

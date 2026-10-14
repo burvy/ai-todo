@@ -2,14 +2,20 @@
 //! (ARCHITECTURE "The engine"). Jobs run on its frames (`on_tick`, `next_frame`) or
 //! every so often in its time (`every`); the loop sleeps when none is waiting.
 
+mod link;
 mod run;
 mod sched;
 mod world;
 
+pub(crate) use link::{leaf, on_leaf, set_push};
+#[cfg(target_arch = "wasm32")]
+pub(crate) use link::{push, show};
 pub(crate) use run::{every, next_frame, now, on_tick};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use sched::{ENGINE_DT_S, Tick};
 pub(crate) use sched::{Flow, Handle};
+#[cfg(target_arch = "wasm32")]
+pub(crate) use world::Leaf;
 pub(crate) use world::{Anchors, World};
 
 #[cfg(test)]

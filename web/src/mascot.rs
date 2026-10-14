@@ -55,6 +55,10 @@ pub enum State {
     WritingCaret,
     /// Writing a fresh task row's title, nib sweeping left to right.
     WritingRow,
+    /// The page turned over him: stuck under the leaf, pushing its corner up to get
+    /// back onto the page. He is not dazed (only a hard throw dazes him): after
+    /// [`COVERED_MS`] he is out and hops home. He cannot be picked up from here.
+    Covered,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,10 +91,16 @@ pub enum Event {
     SkipRow,
     /// Finish writing and fly home.
     FlyHome,
+    /// A leaf closes over him where he stands on the page.
+    Covered,
+    /// He is out from under the leaf (he pushed his way out, or the leaf lifted away).
+    Uncovered,
 }
 
 /// Milliseconds he stays dazed, untouched, before he skitters home on his own.
 pub const DAZED_MS: u32 = 3000;
+/// Milliseconds he is stuck under the leaf, pushing at its corner, before he crawls out.
+pub const COVERED_MS: u32 = 1500;
 /// Milliseconds the splat wobble lasts on a hard drop.
 pub const SPLAT_MS: u32 = 400;
 /// Milliseconds Rambo keeps peeking over at you after your last keystroke.
@@ -128,6 +138,16 @@ pub fn transition(state: &State, event: Event) -> State {
         (State::Splatting, Event::Return) => State::Dazed,
         (State::Dazed, Event::Return) => State::Skittering,
         (State::Skittering, Event::Return) => State::Home,
+
+        // A leaf closing over him where he stands out on the page: he is stuck under it,
+        // pushes his way out and hops home (`Home`, not `Skittering`: he is not dazed and leaves no dots),
+        // undazed. Home is the nest, in the bar and
+        // on no page; in hand he is above the page; in transit he is not standing there.
+        (
+            State::Dazed | State::Inking | State::Splatting | State::Asking { .. },
+            Event::Covered,
+        ) => State::Covered,
+        (State::Covered, Event::Uncovered) => State::Home,
 
         // Dazed: picking him up writes; letting go anywhere but the nest
         // leaves him dazed where he is.
@@ -284,6 +304,7 @@ pub fn is_off_nest(state: &State) -> bool {
             | State::Dazed
             | State::Inking
             | State::Splatting
+            | State::Covered
             | State::Skittering
             | State::Asking { .. }
             | State::Flying
@@ -318,6 +339,7 @@ pub fn hops_there(state: &State, settled_home: bool) -> bool {
         | State::WritingRow
         | State::Dazed
         | State::Splatting
+        | State::Covered
         | State::Asking { .. } => false,
         State::Home => !settled_home,
         State::Flying | State::WritingCaret | State::Skittering => true,
@@ -382,6 +404,7 @@ pub fn rambo_class(state: &State, pose: &str) -> String {
         State::Home => " is-home",
         State::Dragging => " is-dragging",
         State::Dazed => " is-dazed",
+        State::Covered => " is-covered",
         State::Inking => " is-inking",
         State::Splatting => " is-splatting",
         State::Skittering => " is-skittering",
@@ -534,6 +557,8 @@ pub fn pose_for(state: &State, brain_pose: &str, typing: bool) -> Pose {
         State::Asking { .. } => Pose::Teasing,
         // Vacant: the nearest drawing to a daze until one is drawn.
         State::Dazed => Pose::Lobotomized,
+        // Stuck and pushing, not dazed.
+        State::Covered => Pose::Worried,
         State::Home | State::Splatting | State::Skittering => {
             if typing {
                 Mood::Peeking.pose()
@@ -1499,5 +1524,34 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_leaf_closing_on_him_out_on_the_page_traps_him_and_he_runs_home_undazed() {
+        for out_on_the_page in [State::Dazed, State::Inking, State::Splatting] {
+            assert_eq!(transition(&out_on_the_page, Event::Covered), State::Covered);
+        }
+        let asking = State::Asking {
+            task_id: "t".into(),
+            title: "x".into(),
+        };
+        assert_eq!(transition(&asking, Event::Covered), State::Covered);
+        assert_eq!(
+            transition(&State::Covered, Event::Uncovered),
+            State::Home,
+            "out from under it he is not dazed: he hops home, not skitters"
+        );
+        // Not on a page: in the nest, in hand, or in transit.
+        for elsewhere in [
+            State::Home,
+            State::Dragging,
+            State::Flying,
+            State::WritingRow,
+        ] {
+            assert_eq!(transition(&elsewhere, Event::Covered), elsewhere);
+        }
+        // Stuck: he cannot be picked up from under the leaf.
+        assert_eq!(transition(&State::Covered, Event::Grab), State::Covered);
+        assert!(is_off_nest(&State::Covered));
     }
 }
