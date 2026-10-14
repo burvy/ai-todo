@@ -105,6 +105,9 @@ async fn main() {
             "note: TYPESAFE_API_KEY is not set (put it in {CONFIG_FILE} next to the exe); Jev is off"
         );
     }
+    if v2::http::local_login_from_env().unwrap_or_else(|problem| fatal(&problem)) {
+        eprintln!("{}", v2::http::LOCAL_LOGIN_WARNING);
+    }
     let store = v2::app_from_env().unwrap_or_else(|problem| fatal(&problem));
     v2::start_backups().unwrap_or_else(|problem| fatal(&problem));
     v2::admin::start_console(v2::store::data_path_from_env());

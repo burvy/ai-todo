@@ -125,6 +125,7 @@ Task edits use an `updated_at` field and last-write-wins per task. The server se
 | `RAMBL_JEV_DAILY_CAP_ANON` | `30` | Captures per anonymous user per day before capture falls back to `FakeJudge` with `jev_fallback: true`. |
 | `RAMBL_JEV_DAILY_CAP_PAID` | `1000` | Captures per paid user per day before capture falls back to `FakeJudge`. |
 | `RAMBL_ANON_IDS_PER_IP` | `20` | New anonymous ids one client address may be issued per day. |
+| `RAMBL_LOCAL_LOGIN` | unset | `1` adds `POST /api/v1/auth/local` and the page's "Continue locally" button: a session for the fixed user `local-login`, with no Google. Test sites only. The server will not start with it while `RAMBL_TRUSTED_PROXIES` is set, prints a warning when it does start, and the endpoint answers `403` unless the socket peer is loopback or private-LAN (10/8, 172.16/12, 192.168/16, `::1`, `fc00::/7`) and the request has no `CF-Connecting-IP` or `X-Forwarded-For`. `GET /api/v1/config` reports `local_login` under the same test. |
 | `RAMBL_ADMIN_EMAILS` | unset | Comma-separated emails allowed to use `/admin` and its API. Unset or empty disables the admin page (404). |
 | `RAMBL_TRUSTED_PROXIES` | unset | Comma-separated proxy addresses or networks (for example `10.0.0.1, 10.0.0.0/8`) whose `CF-Connecting-IP` names the real client. Loopback is always trusted, which covers a tunnel on the same machine. From any other peer the header is ignored and the socket address is used, so a client reaching the server directly cannot name its own address. |
 

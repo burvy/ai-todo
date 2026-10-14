@@ -1,7 +1,7 @@
 //! Signing in with Google. The server says whether it has a Google client id. When it
 //! does, the page loads Google's button, trades the credential Google returns for a
 //! session token, and keeps that token for later requests. With no client id, nothing
-//! is shown.
+//! is shown. A test site can also offer "Continue locally" (see `continue_locally`).
 
 use gloo_net::http::Request;
 use leptos::prelude::*;
@@ -26,6 +26,9 @@ struct Session {
 #[derive(Deserialize)]
 struct Config {
     google_client_id: Option<String>,
+    /// The server allows the test-site sign-in for this browser.
+    #[serde(default)]
+    local_login: bool,
 }
 
 #[derive(Serialize)]
@@ -39,6 +42,7 @@ thread_local! {
     static USER: ArcRwSignal<Option<Me>> = ArcRwSignal::new(None);
     static CLIENT_ID: ArcRwSignal<Option<String>> = ArcRwSignal::new(None);
     static ERROR: ArcRwSignal<Option<String>> = ArcRwSignal::new(None);
+    static LOCAL_LOGIN: ArcRwSignal<bool> = ArcRwSignal::new(false);
 }
 
 fn user() -> ArcRwSignal<Option<Me>> {
@@ -51,6 +55,15 @@ fn client_id() -> ArcRwSignal<Option<String>> {
 
 fn error() -> ArcRwSignal<Option<String>> {
     ERROR.with(|signal| signal.clone())
+}
+
+fn local_login() -> ArcRwSignal<bool> {
+    LOCAL_LOGIN.with(|signal| signal.clone())
+}
+
+/// Whether the account block has anything to offer.
+fn sign_in_offered() -> bool {
+    client_id().get().is_some() || local_login().get()
 }
 
 fn storage() -> Option<web_sys::Storage> {
@@ -93,23 +106,25 @@ pub fn session_ended() {
 /// page loads.
 pub fn start() {
     wasm_bindgen_futures::spawn_local(async {
-        if let Some(id) = fetch_client_id().await {
-            client_id().set(Some(id.clone()));
-            load_google(id);
+        if let Some(config) = fetch_config().await {
+            local_login().set(config.local_login);
+            if let Some(id) = config.google_client_id {
+                client_id().set(Some(id.clone()));
+                load_google(id);
+            }
         }
         restore().await;
     });
 }
 
-async fn fetch_client_id() -> Option<String> {
-    let config: Config = Request::get("/api/v1/config")
+async fn fetch_config() -> Option<Config> {
+    Request::get("/api/v1/config")
         .send()
         .await
         .ok()?
         .json()
         .await
-        .ok()?;
-    config.google_client_id
+        .ok()
 }
 
 async fn restore() {
@@ -135,6 +150,17 @@ pub async fn sign_in(credential: &str) {
         Ok(request) => request.send().await,
         Err(why) => Err(why),
     };
+    finish_sign_in(response, "Google sign-in").await;
+}
+
+/// The test-site sign-in: a session for the fixed local user, no Google involved.
+async fn continue_locally() {
+    let response = Request::post("/api/v1/auth/local").send().await;
+    finish_sign_in(response, "Local sign-in").await;
+}
+
+/// Keeps the session a sign-in answered with, or shows why there is none.
+async fn finish_sign_in(response: Result<gloo_net::http::Response, gloo_net::Error>, what: &str) {
     match response {
         Ok(response) if response.ok() => match response.json::<Session>().await {
             Ok(session) => {
@@ -145,7 +171,7 @@ pub async fn sign_in(credential: &str) {
             Err(why) => error().set(Some(format!("Sign-in failed: {why}"))),
         },
         Ok(response) => error().set(Some(format!(
-            "Google sign-in was refused (status {})",
+            "{what} was refused (status {})",
             response.status()
         ))),
         Err(why) => error().set(Some(format!("Could not reach the server: {why}"))),
@@ -252,9 +278,16 @@ fn call(target: &wasm_bindgen::JsValue, method: &str, args: &[wasm_bindgen::JsVa
 #[component]
 pub fn AccountSection() -> impl IntoView {
     view! {
-        <Show when=move || client_id().get().is_some()>
+        <Show when=sign_in_offered>
             <div class="account">
                 <div id="google-button" hidden=move || user().get().is_some()></div>
+                <button
+                    type="button"
+                    hidden=move || user().get().is_some() || !local_login().get()
+                    on:click=move |_| wasm_bindgen_futures::spawn_local(continue_locally())
+                >
+                    "Continue locally"
+                </button>
                 <p class="account-user" hidden=move || user().get().is_none()>
                     "Signed in as "
                     {move || user().get().map(|me| me.email)}
@@ -272,7 +305,7 @@ pub fn AccountSection() -> impl IntoView {
 #[component]
 pub fn HeaderLink() -> impl IntoView {
     view! {
-        <Show when=move || client_id().get().is_some()>
+        <Show when=sign_in_offered>
             <p class="account-link">
                 {move || match user().get() {
                     Some(me) => view! {

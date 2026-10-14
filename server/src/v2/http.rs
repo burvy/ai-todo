@@ -59,6 +59,8 @@ pub struct Shared {
     /// The peers allowed to name the client with `CF-Connecting-IP`; see
     /// [`TrustedProxies`].
     trusted_proxies: TrustedProxies,
+    /// Whether `POST /api/v1/auth/local` exists; see [`local_login_from_env`].
+    local_login: bool,
 }
 
 /// Daily limits. Past a Jev cap, capture still works but is judged by `FakeJudge`.
@@ -269,7 +271,10 @@ pub fn router(app: App<Box<dyn Store>>, judge: AnyJudge) -> Router {
             std::env::var("GOOGLE_CLIENT_ID").expect("checked above"),
         ))
     };
-    build_router(
+    // `main` has already refused an unsafe setting; failing closed here keeps any other
+    // caller of `router` safe too.
+    let local_login = !local && local_login_from_env().unwrap_or(false);
+    build_router_with(
         app,
         judge,
         verifier,
@@ -277,7 +282,44 @@ pub fn router(app: App<Box<dyn Store>>, judge: AnyJudge) -> Router {
         Caps::from_env(),
         admin_emails_from_env(),
         TrustedProxies::from_env(),
+        local_login,
     )
+}
+
+/// Whether `RAMBL_LOCAL_LOGIN=1` turns on the test-site "Continue locally" sign-in.
+///
+/// It is refused (an `Err` for `main` to stop on) while `RAMBL_TRUSTED_PROXIES` is set,
+/// because a deployment that names a proxy is one that sits behind a tunnel on the
+/// internet, which is exactly where this bypass must never exist.
+pub fn local_login_from_env() -> Result<bool, String> {
+    local_login_setting(
+        std::env::var("RAMBL_LOCAL_LOGIN").ok().as_deref(),
+        std::env::var("RAMBL_TRUSTED_PROXIES").ok().as_deref(),
+    )
+}
+
+fn local_login_setting(login: Option<&str>, proxies: Option<&str>) -> Result<bool, String> {
+    if login.map(str::trim) != Some("1") {
+        return Ok(false);
+    }
+    if proxies.is_some_and(|list| !list.trim().is_empty()) {
+        return Err("RAMBL_LOCAL_LOGIN=1 is refused while RAMBL_TRUSTED_PROXIES is set:              the local sign-in bypass is for a test site that is not on the internet"
+            .into());
+    }
+    Ok(true)
+}
+
+/// The loud startup warning for an enabled local login.
+pub const LOCAL_LOGIN_WARNING: &str = "WARNING: RAMBL_LOCAL_LOGIN=1: anyone on this machine or     LAN can sign in as the local user without Google. Test sites only; never in production.";
+
+/// May this request use the local sign-in? Only a peer on this machine or the private
+/// LAN, and only if no proxy header says the request came from further away.
+fn local_login_allowed(headers: &HeaderMap, peer: Option<IpAddr>) -> bool {
+    let near = peer.is_some_and(|ip| match ip.to_canonical() {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private(),
+        IpAddr::V6(v6) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
+    });
+    near && !headers.contains_key("cf-connecting-ip") && !headers.contains_key("x-forwarded-for")
 }
 
 /// The router with a supplied verifier, so tests can sign in without a Google project
@@ -292,7 +334,7 @@ fn router_with_verifier(
     admin_emails: Option<Vec<String>>,
     trusted_proxies: TrustedProxies,
 ) -> Router {
-    build_router(
+    build_router_with(
         app,
         judge,
         verifier,
@@ -300,6 +342,7 @@ fn router_with_verifier(
         caps,
         admin_emails,
         trusted_proxies,
+        false,
     )
 }
 
@@ -340,7 +383,8 @@ fn new_anon_id() -> String {
     format!("anon_{}", uuid::Uuid::new_v4().simple())
 }
 
-fn build_router(
+#[allow(clippy::too_many_arguments)]
+fn build_router_with(
     app: App<Box<dyn Store>>,
     judge: AnyJudge,
     verifier: Box<dyn TokenVerifier>,
@@ -348,6 +392,7 @@ fn build_router(
     caps: Caps,
     admin_emails: Option<Vec<String>>,
     trusted_proxies: TrustedProxies,
+    local_login: bool,
 ) -> Router {
     let shared = Arc::new(Shared {
         app: Mutex::new(app),
@@ -360,10 +405,12 @@ fn build_router(
             .filter(|id| !id.is_empty()),
         admin_emails,
         trusted_proxies,
+        local_login,
     });
     Router::new()
         .route("/api/v1/config", get(config))
         .route("/api/v1/auth/google", post(sign_in_google))
+        .route("/api/v1/auth/local", post(sign_in_local))
         .route("/api/v1/auth/signout", post(sign_out))
         .route("/api/v1/me", get(me).delete(delete_me))
         .route("/api/v1/snapshot", get(snapshot))
@@ -415,6 +462,7 @@ async fn assign_anonymous_id(
         .headers()
         .contains_key(axum::http::header::AUTHORIZATION)
         || request.uri().path() == "/api/v1/auth/google"
+        || request.uri().path() == "/api/v1/auth/local"
     {
         return next.run(request).await;
     }
@@ -597,15 +645,51 @@ fn store_failed(error: StoreError) -> HttpError {
 
 /// `GET /api/v1/config`: what the page needs before anyone signs in. The client id is
 /// public: Google shows it on its own sign-in page.
-async fn config(State(shared): State<Arc<Shared>>) -> Json<ConfigOut> {
+async fn config(
+    State(shared): State<Arc<Shared>>,
+    request: axum::extract::Request,
+) -> Json<ConfigOut> {
     Json(ConfigOut {
         google_client_id: shared.google_client_id.clone(),
+        // Offered only to a caller who could use it, so the tunnel never shows the button.
+        local_login: shared.local_login
+            && local_login_allowed(request.headers(), peer_ip(&request)),
     })
 }
 
 #[derive(Serialize)]
 struct ConfigOut {
     google_client_id: Option<String>,
+    local_login: bool,
+}
+
+/// `POST /api/v1/auth/local`: the test-site sign-in as one fixed local user. Absent
+/// unless `RAMBL_LOCAL_LOGIN=1`, and then refused for anything but a near peer.
+async fn sign_in_local(
+    State(shared): State<Arc<Shared>>,
+    request: axum::extract::Request,
+) -> Result<Json<auth::Session>, HttpError> {
+    if !shared.local_login || !local_login_allowed(request.headers(), peer_ip(&request)) {
+        return Err(HttpError(ApiError {
+            code: ErrorCode::Forbidden,
+            message: "local sign-in is not available here".into(),
+        }));
+    }
+    let anonymous = request
+        .headers()
+        .get(&ANON_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| valid_anon_id(value))
+        .map(str::to_owned);
+    let app = shared.app.lock().expect("app mutex");
+    let session = auth::open_session(
+        app.store(),
+        &auth::TokenInfo::local_login(),
+        app.now(),
+        anonymous.as_deref(),
+    )
+    .map_err(HttpError::from)?;
+    Ok(Json(session))
 }
 
 /// `POST /api/v1/auth/google`: trade an ID token for a session.
@@ -3196,6 +3280,123 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "sign in failed: {body}");
         body["token"].as_str().expect("a session token").to_owned()
+    }
+
+    fn login_router(local_login: bool) -> Router {
+        let verifier = auth::FakeVerifier {
+            answer: Err("google is not used here".into()),
+        };
+        super::build_router_with(
+            App::new(
+                Box::new(MemoryStore::default()) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(verifier),
+            false,
+            Caps::default(),
+            None,
+            TrustedProxies::default(),
+            local_login,
+        )
+    }
+
+    async fn local_login_from(
+        router: &Router,
+        peer: &str,
+        headers: &[(&str, &str)],
+    ) -> (StatusCode, serde_json::Value) {
+        let (status, _, body) = call_from(
+            router,
+            "POST",
+            "/api/v1/auth/local",
+            None,
+            headers,
+            Some(peer),
+        )
+        .await;
+        (status, body)
+    }
+
+    /// Startup refuses the bypass next to a configured proxy, and ignores anything but `1`.
+    #[test]
+    fn local_login_is_refused_with_trusted_proxies_set() {
+        assert_eq!(local_login_setting(Some("1"), None), Ok(true));
+        assert_eq!(local_login_setting(Some("1"), Some("  ")), Ok(true));
+        assert!(local_login_setting(Some("1"), Some("10.0.0.1")).is_err());
+        for off in [None, Some(""), Some("0"), Some("true")] {
+            assert_eq!(local_login_setting(off, Some("10.0.0.1")), Ok(false));
+            assert_eq!(local_login_setting(off, None), Ok(false));
+        }
+    }
+
+    /// Near peers get a working session for the fixed local user.
+    #[tokio::test]
+    async fn local_login_signs_in_a_near_peer() {
+        let router = login_router(true);
+        for peer in [
+            "127.0.0.1:5000",
+            "[::1]:5000",
+            "10.1.2.3:5000",
+            "172.16.0.9:5000",
+            "172.31.255.1:5000",
+            "192.168.1.20:5000",
+            "[fd12::1]:5000",
+            "[::ffff:192.168.1.20]:5000",
+        ] {
+            let (status, body) = local_login_from(&router, peer, &[]).await;
+            assert_eq!(status, StatusCode::OK, "{peer}: {body}");
+            assert_eq!(body["user"]["id"], "local-login");
+            let token = body["token"].as_str().expect("a token");
+            let (status, me) = send_as(&router, "GET", "/api/v1/me", None, Some(token)).await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(me["id"], "local-login");
+        }
+    }
+
+    /// Public peers, a missing peer and any proxy header are all refused, and so is a
+    /// server that never enabled it.
+    #[tokio::test]
+    async fn local_login_refuses_far_peers_proxy_headers_and_a_disabled_server() {
+        let router = login_router(true);
+        for peer in [
+            "203.0.113.5:5000",
+            "172.32.0.1:5000",
+            "172.15.0.1:5000",
+            "11.0.0.1:5000",
+            "192.169.0.1:5000",
+            "[2001:db8::1]:5000",
+            "[fe80::1]:5000",
+        ] {
+            let (status, _) = local_login_from(&router, peer, &[]).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{peer}");
+        }
+        for header in [
+            ("cf-connecting-ip", "203.0.113.5"),
+            ("x-forwarded-for", "203.0.113.5"),
+        ] {
+            let (status, _) = local_login_from(&router, "127.0.0.1:5000", &[header]).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{header:?}");
+        }
+        let (status, _, _) = call(&router, "POST", "/api/v1/auth/local", None, &[]).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "no peer address is not near");
+        let (status, _) = local_login_from(&login_router(false), "127.0.0.1:5000", &[]).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "not enabled");
+    }
+
+    /// The page is offered the button only where the sign-in would work.
+    #[tokio::test]
+    async fn config_offers_local_login_only_to_a_near_peer() {
+        async fn offered(router: &Router, peer: &str, headers: &[(&str, &str)]) -> bool {
+            let (_, _, body) =
+                call_from(router, "GET", "/api/v1/config", None, headers, Some(peer)).await;
+            body["local_login"] == true
+        }
+        let on = login_router(true);
+        assert!(offered(&on, "192.168.1.5:1", &[]).await);
+        assert!(!offered(&on, "203.0.113.5:1", &[]).await);
+        assert!(!offered(&on, "127.0.0.1:1", &[("cf-connecting-ip", "203.0.113.5")]).await);
+        assert!(!offered(&login_router(false), "127.0.0.1:1", &[]).await);
     }
 
     const DRAFT: &str = r#"{"title":"Write the report","duration_min":30,"when":{"kind":"anytime"},"label":"Other","priority":"low","source":"text"}"#;
