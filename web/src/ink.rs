@@ -21,8 +21,8 @@
 use crate::settings::Pen;
 use crate::tuning::{
     INK_DRY_ALPHA, INK_DRY_MS, INK_FADE_OUT_MS, INK_FADE_THIN_LEAD_MS, INK_FAST_SHARE,
-    INK_FAST_SPEED, INK_HOLD_MS, INK_SLOW_SPEED, INK_STEP_PX, INK_TAIL_PX, INK_TAPER_PX,
-    INK_WIDTH_EASE,
+    INK_FAST_SPEED, INK_HAIRLINE_PX, INK_HOLD_MS, INK_NIB_ANGLE_DEG, INK_SLOW_SPEED, INK_STEP_PX,
+    INK_TAIL_PX, INK_TAPER_PX, INK_WIDTH_EASE,
 };
 
 /// One dab of ink, in the page's coordinates.
@@ -38,6 +38,12 @@ pub struct Dot {
     /// his rather than the tool's (DESIGN-DIRECTION §1: `--rambo-tint` is the
     /// ink tail of a stroke).
     pub tail: bool,
+    /// When the nib laid this dab, on the samples' clock: ink ages dab by dab, so a
+    /// stroke fades the way it was drawn, its start first.
+    pub t: f64,
+    /// How this dab's ink pools as it dries, -1..=1: a slow wander along the
+    /// stroke, the same every time it is drawn ([`Nib::dry_grain`]).
+    pub pooling: f64,
 }
 
 /// Where the nib was, and when: `t` in ms on the pointer events' clock
@@ -93,6 +99,13 @@ pub struct Nib {
     /// How far the ink dries out through the run-out, 0..=1. A quill is the one
     /// tool that runs dry; a pen does not.
     pub dry_out: f64,
+    /// How broad the nib is, 0..=1: 0 is round (the same width whichever way it
+    /// moves), 1 fully broad (thick across [`INK_NIB_ANGLE_DEG`], a hairline along
+    /// it). A fountain pen's down-strokes are thick and its cross-strokes thin.
+    pub edge: f64,
+    /// How uneven the ink turns as it dries, 0..=1: wet ink is flat, dry ink has
+    /// soaked into the paper a little unevenly.
+    pub dry_grain: f64,
 }
 
 /// The fountain pen: the plain line every other tool is measured against.
@@ -102,6 +115,8 @@ const FOUNTAIN: Nib = Nib {
     grain: 0.0,
     alpha: 1.0,
     dry_out: 0.0,
+    edge: 0.5,
+    dry_grain: 0.08,
 };
 
 impl Nib {
@@ -114,6 +129,8 @@ impl Nib {
             // A ballpoint lays down a fine, even line.
             Pen::Ballpoint => Nib {
                 radius: 2.2,
+                edge: 0.0,
+                dry_grain: 0.04,
                 ..FOUNTAIN
             },
             // Graphite: an even line with an uneven deposit, light ink.
@@ -122,12 +139,16 @@ impl Nib {
                 taper: 0.55,
                 grain: 0.28,
                 alpha: 0.625,
+                edge: 0.0,
+                dry_grain: 0.0,
                 ..FOUNTAIN
             },
             // A felt tip lands and lifts flat, and thick.
             Pen::Marker => Nib {
                 radius: 5.0,
                 taper: 0.95,
+                edge: 0.0,
+                dry_grain: 0.05,
                 ..FOUNTAIN
             },
             // A feather is broad in the middle, runs out at the tail and dries
@@ -137,6 +158,8 @@ impl Nib {
                 taper: 0.25,
                 grain: 0.12,
                 dry_out: 0.85,
+                edge: 0.8,
+                dry_grain: 0.15,
                 ..FOUNTAIN
             },
         }
@@ -254,15 +277,18 @@ pub fn trail(samples: &[Sample], nib: Nib) -> Vec<Dot> {
         let mut walked = 0.0;
         while pending + (step - walked) >= INK_STEP_PX {
             walked += INK_STEP_PX - pending;
-            let target = width_at(speed);
+            let target = width_at(speed) * broad_nib(nib, (b.x - a.x, b.y - a.y));
             let eased = width.map_or(target, |was| was + (target - was) * INK_WIDTH_EASE);
             width = Some(eased);
+            let along = walked / step;
             dots.push(Dot {
-                x: a.x + (b.x - a.x) * walked / step,
-                y: a.y + (b.y - a.y) * walked / step,
+                x: a.x + (b.x - a.x) * along,
+                y: a.y + (b.y - a.y) * along,
                 radius: nib.radius * eased,
                 alpha: nib.alpha,
                 tail: false,
+                t: a.t + (b.t - a.t) * along,
+                pooling: 0.0,
             });
             pending = 0.0;
         }
@@ -278,12 +304,39 @@ pub fn trail(samples: &[Sample], nib: Nib) -> Vec<Dot> {
             radius: nib.radius,
             alpha: nib.alpha,
             tail: false,
+            t: last.t,
+            pooling: 0.0,
         });
     }
     taper_ends(&mut dots, nib);
+    for (index, dot) in dots.iter_mut().enumerate() {
+        dot.radius = dot.radius.max(INK_HAIRLINE_PX);
+        dot.pooling = pooling_at(index);
+    }
     vary_deposit(&mut dots, nib);
     mark_the_tail(&mut dots);
     dots
+}
+
+/// How wide a broad nib draws moving in `direction`, as a share of its full width:
+/// full across its slant, thinnest along it. A round nib is the same every way.
+fn broad_nib(nib: Nib, (dx, dy): (f64, f64)) -> f64 {
+    let heading = dy.atan2(dx);
+    let across = (heading - INK_NIB_ANGLE_DEG.to_radians()).sin().abs();
+    1.0 - nib.edge * (1.0 - across)
+}
+
+/// How the ink pools as it dries at dab `index`: two slow waves along the stroke,
+/// so it is blotchy over a few millimetres and never speckled dab to dab.
+fn pooling_at(index: usize) -> f64 {
+    let i = index as f64;
+    0.6 * (i * 0.21).sin() + 0.4 * (i * 0.057 + 1.3).sin()
+}
+
+/// How far ink laid `age_ms` ago has dried, 0 (wet) to 1 (dry).
+pub fn dryness(age_ms: f64) -> f64 {
+    let share = (age_ms / INK_DRY_MS).clamp(0.0, 1.0);
+    share * share * (3.0 - 2.0 * share)
 }
 
 /// How many dabs cover `px` of a stroke.
@@ -351,7 +404,7 @@ pub fn age_alpha(age_ms: f64, thinness: f64) -> f64 {
         let s = share.clamp(0.0, 1.0);
         s * s * (3.0 - 2.0 * s)
     };
-    let dried = 1.0 - (1.0 - INK_DRY_ALPHA) * ease(age_ms / INK_DRY_MS);
+    let dried = 1.0 - (1.0 - INK_DRY_ALPHA) * dryness(age_ms);
     let fade_from = INK_HOLD_MS - INK_FADE_THIN_LEAD_MS * thinness.clamp(0.0, 1.0);
     dried * (1.0 - ease((age_ms - fade_from) / INK_FADE_OUT_MS))
 }
@@ -550,8 +603,8 @@ mod tests {
 
     #[test]
     fn a_trail_thins_at_both_ends_and_is_fullest_in_the_middle() {
-        let nib = Nib::for_pen(Pen::FountainPen);
-        let dots = fountain(&slow((0.0, 0.0), (300.0, 0.0), 60));
+        let nib = Nib::for_pen(Pen::Ballpoint);
+        let dots = trail(&slow((0.0, 0.0), (300.0, 0.0), 60), nib);
         let first = dots.first().expect("a trail");
         let last = dots.last().expect("a trail");
         let middle = dots[dots.len() / 2];
@@ -563,6 +616,64 @@ mod tests {
         );
         assert!(first.radius >= nib.radius * nib.taper);
         assert!(last.radius >= nib.radius * nib.taper);
+    }
+
+    #[test]
+    fn a_broad_nib_is_thick_across_its_slant_and_thin_along_it() {
+        // A slow circle in the fountain pen: its down-strokes and cross-strokes
+        // differ; the same circle in a ballpoint is even all the way round.
+        let circle: Vec<Sample> = (0..=120)
+            .map(|i| {
+                let a = f64::from(i) / 120.0 * std::f64::consts::TAU;
+                at(
+                    100.0 + 60.0 * a.cos(),
+                    100.0 + 60.0 * a.sin(),
+                    f64::from(i) * 40.0,
+                )
+            })
+            .collect();
+        let spread = |pen: Pen| {
+            let dots = trail(&circle, Nib::for_pen(pen));
+            let body = &dots[dots.len() / 8..dots.len() * 7 / 8];
+            let max = body.iter().map(|d| d.radius).fold(0.0, f64::max);
+            let min = body.iter().map(|d| d.radius).fold(f64::MAX, f64::min);
+            max / min
+        };
+        assert!(
+            spread(Pen::FountainPen) > 1.6,
+            "{}",
+            spread(Pen::FountainPen)
+        );
+        assert!(
+            spread(Pen::Quill) > spread(Pen::FountainPen),
+            "a quill is broader"
+        );
+        assert!(spread(Pen::Ballpoint) < 1.01, "{}", spread(Pen::Ballpoint));
+    }
+
+    #[test]
+    fn each_dab_keeps_the_time_it_was_laid() {
+        let dots = fountain(&line((0.0, 0.0), (100.0, 0.0), 10, 50.0));
+        assert!(
+            dots.windows(2).all(|w| w[1].t >= w[0].t),
+            "in the order drawn"
+        );
+        assert!(dots[0].t < 50.0 && dots.last().unwrap().t > 450.0);
+    }
+
+    #[test]
+    fn drying_is_a_change_you_can_see() {
+        assert_eq!(dryness(0.0), 0.0);
+        assert_eq!(dryness(INK_DRY_MS), 1.0);
+        const { assert!(1.0 - INK_DRY_ALPHA >= 0.2, "dried ink is visibly lighter") };
+        let dots = fountain(&slow((0.0, 0.0), (300.0, 0.0), 60));
+        let pooled: Vec<f64> = dots.iter().map(|d| d.pooling).collect();
+        assert!(pooled.iter().all(|p| p.abs() <= 1.0));
+        let max_step = pooled
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0, f64::max);
+        assert!(max_step < 0.2, "blotchy, never speckled: {max_step}");
     }
 
     #[test]
@@ -625,11 +736,14 @@ mod tests {
         );
         assert!(max > min + 0.05, "the deposit wanders");
 
-        // Ink is steady in both width and deposit.
+        // Ink is steady in both width and deposit along a straight line.
         let ink = fountain(&samples);
         let body = &ink[ink.len() / 4..ink.len() * 3 / 4];
         assert!(body.iter().all(|dot| dot.alpha == 1.0));
-        assert!(body.iter().all(|dot| dot.radius == FOUNTAIN.radius));
+        assert!(
+            body.iter()
+                .all(|dot| (dot.radius - body[0].radius).abs() < 1e-9)
+        );
     }
 
     #[test]

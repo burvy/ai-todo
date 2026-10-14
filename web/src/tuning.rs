@@ -41,7 +41,15 @@ pub const INK_TAIL_PX: f64 = 20.0;
 /// How long fresh ink takes to dry, in ms, and how much of it shows once dry.
 /// Safe ranges 300 to 2000 ms and 0.6 to 0.95.
 pub const INK_DRY_MS: f64 = 900.0;
-pub const INK_DRY_ALPHA: f64 = 0.88;
+pub const INK_DRY_ALPHA: f64 = 0.75;
+/// The thinnest a stroke gets, as a dab's radius in px: a nib's hairline. It keeps
+/// the quickest cross-stroke wider than the dab spacing, so it never breaks into
+/// dots. Safe range 0.5 to 1.0, above half of `INK_STEP_PX`.
+pub const INK_HAIRLINE_PX: f64 = 0.6;
+/// The slant of a broad nib, in degrees from the page's horizontal: the hand's
+/// natural angle. A broad nib draws thick across it and thin along it. Safe range
+/// 25 to 55.
+pub const INK_NIB_ANGLE_DEG: f64 = 40.0;
 /// How long ink stays on the page before it starts to fade, and how long the fade
 /// takes, in ms. Safe ranges 3000 to 20000 and 1000 to 5000.
 pub const INK_HOLD_MS: f64 = 6000.0;
@@ -54,6 +62,7 @@ const _: () = assert!(
     INK_SLOW_SPEED < INK_FAST_SPEED
         && INK_DRY_MS < INK_HOLD_MS - INK_FADE_THIN_LEAD_MS
         && INK_STEP_PX <= 1.0
+        && INK_HAIRLINE_PX * 2.0 > INK_STEP_PX
 );
 
 // ---- the scribble-out delete (DESIGN-DIRECTION §9, "Gestures, final")

@@ -10,7 +10,7 @@
 //! fading the canvas is repainted every frame; once the last stroke has faded it
 //! is dropped and the frames stop.
 
-use crate::ink::{Dot, Stroke, age_alpha};
+use crate::ink::{Dot, Stroke, age_alpha, dryness};
 use crate::settings::Pen;
 use leptos::prelude::*;
 #[cfg(target_arch = "wasm32")]
@@ -39,22 +39,22 @@ pub struct Laid {
     pub dots: Vec<Dot>,
     pub pen: Pen,
     pub at: f64,
-    /// How thin the stroke runs on average against its nib's full width, 0 to 1: a
-    /// quick, thin stroke fades before a slow, full one. One value for the whole
-    /// stroke, so all of its dabs fade together and never bead where they overlap.
-    pub thinness: f64,
+    /// The nib's full width, against which a dab's thinness is measured: thin ink
+    /// fades first.
+    pub radius: f64,
+    /// How uneven the tool's ink turns as it dries.
+    pub dry_grain: f64,
 }
 
 impl Laid {
     pub fn of(stroke: &Stroke) -> Self {
-        let dots = stroke.dots();
-        let full = crate::ink::Nib::for_pen(stroke.pen).radius;
-        let mean = dots.iter().map(|dot| dot.radius).sum::<f64>() / dots.len().max(1) as f64;
+        let nib = crate::ink::Nib::for_pen(stroke.pen);
         Laid {
-            thinness: (1.0 - mean / full).clamp(0.0, 1.0),
-            dots,
+            dots: stroke.dots(),
             pen: stroke.pen,
             at: stroke.laid_at(),
+            radius: nib.radius,
+            dry_grain: nib.dry_grain,
         }
     }
 }
@@ -78,9 +78,14 @@ const ALPHA_LEVELS: f64 = 48.0;
 pub fn batches(laid: &[Laid], now: f64) -> Vec<Batch> {
     let mut out: Vec<Batch> = Vec::new();
     for stroke in laid {
-        let aged = age_alpha(now - stroke.at, stroke.thinness);
         for dot in &stroke.dots {
-            let alpha = (dot.alpha * aged * ALPHA_LEVELS).round() / ALPHA_LEVELS;
+            // Each dab ages from when the nib laid it, so a stroke fades the way it
+            // was drawn; thin ink goes first, and dry ink pools a little unevenly.
+            let age = now - dot.t;
+            let thinness = 1.0 - dot.radius / stroke.radius.max(f64::EPSILON);
+            let pooled = 1.0 + stroke.dry_grain * dot.pooling * dryness(age);
+            let strength = dot.alpha * age_alpha(age, thinness) * pooled;
+            let alpha = (strength.clamp(0.0, 1.0) * ALPHA_LEVELS).round() / ALPHA_LEVELS;
             if alpha <= 0.0 {
                 continue;
             }
@@ -99,6 +104,9 @@ pub fn batches(laid: &[Laid], now: f64) -> Vec<Batch> {
             }
         }
     }
+    // Faintest first: each batch is laid over the ones before it in place of them
+    // (`paint`), so where two strengths meet the stronger shows, never their sum.
+    out.sort_by(|a, b| a.alpha.total_cmp(&b.alpha));
     out
 }
 
@@ -179,19 +187,26 @@ fn run_frames(
 ) {
 }
 
-/// One batch, filled as one path.
+/// One batch, filled as one path. The ink already under it is cleared first, so a
+/// dab's strength is its own and overlapping dabs never darken into beads; with the
+/// batches faintest first, the strongest ink wins wherever two meet.
 #[cfg(target_arch = "wasm32")]
 fn paint(context: &web_sys::CanvasRenderingContext2d, batch: &Batch) {
     let Ok(colour) = token_colour(batch.token) else {
         return;
     };
-    context.set_global_alpha(batch.alpha);
-    context.set_fill_style_str(&colour);
     context.begin_path();
     for &(x, y, radius) in &batch.dabs {
         context.move_to(x + radius, y);
         let _ = context.arc(x, y, radius, 0.0, std::f64::consts::TAU);
     }
+    // The canvas holds only ink, so clearing under the path touches nothing else.
+    let _ = context.set_global_composite_operation("destination-out");
+    context.set_global_alpha(1.0);
+    context.fill();
+    let _ = context.set_global_composite_operation("source-over");
+    context.set_global_alpha(batch.alpha);
+    context.set_fill_style_str(&colour);
     context.fill();
     context.set_global_alpha(1.0);
 }
@@ -301,18 +316,19 @@ mod tests {
         let on_page = batches(std::slice::from_ref(&laid), at);
         let dabs: usize = on_page.iter().map(|b| b.dabs.len()).sum();
         assert_eq!(dabs, laid.dots.len(), "nothing lost");
-        // Steady ink is one path for the body; the tail is Rambo's own.
-        let body: Vec<&Batch> = on_page.iter().filter(|b| b.token == "--ink").collect();
-        assert_eq!(
-            body.len(),
-            1,
-            "{:?}",
+        // Laid over two seconds, the stroke has aged along its length, yet it is
+        // still a bounded number of fills, the freshest dab is full, and the tail is
+        // Rambo's own.
+        assert!(
+            on_page.len() <= 2 * ALPHA_LEVELS as usize,
+            "{} fills",
+            on_page.len()
+        );
+        assert!(
             on_page
                 .iter()
-                .map(|b| (b.token, b.alpha))
-                .collect::<Vec<_>>()
+                .any(|b| b.token == "--rambo-tint" && b.alpha == 1.0)
         );
-        assert!(on_page.iter().any(|b| b.token == "--rambo-tint"));
     }
 
     #[test]
@@ -341,33 +357,44 @@ mod tests {
     }
 
     #[test]
-    fn a_steady_stroke_fades_as_one_and_a_quick_one_fades_first() {
-        // Mid-fade, every dab of a steady stroke is still one strength: no beads.
+    fn the_faintest_ink_is_laid_first_so_the_strongest_wins() {
         let laid = Laid::of(&stroke(Pen::FountainPen));
-        let mid_fade = laid.at + INK_HOLD_MS + INK_FADE_OUT_MS * 0.4;
-        let body: Vec<Batch> = batches(std::slice::from_ref(&laid), mid_fade)
-            .into_iter()
-            .filter(|b| b.token == "--ink")
-            .collect();
-        assert_eq!(body.len(), 1, "{body:?}");
-        // The same line drawn in a hurry is thinner, and fainter at the same age.
-        let mut quick = stroke(Pen::FountainPen);
-        let start = quick.samples[0].t;
-        for (i, sample) in quick.samples.iter_mut().enumerate() {
-            sample.t = start + i as f64;
-        }
-        let quick = Laid::of(&quick);
-        assert!(quick.thinness > laid.thinness);
-        let strength = |l: &Laid| {
-            batches(
-                std::slice::from_ref(l),
-                l.at + INK_HOLD_MS + INK_FADE_OUT_MS * 0.1,
-            )
+        let now = laid.at + INK_HOLD_MS + INK_FADE_OUT_MS * 0.3;
+        let order: Vec<f64> = batches(std::slice::from_ref(&laid), now)
             .iter()
-            .find(|b| b.token == "--ink")
-            .map_or(0.0, |b| b.alpha)
+            .map(|b| b.alpha)
+            .collect();
+        assert!(
+            order.len() > 1 && order.windows(2).all(|w| w[0] <= w[1]),
+            "{order:?}"
+        );
+    }
+
+    #[test]
+    fn a_stroke_fades_the_way_it_was_drawn() {
+        // Laid over two seconds: mid-fade its start is fainter than its end.
+        let laid = Laid::of(&stroke(Pen::Ballpoint));
+        let first = laid.dots[laid.dots.len() / 8];
+        let last = laid.dots[laid.dots.len() * 7 / 8];
+        assert!(last.t - first.t > 1000.0);
+        let now = first.t + INK_HOLD_MS + INK_FADE_OUT_MS * 0.5;
+        let on_page = batches(std::slice::from_ref(&laid), now);
+        let strength_at = |dot: &Dot| {
+            on_page
+                .iter()
+                .find(|b| b.dabs.contains(&(dot.x, dot.y, dot.radius)))
+                .map_or(0.0, |b| b.alpha)
         };
-        assert!(strength(&quick) < strength(&laid));
+        assert!(
+            strength_at(&first) < strength_at(&last),
+            "the start goes first"
+        );
+        // Still a few dozen fills, not one per dab.
+        assert!(
+            on_page.len() <= 2 * ALPHA_LEVELS as usize,
+            "{}",
+            on_page.len()
+        );
     }
 
     #[test]
