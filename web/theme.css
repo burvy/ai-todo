@@ -1317,10 +1317,19 @@ li.task-row:focus-within .delete-mark {
   background: color-mix(in srgb, var(--ink) 55%, transparent);
 }
 
-/* The slip in hand: half faint while it is over the board... its shadow
-   rides the pointer as the ghost, also drawn on paper. */
+/* The slip in hand is lifted off the board, not faded: its shadow grows and it
+   tilts a little, as a card does when it is picked up. `translate` and `rotate`
+   compose with the slip's own transform. */
 .placement.dragging {
-  opacity: 0.45;
+  translate: 0 -3px;
+  rotate: -1deg;
+  box-shadow: var(--sheet-shadow);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .placement.dragging {
+    transition: translate var(--arrive-ms) var(--arrive-ease), rotate var(--arrive-ms) var(--arrive-ease), box-shadow var(--arrive-ms) ease;
+  }
 }
 
 /* The time the held slip would get, riding the ghost beside its title. */
@@ -2030,8 +2039,9 @@ li.task-row:focus-within .delete-mark {
   transform-origin: top left;
   animation: paper-page-in var(--dur-fast) ease-out both;
 }
+/* The paper drops onto the page: it moves, it does not fade or grow. */
 @keyframes paper-page-in {
-  from { opacity: 0; transform: translateY(calc(-1 * var(--space-1))) scale(0.97); }
+  from { translate: 0 calc(-1 * var(--space-2)); }
 }
 .paper-month { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .paper-month-name { font-family: var(--font-hand); font-size: var(--text-xl); }
