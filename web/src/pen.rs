@@ -147,6 +147,17 @@ pub fn inked(glyphs: &[Glyph], elapsed_ms: u32) -> f32 {
     ((written + in_flight) / total_width) as f32
 }
 
+/// Whether any of a box `(left, top, right, bottom)` shows in a `(width,
+/// height)` viewport. The pen only flies to a line he can reach on screen: a
+/// row on the other pane of a phone, or scrolled away, would send him off the
+/// edge of the page to write it.
+pub fn on_screen(
+    (left, top, right, bottom): (f64, f64, f64, f64),
+    (width, height): (f64, f64),
+) -> bool {
+    right > 0.0 && bottom > 0.0 && left < width && top < height
+}
+
 /// Where the pen's centre sits so its nib lands on `(caret_x, caret_y)`:
 /// the nib hangs half a scaled pen below the centre while writing.
 pub fn writing_pen_center(caret_x: f64, caret_y: f64) -> (f64, f64) {
@@ -383,5 +394,24 @@ mod tests {
         assert!(short < long, "{short} !< {long}");
         assert!(long <= MAX_SCRIBBLE_MS, "{long}");
         assert_eq!(scribble_ms(&"x".repeat(500)), MAX_SCRIBBLE_MS);
+    }
+
+    #[test]
+    fn the_pen_only_flies_to_a_line_on_the_screen() {
+        let phone = (390.0, 844.0);
+        assert!(on_screen((16.0, 120.0, 374.0, 160.0), phone));
+        assert!(
+            on_screen((-20.0, 120.0, 30.0, 160.0), phone),
+            "half on is on"
+        );
+        // The list pane while the planner page is showing sits one page left.
+        assert!(!on_screen((-374.0, 120.0, -16.0, 160.0), phone));
+        assert!(
+            !on_screen((-390.0, 120.0, 0.0, 160.0), phone),
+            "touching is off"
+        );
+        // Scrolled above or below the window.
+        assert!(!on_screen((16.0, -80.0, 374.0, -40.0), phone));
+        assert!(!on_screen((16.0, 844.0, 374.0, 884.0), phone));
     }
 }

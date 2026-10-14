@@ -210,7 +210,10 @@ Plain and fast: a text box with a mic button (Web Speech API via `web-sys`), the
 
 ### 8.1 Rambo, the mascot
 
-The pen character (`web/assets/rambo/`) is named **Rambo**. He lives in a small circle next to the text box.
+The pen character (`web/assets/rambo/`) is named **Rambo**. He rests in his nest, the dish at the end of the text box.
+
+- **Nest and pen are separate:** the dish (`nest.svg`) is drawn on the nest button, which sits in the page; Rambo is a `position: fixed` layer placed only by `--pen-x`/`--pen-y`, so carrying him away never carries the dish. At home he follows the nest: he measures it again on any scroll (window or panes), resize, page size change and once the fonts load (`web/src/rambo.rs:on_page_moved`), and on the way home he aims at where the nest is now. No CSS rule may give the button a transform without `--pen-x`/`--pen-y` (a test in `mascot.rs` checks theme.css).
+- **Only to rows on screen:** the pen flies to write a new row only when that row shows on screen (`pen::on_screen`); a row on the other pane of a phone, or scrolled away, is shown without him.
 
 - **Writing pen:** while typing, Rambo's pen follows the caret in the capture box. Two seconds after typing stops, the pen flies home. When new tasks are created, the pen visits each new row, writing the title left-to-right (~600ms per row) with an underline SVG; the row's title is revealed as the pen writes.
 - **Grab to listen:** there is no Mic button. Pointer-down on Rambo in his nest (or Space/Enter on his focusable circle) starts speech recognition. Releasing without dragging captures the transcript. Keyboard: Space/Enter toggles listening. A dazed Rambo never listens.

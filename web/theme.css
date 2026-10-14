@@ -524,6 +524,9 @@ a {
   cursor: pointer;
   position: relative;
   flex-shrink: 0;
+  /* The dish is drawn here, on the furniture, so it stays put when Rambo is
+     carried off: he is only the pen. */
+  background: url("assets/rambo/nest.svg") center bottom / contain no-repeat;
 }
 
 /* The single Rambo button: independent fixed layer above everything.
@@ -543,9 +546,8 @@ a {
   width: 64px;
   height: 64px;
   padding: var(--space-1);
-  background-color: var(--paper-sunken);
-  border: 1px solid var(--rule-strong);
-  border-radius: var(--radius-round);
+  background: none;
+  border: none;
   cursor: grab;
   touch-action: none;
   /* CSS variables for position (set by JS measuring the nest) */
@@ -1535,8 +1537,10 @@ a {
     transition: transform var(--dur) var(--ease);
   }
 
-  .rambo:active {
-    transform: translateY(1rem) rotate(8deg);
+  /* In hand he is exactly under the finger, never easing after it. */
+  .rambo.is-dragging,
+  .rambo.is-inking {
+    transition: none;
   }
 
   /* Pressed like a pen nib: the gear tilts while its menu is open. */
