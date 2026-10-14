@@ -1800,6 +1800,11 @@ li.task-row:focus-within .delete-mark {
     max-height: 70vh;
   }
 
+  /* The list page is as tall as the screen allows, so the strips at the pin have room to hang. */
+  .tasks-pane {
+    min-height: 80dvh;
+  }
+
   /* Nest and Rambo are larger on desktop. Spec: docs/DESIGN-DIRECTION.md §2 */
   :root {
     --nest-art-w: 180px;
