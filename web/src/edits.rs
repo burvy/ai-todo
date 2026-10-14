@@ -97,7 +97,61 @@ pub(crate) async fn patch_and_show(
     body: api::PatchTaskBody,
     sink: EditSink,
 ) -> bool {
-    match api::patch_task(id, body).await {
+    show(api::patch_task(id, body).await, sink).await
+}
+
+/// The same for a spoken change, which Jev turns into an edit on the server.
+pub(crate) async fn revise_and_show(
+    id: &todo_core::TaskId,
+    body: api::ReviseBody,
+    sink: EditSink,
+) -> bool {
+    show(api::revise_task(id, body).await, sink).await
+}
+
+/// The change for `id` that Rambo heard while its edit sheet was open, or `None`
+/// when he heard nothing or the row is not a task the revise call can change: a
+/// series row's sheet edits the whole series, which revise does not.
+pub(crate) fn revise_body(snapshot: &Snapshot, id: &str, heard: &str) -> Option<api::ReviseBody> {
+    let instruction = heard.trim();
+    let task = revisable_task(snapshot, id)?;
+    (!instruction.is_empty()).then(|| api::ReviseBody {
+        instruction: instruction.to_owned(),
+        updated_at: Some(task.updated_at),
+    })
+}
+
+/// Whether a change Rambo heard for `heard_for` may be sent: only while that task's
+/// sheet is still the one open. Closed, or showing another task, it is dropped.
+pub(crate) fn heard_edit_applies(
+    heard_for: Option<&todo_core::TaskId>,
+    open_sheet: Option<&todo_core::TaskId>,
+) -> bool {
+    heard_for.is_some() && heard_for == open_sheet
+}
+
+/// Whether the sheet Rambo is listening for has just closed or moved to another
+/// task, so the listening must end. A sheet not yet open (Edit was just chosen) is
+/// not one that left.
+pub(crate) fn sheet_left(
+    heard_for: Option<&todo_core::TaskId>,
+    was_open: Option<&todo_core::TaskId>,
+    now_open: Option<&todo_core::TaskId>,
+) -> bool {
+    heard_for.is_some() && was_open == heard_for && now_open != heard_for
+}
+
+/// Whether Rambo should listen for a change to `id` when its sheet opens.
+pub(crate) fn revisable(snapshot: &Snapshot, id: &str) -> bool {
+    revisable_task(snapshot, id).is_some()
+}
+
+fn revisable_task<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a todo_core::Task> {
+    held(snapshot, id).filter(|task| task.source != todo_core::Source::Series)
+}
+
+async fn show(result: Result<Snapshot, api::ApiError>, sink: EditSink) -> bool {
+    match result {
         Ok(snapshot) => {
             // A note about an earlier refusal must not outlive the retry that worked.
             sink.set_error.set(None);
@@ -162,6 +216,66 @@ mod tests {
             assert!(!refused_note(&refused, reloaded).contains("reach"));
             assert!(refused_note(&refused, reloaded).contains("not saved"));
         }
+    }
+
+    #[test]
+    fn a_heard_change_revises_the_task_it_was_said_for() {
+        let snapshot = api::fixture_snapshot();
+        let task = snapshot
+            .tasks
+            .iter()
+            .find(|task| task.source != todo_core::Source::Series)
+            .expect("the fixture holds a plain task");
+        let body = revise_body(&snapshot, &task.id.0, "  make it Friday at 3 ")
+            .expect("a heard change on a listed task");
+        assert_eq!(body.instruction, "make it Friday at 3");
+        assert_eq!(
+            body.updated_at,
+            Some(task.updated_at),
+            "stale edits are refused"
+        );
+
+        assert!(
+            revise_body(&snapshot, &task.id.0, "  ").is_none(),
+            "nothing heard"
+        );
+        assert!(
+            revise_body(&snapshot, "nope", "make it Friday").is_none(),
+            "task gone"
+        );
+        if let Some(row) = snapshot
+            .tasks
+            .iter()
+            .find(|t| t.source == todo_core::Source::Series)
+        {
+            assert!(revise_body(&snapshot, &row.id.0, "make it Friday").is_none());
+        }
+    }
+
+    #[test]
+    fn a_heard_change_only_lands_on_its_own_open_sheet() {
+        use todo_core::TaskId;
+        let (a, b) = (TaskId("a".into()), TaskId("b".into()));
+        assert!(heard_edit_applies(Some(&a), Some(&a)));
+        assert!(!heard_edit_applies(Some(&a), None), "the sheet was closed");
+        assert!(
+            !heard_edit_applies(Some(&a), Some(&b)),
+            "another task's sheet"
+        );
+        assert!(
+            !heard_edit_applies(None, Some(&a)),
+            "nothing was being listened for"
+        );
+
+        // Closing the sheet, or opening another task's, ends the listening.
+        assert!(sheet_left(Some(&a), Some(&a), None));
+        assert!(sheet_left(Some(&a), Some(&a), Some(&b)));
+        // Edit was just chosen and the sheet is opening: keep listening.
+        assert!(!sheet_left(Some(&a), None, Some(&a)));
+        assert!(!sheet_left(Some(&a), None, None));
+        // A refill keeps it open on the same task.
+        assert!(!sheet_left(Some(&a), Some(&a), Some(&a)));
+        assert!(!sheet_left(None, Some(&a), None), "not listening at all");
     }
 
     #[test]

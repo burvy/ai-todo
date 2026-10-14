@@ -105,6 +105,7 @@ The v1 prototype was decent; read it for feel and behaviour (not code to copy):
 - Rambo is **separate from the nest**: the user can **drag him out and toy with him**; he follows the finger/mouse **exactly**; on release he recovers and skitters back to the nest.
   - BUG today: dragging sends him off-screen to the left. The drag maths is wrong (pointer vs element offset / transform origin). Fix it and test with mouse and touch.
 - **Picking Rambo up makes him listen** (speech capture). There is no mic button.
+  - Decided 2026-10-14 (god, after Emilio's review of #292): he listens on a long press (held still), on Edit, and on an empty-hour drop (planned); a plain drag only carries him, so a drop on a task no longer listens.
   - BUG today: "Could not start speech recognition". Find out why (permissions, secure context, starting twice, `continuous`/`interimResults`, Edge vs Chrome) and fix it; show a calm message only when the browser truly lacks it.
 - A bit **bigger** than now. Recolour him to fit the paper palette (his blue clashes); he should look drawn on paper.
 - **Writing animation** (today: a scribble, then the words appear at once; or he just slides to the row and back): the task title must **appear gradually, letter by letter, under the nib** as he moves along the line, then he returns to the nest.

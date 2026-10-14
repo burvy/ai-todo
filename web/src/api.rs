@@ -264,6 +264,15 @@ pub struct PatchTaskBody {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
+/// Body for revising a task with one spoken or typed sentence.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct ReviseBody {
+    pub instruction: String,
+    /// The task's `updated_at` as this page last saw it, as for [`PatchTaskBody`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
 impl PatchTaskBody {
     pub fn new() -> Self {
         Self::default()
@@ -340,6 +349,21 @@ pub async fn capture_text(text: &str) -> Result<CaptureResponse, ApiError> {
 pub async fn patch_task(id: &TaskId, body: PatchTaskBody) -> Result<Snapshot, ApiError> {
     let url = format!("/api/v1/tasks/{}", id.0);
     Request::patch(&url)
+        .identity()
+        .header("Content-Type", "application/json")
+        .json(&body)
+        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
+        .json::<Snapshot>()
+        .await
+        .map_err(|e| ApiError::Decode(e.to_string()))
+}
+
+/// POST /api/v1/tasks/{id}/revise - Jev applies one sentence ("make it Friday at 3")
+pub async fn revise_task(id: &TaskId, body: ReviseBody) -> Result<Snapshot, ApiError> {
+    let url = format!("/api/v1/tasks/{}/revise", id.0);
+    Request::post(&url)
         .identity()
         .header("Content-Type", "application/json")
         .json(&body)

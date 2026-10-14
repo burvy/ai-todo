@@ -5,7 +5,9 @@ use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
 
-use crate::edits::{EditSink, series_note};
+use crate::edits::{
+    EditSink, heard_edit_applies, revisable, revise_and_show, revise_body, series_note, sheet_left,
+};
 use crate::tasks::{apply_tick, delete_with_scribble, tick_action};
 use crate::{ink, mascot, settings, speech, voice};
 
@@ -35,6 +37,8 @@ pub(crate) fn Rambo(
     form_ref: NodeRef<leptos::html::Form>,
     /// Set to the task he was dropped on when you choose "Edit": the list opens its sheet
     edit_request: RwSignal<Option<TaskId>>,
+    /// The task whose edit sheet is open, if any: listening for an edit ends with it
+    open_sheet: RwSignal<Option<TaskId>>,
     /// The nest button: Rambo measures its bounding box to know where home is
     nest_ref: NodeRef<leptos::html::Button>,
     /// The tool he holds: it decides which drawing of each pose he wears
@@ -182,14 +186,23 @@ pub(crate) fn Rambo(
     // (gx, gy, ox, oy, timestamp_ms)
     let grab_state = std::rc::Rc::new(std::cell::RefCell::new(None::<(f64, f64, f64, f64, u64)>));
     let grab_state_down = grab_state.clone();
+    let grab_state_move = grab_state.clone();
     let grab_state_up = grab_state.clone();
+    // A long press listens: each grab takes a ticket, and the hold's timer starts
+    // listening only if its grab is still the current one and he was held still.
+    let hold = std::rc::Rc::new(std::cell::Cell::new(0_u32));
+    let still = std::rc::Rc::new(std::cell::Cell::new(false));
 
     // Speech session for grab-to-listen: transcript goes into capture_text so
     // the capture box can submit it when the user releases Rambo.
     let speech_session = std::rc::Rc::new(std::cell::RefCell::new(None::<speech::Session>));
     let transcript = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+    // True while a hold or the keyboard has him listening: only then does letting
+    // go send what he heard.
+    let listening = std::rc::Rc::new(std::cell::Cell::new(false));
     let start_speech = {
         let ss = speech_session.clone();
+        let listening = listening.clone();
         let transcript = transcript.clone();
         let capture = capture_text;
         move || {
@@ -213,6 +226,7 @@ pub(crate) fn Rambo(
             match result {
                 Ok(session) => {
                     *ss.borrow_mut() = Some(session);
+                    listening.set(true);
                     set_talking.set(true);
                 }
                 Err(message) => set_error.set(Some(message)),
@@ -221,9 +235,13 @@ pub(crate) fn Rambo(
     };
     let stop_speech_and_send = {
         let ss = speech_session.clone();
+        let listening = listening.clone();
         let capture = capture_text;
         let form = form_ref;
         move || {
+            if !listening.replace(false) {
+                return;
+            }
             if let Some(session) = ss.borrow().as_ref() {
                 session.stop();
             }
@@ -240,7 +258,78 @@ pub(crate) fn Rambo(
         }
     };
 
+    // Edit opens the sheet and he listens: what he hears is the change, which the
+    // server's revise call (Jev) applies, and the sheet then shows the result. The
+    // session ends by itself after a pause, so nothing has to be let go.
+    let editing = RwSignal::new(None::<TaskId>);
+    let heard = RwSignal::new(String::new());
+    let edit_session = StoredValue::new_local(None::<speech::Session>);
+    let listen_for_edit = move |id: TaskId| {
+        // Quietly not: the sheet is open, and typing in it still works.
+        if !speech::supported() || !snapshot.with_untracked(|s| revisable(s, &id.0)) {
+            return;
+        }
+        voice::cancel();
+        set_error.set(None);
+        heard.set(String::new());
+        editing.set(Some(id));
+        let result = speech::Session::start(
+            std::rc::Rc::new(std::cell::RefCell::new(String::new())),
+            move |text| heard.set(text),
+            move |on| {
+                set_talking.set(on);
+                if !on {
+                    send_heard_edit(
+                        editing,
+                        heard,
+                        snapshot,
+                        EditSink {
+                            set_snapshot,
+                            set_error,
+                        },
+                        edit_request,
+                        open_sheet,
+                    );
+                }
+            },
+            // Silence is fine here: the sheet is open, so typing the change works too.
+            move |value: Option<String>| {
+                if value.as_deref() != Some(speech::NO_SPEECH_NOTE) {
+                    set_error.set(value);
+                }
+            },
+        );
+        match result {
+            Ok(session) => {
+                edit_session.set_value(Some(session));
+                set_talking.set(true);
+            }
+            Err(message) => set_error.set(Some(message)),
+        }
+    };
+
+    // Closing the sheet, or opening another task's, ends the listening for it, and
+    // what was heard is dropped rather than sent.
+    Effect::new(move |was: Option<Option<TaskId>>| {
+        let now = open_sheet.get();
+        if let Some(was) = was
+            && sheet_left(editing.get_untracked().as_ref(), was.as_ref(), now.as_ref())
+        {
+            editing.set(None);
+            edit_session.with_value(|session| {
+                if let Some(session) = session {
+                    session.stop();
+                }
+            });
+        }
+        now
+    });
+
     // Clone closures for multiple event handlers
+    let still_move = still.clone();
+    let hold_up = hold.clone();
+    let hold_cancel = hold.clone();
+    let listening_up = listening.clone();
     let start_speech_down = start_speech.clone();
     let start_speech_key = start_speech.clone();
     let stop_speech_up = stop_speech_and_send.clone();
@@ -283,9 +372,22 @@ pub(crate) fn Rambo(
                     // In hand he never skitters off on his own.
                     daze.set(daze.get().wrapping_add(1));
                     set_state.set(after.clone());
+                    let ticket = hold.get().wrapping_add(1);
+                    hold.set(ticket);
                     if mascot::listens_on_grab(&before) {
-                        set_talking.set(true);
-                        start_speech_down();
+                        // Held still, he listens; a drag only carries him.
+                        still.set(true);
+                        let (hold, still) = (hold.clone(), still.clone());
+                        let start = start_speech_down.clone();
+                        Timeout::new(mascot::LISTEN_HOLD_MS, move || {
+                            if hold.get() == ticket
+                                && still.get()
+                                && state.get_untracked() == mascot::State::Dragging
+                            {
+                                start();
+                            }
+                        })
+                        .forget();
                     } else if let Some(rambo) = rambo_ref.get() {
                         // Dazed: this drag writes, starting where the nib is now.
                         let below = rambo.get_bounding_client_rect().height() * mascot::NIB_BELOW;
@@ -307,6 +409,11 @@ pub(crate) fn Rambo(
                     *moved_move.borrow_mut() = true;
                     // Rambo follows the pointer exactly — pen_pos is the pointer position
                     let (x, y) = (ev.client_x() as f64, ev.client_y() as f64);
+                    if let Some((gx, gy, ..)) = *grab_state_move.borrow()
+                        && !mascot::held_still((gx, gy), (x, y))
+                    {
+                        still_move.set(false);
+                    }
                     pen_pos.set((x, y));
                     if held == mascot::State::Inking {
                         let below = nib_below.get();
@@ -323,18 +430,17 @@ pub(crate) fn Rambo(
                 let land_dazed = land_dazed.clone();
                 move |ev: leptos::ev::PointerEvent| {
                     let before = state.get_untracked();
-                    if before == mascot::State::Inking {
-                        // Dazed, he was never listening: nothing to stop or send.
-                    } else {
-                        stop_speech_up();
-                    }
+                    // Let go before the hold ended: he never starts listening.
+                    hold_up.set(hold_up.get().wrapping_add(1));
+                    let was_listening = listening_up.get();
+                    stop_speech_up();
                     if !matches!(before, mascot::State::Dragging | mascot::State::Inking) {
                         return;
                     }
                     let did_move = *moved_for_up.borrow();
                     if !did_move {
                         *grab_state_up.borrow_mut() = None;
-                        if before == mascot::State::Dragging {
+                        if before == mascot::State::Dragging && !was_listening {
                             // Tap (no drag): submit the form (sends typed text) and go home
                             if let Some(form) = form_ref.get() {
                                 let _ = form.request_submit();
@@ -405,6 +511,7 @@ pub(crate) fn Rambo(
                 let land_dazed = land_dazed.clone();
                 move |_| match state.get_untracked() {
                     mascot::State::Dragging => {
+                        hold_cancel.set(hold_cancel.get().wrapping_add(1));
                         stop_speech_cancel();
                         land_dazed(false);
                     }
@@ -451,7 +558,9 @@ pub(crate) fn Rambo(
                             <span>{format!("Hey! What do you want with \"{title}\"?")}</span>
                             <button type="button" on:click=move |_| {
                                 if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
-                                    edit_request.set(Some(TaskId(task_id.clone())));
+                                    let id = TaskId(task_id.clone());
+                                    edit_request.set(Some(id.clone()));
+                                    listen_for_edit(id);
                                 }
                                 set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
                             }>"Edit"</button>
@@ -500,6 +609,34 @@ pub(crate) fn Rambo(
             </span>
         </button>
     }
+}
+
+/// Send what Rambo heard while an edit sheet was open, once: the speech session
+/// reports its end more than once (an error, then the end).
+fn send_heard_edit(
+    editing: RwSignal<Option<TaskId>>,
+    heard: RwSignal<String>,
+    snapshot: ReadSignal<Snapshot>,
+    sink: EditSink,
+    edit_request: RwSignal<Option<TaskId>>,
+    open_sheet: RwSignal<Option<TaskId>>,
+) {
+    let Some(id) = editing.try_update(Option::take).flatten() else {
+        return;
+    };
+    if !heard_edit_applies(Some(&id), open_sheet.get_untracked().as_ref()) {
+        return;
+    }
+    let Some(body) = snapshot.with_untracked(|s| revise_body(s, &id.0, &heard.get_untracked()))
+    else {
+        return;
+    };
+    wasm_bindgen_futures::spawn_local(async move {
+        if revise_and_show(&id, body, sink).await {
+            // Fill the sheet again from the result; fields typed meanwhile are kept.
+            edit_request.set(Some(id));
+        }
+    });
 }
 
 /// The middle of the nest on screen, where he sits at home.

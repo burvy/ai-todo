@@ -102,6 +102,14 @@ pub const PEEK_MS: u32 = 1400;
 pub const NIB_BELOW: f64 = 0.42;
 /// How far outside the nest's edge a drop still counts as putting him back.
 pub const NEST_SLACK_PX: f64 = 16.0;
+/// Milliseconds he must be held still before he listens. A drag only carries
+/// him; listening starts on this long press, on Edit, or from the keyboard. Safe
+/// range 300 to 1000: shorter and a slow start to a drag listens, longer and a
+/// hold feels ignored.
+pub const LISTEN_HOLD_MS: u32 = 450;
+/// How far the pointer may wander during that hold and still count as still.
+/// Safe range 4 to 16 px: a resting finger on a phone shakes a few pixels.
+pub const LISTEN_SLOP_PX: f64 = 8.0;
 /// Minimum drop velocity (px/ms) to trigger a hard-drop splat.
 pub const HARD_DROP_VELOCITY: f64 = 0.5;
 
@@ -164,6 +172,12 @@ pub fn transition(state: &State, event: Event) -> State {
 /// listens: dazed, he writes instead.
 pub fn listens_on_grab(state: &State) -> bool {
     transition(state, Event::Grab) == State::Dragging
+}
+
+/// Whether a pointer that picked him up at `grab` and is now at `now` is still
+/// holding him (a long press can listen) rather than dragging him.
+pub fn held_still(grab: (f64, f64), now: (f64, f64)) -> bool {
+    (now.0 - grab.0).hypot(now.1 - grab.1) <= LISTEN_SLOP_PX
 }
 
 /// Whether going from `before` to `after` is the user putting a dazed Rambo
@@ -906,6 +920,52 @@ mod tests {
             rest = &after[end..];
         }
         found
+    }
+
+    #[test]
+    fn only_a_still_hold_listens() {
+        assert!(held_still((100.0, 100.0), (100.0, 100.0)));
+        assert!(
+            held_still((100.0, 100.0), (105.0, 106.0)),
+            "a shaky finger is still"
+        );
+        assert!(
+            !held_still((100.0, 100.0), (110.0, 100.0)),
+            "a drag is not a hold"
+        );
+    }
+
+    /// The body of the handler written right after `on:{event}=` in `rambo.rs`.
+    fn rambo_handler(event: &str) -> &'static str {
+        let source = include_str!("rambo.rs");
+        let (_, rest) = source
+            .split_once(&format!("on:{event}="))
+            .expect("rambo.rs has the handler");
+        rest.split_once("\n            on:")
+            .map_or(rest, |(body, _)| body)
+    }
+
+    #[test]
+    fn picking_him_up_does_not_listen_at_once() {
+        // Emilio saw "No speech was detected." after dropping him on a task: every
+        // grab listened. Listening waits for a still hold (`LISTEN_HOLD_MS`).
+        let down = rambo_handler("pointerdown");
+        assert!(down.contains("LISTEN_HOLD_MS"), "{down}");
+        let before_timer = down.split_once("LISTEN_HOLD_MS").map_or(down, |(b, _)| b);
+        assert!(
+            !before_timer.contains("start_speech_down();"),
+            "a grab must not start listening before the hold: {down}"
+        );
+    }
+
+    #[test]
+    fn edit_in_the_bubble_listens_for_the_change() {
+        let source = include_str!("rambo.rs");
+        let (before, _) = source
+            .split_once(">\"Edit\"</button>")
+            .expect("the bubble has an Edit button");
+        let handler = &before[before.rfind("<button").expect("Edit is a button")..];
+        assert!(handler.contains("listen_for_edit("), "{handler}");
     }
 
     #[test]

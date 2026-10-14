@@ -139,7 +139,7 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
 - Files: hive `QA-BASELINE.md`.
 - Do: a check list run on the test site for every front-end PR, at 1366x800 with a mouse and at 390x844 with touch:
   - cold load: Rambo on the nest
-  - first drag listens
+  - a long press listens; a plain drag does not
   - release: no jump
   - dazed drag writes
   - put back in the nest
