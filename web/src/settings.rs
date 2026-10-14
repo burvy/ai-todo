@@ -1,6 +1,7 @@
 use crate::clock::Clock;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
+use todo_core::tuning::DEFAULT_WINDOW_DAYS;
 
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RamblMode {
@@ -117,6 +118,10 @@ impl Default for Settings {
     }
 }
 
+/// The most planner columns. The page fetches one window of this many days, so it cannot
+/// show more days than it has.
+const MAX_DAYS: u8 = DEFAULT_WINDOW_DAYS as u8;
+
 impl Settings {
     pub fn clamped(self) -> Self {
         let start_hour = self.start_hour.min(23);
@@ -124,7 +129,7 @@ impl Settings {
         Self {
             start_hour,
             end_hour,
-            days: self.days.clamp(1, 7),
+            days: self.days.clamp(1, MAX_DAYS),
             mode: self.mode,
             pen: self.pen,
             theme: self.theme,
@@ -330,7 +335,7 @@ pub fn GearMenu(
                         </label>
                         <label>
                             "Days "
-                            <input type="number" min="1" max="7" prop:value=move || settings.get().days
+                            <input type="number" min="1" max=MAX_DAYS.to_string() prop:value=move || settings.get().days
                                 on:change=move |event| {
                                     if let Ok(days) = event_target_value(&event).parse() {
                                         update(Settings { days, ..settings.get() });
