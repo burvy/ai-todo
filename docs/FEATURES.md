@@ -521,7 +521,8 @@ c. Code: `web/src/voice.rs:say, cancel, audible, pick_voice`, called from
 ## V. IMPORT AND EXPORT
 
 ### 1. Import an iCalendar file
-a. An `.ics` calendar becomes ordinary editable tasks with their original times.
+a. An `.ics` calendar becomes editable tasks with their original times. Weekly recurring
+events (`RRULE:FREQ=WEEKLY`) become repeating series, not separate tasks (§7).
 b. Choose a file in **Import .ics**.
 c. Code: `web/src/settings.rs:GearMenu`; `web/src/api.rs:import_ics`;
 `server/src/v2/http.rs:import`; `server/src/v2/ics_import.rs`.
@@ -550,7 +551,22 @@ b. Click **Download calendar (.ics)** in **View settings**, or call `GET /api/v1
 c. Code: `web/src/api.rs:export_calendar`;
 `server/src/v2/http.rs:calendar_ics`; `server/src/v2/ics_export.rs:build_ics`.
 
-### 6. Accepted import formats
+### 7. Weekly recurring events become series
+a. When an `.ics` file contains a weekly recurring event (`RRULE:FREQ=WEEKLY`), it
+becomes one repeating series, not one task or many copies. The series repeats on the
+days named by `BYDAY` (or the event's own weekday), respects `UNTIL` and `COUNT` for
+its end, and keeps `EXDATE` dates as skipped occurrences. A re-import by UID updates
+the same series without duplicating it. Rules the import cannot follow (daily, monthly,
+`INTERVAL` other than 1, `BYSETPOS`, …) fall back to a single task and are listed in
+the import result under `unmapped` so the client can tell the user.
+b. Import a `.ics` with `RRULE:FREQ=WEEKLY;BYDAY=MO,WE;UNTIL=...` and check that the
+snapshot contains one series and its occurrence rows, not separate tasks.
+c. Code: `server/src/v2/ics_import.rs:parse_calendar, weekly_series`;
+`server/src/v2/app.rs:import_series`; `crates/core/src/lib.rs:Recurrence, Series`.
+Tests: `server/src/v2/ics_import.rs` (38 parsing tests incl. hand-written `.ics`
+strings); `server/src/v2/http.rs` (integration: import, re-import, EXDATE).
+
+### 8. Accepted import formats
 a. Calendars use `.ics`; capture accepts PDF, email and text; Outlook `.pst` is
 not read.
 b. Not visible; covered by the capture and HTTP tests.
