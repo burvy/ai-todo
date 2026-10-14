@@ -80,7 +80,7 @@ d. Code: `web/src/lib.rs:reorder_ids`; `web/src/api.rs:reorder_tasks`;
 a. Dropping Rambo on a task offers actions; the built actions can change priority,
 toggle completion, or delete the task.
 b. Drag Rambo onto a task, then choose **Edit**, **Done**, or **Delete**.
-c. Code: `web/src/lib.rs:Mascot`; `web/src/api.rs:patch_task, delete_task`.
+c. Code: `web/src/lib.rs:Rambo`; `web/src/api.rs:patch_task, delete_task`.
 
 ### 5. Labels and priorities
 a. Tasks carry one of six labels and one of four priorities.
@@ -110,7 +110,7 @@ a. The planner shows a configurable number of days and a scrollable 24-hour rang
 Each placement block shows the task's title in the handwriting font and its start time,
 truncated with an ellipsis when the block is too narrow.
 b. Open the **Week** panel and scroll through the grid.
-c. Code: `web/src/week.rs:WeekGrid`; `web/src/settings.rs:SettingsPanel, Settings`.
+c. Code: `web/src/week.rs:WeekGrid`; `web/src/settings.rs:GearMenu, Settings`.
 
 ### 2. One server snapshot
 a. The task list and planner use the same server snapshot, so a task cannot show
@@ -132,10 +132,13 @@ b. Not visible; covered by scheduler and server tests.
 c. Code: `crates/core/src/lib.rs:Placement, Plan`;
 `server/src/v2/app.rs:plan`.
 
-### 5. System colour scheme
-a. The page follows the operating system's light or dark setting.
-b. Change the system theme and reload the page.
-c. Code: `web/theme.css` (`:root` and `@media (prefers-color-scheme: dark)`).
+### 5. Light and dark paper
+a. The paper is Light or Dark by the reader's own choice in the gear menu, not by
+the operating system's setting. `data-theme="light"` is baked into `web/index.html`
+so the first paint is light and never flashes; there is no "System" row.
+b. Open the gear menu and choose Dark, then Light, and reload the page.
+c. Code: `web/theme.css` (`:root` and `:root[data-theme="dark"]`);
+`web/src/settings.rs:GearMenu, apply_theme`.
 
 ### 6. Parchment theme
 a. The page is aged paper: warm palette, serif headings, a tiled paper texture that switches to a dark variant in dark mode.
@@ -147,28 +150,29 @@ c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics: `web/assets/theme/` *
 ### 1. Talk button
 a. The pen beside the capture box is Rambo's send and talk control.
 b. Click the pen to send or press and hold it to show the listening state.
-c. Code: `web/src/lib.rs:CaptureBox, Mascot`; `web/src/mascot.rs:State, Event, transition`.
+c. Code: `web/src/lib.rs:CaptureBox, Rambo`; `web/src/mascot.rs:State, Event, transition`.
 
 ### 2. Drag, fall and return
 a. Rambo can be dragged; when dropped away from a target he falls and returns home.
 b. Drag the pen to empty space and release it.
-c. Code: `web/src/lib.rs:Mascot`; `web/src/mascot.rs:transition`;
+c. Code: `web/src/lib.rs:Rambo`; `web/src/mascot.rs:transition`;
 `web/index.html`.
 
 ### 3. Drop actions
 a. Dropping Rambo on a task opens a prompt with Edit, Move, Done, Delete and
 Never mind actions. The edit dialog is *(planned)*.
 b. Drag the pen onto a task row and choose an action.
-c. Code: `web/src/lib.rs:Mascot`; `web/src/api.rs:patch_task, delete_task`.
+c. Code: `web/src/lib.rs:Rambo`; `web/src/api.rs:patch_task, delete_task`.
 
 ### 4. Reduced motion
 a. With reduced motion enabled, Rambo returns immediately instead of animating.
 b. Enable reduced motion in the operating system and drag Rambo away from home.
-c. Code: `web/src/mascot.rs:prefers_reduced_motion`; `web/src/lib.rs:Mascot`.
+c. Code: `web/src/mascot.rs:prefers_reduced_motion`; `web/src/lib.rs:Rambo`.
 
 ### 5. Mascot brain
-a. The mascot crate provides deterministic, seeded behaviour without web code; wiring it
-into the web mascot is *(planned)*.
+a. The mascot crate provides deterministic, seeded behaviour without web code; it is
+wired into the web mascot by `web/src/brain.rs:Controller`, which turns a brain event
+into a pose and a line of Rambo's own dialogue.
 b. Not visible; covered by tests in `crates/rambl-brain/src/lib.rs`.
 c. Code: `crates/rambl-brain/src/lib.rs:Brain, step, step_with`;
 `crates/rambl-brain/src/rng.rs:Seeded`.
@@ -178,7 +182,7 @@ c. Code: `crates/rambl-brain/src/lib.rs:Brain, step, step_with`;
 ### 1. Import an iCalendar file
 a. An `.ics` calendar becomes ordinary editable tasks with their original times.
 b. Choose a file in **Import .ics**.
-c. Code: `web/src/lib.rs:ImportIcs`; `web/src/api.rs:import_ics`;
+c. Code: `web/src/settings.rs:GearMenu`; `web/src/api.rs:import_ics`;
 `server/src/v2/http.rs:import`; `server/src/v2/ics_import.rs`.
 
 ### 2. Re-import without duplicates
@@ -196,7 +200,8 @@ c. Code: `server/src/v2/ics_import.rs`.
 ### 4. Edit imported-event tasks
 a. Imported calendar tasks can be edited locally without changing the source calendar.
 b. Choose **Edit** on an imported task; the editor warns that changes will not sync back.
-c. Code: `web/src/lib.rs:TaskList, calendar_notice`; `crates/core/src/lib.rs:Source`.
+c. Code: `web/src/lib.rs:TaskList` and the `.calendar-notice` element in the edit
+dialog; `crates/core/src/lib.rs:Source`.
 
 ### 5. Export the plan
 a. The current plan can be downloaded as a standard iCalendar file.
@@ -215,13 +220,13 @@ c. Code: `server/src/v2/http.rs:file_text`;
 
 ### 1. Planner settings
 a. You can choose the first hour, last hour and number of days shown in the planner.
-b. Open **View settings** and change the fields.
-c. Code: `web/src/settings.rs:SettingsPanel, Settings, load, save`.
+b. Open the **gear menu** and change the fields.
+c. Code: `web/src/settings.rs:GearMenu, Settings, load, save`.
 
 ### 2. Version and calendar export
-a. The settings panel displays the Rambl version and build date and links to an iCalendar export.
-b. Open **View settings**.
-c. Code: `web/src/settings.rs:SettingsPanel`; `web/src/api.rs:export_calendar`.
+a. The gear menu displays the Rambl version and build date and links to an iCalendar export.
+b. Open the **gear menu**.
+c. Code: `web/src/settings.rs:GearMenu`; `web/src/api.rs:export_calendar`.
 
 ### 3. Browser time zone
 a. Requests carry the browser's IANA time zone so dates and working hours are local.
@@ -244,7 +249,7 @@ c. Code: `server/src/v2/app.rs:create, import, add_drafts` (new task order, newe
 `server/src/v2/app.rs:sort_tasks`;
 `crates/scheduler/src/lib.rs:plan` (overdue detection and priority placement);
 `web/src/lib.rs:is_overdue, TaskList` (overdue badge);
-`web/src/brain.rs:108` (emits `TaskOverdue`);
+`web/src/brain.rs:142` (emits `TaskOverdue`);
 `crates/rambl-brain/src/lib.rs:Event::TaskOverdue`;
 `crates/rambl-brain/content/lines.toml` (overdue teasing lines).
 
