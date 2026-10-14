@@ -231,8 +231,9 @@ waits at the letter he reached, and once he is home and can see the row he flies
 back and carries on. A row left waiting `WRITE_HOLD_MAX_MS` simply shows its title,
 and a reload always shows titles whole.
 b. Type a long task and press Enter; pick him up halfway through, then let go.
-c. Code: `web/src/tasks/write.rs:write_row_title`; `web/src/pen.rs:schedule, inked,
-ink_edge, ink_clip, beat`; pace in `web/src/tuning.rs` (`WRITE_*`).
+c. Code: `web/src/tasks/write.rs:write_row_title`; `web/src/pen.rs:schedule,
+glyphs_of, stroke_at, inked_count, hand, touch_down, flick, beat`; pace and hand in
+`web/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`).
 
 ### 4. Drop actions
 a. Dropping Rambo on a task opens a prompt with Edit, Move, Done, Delete and

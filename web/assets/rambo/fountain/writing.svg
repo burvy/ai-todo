@@ -22,8 +22,7 @@
     .fx{stroke:var(--rambo-fx);stroke-width:1.6;stroke-linecap:round;fill:none}
     .fx-fill{fill:var(--rambo-fx)}
   </style>
-  <path class="fx" d="M35 108 q4 -3 8 0 t8 0 t8 0" style="stroke:var(--rambo-ink)"/>
-  <g class="pen-body" transform="translate(-5 0) rotate(15 32 104)">
+    <g class="pen-body" transform="translate(-5 0) rotate(15 32 104)">
     <rect class="pen-barrel" x="23" y="25" width="18" height="63" rx="9"/>
     <path class="pen-gloss" d="M27 36 L27 76"/>
     <path class="pen-nib" d="M23 88 L32 110 L41 88 Z"/>

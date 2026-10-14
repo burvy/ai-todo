@@ -24,8 +24,7 @@
     .pen-grain{stroke:var(--rambo-fx);stroke-width:1;stroke-linecap:round;fill:none}
     .pen-eraser{fill:var(--rambo-blush)}
   </style>
-  <path class="fx" d="M35 108 q4 -3 8 0 t8 0 t8 0" style="stroke:var(--rambo-ink)"/>
-  <g class="pen-body" transform="translate(-5 0) rotate(15 32 104)">
+    <g class="pen-body" transform="translate(-5 0) rotate(15 32 104)">
     <path class="pen-barrel" d="M23 30 L32 26 L41 30 L41 82 L32 86.5 L23 82 Z"/>
     <path class="pen-grain" d="M27.5 33 L27.5 81"/><path class="pen-grain" d="M30.5 31.5 L30.5 83"/>
     <path class="pen-nib" d="M25 85 L32 110 L39 85 Z"/>
