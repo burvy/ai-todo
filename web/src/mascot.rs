@@ -27,18 +27,23 @@ fn art_folder(pen: Pen) -> &'static str {
 
 /// Rambo's complete state: where he is and what he's doing.
 ///
-/// One element, one state — the element is always visible at home unless
-/// it is Dragging, Recovering, Skittering, Asking, WritingCaret,
-/// WritingRow, or Flying.
+/// One element, one state: he sits in the nest only when `Home`.
+///
+/// The first drag listens. Dropped anywhere but a task or the nest he is
+/// `Dazed`: he stays where he landed, does not listen, and dragging him again
+/// (`Inking`) writes on the page instead. He comes round on his own and skitters
+/// home after [`DAZED_MS`], or comes home at once when put back in the nest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum State {
     /// Resting at his home spot (bottom-right corner).
     Home,
     /// Picked up: listening, being dragged with the pointer.
     Dragging,
-    /// Dropped on empty space: sits there a moment, dazed.
-    Recovering,
-    /// Dropped hard (fast release): ink splat + wobble, then recover.
+    /// Dropped on the page: he stays where he landed and does not listen.
+    Dazed,
+    /// A dazed Rambo being dragged: he writes on the page and does not listen.
+    Inking,
+    /// Dropped hard (fast release): ink splat + wobble, then dazed.
     Splatting,
     /// Running home in little hops.
     Skittering,
@@ -64,7 +69,10 @@ pub enum Event {
     DropHard,
     /// Dropped on a task row or planner block.
     DropTask { task_id: String, title: String },
-    /// The recovering pause is over (he skitters), or the skitter ends (home).
+    /// Put back in his nest.
+    DropNest,
+    /// The splat is over (dazed), the daze is over (he skitters), or the
+    /// skitter ends (home).
     Return,
     /// He chose an action on the task he was dropped on.
     Choose,
@@ -78,14 +86,19 @@ pub enum Event {
     FlyHome,
 }
 
-/// Milliseconds he sits dazed where he was dropped.
-pub const RECOVER_MS: u32 = 600;
+/// Milliseconds he stays dazed, untouched, before he skitters home on his own.
+pub const DAZED_MS: u32 = 8000;
 /// Milliseconds his hop home takes.
 pub const SKITTER_MS: u32 = 900;
 /// Milliseconds the splat wobble lasts on a hard drop.
 pub const SPLAT_MS: u32 = 400;
 /// Milliseconds Rambo keeps peeking over at you after your last keystroke.
 pub const PEEK_MS: u32 = 1400;
+/// How far below his middle his nib is, as a share of his height: where a
+/// dazed Rambo's ink comes out.
+pub const NIB_BELOW: f64 = 0.42;
+/// How far outside the nest's edge a drop still counts as putting him back.
+pub const NEST_SLACK_PX: f64 = 16.0;
 /// Minimum drop velocity (px/ms) to trigger a hard-drop splat.
 pub const HARD_DROP_VELOCITY: f64 = 0.5;
 
@@ -97,17 +110,26 @@ pub fn transition(state: &State, event: Event) -> State {
         (State::Home, Event::WriteRow) => State::Flying,
         (State::Home, Event::FlyHome) => State::Home,
 
-        // Dragging: release goes home; drop on task asks; drop empty recovers;
-        // drop hard splats.
-        (State::Dragging, Event::Release) => State::Home,
-        (State::Dragging, Event::DropEmpty) => State::Recovering,
+        // Dragging: release or the nest goes home; drop on task asks; drop on
+        // the page dazes him; drop hard splats first.
+        (State::Dragging, Event::Release | Event::DropNest) => State::Home,
+        (State::Dragging, Event::DropEmpty) => State::Dazed,
         (State::Dragging, Event::DropHard) => State::Splatting,
         (State::Dragging, Event::DropTask { task_id, title }) => State::Asking { task_id, title },
 
-        // Splatting → Recovering → Skittering → Home.
-        (State::Splatting, Event::Return) => State::Recovering,
-        (State::Recovering, Event::Return) => State::Skittering,
+        // Splatting → Dazed → Skittering → Home.
+        (State::Splatting, Event::Return) => State::Dazed,
+        (State::Dazed, Event::Return) => State::Skittering,
         (State::Skittering, Event::Return) => State::Home,
+
+        // Dazed: picking him up writes; letting go anywhere but the nest
+        // leaves him dazed where he is.
+        (State::Dazed, Event::Grab) => State::Inking,
+        (State::Inking, Event::DropNest) => State::Home,
+        (
+            State::Inking,
+            Event::Release | Event::DropEmpty | Event::DropHard | Event::DropTask { .. },
+        ) => State::Dazed,
 
         // Asking: choose or return goes home.
         (State::Asking { .. }, Event::Choose | Event::Return) => State::Home,
@@ -133,6 +155,28 @@ pub fn transition(state: &State, event: Event) -> State {
     }
 }
 
+/// Whether picking him up from `state` listens. Only a Rambo who was resting
+/// listens: dazed, he writes instead.
+pub fn listens_on_grab(state: &State) -> bool {
+    transition(state, Event::Grab) == State::Dragging
+}
+
+/// Whether going from `before` to `after` is the user putting a dazed Rambo
+/// back in his nest, which he forgives them a little for.
+pub fn put_back(before: &State, after: &State) -> bool {
+    matches!(before, State::Dazed | State::Inking) && *after == State::Home
+}
+
+/// Whether a drop at `point` puts him back in the nest whose box is
+/// `(left, top, right, bottom)`: on the dish, or near enough that a hand
+/// aiming for it would call it in.
+pub fn over_nest(point: (f64, f64), nest: (f64, f64, f64, f64)) -> bool {
+    let (x, y) = point;
+    let (left, top, right, bottom) = nest;
+    (left - NEST_SLACK_PX..=right + NEST_SLACK_PX).contains(&x)
+        && (top - NEST_SLACK_PX..=bottom + NEST_SLACK_PX).contains(&y)
+}
+
 /// Is he away from home (not resting at his circle)?
 pub fn is_away(state: &State) -> bool {
     !matches!(state, State::Home)
@@ -144,7 +188,8 @@ pub fn is_off_nest(state: &State) -> bool {
     matches!(
         state,
         State::Dragging
-            | State::Recovering
+            | State::Dazed
+            | State::Inking
             | State::Splatting
             | State::Skittering
             | State::Asking { .. }
@@ -203,7 +248,8 @@ pub fn rambo_class(state: &State, pose: &str) -> String {
     let extra = match state {
         State::Home => "",
         State::Dragging => " is-dragging",
-        State::Recovering => " is-recovering",
+        State::Dazed => " is-dazed",
+        State::Inking => " is-inking",
         State::Splatting => " is-splatting",
         State::Skittering => " is-skittering",
         State::Asking { .. } => " is-asking",
@@ -348,10 +394,12 @@ pub fn mood_for(brain_pose: &str, typing: bool) -> Mood {
 pub fn pose_for(state: &State, brain_pose: &str, typing: bool) -> Pose {
     match state {
         State::Dragging => Pose::Listening,
-        State::WritingCaret | State::WritingRow => Pose::Writing,
+        State::WritingCaret | State::WritingRow | State::Inking => Pose::Writing,
         State::Flying => Pose::Flying,
         State::Asking { .. } => Pose::Teasing,
-        State::Home | State::Recovering | State::Splatting | State::Skittering => {
+        // Vacant: the nearest drawing to a daze until one is drawn.
+        State::Dazed => Pose::Lobotomized,
+        State::Home | State::Splatting | State::Skittering => {
             if typing {
                 Mood::Peeking.pose()
             } else if brain_pose == "lobotomized" {
@@ -411,25 +459,68 @@ mod tests {
     }
 
     #[test]
-    fn empty_drop_recovers_then_skitters_home() {
+    fn a_drop_on_the_page_dazes_him_where_he_lands_until_he_skitters_home() {
         let state = transition(&State::Home, Event::Grab);
         let state = transition(&state, Event::DropEmpty);
-        assert_eq!(state, State::Recovering);
+        assert_eq!(state, State::Dazed);
+        assert!(is_off_nest(&state), "he stays where he landed");
         let state = transition(&state, Event::Return);
         assert_eq!(state, State::Skittering);
         assert_eq!(transition(&state, Event::Return), State::Home);
     }
 
     #[test]
-    fn hard_drop_splats_then_recovers_and_skitters_home() {
+    fn hard_drop_splats_then_dazes_him() {
         let state = transition(&State::Home, Event::Grab);
         let state = transition(&state, Event::DropHard);
         assert_eq!(state, State::Splatting);
-        let state = transition(&state, Event::Return);
-        assert_eq!(state, State::Recovering);
-        let state = transition(&state, Event::Return);
-        assert_eq!(state, State::Skittering);
-        assert_eq!(transition(&state, Event::Return), State::Home);
+        assert_eq!(transition(&state, Event::Return), State::Dazed);
+    }
+
+    #[test]
+    fn only_the_first_drag_listens_a_dazed_drag_writes() {
+        assert!(listens_on_grab(&State::Home));
+        assert!(!listens_on_grab(&State::Dazed));
+        let state = transition(&State::Dazed, Event::Grab);
+        assert_eq!(state, State::Inking);
+        assert_eq!(pose_for(&state, "", false), Pose::Writing);
+        // Wherever a writing drag ends he is still dazed, task rows included.
+        for drop in [
+            Event::Release,
+            Event::DropEmpty,
+            Event::DropHard,
+            Event::DropTask {
+                task_id: "t1".into(),
+                title: "Lab report".into(),
+            },
+        ] {
+            assert_eq!(transition(&state, drop), State::Dazed);
+        }
+        // Not while he is on his way home or splatting either.
+        assert!(!listens_on_grab(&State::Skittering));
+        assert!(!listens_on_grab(&State::Splatting));
+    }
+
+    #[test]
+    fn putting_him_back_in_the_nest_ends_the_daze_and_is_forgiven() {
+        let state = transition(&State::Inking, Event::DropNest);
+        assert_eq!(state, State::Home);
+        assert!(put_back(&State::Inking, &state));
+        assert!(listens_on_grab(&state), "home again, he listens again");
+        // Dropping a listening Rambo on his nest just sends him home.
+        assert_eq!(transition(&State::Dragging, Event::DropNest), State::Home);
+        assert!(!put_back(&State::Dragging, &State::Home));
+        // Skittering home on his own is not being put back.
+        assert!(!put_back(&State::Skittering, &State::Home));
+    }
+
+    #[test]
+    fn a_drop_on_or_just_beside_the_dish_puts_him_back() {
+        let nest = (100.0, 100.0, 164.0, 164.0);
+        assert!(over_nest((132.0, 132.0), nest));
+        assert!(over_nest((100.0 - NEST_SLACK_PX, 170.0), nest));
+        assert!(!over_nest((100.0 - NEST_SLACK_PX - 1.0, 132.0), nest));
+        assert!(!over_nest((132.0, 300.0), nest));
     }
 
     #[test]
@@ -511,7 +602,8 @@ mod tests {
         assert_eq!(rambo_class(&State::Home, ""), "rambo");
         assert!(rambo_class(&State::Dragging, "").contains("is-dragging"));
         assert!(rambo_class(&State::Splatting, "").contains("is-splatting"));
-        assert!(rambo_class(&State::Recovering, "").contains("is-recovering"));
+        assert!(rambo_class(&State::Dazed, "").contains("is-dazed"));
+        assert!(rambo_class(&State::Inking, "").contains("is-inking"));
         assert!(rambo_class(&State::Skittering, "").contains("is-skittering"));
         assert!(rambo_class(&State::Flying, "").contains("is-flying"));
         assert!(rambo_class(&State::WritingCaret, "").contains("is-caret"));
@@ -698,7 +790,7 @@ mod tests {
 
     #[test]
     fn a_lobotomized_rambl_stands_vacant() {
-        for state in [State::Home, State::Recovering, State::Splatting] {
+        for state in [State::Home, State::Splatting] {
             assert_eq!(pose_for(&state, "lobotomized", false), Pose::Lobotomized);
         }
     }
@@ -707,7 +799,8 @@ mod tests {
     fn no_mood_picture_follows_him_off_the_nest() {
         for state in [
             State::Dragging,
-            State::Recovering,
+            State::Dazed,
+            State::Inking,
             State::Splatting,
             State::Skittering,
             State::Asking {

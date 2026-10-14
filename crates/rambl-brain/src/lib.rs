@@ -52,6 +52,8 @@ pub enum Event {
     Dropped {
         on_task: String,
     },
+    /// Put back in his nest after being dropped and left dazed.
+    PutBack,
     /// Nothing happened; he is being ticked.
     Tick,
     /// The client telling us the local hour, so we never do date maths ourselves.
@@ -252,6 +254,11 @@ pub fn step_with(
             let situation = if next.is_night() { "wake" } else { "poked" };
             react(&mut next, situation, "look", "wiggle", rng, &mut actions);
         }
+        Event::PutBack => {
+            // He forgives you, a little.
+            next.moods.cheer = clamp01(next.moods.cheer + FORGIVE_CHEER);
+            next.idle_rounds = 0;
+        }
         Event::Dragged => {
             next.state = State::Reacting;
             next.idle_rounds = 0;
@@ -301,6 +308,10 @@ pub fn step_with(
 
 /// Idle steps before he starts doing something of his own.
 const IDLE_AFTER: u32 = 3;
+
+/// How much putting him back in his nest makes up for leaving him dazed:
+/// a little, less than a poke.
+const FORGIVE_CHEER: f32 = 0.03;
 
 /// The pose, the animation and the line for reacting to something.
 fn react(
@@ -482,6 +493,21 @@ mod tests {
         );
         assert_eq!(after.state, State::Reacting);
         assert!(actions.iter().any(|a| matches!(a, Action::Say(_))));
+    }
+
+    #[test]
+    fn putting_him_back_is_forgiven_a_little() {
+        let brain = Brain::new(Mode::Interactive);
+        let (put_back, actions) = step(&brain, Some(Event::PutBack), at(12), &mut Seeded::new(1));
+        let (left, _) = step(&brain, Some(Event::Tick), at(12), &mut Seeded::new(1));
+        let (done, _) = step(&brain, Some(Event::TaskDone), at(12), &mut Seeded::new(1));
+        let forgiven = put_back.moods.cheer - left.moods.cheer;
+        assert!(forgiven > 0.0, "he forgives: {forgiven}");
+        assert!(
+            put_back.moods.cheer < done.moods.cheer,
+            "only slightly: less than a task done"
+        );
+        assert!(actions.is_empty(), "quietly, without a word");
     }
 
     #[test]
