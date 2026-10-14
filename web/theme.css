@@ -552,8 +552,7 @@ a {
   color: var(--accent);
 }
 
-/* The active tab or filter: underlined in golden brown, like a marked word. */
-.label-filters button.active,
+/* The active choice: underlined in golden brown, like a marked word. */
 .duration-chips button.active,
 .gear-choices button.active {
   font-weight: 700;
@@ -625,10 +624,11 @@ li.task-row.row-lifted {
   stroke-linejoin: round;
 }
 
-/* The pin at the top right of the list's page, and the strips hanging down the right edge
-   from it, always visible: each done task, and for a few seconds each deleted one, hangs
-   sideways so it fits (the title runs down it). The column sits in the page, so it turns
-   with it, and takes no taps itself. */
+/* The pin at the top right of the list's page. The done tasks hang from it as a stack:
+   the newest strip on top with its title, the older ones under it, each a few px
+   further down (`--depth`), so only their edges show. Deleted rows hang as scraps
+   below the stack. The column sits in the page, so it turns with it, and takes no
+   taps itself. */
 .scrap-pile {
   position: absolute;
   top: 0;
@@ -641,7 +641,6 @@ li.task-row.row-lifted {
   align-items: flex-end;
   gap: var(--strip-gap, 4px);
   padding-top: var(--pin-room, 28px);
-  /* Not clipped: a strip pushed past the last that fits slides off the page's edge. */
   pointer-events: none;
 }
 
@@ -677,6 +676,20 @@ li.task-row.row-lifted {
   transform: rotate(var(--hang, 0deg));
   transition: transform var(--scrap-ms) cubic-bezier(0.23, 1, 0.32, 1);
   cursor: pointer;
+}
+
+/* A done strip hangs in the stack: all of them at the pin's place, each deeper one
+   a few px lower and further back. When the top one is taped back the next slides
+   forward into its place, because its `--depth` changes. */
+.scrap-undo.done {
+  position: absolute;
+  top: var(--pin-room, 28px);
+  right: calc(var(--pin-w) / 2 - 0.9em);
+  margin-right: 0;
+  translate: 0 calc(var(--depth, 0) * 4px);
+  transition:
+    transform var(--scrap-ms) cubic-bezier(0.23, 1, 0.32, 1),
+    translate var(--scrap-ms) cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 /* The start of the flight: at the row, laid flat as its line was, with no transition so
@@ -722,14 +735,12 @@ li.task-row.row-lifted {
 /* No motion: the scrap simply hangs, and is simply gone. */
 @media (prefers-reduced-motion: reduce) {
   .scrap-undo,
+  .scrap-undo.done,
   .scrap-undo.leaving {
     transform: rotate(var(--hang, 0deg));
     transition: none;
   }
 
-  .scrap-undo.done.leaving {
-    visibility: hidden;
-  }
 }
 
 .delete-mark {
@@ -1420,23 +1431,6 @@ li.task-row:focus-within .delete-mark {
 }
 
 /* --- Task list --- */
-
-.label-filters {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-  /* One scrollable strip: a wrapped row can strand a single tab ("Other")
-     whenever the data decides the break, which the owner banned. The padding
-     keeps focus outlines from being clipped by the scroll box. */
-  overflow-x: auto;
-  padding: var(--space-1) 0;
-  scrollbar-width: none;
-}
-
-.label-filters button {
-  min-width: var(--tap);
-}
 
 /* One text run: block layout, not flex, so the space in
    "Finish history paper — 60 min" survives between the inline children.
