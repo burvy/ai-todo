@@ -969,6 +969,17 @@ li.task-row:focus-within .delete-mark {
     ) rotate(34deg) scale(0.78);
 }
 
+/* Writing a row: not a flight, so nothing eases and the nib is where the ink is on
+   every frame. He leans and shrinks about his nib, the bottom of his box, so the
+   lean never moves it (pen::row_nib_center). */
+.rambo.is-writing:not(.is-caret) {
+  transform-origin: 50% 100%;
+  transform: translate(
+      calc(var(--pen-x) - 50%),
+      calc(var(--pen-y) - 50%)
+    ) rotate(34deg) scale(0.78);
+}
+
 /* Writing at caret (same as writing, but marked for future differentiation) */
 .rambo.is-flying.is-writing.is-caret {
   transform: translate(
@@ -1692,17 +1703,14 @@ li.task-row:focus-within .delete-mark {
 
 }
 
-/* Pen writing row animation: the title reveals left to right. The reveal is
-   a clip-path wipe, not a shrinking box: a long title wraps onto the next
-   ruled line both while Rambo is writing and after he is done.
-
-   On a title that fits one ruled line the view layer drives that clip itself,
-   one frame at a time, so the nib sits exactly at the edge of the ink. A
-   title that wraps is left to this transition: there is more than one line
-   box to wipe and the pen cannot trace across both. */
+/* Pen writing row animation: the title is inked under the nib. The reveal is a
+   clip-path, not a shrinking box, so a long title wraps onto the next ruled line
+   both while Rambo is writing and after he is done. The view layer
+   (tasks/write.rs) moves the clip itself, one frame at a time and line after
+   line, so the nib sits exactly at the edge of the ink: no transition here, or
+   the ink would trail behind the pen. Only the ink appears; the row is paper and
+   is simply there. */
 .pen-title {
-  clip-path: inset(0 0 0 0);
-  transition: clip-path 0.6s linear;
   display: inline;
 }
 
@@ -1723,14 +1731,6 @@ li.task-row:focus-within .delete-mark {
 .pen-writing.marker .pen-title { color: var(--ink-marker); font-weight: 700; }
 .pen-writing.fountain-pen .pen-title { color: var(--ink); }
 
-.pen-underline {
-  display: none;
-}
-
-.pen-writing .pen-underline {
-  display: inline-block;
-}
-
 /* Scribbling a row out: the title is struck through, then Ping's ink cloud
    closes over it. The row sets `--scribble-ms` from pen::scribble_ms, so a
    long title is crossed out for as long as the pen needs. */
@@ -1744,11 +1744,6 @@ li.task-row:focus-within .delete-mark {
   text-decoration-color: var(--danger);
   text-decoration-thickness: 2px;
   opacity: 0.6;
-  animation: scribble-out var(--scribble-ms, 420ms) ease-in forwards;
-}
-
-.scribbling .pen-underline {
-  display: inline-block;
   animation: scribble-out var(--scribble-ms, 420ms) ease-in forwards;
 }
 
@@ -1790,15 +1785,10 @@ li.task-row:focus-within .delete-mark {
     clip-path: inset(0 0 0 0) !important;
   }
 
-  .pen-underline {
-    display: none !important;
-  }
-
   /* No cloud and no fade: the row is already on its way out, and Rambo does
      not scribble when motion is off. */
   .scribbling::after,
-  .scribbling .pen-title,
-  .scribbling .pen-underline {
+  .scribbling .pen-title {
     animation: none;
   }
 }

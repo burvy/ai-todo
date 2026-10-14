@@ -12,8 +12,6 @@ use todo_core::{Label, Snapshot, Source, TaskId, When};
 
 use crate::clock::Clock;
 use crate::edits::{EditSink, confirmed, held, patch_and_show, series_note, toggle_done_body};
-#[cfg(target_arch = "wasm32")]
-use crate::pen;
 use crate::pickers::{PaperDate, PaperDateTime, PaperRadios, PaperTime};
 use crate::{api, mascot, row, scrap, settings, tuning, week};
 use fields::{
@@ -444,13 +442,19 @@ pub(crate) fn TaskList(
     // not every task on reload.
     #[cfg(target_arch = "wasm32")]
     {
+        // One writer at a time: a row he is waiting to finish must not have a
+        // second writer start on the queue each time his state changes.
+        let writing = StoredValue::new(false);
         Effect::new(move |_| {
             let mode = view_settings.get().mode;
             if mascot::prefers_reduced_motion() || mode == settings::RamblMode::Lobotomized {
+                // Nothing is written: drop the queue, so his lines are not held for it.
+                if pen_queue.with(|queue| !queue.is_empty()) {
+                    pen_queue.set(Vec::new());
+                }
                 return;
             }
-            let queue = pen_queue.get();
-            if queue.is_empty() {
+            if pen_queue.with(Vec::is_empty) || writing.get_value() {
                 return;
             }
             let current_state = mascot_state.get();
@@ -461,14 +465,24 @@ pub(crate) fn TaskList(
             ) {
                 let set_state = set_mascot_state;
                 let pen_pos = pen_pos;
+                writing.set_value(true);
                 wasm_bindgen_futures::spawn_local(async move {
-                    for task_id in queue {
+                    // Rows captured while he writes join the queue and are
+                    // written in turn.
+                    let next = move || {
+                        pen_queue
+                            .try_update(|queue| (!queue.is_empty()).then(|| queue.remove(0)))
+                            .flatten()
+                    };
+                    while let Some(task_id) = next() {
                         // On the first row, Rambo may be at WritingCaret (after Add) or Home.
-                        // On subsequent rows, he should be back at Home from the fly-home above.
+                        // On later rows, he is back at Home from the fly-home below.
                         let state = mascot_state.get_untracked();
                         let is_ready =
                             matches!(state, mascot::State::Home | mascot::State::WritingCaret);
                         if !is_ready {
+                            // Taken elsewhere between rows: the rest stay as they are.
+                            pen_queue.set(Vec::new());
                             break;
                         }
                         let row = web_sys::window()
@@ -495,26 +509,29 @@ pub(crate) fn TaskList(
                         if let Some(row) = row.as_ref() {
                             write::park_nib(row, pen_pos);
                         }
-                        gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
+                        gloo_timers::future::TimeoutFuture::new(crate::tuning::FLY_MS).await;
                         set_state.set(mascot::transition(
                             &mascot_state.get_untracked(),
                             mascot::Event::WriteRow,
                         ));
                         if let Some(row) = row.as_ref() {
-                            write::write_row_title(row, pen_pos).await;
+                            write::write_row_title(row, pen_pos, mascot_state, set_state).await;
                         }
-                        // Fly home after this row
-                        set_state.set(mascot::transition(
-                            &mascot::State::WritingRow,
-                            mascot::Event::FlyHome,
-                        ));
-                        gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
-                        set_state.set(mascot::transition(
-                            &mascot_state.get_untracked(),
-                            mascot::Event::FlyHome,
-                        ));
+                        // Fly home after this row. A row finished without him (he
+                        // was taken elsewhere) leaves him where he is.
+                        if mascot_state.get_untracked() == mascot::State::WritingRow {
+                            set_state.set(mascot::transition(
+                                &mascot::State::WritingRow,
+                                mascot::Event::FlyHome,
+                            ));
+                            gloo_timers::future::TimeoutFuture::new(crate::tuning::FLY_MS).await;
+                            set_state.set(mascot::transition(
+                                &mascot_state.get_untracked(),
+                                mascot::Event::FlyHome,
+                            ));
+                        }
                     }
-                    pen_queue.set(Vec::new());
+                    writing.set_value(false);
                 });
             }
         });
@@ -762,7 +779,6 @@ pub(crate) fn TaskList(
                             }}
                             {is_overdue(&task).then(|| view! { <span class="overdue">"Overdue"</span> })}
                         </span>
-                        <span class="pen-underline"><img src="assets/pen-underline.svg" alt="" /></span>
                         {(!is_occurrence).then(|| view! {
                             <button
                                 class="delete-mark"

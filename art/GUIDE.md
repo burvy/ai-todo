@@ -67,7 +67,7 @@ To use burvy's own handwriting in place of Caveat:
 
 ## Rambo design placeholder (v2 / Leptos)
 
-The pen mascot (`illustrations/pen.svg`) is Rambo. It is the writing pen, not just an icon. In v1 (`static/app.js`) it sits at the caret, writes as you type (linger ~2 s, then goes home), flies up to write new task titles (WRITE_MS = 600 ms per title, pen-underline under each new title, reduced-motion respected), and blinks/fidgets between actions. For v2, the brain (`crates/rambl-brain`) decides moods (idle, working, cheerful, sleepy, teasing); the pen (`web/src/mascot.rs`, `brain.rs`) is its body. Until the full animation is ported:
+The pen mascot (`illustrations/pen.svg`) is Rambo. It is the writing pen, not just an icon. In v1 (`static/app.js`) it sits at the caret, writes as you type (linger ~2 s, then goes home), flies up to write new task titles (WRITE_MS = 600 ms per title, a pen-underline under each new title, reduced-motion respected). v2 writes each title letter by letter under the nib, line after line, with no underline; its pace is the `WRITE_*` values in `web/src/tuning.rs`, and blinks/fidgets between actions. For v2, the brain (`crates/rambl-brain`) decides moods (idle, working, cheerful, sleepy, teasing); the pen (`web/src/mascot.rs`, `brain.rs`) is its body. Until the full animation is ported:
 - Replace the pen drawing as a whole by drawing a 64×112 pen on paper, scanning at 600 dpi, vectorizing (Trace Bitmap, Brightness cutoff), simplifying, and exporting Plain SVG with the six class names preserved.
 - Keep the class names (`pen-barrel`, `pen-cap`, `pen-nib`, `pen-lead`, `pen-gloss`, `eye-white`, `eye-black`, `brow`) so blinking, looking, and brows continue to work via CSS.
 - Keep the viewBox `0 0 64 112`.

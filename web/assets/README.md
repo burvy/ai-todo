@@ -69,7 +69,6 @@ backgrounds, paper palette, they render inside fixed boxes and scale.
 
 | File | What | Where used |
 |---|---|---|
-| `pen-underline.svg` | wobbly golden-brown underline, viewBox `0 0 200 8`, stretched (`preserveAspectRatio="none"`) | under a freshly written task title |
 
 ## Fonts — `fonts/`
 

@@ -4,7 +4,7 @@ use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 
-use crate::{api, mascot, pen, settings};
+use crate::{api, mascot, settings};
 
 /// Rambo's whisper: short handwritten prompts the empty capture line cycles
 /// through, one every few seconds, as if he's quietly suggesting what to type.
@@ -145,12 +145,12 @@ pub(crate) fn CaptureBox(
             if let Some(timer) = linger_timer.borrow_mut().take() {
                 timer.cancel();
             }
-            let timer = Timeout::new(pen::LINGER_MS, move || {
+            let timer = Timeout::new(crate::tuning::LINGER_MS, move || {
                 set_state.update(|s| {
                     *s = mascot::transition(s, mascot::Event::FlyHome);
                 });
                 let set_state = set_state;
-                let timer = Timeout::new(pen::FLY_MS, move || {
+                let timer = Timeout::new(crate::tuning::FLY_MS, move || {
                     // Use transition() so a grab during flight is not overridden.
                     set_state.update(|s| {
                         *s = mascot::transition(s, mascot::Event::FlyHome);
@@ -173,7 +173,7 @@ pub(crate) fn CaptureBox(
             let sel = input_el.selection_start().ok().flatten().unwrap_or(0);
             let caret_x = rect.left() + f64::from(sel) * 8.0;
             let caret_y = rect.top() + rect.height() / 2.0;
-            let center = pen::writing_pen_center(caret_x, caret_y);
+            let center = crate::pen::writing_pen_center(caret_x, caret_y);
             // Rambo is now a fixed layer — pen_pos is absolute page coords
             pen_pos.set(center);
         }

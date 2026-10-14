@@ -154,8 +154,12 @@ pub fn transition(state: &State, event: Event) -> State {
         // Flying to a row: arrive and write.
         (State::Flying, Event::WriteRow) => State::WritingRow,
 
-        // Writing row: fly home when done.
+        // Writing row: fly home when done. Picked up mid-row he listens, and
+        // typing a new capture calls him to the caret; either way the ink waits
+        // and he goes back to finish once he is home (`pen::beat`).
         (State::WritingRow, Event::FlyHome) => State::Flying,
+        (State::WritingRow, Event::Grab) => State::Dragging,
+        (State::WritingRow, Event::WriteCaret) => State::WritingCaret,
 
         // Flying home: arrive.
         (State::Flying, Event::FlyHome) => State::Home,
@@ -218,12 +222,18 @@ pub fn is_off_nest(state: &State) -> bool {
     )
 }
 
-/// Is he writing or flying for writing (so typing must not yank him)?
+/// Is he flying, or writing at the caret, so a grab or typing must not yank him?
+/// A row he is writing is not busy: anything the user does interrupts it, and he
+/// goes back to finish it (`pen::beat`).
 pub fn pen_busy(state: &State) -> bool {
-    matches!(
-        state,
-        State::Flying | State::WritingCaret | State::WritingRow
-    )
+    matches!(state, State::Flying | State::WritingCaret)
+}
+
+/// Whether a line he says now waits until he is home: he is out writing a row, or
+/// flying to or from one (DESIGN-DIRECTION §4 beat 4). Speaking mid-row puts his
+/// bubble over the page he is writing on.
+pub fn speaks_later(state: &State) -> bool {
+    matches!(state, State::Flying | State::WritingRow)
 }
 
 /// Where a hop of the skitter run is at `progress` (0..=1): straight line from
@@ -274,7 +284,9 @@ pub fn rambo_class(state: &State, pose: &str) -> String {
         State::Asking { .. } => " is-asking",
         State::Flying => " is-flying",
         State::WritingCaret => " is-flying is-writing is-caret",
-        State::WritingRow => " is-flying is-writing",
+        // Not a flight: the flight's eased transition would trail the nib behind
+        // the ink, retargeted every frame.
+        State::WritingRow => " is-writing",
     };
     if pose.is_empty() {
         format!("{base}{extra}")
@@ -608,12 +620,40 @@ mod tests {
     }
 
     #[test]
+    fn writing_a_row_never_eases_him() {
+        // Only a flight eases (`only_a_flight_eases_him_from_place_to_place`), so a
+        // row written without the flight's class follows the ink frame by frame.
+        assert!(!rambo_class(&State::WritingRow, "").contains("is-flying"));
+        assert!(rambo_class(&State::Flying, "").contains("is-flying"));
+    }
+
+    #[test]
+    fn he_speaks_once_he_is_home() {
+        assert!(speaks_later(&State::WritingRow));
+        assert!(speaks_later(&State::Flying));
+        assert!(!speaks_later(&State::Home));
+        assert!(
+            !speaks_later(&State::Dragging),
+            "picked up, he answers at once"
+        );
+    }
+
+    #[test]
+    fn anything_the_user_does_interrupts_a_row() {
+        assert!(!pen_busy(&State::WritingRow));
+        assert_eq!(transition(&State::WritingRow, Event::Grab), State::Dragging);
+        assert_eq!(
+            transition(&State::WritingRow, Event::WriteCaret),
+            State::WritingCaret
+        );
+    }
+
+    #[test]
     fn pen_busy_during_writing_flight() {
         assert!(!pen_busy(&State::Home));
         assert!(!pen_busy(&State::Dragging));
         assert!(pen_busy(&State::Flying));
         assert!(pen_busy(&State::WritingCaret));
-        assert!(pen_busy(&State::WritingRow));
     }
 
     #[test]

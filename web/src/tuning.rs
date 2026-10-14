@@ -90,3 +90,44 @@ pub const BEND_SLIDE_MS: u32 = 150;
 
 const _: () =
     assert!(BEND_FLICK_MIN_PX < 100.0 && BEND_COMMIT_SHARE < 1.0 && BEND_FULL_TURN >= 2.0);
+
+// ---- Rambo writing a new row (UI-BUGS #11, v1's writing)
+
+/// How often the ink and the nib move while a title is written, in ms: one frame,
+/// so the ink never jumps a letter and the pen never looks stalled. Safe range 8
+/// to 33.
+pub const INK_TICK_MS: u32 = 16;
+/// His flight between two spots (caret, row, home), in ms. Safe range 300 to 700.
+pub const FLY_MS: u32 = 450;
+/// Quiet time at the capture box after typing stops before he flies home, in ms.
+/// Safe range 800 to 4000.
+pub const LINGER_MS: u32 = 2000;
+/// Extra width, in px of glyph advance, that the pen lift over a space costs: the
+/// nib hops the gap and pauses before the next word. Safe range 0 to 24.
+pub const WORD_GAP_W: f64 = 10.0;
+/// Stroke time per glyph: the pace of his hand. Safe range 70 to 160 ms; v1 wrote at
+/// about this pace, slower than typing so it reads as considered writing.
+pub const WRITE_PER_GLYPH_MS: u32 = 110;
+/// The shortest a title takes to write, so a short one still reads as writing.
+/// Safe range 400 to 1200 ms.
+pub const WRITE_MIN_MS: u32 = 700;
+/// The longest a title takes to write, so a long one still finishes. Safe range
+/// 1800 to 5000 ms.
+pub const WRITE_MAX_MS: u32 = 3200;
+/// The beat the nib rests on the line after landing, before the first stroke.
+/// Safe range 0 to 300 ms.
+pub const WRITE_SETTLE_MS: u32 = 140;
+/// The hold after the last letter closes, before he flies home. Safe range 0 to
+/// 500 ms.
+pub const WRITE_FINISH_MS: u32 = 250;
+/// How long a half-written row waits for him (held, typing elsewhere, or the row
+/// scrolled away) before its rest of the title simply appears. Safe range 5000 to
+/// 60000 ms.
+pub const WRITE_HOLD_MAX_MS: u32 = 15_000;
+/// How far past its edges the ink may show, in px, so a letter's flourish above
+/// the line or past the last stroke is not cut. Safe range 0 to 4.
+pub const INK_BLEED_PX: f64 = 2.0;
+
+const _: () = assert!(WRITE_MIN_MS < WRITE_MAX_MS);
+// A title that is merely slow to write is never cut short as "waited too long".
+const _: () = assert!(WRITE_MAX_MS < WRITE_HOLD_MAX_MS);
