@@ -10,7 +10,7 @@
 //! fading the canvas is repainted every frame; once the last stroke has faded it
 //! is dropped and the frames stop.
 
-use crate::ink::{Dot, Stroke, age_alpha, dryness};
+use crate::ink::{Dot, Stroke, Surface, age_alpha, dryness};
 use crate::settings::Pen;
 use leptos::prelude::*;
 #[cfg(target_arch = "wasm32")]
@@ -110,13 +110,21 @@ pub fn batches(laid: &[Laid], now: f64) -> Vec<Batch> {
     out
 }
 
-/// The ink a dazed Rambo leaves, and the splats he throws: painted from `strokes`,
-/// aged frame by frame, and each stroke dropped from `strokes` once it has faded.
+/// The ink a dazed Rambo leaves, and the splats he throws, on one surface: painted
+/// from the `strokes` laid on it, aged frame by frame, and each stroke dropped from
+/// `strokes` once it has faded.
 #[component]
-pub fn InkLayer(strokes: RwSignal<Vec<Stroke>>) -> impl IntoView {
+pub fn InkLayer(strokes: RwSignal<Vec<Stroke>>, on: Surface) -> impl IntoView {
     let canvas_ref = NodeRef::<leptos::html::Canvas>::new();
     // The dabs are worked out when a stroke changes, not on every frame.
-    let laid = Memo::new(move |_| strokes.with(|all| all.iter().map(Laid::of).collect::<Vec<_>>()));
+    let laid = Memo::new(move |_| {
+        strokes.with(|all| {
+            all.iter()
+                .filter(|stroke| stroke.on == on)
+                .map(Laid::of)
+                .collect::<Vec<_>>()
+        })
+    });
     let painting = std::rc::Rc::new(std::cell::Cell::new(false));
     Effect::new(move |_| {
         if !laid.with(Vec::is_empty) && !painting.get() {
@@ -125,12 +133,23 @@ pub fn InkLayer(strokes: RwSignal<Vec<Stroke>>) -> impl IntoView {
         }
     });
 
-    view! {
-        <canvas class="ink-layer" node_ref=canvas_ref aria-hidden="true" />
+    match on {
+        // The page's sheet sticks to the window inside the page, so it is never taller
+        // than the screen however long the list is.
+        Surface::List => view! {
+            <div class="page-ink" aria-hidden="true">
+                <canvas class="ink-sheet" node_ref=canvas_ref />
+            </div>
+        }
+        .into_any(),
+        Surface::Floor => view! {
+            <canvas class="ink-floor" node_ref=canvas_ref aria-hidden="true" />
+        }
+        .into_any(),
     }
 }
 
-/// Paint every frame while any ink is on the page; stop once it has all faded.
+/// Paint on every frame while any ink is on the page; stop once it has all faded.
 #[cfg(target_arch = "wasm32")]
 fn run_frames(
     canvas: NodeRef<leptos::html::Canvas>,
@@ -138,16 +157,11 @@ fn run_frames(
     strokes: RwSignal<Vec<Stroke>>,
     painting: std::rc::Rc<std::cell::Cell<bool>>,
 ) {
-    use std::cell::RefCell;
-    use std::rc::Rc;
-    use wasm_bindgen::closure::Closure;
-    type Frame = Rc<RefCell<Option<Closure<dyn FnMut(f64)>>>>;
-    let frame: Frame = Rc::new(RefCell::new(None));
-    let next = frame.clone();
-    *frame.borrow_mut() = Some(Closure::new(move |now: f64| {
+    crate::engine::on_tick(move |tick| {
+        let now = tick.now;
         let Some(context) = ink_context(&canvas) else {
             painting.set(false);
-            return;
+            return crate::engine::Flow::Stop;
         };
         fresh_sheet(&canvas, &context);
         let on_page = laid.with_untracked(|laid| batches(laid, now));
@@ -158,24 +172,17 @@ fn run_frames(
         if strokes.with_untracked(|all| all.iter().any(|s| crate::ink::faded(now - s.laid_at()))) {
             strokes.update(|all| all.retain(|s| !crate::ink::faded(now - s.laid_at())));
         }
-        if strokes.with_untracked(Vec::is_empty) {
-            // The last ink has gone: a clean sheet, and the frames stop. The frame's
-            // own closure is let go once it has returned, not while it runs.
+        if laid.with_untracked(Vec::is_empty) {
+            // The last ink on this surface has gone: a clean sheet, and the frames stop.
             fresh_sheet(&canvas, &context);
+            if let Some(sheet) = canvas.get_untracked() {
+                page_layer(&sheet, None);
+            }
             painting.set(false);
-            let done = next.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                done.borrow_mut().take();
-            });
-            return;
+            return crate::engine::Flow::Stop;
         }
-        if let Some(callback) = next.borrow().as_ref() {
-            let _ = window().request_animation_frame(callback.as_ref().unchecked_ref());
-        }
-    }));
-    if let Some(callback) = frame.borrow().as_ref() {
-        let _ = window().request_animation_frame(callback.as_ref().unchecked_ref());
-    }
+        crate::engine::Flow::Go
+    });
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -232,16 +239,21 @@ fn fresh_sheet(
     canvas: &NodeRef<leptos::html::Canvas>,
     context: &web_sys::CanvasRenderingContext2d,
 ) {
-    let (Some(canvas), window) = (canvas.get_untracked(), window()) else {
+    let Some(canvas) = canvas.get_untracked() else {
         return;
     };
-    let (Ok(width), Ok(height)) = (window.inner_width(), window.inner_height()) else {
-        return;
-    };
-    let ratio = window.device_pixel_ratio();
-    let px =
-        |value: wasm_bindgen::JsValue| js_sys::Number::from(value).as_f64().unwrap_or_default();
-    let (w, h) = ((px(width) * ratio) as u32, (px(height) * ratio) as u32);
+    // The page's layer is as tall as all the rows, scrolled past or not, so its sheet can
+    // stick to the part of the page that shows wherever the rows have got to.
+    let rows = canvas
+        .parent_element()
+        .and_then(|layer| layer.parent_element())
+        .map(|page| page.scroll_height());
+    page_layer(&canvas, rows);
+    let ratio = window().device_pixel_ratio();
+    let (w, h) = (
+        (f64::from(canvas.client_width()) * ratio) as u32,
+        (f64::from(canvas.client_height()) * ratio) as u32,
+    );
     // Setting the size reallocates the backing store, so only when it changed.
     if canvas.width() != w || canvas.height() != h {
         canvas.set_width(w);
@@ -249,7 +261,29 @@ fn fresh_sheet(
     }
     let _ = context.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
     context.clear_rect(0.0, 0.0, f64::from(w), f64::from(h));
-    let _ = context.set_transform(ratio, 0.0, 0.0, ratio, 0.0, 0.0);
+    // The sheet shows the part of its surface it is over: the page's canvas sticks to
+    // the window as the page scrolls past it, so the ink is drawn shifted by where the
+    // canvas has got to on the page. The floor's sits at the window's corner.
+    let (dx, dy) = (
+        f64::from(canvas.offset_left()),
+        f64::from(canvas.offset_top()),
+    );
+    let _ = context.set_transform(ratio, 0.0, 0.0, ratio, -dx * ratio, -dy * ratio);
+}
+
+/// Sizes the list page's ink layer to `height` px, or back to nothing; the floor's
+/// canvas has no layer and is left alone.
+#[cfg(target_arch = "wasm32")]
+fn page_layer(canvas: &web_sys::HtmlCanvasElement, height: Option<i32>) {
+    let Some(layer) = canvas
+        .parent_element()
+        .filter(|layer| layer.class_list().contains("page-ink"))
+        .and_then(|layer| layer.dyn_into::<web_sys::HtmlElement>().ok())
+    else {
+        return;
+    };
+    let height = height.map_or(String::new(), |px| format!("{px}px"));
+    let _ = layer.style().set_property("height", &height);
 }
 
 /// The page's value of a colour token, so the canvas paints exactly what the CSS
@@ -284,6 +318,7 @@ mod tests {
                 })
                 .collect(),
             pen,
+            on: crate::ink::Surface::Floor,
         }
     }
 

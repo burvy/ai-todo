@@ -52,11 +52,12 @@ mod imp {
 
     use leptos::prelude::*;
 
+    use crate::engine::now;
     use crate::flip::{self, Pull, Settle, Spring, Turn};
     use crate::tuning::{
         BEND_BUTTON_MS, FLIP_FALL_DAMPING, FLIP_FALL_OMEGA, FLIP_FINISH_OMEGA, FLIP_PERSPECTIVE,
     };
-    use crate::turn_util::{el_style, element_of, may_turn_from, now, phone, show_pane};
+    use crate::turn_util::{el_style, element_of, may_turn_from, phone, show_pane};
 
     /// Reduced motion slides the page: a quick settle with no swing to it.
     const SLIDE_PULL: Pull = Pull {
@@ -108,9 +109,8 @@ mod imp {
         stage: Stage,
         motion: Motion,
         outcome: Settle,
-        /// When the flight began and when the last frame was drawn, in ms.
+        /// When the flight began, in the engine's ms.
         began: f64,
-        last: f64,
     }
 
     struct Drag {
@@ -275,7 +275,6 @@ mod imp {
                 motion,
                 outcome: Settle::Complete,
                 began: 0.0,
-                last: 0.0,
             });
         }
 
@@ -320,7 +319,6 @@ mod imp {
                         },
                         outcome,
                         began: 0.0,
-                        last: 0.0,
                     });
                 }
                 _ => {}
@@ -403,38 +401,42 @@ mod imp {
 
         /// Steps the leaf's spring each frame, then ends the turn when it comes to rest.
         fn run(&self, flight: Flight) {
-            let t = now();
-            self.frame(Flight {
-                began: t,
-                last: t,
+            let this = self.clone();
+            let mut flight = Flight {
+                began: now(),
                 ..flight
+            };
+            crate::engine::on_tick(move |tick| {
+                if this.frame(&mut flight, tick) {
+                    this.end(&flight.stage, flight.outcome);
+                    crate::engine::Flow::Stop
+                } else {
+                    crate::engine::Flow::Go
+                }
             });
         }
 
-        fn frame(&self, mut flight: Flight) {
-            let t = now();
-            let done = match &mut flight.motion {
+        /// Draws one frame of the flight; true once it has landed.
+        fn frame(&self, flight: &mut Flight, tick: crate::engine::Tick) -> bool {
+            match &mut flight.motion {
                 Motion::Spring {
                     spring,
                     target,
                     pull,
                 } => {
-                    spring.step(*target, *pull, (t - flight.last) / 1000.0);
+                    // Stepped by the engine's fixed step, so the leaf falls the same at
+                    // any frame rate.
+                    for _ in 0..tick.steps {
+                        spring.step(*target, *pull, crate::engine::ENGINE_DT_S);
+                    }
                     self.draw(&flight.stage, spring.x);
                     spring.at_rest(*target)
                 }
                 Motion::Glide { from, to, ms } => {
-                    let share = ((t - flight.began) / *ms).clamp(0.0, 1.0);
+                    let share = ((tick.now - flight.began) / *ms).clamp(0.0, 1.0);
                     self.draw(&flight.stage, *from + (*to - *from) * flip::glide(share));
                     share >= 1.0
                 }
-            };
-            flight.last = t;
-            if done {
-                self.end(&flight.stage, flight.outcome);
-            } else {
-                let this = self.clone();
-                request_animation_frame(move || this.frame(flight));
             }
         }
 

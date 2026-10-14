@@ -667,7 +667,7 @@ pub fn ScrapCorner(
                                     crate::tasks::apply_tick(&id, action, sink).await;
                                     forget_return(&id.0);
                                     // The strip is gone: keep the keyboard on the new top strip.
-                                    request_animation_frame(focus_top_strip);
+                                    crate::engine::next_frame(focus_top_strip);
                                 });
                             }
                         >

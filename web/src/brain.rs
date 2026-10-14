@@ -1,5 +1,5 @@
 use chrono::{TimeZone, Utc};
-use gloo_timers::callback::{Interval, Timeout};
+use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
 use rambl_brain::{Action, Brain, Event, Mode, Seeded};
 use std::cell::RefCell;
@@ -241,11 +241,12 @@ pub fn Controller(
         }
     });
 
-    let tick = {
+    // The brain lives for the whole page, so its tick never stops.
+    {
         let brain = brain.clone();
         let rng = rng.clone();
         let teased = teased.clone();
-        Interval::new(5000, move || {
+        crate::engine::every(5000.0, move || {
             if mode.get_untracked() != crate::settings::RamblMode::Lobotomized
                 && !window()
                     .document()
@@ -273,10 +274,9 @@ pub fn Controller(
                 };
                 step(&brain, &rng, event, &mouth, set_pose);
             }
-        })
-    };
-    // The brain lives for the whole page, so the interval is never cancelled.
-    tick.forget();
+            crate::engine::Flow::Go
+        });
+    }
 
     view! { <span class="brain-speech" aria-live="polite"></span> }
 }

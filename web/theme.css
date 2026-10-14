@@ -1988,13 +1988,38 @@ li.task-row:focus-within .delete-mark {
 /* The ink a dazed Rambo writes. A layer above the page and below Rambo, and
    never over the capture line or a dialog (see the layer scale in :root). It takes no
    pointer: Rambo is the thing you pull, and the trail is what follows him. */
-.ink-layer {
+/* Ink on no page lies on the floor, over the window. */
+.ink-floor {
   position: fixed;
   inset: 0;
   width: 100%;
   height: 100%;
   z-index: var(--layer-page);
   pointer-events: none;
+}
+
+/* Ink on the list is part of the page: it scrolls and turns with the paper. Its sheet
+   sticks to the window inside the page, so it is never taller than the screen. */
+.page-ink {
+  /* As tall as all the rows while ink lies on them (`inklayer::page_layer`): the page may
+     scroll inside itself, and a box at inset 0 would cover only its first screen. */
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 0;
+  z-index: var(--layer-page);
+  pointer-events: none;
+}
+
+.ink-sheet {
+  display: block;
+  position: sticky;
+  top: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100%;
 }
 
 @media (prefers-reduced-motion: no-preference) {

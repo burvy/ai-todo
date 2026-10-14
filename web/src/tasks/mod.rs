@@ -381,7 +381,7 @@ pub(crate) fn TaskList(
     let rested = StoredValue::new(Vec::<(String, i32)>::new());
     Effect::new(move |_| {
         snapshot.track();
-        request_animation_frame(move || {
+        crate::engine::next_frame(move || {
             let now = scrap::row_tops();
             let slide = rested.with_value(|before| scrap::rows_to_slide(before, &now));
             rested.set_value(now);
