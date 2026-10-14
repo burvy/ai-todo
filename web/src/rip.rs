@@ -132,20 +132,6 @@ pub struct Tape {
     pub angle_deg: f64,
 }
 
-/// Whether `p` is inside the closed polygon `outline` (even-odd rule).
-pub fn contains(outline: &[Pt], p: Pt) -> bool {
-    let mut inside = false;
-    let mut j = outline.len().wrapping_sub(1);
-    for (i, &(xi, yi)) in outline.iter().enumerate() {
-        let (xj, yj) = outline[j];
-        if (yi > p.1) != (yj > p.1) && p.0 < (xj - xi) * (p.1 - yi) / (yj - yi) + xi {
-            inside = !inside;
-        }
-        j = i;
-    }
-    inside
-}
-
 /// An SVG path for a closed polygon, shifted down by `dy` (the page's scroll, so the
 /// hole stays on the paper it was torn in).
 pub fn ring_path(outline: &[Pt]) -> String {
@@ -171,35 +157,6 @@ pub fn sheet_path(tear: &Tear, width: f64, height: f64, scroll: f64) -> String {
     )
 }
 
-/// The repair's clock, in ms since the finger let go. The tape goes on when Rambo has
-/// had time to get there, lies for a while, then tape and tear fade together.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stage {
-    /// Torn and open; Rambo is on his way.
-    Open,
-    /// The tape is going on.
-    Taping,
-    /// Taped and left alone.
-    Taped,
-    /// Tape and tear fading out.
-    Fading,
-    /// The page is whole again.
-    Gone,
-}
-
-/// The stage `elapsed` ms after the finger let go.
-pub fn stage(elapsed: u32) -> Stage {
-    let laid = TAPE_AT_MS + TAPE_LAY_MS;
-    let faded = laid + TEAR_HOLD_MS;
-    match elapsed {
-        e if e < TAPE_AT_MS => Stage::Open,
-        e if e < laid => Stage::Taping,
-        e if e < faded => Stage::Taped,
-        e if e < faded + TEAR_FADE_MS => Stage::Fading,
-        _ => Stage::Gone,
-    }
-}
-
 /// When the page is whole again, in ms after the finger let go.
 pub const fn total_ms() -> u32 {
     TAPE_AT_MS + TAPE_LAY_MS + TEAR_HOLD_MS + TEAR_FADE_MS
@@ -208,6 +165,20 @@ pub const fn total_ms() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Whether `p` is inside the closed polygon `outline` (even-odd rule).
+    pub fn contains(outline: &[Pt], p: Pt) -> bool {
+        let mut inside = false;
+        let mut j = outline.len().wrapping_sub(1);
+        for (i, &(xi, yi)) in outline.iter().enumerate() {
+            let (xj, yj) = outline[j];
+            if (yi > p.1) != (yj > p.1) && p.0 < (xj - xi) * (p.1 - yi) / (yj - yi) + xi {
+                inside = !inside;
+            }
+            j = i;
+        }
+        inside
+    }
 
     fn tear(span: f64) -> Tear {
         Tear {
@@ -343,25 +314,5 @@ mod tests {
             assert!((tape.angle_deg - 90.0).abs() <= TAPE_SKEW_DEG);
         }
         assert!(tapes.windows(2).all(|w| w[0].at.0 < w[1].at.0));
-    }
-
-    #[test]
-    fn the_repair_runs_open_taping_taped_fading_gone() {
-        let stages: Vec<Stage> = (0..=total_ms()).step_by(50).map(stage).collect();
-        assert_eq!(stages.first(), Some(&Stage::Open));
-        assert_eq!(stages.last(), Some(&Stage::Gone));
-        let mut order = stages.clone();
-        order.dedup();
-        assert_eq!(
-            order,
-            [
-                Stage::Open,
-                Stage::Taping,
-                Stage::Taped,
-                Stage::Fading,
-                Stage::Gone
-            ]
-        );
-        assert_eq!(stage(total_ms() - 1), Stage::Fading);
     }
 }

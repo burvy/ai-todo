@@ -326,8 +326,17 @@ mod imp {
         }
 
         pub(crate) fn scrolled(&self) {
-            if let Some(pane) = self.dom.pane.get() {
-                self.scroll.set(f64::from(pane.scroll_top()));
+            let Some(pane) = self.dom.pane.get() else {
+                return;
+            };
+            self.scroll.set(f64::from(pane.scroll_top()));
+            // The list moved under the tear: he stays on it while he tapes.
+            if let (State::Mending, Some(tear)) =
+                (self.dom.state.get_untracked(), self.tear.get_untracked())
+            {
+                let (left, top) = Self::origin(&pane);
+                let (mx, my) = tear.middle();
+                self.dom.pen_pos.set((left + mx, top + my));
             }
         }
     }
