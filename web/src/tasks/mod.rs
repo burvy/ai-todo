@@ -297,7 +297,7 @@ pub async fn on_delete_requested(_task_id: todo_core::TaskId) {}
 pub async fn delete_with_scribble(
     task_id: &todo_core::TaskId,
     snapshot: ReadSignal<Snapshot>,
-    scraps: RwSignal<Option<scrap::Scrap>>,
+    scraps: RwSignal<Vec<scrap::Scrap>>,
 ) -> Result<todo_core::Snapshot, api::ApiError> {
     on_delete_requested(task_id.clone()).await;
     delete_scribbled(task_id, snapshot, scraps).await
@@ -308,7 +308,7 @@ pub async fn delete_with_scribble(
 pub async fn delete_scribbled(
     task_id: &todo_core::TaskId,
     snapshot: ReadSignal<Snapshot>,
-    scraps: RwSignal<Option<scrap::Scrap>>,
+    scraps: RwSignal<Vec<scrap::Scrap>>,
 ) -> Result<todo_core::Snapshot, api::ApiError> {
     let delete = async {
         match occurrence_parts(&task_id.0) {
@@ -336,7 +336,7 @@ pub(crate) fn TaskList(
     /// The task whose edit sheet is open; Rambo listens for its change while it is.
     open_sheet: RwSignal<Option<TaskId>>,
     /// The scrap a swiped-out row leaves in the corner, to tape it back.
-    scraps: RwSignal<Option<scrap::Scrap>>,
+    scraps: RwSignal<Vec<scrap::Scrap>>,
 ) -> impl IntoView {
     #[cfg(not(target_arch = "wasm32"))]
     let _ = pen_pos;

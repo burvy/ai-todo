@@ -2716,6 +2716,44 @@ mod tests {
         assert_eq!(tasks[0].title, "Post the letter");
     }
 
+    /// The scrap undo end to end: two tasks deleted one after the other are both taped
+    /// back, and a fresh read of the list (a reload) still holds both.
+    #[tokio::test]
+    async fn two_quick_deletes_are_both_taped_back_and_stay() {
+        let router = router_at(sunday_night());
+        let mut gone = Vec::new();
+        for title in ["Post the letter", "Water the plants"] {
+            let id = create_task(&router, title).await;
+            let (_, held) = send(&router, "GET", "/api/v1/snapshot", None).await;
+            let task = serde_json::from_value::<Snapshot>(held)
+                .unwrap()
+                .tasks
+                .into_iter()
+                .find(|task| task.id.0 == id)
+                .expect("created");
+            gone.push(serde_json::to_string(&task).unwrap());
+            send(&router, "DELETE", &format!("/api/v1/tasks/{id}"), None).await;
+        }
+        let titles = |snapshot: Snapshot| {
+            let mut titles: Vec<_> = snapshot.tasks.into_iter().map(|task| task.title).collect();
+            titles.sort();
+            titles
+        };
+        let (_, empty) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        assert!(titles(serde_json::from_value(empty).unwrap()).is_empty());
+
+        for task in &gone {
+            let (status, _) = send(&router, "POST", "/api/v1/tasks/restore", Some(task)).await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        let (_, reload) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        assert_eq!(
+            titles(serde_json::from_value(reload).unwrap()),
+            ["Post the letter", "Water the plants"],
+            "each task is back and stored, not just answered"
+        );
+    }
+
     #[tokio::test]
     async fn a_restore_is_checked_like_a_create() {
         let router = router_at(sunday_night());

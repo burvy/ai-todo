@@ -108,7 +108,7 @@ pub fn App() -> impl IntoView {
     // The task whose edit sheet is open: the list owns it, Rambo listens while it is
     let open_sheet = RwSignal::new(None::<TaskId>);
     // The scrap a swiped-out row leaves in the corner, to tape it back
-    let scraps = RwSignal::new(None::<scrap::Scrap>);
+    let scraps = RwSignal::new(Vec::<scrap::Scrap>::new());
     // Capture form ref so Rambo can requestSubmit on release
     let form_ref = NodeRef::<leptos::html::Form>::new();
     // Nest ref so Rambo (independent fixed layer) can measure where to sit at home

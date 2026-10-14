@@ -88,7 +88,7 @@ ink, each row's loops its own (seeded by the row). Let go past
 `SCRIBBLE_COMMIT_SHARE` of the row (or flick past `row::SWIPE_PX`) and the ink
 finishes across and the row is deleted; short of that, the ink lifts away. Every
 delete (the swipe, the row's x, Rambo's x, the sheet's x) leaves a **paper scrap**
-in the bottom-left corner for `SCRAP_UNDO_MS` of time the page is in view: tap it and the task is taped back as it was (`POST
+in the bottom-left corner for `SCRAP_UNDO_MS` of time the page is in view. Scraps pile up, newest at the bottom, up to `SCRAP_MAX` (two quick deletes leave two, each taping back its own task; a third sends the oldest away). Tap one and the task is taped back as it was (`POST
 /api/v1/tasks/restore`; a repeat's day has its skip cleared), otherwise it slides
 away. The scrap is paper, so it slides and never fades. Times and thresholds are in `web/src/tuning.rs`; the scrap is
 `web/src/scrap.rs`.

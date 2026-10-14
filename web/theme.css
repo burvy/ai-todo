@@ -588,14 +588,24 @@ li.task-row.row-lifted {
   stroke-linejoin: round;
 }
 
-/* The deleted row's scrap: torn paper laid in the corner above the capture line,
-   tapped to tape the task back. It slides in from the edge and away again; paper
-   slides, only ink fades (DESIGN-DIRECTION §9). */
-.scrap-undo {
+/* The corner the scraps pile in, newest at the bottom; it takes no taps itself. */
+.scrap-pile {
   position: fixed;
   left: var(--gutter);
   bottom: calc(56px + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
   z-index: var(--layer-note);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  pointer-events: none;
+}
+
+/* The deleted row's scrap: torn paper laid in the corner above the capture line,
+   tapped to tape the task back. It slides in from the edge and away again; paper
+   slides, only ink fades (DESIGN-DIRECTION §9). */
+.scrap-undo {
+  pointer-events: auto;
   display: grid;
   gap: 0.1em;
   max-width: min(18em, 70vw);

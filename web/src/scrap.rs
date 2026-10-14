@@ -2,7 +2,9 @@
 //! "Undo is the scrap"). Tap it within [`SCRAP_UNDO_MS`] and the task is taped
 //! back as it was; after that it slides away and the delete stands. Every delete
 //! lays one, whichever control made it: the undo belongs to the delete, not the
-//! gesture. Its clock only runs while the page is in view.
+//! gesture. Scraps pile up, newest at the bottom, up to [`SCRAP_MAX`]: two quick
+//! deletes leave two, each taping back its own task. A scrap's clock only runs
+//! while the page is in view.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -13,7 +15,7 @@ use todo_core::{Snapshot, Task};
 use crate::api;
 use crate::edits::series_note;
 use crate::tasks::occurrence_parts;
-use crate::tuning::{SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS};
+use crate::tuning::{SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS};
 
 /// What taping a scrap back does.
 #[derive(Clone, Debug, PartialEq)]
@@ -24,8 +26,8 @@ pub enum Undo {
     Day { series: String, date: NaiveDate },
 }
 
-/// The scrap lying in the corner. A newer delete lays a new scrap over it, and
-/// each one's timers only ever clear their own (`ticket`).
+/// The scraps lying in the corner, oldest first. A newer delete lays a new scrap
+/// beside the others, and each one's timers only ever clear their own (`ticket`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scrap {
     pub title: String,
@@ -52,9 +54,25 @@ pub fn undo_for(snapshot: &Snapshot, id: &str) -> Option<(String, Undo)> {
     Some((task.title.clone(), undo))
 }
 
-/// Whether a timer laid with `ticket` still owns what lies in the corner.
-fn owns(scrap: Option<&Scrap>, ticket: u32) -> bool {
-    scrap.is_some_and(|scrap| scrap.ticket == ticket)
+/// Whether a timer laid with `ticket` still has its scrap in the corner.
+fn owns(pile: &[Scrap], ticket: u32) -> bool {
+    pile.iter().any(|scrap| scrap.ticket == ticket)
+}
+
+/// The corner with `scrap` laid at the bottom. Past [`SCRAP_MAX`] the oldest goes:
+/// the corner never fills the page.
+fn laid(mut pile: Vec<Scrap>, scrap: Scrap) -> Vec<Scrap> {
+    pile.push(scrap);
+    let extra = pile.len().saturating_sub(SCRAP_MAX);
+    pile.drain(..extra);
+    pile
+}
+
+/// Change the scrap laid with `ticket`, if it is still there.
+fn edit(pile: &mut [Scrap], ticket: u32, change: impl FnOnce(&mut Scrap)) {
+    if let Some(scrap) = pile.iter_mut().find(|scrap| scrap.ticket == ticket) {
+        change(scrap);
+    }
 }
 
 /// The undo time left after one more tick. It only runs while the page is in view
@@ -68,16 +86,15 @@ fn after_tick(left_ms: u32, paused: bool) -> u32 {
 }
 
 /// What lies in the corner once the server answers the tape-back of scrap `ticket`:
-/// taken back, it is gone; refused, it is laid down again to try once more. A
-/// newer scrap is left as it is.
-fn after_tape(scrap: Option<Scrap>, ticket: u32, taken_back: bool) -> Option<Scrap> {
-    match scrap {
-        Some(scrap) if scrap.ticket == ticket => (!taken_back).then_some(Scrap {
-            taping: false,
-            ..scrap
-        }),
-        other => other,
+/// taken back, it is gone; refused, it is laid down again to try once more. The
+/// other scraps are left as they are.
+fn after_tape(mut pile: Vec<Scrap>, ticket: u32, taken_back: bool) -> Vec<Scrap> {
+    if taken_back {
+        pile.retain(|scrap| scrap.ticket != ticket);
+    } else {
+        edit(&mut pile, ticket, |scrap| scrap.taping = false);
     }
+    pile
 }
 
 fn page_hidden() -> bool {
@@ -86,18 +103,19 @@ fn page_hidden() -> bool {
         .is_some_and(|document| document.hidden())
 }
 
-/// Lay the scrap of a row just deleted, replacing any scrap already there.
-pub fn lay(scraps: RwSignal<Option<Scrap>>, title: String, undo: Undo) {
+/// Lay the scrap of a row just deleted, under the scraps already there.
+pub fn lay(scraps: RwSignal<Vec<Scrap>>, title: String, undo: Undo) {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let ticket = NEXT.fetch_add(1, Ordering::Relaxed);
-    scraps.set(Some(Scrap {
+    let scrap = Scrap {
         title,
         undo,
         leaving: false,
         taping: false,
         ticket,
-    }));
-    let still_ours = move || scraps.with_untracked(|scrap| owns(scrap.as_ref(), ticket));
+    };
+    scraps.update(|pile| *pile = laid(std::mem::take(pile), scrap));
+    let still_ours = move || scraps.with_untracked(|pile| owns(pile, ticket));
     wasm_bindgen_futures::spawn_local(async move {
         let mut left_ms = SCRAP_UNDO_MS;
         while left_ms > 0 {
@@ -105,18 +123,15 @@ pub fn lay(scraps: RwSignal<Option<Scrap>>, title: String, undo: Undo) {
             if !still_ours() {
                 return;
             }
-            let taping = scraps.with_untracked(|scrap| scrap.as_ref().is_some_and(|s| s.taping));
+            let taping = scraps.with_untracked(|pile| {
+                pile.iter()
+                    .any(|scrap| scrap.ticket == ticket && scrap.taping)
+            });
             left_ms = after_tick(left_ms, page_hidden() || taping);
         }
-        scraps.update(|scrap| {
-            if let Some(scrap) = scrap.as_mut() {
-                scrap.leaving = true;
-            }
-        });
+        scraps.update(|pile| edit(pile, ticket, |scrap| scrap.leaving = true));
         gloo_timers::future::TimeoutFuture::new(SCRAP_SLIDE_MS).await;
-        if still_ours() {
-            scraps.set(None);
-        }
+        scraps.update(|pile| pile.retain(|scrap| scrap.ticket != ticket));
     });
 }
 
@@ -125,7 +140,7 @@ pub fn lay(scraps: RwSignal<Option<Scrap>>, title: String, undo: Undo) {
 pub async fn delete_and_lay<F>(
     task_id: &todo_core::TaskId,
     snapshot: ReadSignal<Snapshot>,
-    scraps: RwSignal<Option<Scrap>>,
+    scraps: RwSignal<Vec<Scrap>>,
     delete: F,
 ) -> Result<Snapshot, api::ApiError>
 where
@@ -144,7 +159,7 @@ where
 /// the undo.
 async fn tape_back(
     scrap: Scrap,
-    scraps: RwSignal<Option<Scrap>>,
+    scraps: RwSignal<Vec<Scrap>>,
     set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
 ) {
@@ -152,49 +167,62 @@ async fn tape_back(
         Undo::Task(task) => api::restore_task(&task).await,
         Undo::Day { series, date } => api::clear_occurrence(&series, &date.to_string()).await,
     };
-    scraps.update(|corner| *corner = after_tape(corner.take(), scrap.ticket, result.is_ok()));
+    scraps.update(|pile| *pile = after_tape(std::mem::take(pile), scrap.ticket, result.is_ok()));
     match result {
         Ok(snapshot) => set_snapshot.set(snapshot),
         Err(error) => set_error.set(Some(series_note(&error))),
     }
 }
 
-/// The corner the scrap lies in. Nothing is drawn while there is no scrap.
+/// The corner the scraps lie in. Nothing is drawn while there is none. Each scrap is
+/// kept by its ticket, so a new one sliding in does not replay the others' entrance.
 #[component]
 pub fn ScrapCorner(
-    scraps: RwSignal<Option<Scrap>>,
+    scraps: RwSignal<Vec<Scrap>>,
     set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
 ) -> impl IntoView {
-    move || {
-        scraps.get().map(|scrap| {
-            let tapped = scrap.clone();
-            let label = format!("Tape \"{}\" back", scrap.title);
-            view! {
-                <button
-                    type="button"
-                    class="scrap-undo"
-                    class:leaving=scrap.leaving
-                    class:taping=scrap.taping
-                    style:--scrap-ms=format!("{SCRAP_SLIDE_MS}ms")
-                    aria-label=label
-                    aria-busy=scrap.taping.to_string()
-                    disabled=scrap.leaving || scrap.taping
-                    on:click=move |_| {
-                        scraps.update(|corner| {
-                            if let Some(corner) = corner.as_mut() {
-                                corner.taping = true;
+    view! {
+        <div class="scrap-pile">
+            <For
+                each=move || scraps.get()
+                key=|scrap| scrap.ticket
+                children=move |scrap| {
+                    let ticket = scrap.ticket;
+                    let state = move |read: fn(&Scrap) -> bool| {
+                        scraps.with(|pile| pile.iter().any(|s| s.ticket == ticket && read(s)))
+                    };
+                    let label = format!("Tape \"{}\" back", scrap.title);
+                    view! {
+                        <button
+                            type="button"
+                            class="scrap-undo"
+                            class:leaving=move || state(|s| s.leaving)
+                            class:taping=move || state(|s| s.taping)
+                            style:--scrap-ms=format!("{SCRAP_SLIDE_MS}ms")
+                            aria-label=label
+                            aria-busy=move || state(|s| s.taping).to_string()
+                            disabled=move || state(|s| s.leaving || s.taping)
+                            on:click={
+                                let tapped = scrap.clone();
+                                move |_| {
+                                    scraps.update(|pile| edit(pile, ticket, |s| s.taping = true));
+                                    wasm_bindgen_futures::spawn_local(tape_back(
+                                        tapped.clone(),
+                                        scraps,
+                                        set_snapshot,
+                                        set_error,
+                                    ));
+                                }
                             }
-                        });
-                        let tapped = tapped.clone();
-                        wasm_bindgen_futures::spawn_local(tape_back(tapped, scraps, set_snapshot, set_error));
+                        >
+                            <s>{scrap.title.clone()}</s>
+                            <small>"Tap to tape it back"</small>
+                        </button>
                     }
-                >
-                    <s>{scrap.title.clone()}</s>
-                    <small>"Tap to tape it back"</small>
-                </button>
-            }
-        })
+                }
+            />
+        </div>
     }
 }
 
@@ -246,40 +274,61 @@ mod tests {
         assert_eq!(after_tick(SCRAP_TICK_MS / 2, false), 0, "never below zero");
     }
 
-    #[test]
-    fn a_refused_tape_back_keeps_the_scrap() {
-        let tapped = Scrap {
-            title: "Gym".into(),
+    fn scrap(ticket: u32) -> Scrap {
+        Scrap {
+            title: format!("Task {ticket}"),
             undo: Undo::Day {
                 series: "s".into(),
                 date: NaiveDate::from_ymd_opt(2026, 10, 15).unwrap(),
             },
             leaving: false,
-            taping: true,
-            ticket: 3,
-        };
-        assert_eq!(
-            after_tape(Some(tapped.clone()), 3, true),
-            None,
-            "taken back"
-        );
-        assert_eq!(
-            after_tape(Some(tapped.clone()), 3, false),
-            Some(Scrap {
-                taping: false,
-                ..tapped.clone()
-            }),
-            "refused: laid down again to tap once more"
-        );
-        let newer = Scrap {
-            ticket: 4,
             taping: false,
-            ..tapped
+            ticket,
+        }
+    }
+
+    fn tickets(pile: &[Scrap]) -> Vec<u32> {
+        pile.iter().map(|scrap| scrap.ticket).collect()
+    }
+
+    #[test]
+    fn quick_deletes_keep_their_own_scraps_newest_at_the_bottom() {
+        let pile = laid(laid(Vec::new(), scrap(1)), scrap(2));
+        assert_eq!(tickets(&pile), [1, 2], "both are there, each with its task");
+        assert_ne!(pile[0].title, pile[1].title);
+    }
+
+    #[test]
+    fn the_corner_never_holds_more_than_the_most_it_may() {
+        let most = SCRAP_MAX as u32;
+        let pile = (0..most + 2).fold(Vec::new(), |pile, n| laid(pile, scrap(n)));
+        assert_eq!(pile.len(), SCRAP_MAX);
+        assert_eq!(pile.last().map(|s| s.ticket), Some(most + 1));
+        assert_eq!(pile[0].ticket, 2, "the oldest went first");
+    }
+
+    #[test]
+    fn a_refused_tape_back_keeps_the_scrap() {
+        let tapped = Scrap {
+            taping: true,
+            ..scrap(3)
         };
+        let pile = vec![scrap(2), tapped.clone()];
         assert_eq!(
-            after_tape(Some(newer.clone()), 3, true),
-            Some(newer),
-            "a newer delete's scrap stays"
+            tickets(&after_tape(pile.clone(), 3, true)),
+            [2],
+            "taken back: only that scrap goes"
+        );
+        assert_eq!(
+            after_tape(pile, 3, false),
+            vec![
+                scrap(2),
+                Scrap {
+                    taping: false,
+                    ..tapped
+                }
+            ],
+            "refused: laid down again to tap once more, the other untouched"
         );
         assert_eq!(
             after_tick(SCRAP_UNDO_MS, true),
@@ -290,19 +339,10 @@ mod tests {
 
     #[test]
     fn a_timer_only_clears_its_own_scrap() {
-        let scrap = |ticket| Scrap {
-            title: "Gym".into(),
-            undo: Undo::Day {
-                series: "s".into(),
-                date: NaiveDate::from_ymd_opt(2026, 10, 15).unwrap(),
-            },
-            leaving: false,
-            taping: false,
-            ticket,
-        };
-        assert!(owns(Some(&scrap(3)), 3));
-        // A newer delete laid its own scrap: the older timer leaves it be.
-        assert!(!owns(Some(&scrap(4)), 3));
-        assert!(!owns(None, 3), "already taped back");
+        let pile = vec![scrap(4)];
+        assert!(owns(&pile, 4));
+        // A timer laid for an older scrap finds it gone and leaves the rest be.
+        assert!(!owns(&pile, 3));
+        assert!(!owns(&[], 3), "already taped back");
     }
 }
