@@ -605,6 +605,36 @@ fn schedule_whisper(index: RwSignal<usize>, fading: RwSignal<bool>) {
     .forget();
 }
 
+/// What a submit adds: Rambo's transcript when he just heard one, else the box.
+///
+/// A release submits the form in the same tick that hands over the transcript, before
+/// the box has caught up with it, so the box alone would send the text from before.
+/// Typing clears the transcript, so an edited box always wins. Blank is nothing to add.
+fn capture_title(transcript: &str, typed: &str) -> Option<String> {
+    let source = if transcript.trim().is_empty() {
+        typed
+    } else {
+        transcript
+    };
+    let title = source.trim();
+    (!title.is_empty()).then(|| title.to_owned())
+}
+
+/// The note when a capture was not added, naming it so it is never silently lost.
+fn capture_note(title: &str, error: &api::ApiError) -> String {
+    match error {
+        api::ApiError::Network(_) => {
+            format!("Could not reach the server, so \"{title}\" was not added.")
+        }
+        api::ApiError::Server(refusal) => {
+            format!("\"{title}\" was not added: {}", refusal.message)
+        }
+        api::ApiError::Decode(_) => {
+            format!("\"{title}\" may not have been added. Reload to check.")
+        }
+    }
+}
+
 #[component]
 fn CaptureBox(
     form_ref: NodeRef<leptos::html::Form>,
@@ -715,6 +745,8 @@ fn CaptureBox(
     let handle_input = move |ev: leptos::ev::Event| {
         // Keep the typed text first; the pen choreography below may bail out early.
         set_text.set(event_target_value(&ev));
+        // What is typed now is what a submit sends, not an older transcript.
+        capture_text.set(String::new());
         // He looks up at you as you type, and goes back to what he was doing
         // PEEK_MS after the last keystroke.
         set_typing.set(true);
@@ -741,30 +773,42 @@ fn CaptureBox(
         restart_linger();
     };
 
+    // One capture in flight at a time: a second Enter while the first is still on its
+    // way would add the same task twice.
+    let sending = RwSignal::new(false);
     let handle_submit = {
         let linger_timer = linger_timer.clone();
         move |ev: leptos::ev::SubmitEvent| {
             ev.prevent_default();
-            let text_val = text.get_untracked();
-            if !text_val.is_empty() {
-                if let Some(timer) = linger_timer.borrow_mut().take() {
-                    timer.cancel();
-                }
-                // Record current task IDs so we can find the new one after capture
-                let old_ids: std::collections::HashSet<_> =
-                    snapshot.with_untracked(|s| s.tasks.iter().map(|t| t.id.clone()).collect());
-                let set_snapshot = set_snapshot;
-                let set_text = set_text;
-                wasm_bindgen_futures::spawn_local(async move {
-                    let draft = TaskDraft {
-                        title: text_val.clone(),
-                        duration_min: 30,
-                        when: When::Anytime,
-                        label: Label::Other,
-                        priority: Priority::Medium,
-                        source: Source::Text,
-                    };
-                    if let Ok(new_snapshot) = api::create_task(draft).await {
+            if sending.get_untracked() {
+                return;
+            }
+            let Some(title) = capture_title(&capture_text.get_untracked(), &text.get_untracked())
+            else {
+                return;
+            };
+            if let Some(timer) = linger_timer.borrow_mut().take() {
+                timer.cancel();
+            }
+            // Record current task IDs so we can find the new one after capture
+            let old_ids: std::collections::HashSet<_> =
+                snapshot.with_untracked(|s| s.tasks.iter().map(|t| t.id.clone()).collect());
+            // The box empties now, so whatever is typed while the task is on its way
+            // is the next task, not wiped when this one lands.
+            sending.set(true);
+            set_text.set(String::new());
+            capture_text.set(String::new());
+            wasm_bindgen_futures::spawn_local(async move {
+                let draft = TaskDraft {
+                    title: title.clone(),
+                    duration_min: 30,
+                    when: When::Anytime,
+                    label: Label::Other,
+                    priority: Priority::Medium,
+                    source: Source::Text,
+                };
+                match api::create_task(draft).await {
+                    Ok(new_snapshot) => {
                         // Find the new task ID (the one not in old_ids)
                         let new_id: Option<TaskId> = new_snapshot
                             .tasks
@@ -778,10 +822,17 @@ fn CaptureBox(
                         }
                         set_snapshot.set(new_snapshot);
                     }
-                    set_text.set(String::new());
-                    capture_text.set(String::new());
-                });
-            }
+                    Err(error) => {
+                        // Never lose what was said: it goes back in the box when the
+                        // box is still empty, and the note names it either way.
+                        if text.get_untracked().trim().is_empty() {
+                            set_text.set(title.clone());
+                        }
+                        set_error.set(Some(capture_note(&title, &error)));
+                    }
+                }
+                sending.set(false);
+            });
         }
     };
 
@@ -2291,6 +2342,34 @@ mod tests {
         moved.when = When::At(moved.created);
         moved.updated_at += chrono::Duration::seconds(1);
         assert!(RowKey(moved) != same, "a new time draws a new row");
+    }
+
+    #[test]
+    fn a_capture_sends_the_fresh_transcript_or_the_box_and_never_blank() {
+        // Rambo's release: the transcript is newer than the box.
+        assert_eq!(
+            capture_title(" buy milk ", "old text").as_deref(),
+            Some("buy milk")
+        );
+        // Typed: typing cleared the transcript.
+        assert_eq!(capture_title("", "call mum ").as_deref(), Some("call mum"));
+        assert_eq!(capture_title("", "   "), None, "blank adds nothing");
+        assert_eq!(capture_title(" ", ""), None);
+    }
+
+    #[test]
+    fn a_capture_that_failed_is_named_in_the_note() {
+        let offline = api::ApiError::Network("offline".into());
+        assert!(capture_note("buy milk", &offline).contains("\"buy milk\""));
+        assert!(capture_note("buy milk", &offline).contains("Could not reach the server"));
+        let refused = api::ApiError::Server(todo_core::ApiError {
+            code: todo_core::ErrorCode::Forbidden,
+            message: "this account is paused".into(),
+        });
+        assert_eq!(
+            capture_note("buy milk", &refused),
+            "\"buy milk\" was not added: this account is paused"
+        );
     }
 
     #[test]
