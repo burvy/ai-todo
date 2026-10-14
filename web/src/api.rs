@@ -5,7 +5,7 @@ use js_sys;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use todo_core::{ApiError as CoreApiError, Snapshot, TaskDraft, TaskId, When};
+use todo_core::{ApiError as CoreApiError, ErrorCode, Snapshot, TaskDraft, TaskId, When};
 use uuid::Uuid;
 
 /// Keeps the anonymous id the server issued, and ends the signed-in session when the
@@ -55,8 +55,7 @@ impl SendChecked for RequestBuilder {
             .send()
             .await
             .map_err(|e| ApiError::Network(e.to_string()))?;
-        check_response(&response);
-        Ok(response)
+        accepted(response).await
     }
 }
 
@@ -66,9 +65,48 @@ impl SendChecked for Request {
             .send()
             .await
             .map_err(|e| ApiError::Network(e.to_string()))?;
-        check_response(&response);
-        Ok(response)
+        accepted(response).await
     }
+}
+
+/// The response when the server accepted the request, else its refusal. A refusal must
+/// not reach the caller's `.json::<Snapshot>()`: that would turn "this task changed
+/// elsewhere" into a decode error the user cannot act on.
+async fn accepted(response: Response) -> Result<Response, ApiError> {
+    check_response(&response);
+    if response.ok() {
+        return Ok(response);
+    }
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    Err(refusal(status, &body))
+}
+
+/// A refused request as the server explained it: `{ "error": { "code", "message" } }`.
+/// A body without that shape (a proxy's error page, an empty 502) is named from its
+/// status, so the caller can still tell a stale edit from a server that is down.
+fn refusal(status: u16, body: &str) -> ApiError {
+    #[derive(Deserialize)]
+    struct Refusal {
+        error: CoreApiError,
+    }
+    if let Ok(Refusal { error }) = serde_json::from_str(body) {
+        return ApiError::Server(error);
+    }
+    let code = match status {
+        400 => ErrorCode::BadRequest,
+        401 => ErrorCode::Unauthorized,
+        403 => ErrorCode::Forbidden,
+        404 => ErrorCode::NotFound,
+        409 => ErrorCode::Conflict,
+        502 | 504 => ErrorCode::Upstream,
+        503 => ErrorCode::Unavailable,
+        _ => ErrorCode::Internal,
+    };
+    ApiError::Server(CoreApiError {
+        code,
+        message: format!("The server answered {status}."),
+    })
 }
 
 /// Get the anonymous user ID from localStorage, or generate a new one if not present.
@@ -597,4 +635,34 @@ pub async fn clear_occurrence(series_id: &str, date: &str) -> Result<Snapshot, A
         .json::<Snapshot>()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stale_edit_is_refused_as_stale_not_as_an_undecodable_snapshot() {
+        let body = r#"{"error":{"code":"stale_update","message":"that task changed"}}"#;
+        match refusal(409, body) {
+            ApiError::Server(error) => {
+                assert_eq!(error.code, ErrorCode::StaleUpdate);
+                assert_eq!(error.message, "that task changed");
+            }
+            other => panic!("expected the server's refusal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_refusal_without_the_error_body_is_named_from_its_status() {
+        let code = |status, body| match refusal(status, body) {
+            ApiError::Server(error) => error.code,
+            other => panic!("expected a server refusal, got {other:?}"),
+        };
+        assert_eq!(code(502, "<html>Bad gateway</html>"), ErrorCode::Upstream);
+        assert_eq!(code(503, ""), ErrorCode::Unavailable);
+        assert_eq!(code(401, ""), ErrorCode::Unauthorized);
+        assert_eq!(code(404, "not json"), ErrorCode::NotFound);
+        assert_eq!(code(500, "{}"), ErrorCode::Internal);
+    }
 }
