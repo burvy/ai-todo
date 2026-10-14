@@ -81,3 +81,30 @@ async fn a_day_only_task_is_placed_on_its_day_near_the_users_usual_time() {
     assert_eq!(call.start, local(&ctx, 16, 15, 0));
     assert!(call.end <= local(&ctx, 16, 23, 59));
 }
+
+#[tokio::test]
+async fn every_chore_said_alone_is_captured() {
+    // Offline, or over the Jev cap, capture is judged by `FakeJudge`: a chore with any
+    // verb must still become its task, titled as said.
+    let ctx = ctx();
+    for (said, title) in [
+        ("walk the dog", "Walk the dog"),
+        ("fix the sink", "Fix the sink"),
+        ("water plants", "Water plants"),
+        ("mow the lawn", "Mow the lawn"),
+        ("clean the bathroom", "Clean the bathroom"),
+        ("feed the cat", "Feed the cat"),
+    ] {
+        let drafts = capture_text(
+            &FakeJudge,
+            said,
+            Source::Text,
+            DaySettings::default().deadline,
+            &ctx,
+        )
+        .await
+        .unwrap();
+        let titles: Vec<_> = drafts.iter().map(|draft| draft.title.as_str()).collect();
+        assert_eq!(titles, [title], "{said}");
+    }
+}
