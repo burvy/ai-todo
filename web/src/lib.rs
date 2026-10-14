@@ -3,6 +3,8 @@ use gloo_timers::callback::Timeout;
 #[cfg(target_arch = "wasm32")]
 use js_sys::Array;
 use leptos::prelude::*;
+use std::cell::Cell;
+use std::rc::Rc;
 use todo_core::Snapshot;
 use todo_core::{Label, Priority, Source, TaskDraft, TaskId, When};
 use wasm_bindgen::JsCast;
@@ -349,10 +351,17 @@ pub fn App() -> impl IntoView {
     account::start();
     let main_ref = NodeRef::<leptos::html::Main>::new();
     let (pane, set_pane) = signal(0_u8);
-    // The page flip: where the finger went down, and what direction is turning.
-    // Some(true) = turning forward (list → planner), Some(false) = turning back.
-    let swipe_start = RwSignal::new(None::<(f64, f64)>);
+    // The page flip: where the finger went down, on which page it went down,
+    // and what direction is turning. Some(true) = turning forward (list →
+    // planner), Some(false) = turning back. The page belongs to the gesture
+    // start: main is a native scroll-snap row, so on a fast flick the scroll
+    // moves the page under the finger and `pane` is already the destination by
+    // the time the pointer comes up.
+    let swipe_start = RwSignal::new(None::<(f64, f64, u8)>);
     let turning = RwSignal::new(None::<bool>);
+    // Two quick swipes means two shade timers. Only the newest one may take the
+    // class off, or the first to fire clears the shading mid-turn.
+    let turn_id = Rc::new(Cell::new(0_u32));
     #[cfg(target_arch = "wasm32")]
     let (flip_down, flip_up, flip_cancel) = (
         // Never fight controls: Rambo's drag, the capture bar, the nav, the
@@ -373,22 +382,20 @@ pub fn App() -> impl IntoView {
                 swipe_start.set(Some((
                     f64::from(event.client_x()),
                     f64::from(event.client_y()),
+                    pane.get_untracked(),
                 )));
             }
         },
         move |event: leptos::ev::PointerEvent| {
-            let Some((x0, y0)) = swipe_start.get_untracked() else {
+            let Some((x0, y0, from)) = swipe_start.get_untracked() else {
                 return;
             };
             swipe_start.set(None);
-            let target = flip_target(
-                pane.get_untracked(),
-                f64::from(event.client_x()) - x0,
-                f64::from(event.client_y()) - y0,
-            );
-            if target.is_none() || target == Some(pane.get_untracked()) {
+            let dx = f64::from(event.client_x()) - x0;
+            let dy = f64::from(event.client_y()) - y0;
+            let Some(index) = flip_turn(from, dx, dy) else {
                 return;
-            }
+            };
             // A turn only exists where the pages really scroll: on a wide
             // screen both pages are on the desk at once, nothing to turn.
             let Some(element) = main_ref.get() else {
@@ -397,12 +404,16 @@ pub fn App() -> impl IntoView {
             if f64::from(element.scroll_width()) <= f64::from(element.client_width()) {
                 return;
             }
-            let index = target.unwrap();
             turning.set(Some(index == 1));
             show_pane(main_ref, index, set_pane);
+            turn_id.set(turn_id.get() + 1);
+            let turn = turn_id.get();
+            let counting = turn_id.clone();
             wasm_bindgen_futures::spawn_local(async move {
                 gloo_timers::future::TimeoutFuture::new(FLIP_MS).await;
-                turning.set(None);
+                if counting.get() == turn {
+                    turning.set(None);
+                }
             });
         },
         move |_: leptos::ev::PointerEvent| swipe_start.set(None),
@@ -414,7 +425,7 @@ pub fn App() -> impl IntoView {
         |_: leptos::ev::PointerEvent| {},
     );
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = swipe_start;
+    let _ = (swipe_start, turn_id);
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
     let pen_pos = RwSignal::new((0.0_f64, 0.0));
@@ -535,6 +546,17 @@ fn flip_target(pane: u8, dx: f64, dy: f64) -> Option<u8> {
         (1, false) => Some(0),
         _ => None,
     }
+}
+
+/// The page a finished swipe turns to, and nothing when it should not turn.
+///
+/// `from` is the page the finger went **down** on, never the page `main` happens
+/// to be scrolled to when the finger lifts: `main` is a native scroll-snap row,
+/// so a fast flick has already dragged the row to its destination and reading
+/// the live position there would drop a turn that was meant to happen.
+#[cfg(any(target_arch = "wasm32", test))]
+fn flip_turn(from: u8, dx: f64, dy: f64) -> Option<u8> {
+    flip_target(from, dx, dy).filter(|index| *index != from)
 }
 
 /// How long the curl shading shows before the class is dropped.
@@ -1682,9 +1704,11 @@ fn TaskList(
                         draggable="true"
                         on:dragstart=handle_drag_start
                         on:dragend=handle_drag_end
-                        // The row owns its touch gestures: swipe right deletes it
-                        // (swipe left still turns the page, see flip_target), and
-                        // nothing above the row should answer the same touch.
+                        // The row answers its own touch gestures and stops them here, so nothing
+                        // above the row sees the same touch. This does NOT stop the page
+                        // flip: that listens on pointer events, which are a separate
+                        // dispatch. What keeps swipe right (delete) and swipe left (turn
+                        // the page) apart is the direction rule in flip_target.
                         on:touchstart=move |ev: leptos::ev::TouchEvent| ev.stop_propagation()
                         on:touchend=move |ev: leptos::ev::TouchEvent| ev.stop_propagation()
                     >
@@ -2555,7 +2579,7 @@ mod tests {
 
 #[cfg(test)]
 mod pane_tests {
-    use super::{flip_target, pane_at};
+    use super::{flip_target, flip_turn, pane_at};
 
     #[test]
     fn a_phone_swipe_maps_to_the_nearest_pane() {
@@ -2600,6 +2624,23 @@ mod pane_tests {
             "too steep, that is list scrolling"
         );
         assert_eq!(flip_target(0, 0.0, 0.0), None, "no move, no turn");
+    }
+
+    #[test]
+    fn a_turn_answers_the_page_the_finger_went_down_on() {
+        // The fast flick: the drag is long enough that scroll-snap has already
+        // carried the row to the planner by the time the finger lifts. The
+        // gesture still started on the list, so it must turn.
+        assert_eq!(flip_turn(0, -120.0, 10.0), Some(1));
+        // The same flick seen from the planner side is a left swipe with no
+        // page before it, however far the row has scrolled.
+        assert_eq!(flip_turn(1, -120.0, 10.0), None);
+        assert_eq!(flip_turn(1, 120.0, 10.0), Some(0));
+        // Right on the list stays the delete, never a turn.
+        assert_eq!(flip_turn(0, 120.0, 10.0), None);
+        // A swipe that never travelled stays nothing, from either page.
+        assert_eq!(flip_turn(0, -30.0, 0.0), None);
+        assert_eq!(flip_turn(1, 30.0, 0.0), None);
     }
 }
 
