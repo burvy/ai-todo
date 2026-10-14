@@ -9,7 +9,7 @@ use capture::Revision;
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc, Weekday};
 use chrono_tz::Tz;
 use scheduler::{WorkingHours, expand};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use todo_core::{
     ApiError, Clock, ErrorCode, ExceptionKind, Label, LocalContext, Occurrence, OccurrenceStatus,
     Plan, Priority, Recurrence, Series, SeriesException, SeriesId, Snapshot, Source, Task,
@@ -81,15 +81,28 @@ pub struct SeriesDraft {
     pub start_day: Option<NaiveDate>,
 }
 
-/// The fields a client may change on a series. Absent fields stay as they are.
+/// The fields a client may change on a series. Absent fields stay as they are; for
+/// `time_of_day` and `until`, an explicit `null` clears the field.
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
 pub struct SeriesPatch {
     pub title: Option<String>,
     pub duration_min: Option<u16>,
     pub weekdays: Option<Vec<Weekday>>,
-    pub time_of_day: Option<NaiveTime>,
-    pub until: Option<NaiveDate>,
+    #[serde(default, deserialize_with = "present_or_null")]
+    pub time_of_day: Option<Option<NaiveTime>>,
+    #[serde(default, deserialize_with = "present_or_null")]
+    pub until: Option<Option<NaiveDate>>,
     pub start_day: Option<NaiveDate>,
+}
+
+/// Tells a field that is `null` (`Some(None)`) from one that is missing (`None`),
+/// which serde's plain `Option` folds together.
+fn present_or_null<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
 }
 
 /// One occurrence's deviation: `done`, `skipped`, or `moved` to a new `When`.
@@ -711,10 +724,10 @@ impl<S: Store> App<S> {
             series.rule = Self::recurrence_of(weekdays, series.rule.until)?;
         }
         if let Some(until) = patch.until {
-            series.rule.until = Some(until);
+            series.rule.until = until;
         }
         if let Some(time_of_day) = patch.time_of_day {
-            series.time_of_day = Some(time_of_day);
+            series.time_of_day = time_of_day;
         }
         if let Some(start_day) = patch.start_day {
             series.start_day = start_day;
@@ -2269,7 +2282,7 @@ mod tests {
                 &id,
                 SeriesPatch {
                     // An end before the first day: no occurrence can ever fall inside it.
-                    until: Some(day(2026, 10, 20)),
+                    until: Some(Some(day(2026, 10, 20))),
                     start_day: Some(day(2026, 11, 1)),
                     ..SeriesPatch::default()
                 },
@@ -2285,6 +2298,55 @@ mod tests {
             "the refused edit stored nothing"
         );
         assert_eq!(held.rule.until, None);
+    }
+
+    /// On the wire, `null` clears `time_of_day` and `until`, while a missing field
+    /// leaves them as they are.
+    #[test]
+    fn a_null_series_field_clears_it_and_a_missing_one_keeps_it() {
+        let patch: SeriesPatch = serde_json::from_str("{}").unwrap();
+        assert_eq!((patch.time_of_day, patch.until), (None, None));
+        let patch: SeriesPatch =
+            serde_json::from_str(r#"{"time_of_day":null,"until":null}"#).unwrap();
+        assert_eq!((patch.time_of_day, patch.until), (Some(None), Some(None)));
+        let patch: SeriesPatch =
+            serde_json::from_str(r#"{"time_of_day":"09:30:00","until":"2026-12-01"}"#).unwrap();
+        assert_eq!(
+            (patch.time_of_day, patch.until),
+            (
+                Some(NaiveTime::from_hms_opt(9, 30, 0)),
+                Some(Some(day(2026, 12, 1)))
+            )
+        );
+    }
+
+    /// Clearing the end makes the series repeat forever again, and clearing the time
+    /// makes its occurrences all-day.
+    #[test]
+    fn an_edit_can_clear_a_series_end_and_time() {
+        let (mut app, id) = app_with_one_series();
+        let set = SeriesPatch {
+            until: Some(Some(day(2026, 11, 1))),
+            ..SeriesPatch::default()
+        };
+        app.update_series(&id, set, USER, NEW_YORK).unwrap();
+        let clear = SeriesPatch {
+            time_of_day: Some(None),
+            until: Some(None),
+            ..SeriesPatch::default()
+        };
+        app.update_series(&id, clear, USER, NEW_YORK).unwrap();
+        let held = &app.snapshot(USER, NEW_YORK).unwrap().series[0];
+        assert_eq!(held.rule.until, None);
+        assert_eq!(held.time_of_day, None);
+        let keep = SeriesPatch {
+            title: Some("Run".into()),
+            ..SeriesPatch::default()
+        };
+        app.update_series(&id, keep, USER, NEW_YORK).unwrap();
+        let held = &app.snapshot(USER, NEW_YORK).unwrap().series[0];
+        assert_eq!(held.title, "Run");
+        assert_eq!(held.time_of_day, None, "a missing field changes nothing");
     }
 
     /// An `until` sent with a new series is kept: a rule that ends is not one that
