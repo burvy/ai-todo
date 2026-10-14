@@ -13,9 +13,9 @@
   --tack-pin-y: 12px;
   /* Strips are written-on paper: slightly warmer than the page. */
   --tack-paper: var(--wheat, var(--paper-raised, #ecd7af));
-  --tack-ink: var(--coffee, var(--ink, #5d4732));
+  --tack-ink: var(--ink, #5d4732);
   --tack-rule: var(--chamoisee, var(--rule, #a7865d));
-  --tack-accent: var(--golden-brown, var(--accent, #9f682e));
+  --tack-accent: var(--accent, #9f682e);
   --tack-danger: var(--danger, #a5342a);
 }
 
@@ -275,18 +275,6 @@
   .tack-bin {
     left: 12px;
     right: auto;
-  }
-}
-
-/* Ping's art is drawn on light paper. At night it takes the paper down with
-   it, so the art is dimmed rather than left glaring off the dark page — the
-   ink and the text are untouched, because only the art layers are filtered.
-   The two selectors mirror theme.css: the OS asking for dark, then the user
-   picking it in settings (which wins). */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .tack-strip::after,
-  :root:not([data-theme="light"]) .tack-bin {
-    filter: brightness(0.55) saturate(0.7);
   }
 }
 

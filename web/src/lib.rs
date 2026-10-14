@@ -197,7 +197,6 @@ pub fn App() -> impl IntoView {
                 set_snapshot=set_snapshot
                 set_error=set_error
                 capture_text
-                set_mascot_state=set_mascot_state
             />
         </main>
         // The ink a dazed Rambo leaves: above the page, below him.

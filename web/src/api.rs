@@ -2,7 +2,6 @@ use chrono::{DateTime, Utc, Weekday};
 use gloo_net::http::{Request, RequestBuilder, Response};
 #[cfg(target_arch = "wasm32")]
 use js_sys;
-use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use todo_core::{ApiError as CoreApiError, ErrorCode, Snapshot, TaskId, When};
@@ -179,12 +178,6 @@ pub fn today_date() -> String {
     }
 }
 
-pub fn use_snapshot() -> ReadSignal<Snapshot> {
-    let initial = fixture_snapshot();
-    let (snapshot, _) = signal(initial);
-    snapshot
-}
-
 /// API error that wraps both server errors and network/decoding failures.
 #[derive(Debug)]
 pub enum ApiError {
@@ -239,12 +232,6 @@ pub struct ImportResponse {
 #[derive(Clone, Debug, Serialize)]
 pub struct CaptureTextBody {
     pub text: String,
-}
-
-/// Body for revising a task.
-#[derive(Clone, Debug, Serialize)]
-pub struct ReviseBody {
-    pub instruction: String,
 }
 
 /// Body for reordering tasks.
@@ -306,18 +293,8 @@ impl PatchTaskBody {
         self
     }
 
-    pub fn label(mut self, label: todo_core::Label) -> Self {
-        self.label = Some(label);
-        self
-    }
-
     pub fn priority(mut self, priority: todo_core::Priority) -> Self {
         self.priority = Some(priority);
-        self
-    }
-
-    pub fn source(mut self, source: todo_core::Source) -> Self {
-        self.source = Some(source);
         self
     }
 }
@@ -341,36 +318,6 @@ pub async fn capture_text(text: &str) -> Result<CaptureResponse, ApiError> {
         .identity()
         .header("Content-Type", "application/json")
         .json(&body)
-        .map_err(|e| ApiError::Network(e.to_string()))?
-        .send_checked()
-        .await?;
-    response
-        .json::<CaptureResponse>()
-        .await
-        .map_err(|e| ApiError::Decode(e.to_string()))
-}
-
-/// POST /api/v1/capture with file upload (PDF, EML, TXT)
-pub async fn capture_file(file: web_sys::File) -> Result<CaptureResponse, ApiError> {
-    let form_data = web_sys::FormData::new().unwrap();
-    let file_name = file.name();
-    let name = if file_name.is_empty() {
-        "filename"
-    } else {
-        &file_name
-    };
-    form_data
-        .append_with_blob_and_filename("file", &file.into(), name)
-        .map_err(|e| {
-            ApiError::Network(
-                e.as_string()
-                    .unwrap_or_else(|| "failed to append file".into()),
-            )
-        })?;
-
-    let response = Request::post("/api/v1/capture")
-        .identity()
-        .body(form_data)
         .map_err(|e| ApiError::Network(e.to_string()))?
         .send_checked()
         .await?;
@@ -428,24 +375,6 @@ pub async fn move_series_occurrence(
 struct OccurrencePatchBody {
     kind: String,
     when: Option<When>,
-}
-
-/// POST /api/v1/tasks/{id}/revise - revise a task with an instruction
-pub async fn revise_task(id: &TaskId, instruction: &str) -> Result<Snapshot, ApiError> {
-    let url = format!("/api/v1/tasks/{}/revise", id.0);
-    let body = ReviseBody {
-        instruction: instruction.to_string(),
-    };
-    Request::post(&url)
-        .identity()
-        .header("Content-Type", "application/json")
-        .json(&body)
-        .map_err(|e| ApiError::Network(e.to_string()))?
-        .send_checked()
-        .await?
-        .json::<Snapshot>()
-        .await
-        .map_err(|e| ApiError::Decode(e.to_string()))
 }
 
 /// PUT /api/v1/tasks/order - reorder all tasks

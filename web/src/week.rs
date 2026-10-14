@@ -7,7 +7,7 @@ use todo_core::When;
 use todo_core::{Clock, SystemClock};
 use todo_core::{LocalContext, Placement, Snapshot, TaskId};
 
-use crate::{clock, mascot, settings::Settings};
+use crate::{clock, settings::Settings};
 
 /// A task being dragged by its grip: who it is, and where the finger is.
 /// Where it may land is drawn from `landing`; the drop's `updated_at` guard
@@ -65,7 +65,6 @@ pub fn WeekGrid(
     set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
     capture_text: RwSignal<String>,
-    set_mascot_state: WriteSignal<mascot::State>,
 ) -> impl IntoView {
     let grid_ref = NodeRef::<leptos::html::Div>::new();
     let (now_minutes, set_now_minutes) = signal(current_minutes());
@@ -225,7 +224,7 @@ pub fn WeekGrid(
                                     placements_on_day(&snapshot.plan.placements, i64::from(day), &ctx)
                                 }
                                 key=placement_key let:placement>
-                                <PlacementBlock placement snapshot settings set_snapshot set_error drag landing set_mascot_state />
+                                <PlacementBlock placement snapshot settings set_snapshot set_error drag landing />
                             </For>
                                 <For each=hours key=|hour| *hour let:hour>
                                     <div
@@ -587,7 +586,6 @@ fn PlacementBlock(
     set_error: WriteSignal<Option<String>>,
     drag: RwSignal<Option<Drag>>,
     landing: RwSignal<Option<Slot>>,
-    set_mascot_state: WriteSignal<mascot::State>,
 ) -> impl IntoView {
     let task_id = placement.task.clone();
     let label_task_id = task_id.clone();
@@ -601,7 +599,6 @@ fn PlacementBlock(
     let end_id = task_id.clone();
     #[cfg(target_arch = "wasm32")]
     let cancel_id = task_id.clone();
-    let drop_id = task_id.clone();
     // The slip's time rides the gear's clock: it re-writes when the clock flips.
     let render_time = move || {
         local_time_label(
@@ -845,16 +842,6 @@ fn PlacementBlock(
             );
             format!("top: {}px; height: {}px;", top, height)
         }
-            on:drop=move |_| set_mascot_state.update(|state| {
-                if matches!(state, mascot::State::Dragging)
-                    && let Some(task) = snapshot.get().tasks.iter().find(|task| task.id == drop_id)
-                {
-                    *state = mascot::transition(state, mascot::Event::DropTask {
-                        task_id: task.id.0.clone(), title: task.title.clone()
-                    });
-                }
-            })
-            on:dragover=|event| event.prevent_default()
             // The whole slip is the grab area: pointer handlers sit on the
             // block itself. On a phone they lift only after the hold (so a
             // slide stays a scroll), and touching a slip is touch-action:
