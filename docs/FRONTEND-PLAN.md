@@ -4,13 +4,14 @@ Written 2026-10-14 by Emilio (front-end owner) after the human's report on the t
 
 ## 1. Assessment
 
-### 1.1 The Rambo/nest bug: four causes, all fixed in step 0
+### 1.1 The Rambo/nest bug: five causes, all fixed in step 0
 
 Reproduced on my own server at desktop width in Chrome with a real mouse. I could not get the browser below 905px wide, so phone width and touch were checked from the code and layout, not on a device.
 
 | What the human saw | Cause | Where |
 |---|---|---|
 | "Moves with his nest" | The paper dish was painted on Rambo's own button (`.rambo` had the sunken paper background, border and round radius). The real nest button was transparent and `nest.svg` was never used. Dragging Rambo carried the dish; the nest looked gone. | `web/theme.css` `.rambo`, `.nest` |
+| "Letting go sends him to the corner" (PC and phone, every drop) | The button had a 200ms `transform` transition for every state. It also runs when a state's animation ends: held to dazed, or splat to dazed. Chrome started that transition near the window's top-left corner. Measured on main: on release his drawn position jumped to (101, 21), then slid back to the drop point at (500, 450) over 200ms. The same transition flew him in from (0, 0) on every cold load. | `web/theme.css` (motion block) |
 | "Flies to the top left" (on press) | A rule from the days when Rambo sat inside the nest, `.rambo:active { transform: translateY(1rem) rotate(8deg) }`, comes later in the file than every state rule, so while he is pressed it replaces his `translate(--pen-x, --pen-y)`. With the 200ms transform transition he *slides* to the window's top-left corner. Touch browsers apply `:active` for the whole press. | `web/theme.css` (motion block) |
 | Floats away from the nest / vanishes off the top | His home spot was measured only on mount, on a window `resize` and on a state change. On desktop the nest is in the masthead and scrolls; Rambo is `position: fixed` and stayed put. Dropped, then the page scrolled, he skittered to where the nest had been when he set off and stayed off screen (measured: stuck at y = -299 after scrolling back). On a cold load he sat 10px off the nest, because the scrollbar appears as tasks load and fires no resize. | `web/src/rambo.rs` |
 | Flies off the left edge on a phone (from code) | After a capture the pen flies to the new row to write it. On a phone the two panes sit side by side in a sideways scroll-snap; with the planner page showing, the list pane is one screen to the left, so the row's rectangle is at negative x and near the top. | `web/src/tasks/mod.rs`, `tasks/write.rs` |
@@ -55,7 +56,6 @@ Raw numbers, no scale. What they say today:
 
 - At 905px wide the To do column is about 100px: the tack board takes 160px and the planner the rest, so titles wrap word by word ("Send / — / 30 min · / Wed 8:30 / am"). The desktop grid needs a minimum for the list.
 - When writing ends, the pen does not fly home: `FlyHome` keeps `pen_pos` at the end of the row, then he jumps when the state turns `Home`.
-- At home there is still a 200ms transform transition, so on a fast scroll he trails the nest by a moment before settling.
 
 ## 2. Plan
 
@@ -63,10 +63,10 @@ Each step is one PR, gated in full, small enough to review in one sitting, and l
 
 | # | Step | Owner | Size |
 |---|---|---|---|
-| 0 | **Rambo/nest fix** (the four causes in 1.1): dish on the nest, the `:active` rule gone, follow the nest on any scroll/resize/page-size change/font load, aim the skitter at the nest's current place, no flight to off-screen rows. Test for the transform rule and for `pen::on_screen`. | Core (Emilio) | PR #267 |
+| 0 | **Rambo/nest fix** (the five causes in 1.1): dish on the nest, no transform transition except a flight, the `:active` rule gone, follow the nest on any scroll/resize/page-size change/font load, aim the skitter at the nest's current place, no flight to off-screen rows. Tests for both CSS rules and for `pen::on_screen`. | Core (Emilio) | PR #267 |
 | 1 | **One owner for his place.** A `Place` enum in `mascot.rs` (`Nest`, `At(x, y)`, `Nib(x, y)`); `rambo.rs` turns it into `--pen-x/--pen-y`, measuring the nest live for `Nest`. Writers say where he should be, never compute pixels for him. Fixes the jump at the end of writing (1.7). | Core | M |
 | 2 | **Every state change through `transition`.** Remove the nine direct `set_state(State::…)` calls; add the missing events; one test per path. | Core | S |
-| 3 | **Two-element Rambo.** An outer element that is only placed (translate) and an inner one that is only posed (rotate, scale, keyframes). The 24 restated translates go; a pose can no longer move him. Drop the home transition so he sits on the nest exactly. | Core view + CSS | M |
+| 3 | **Two-element Rambo.** An outer element that is only placed (translate) and an inner one that is only posed (rotate, scale, keyframes). The 24 restated translates go; a pose can no longer move him. | Core view + CSS | M |
 | 4 | **z-index scale.** Tokens in `:root`: page 0, sheet 2, capture 3, ink 4, Rambo 20, bubble 21, drag 30, menu 40, dialog 50, note 60. Rambo goes under menus and dialogs; the tack pin and bin go under Rambo. One table in `docs/THEME.md`. | CSS (GLM) | S |
 | 5 | **Split `theme.css`.** `tokens.css`, `layout.css`, `rambo.css`, `rows.css`, `planner.css`, `dialogs.css`, each linked by trunk; fold the appended one-liners into their sections; one breakpoint (700/701) everywhere. No visual change: screenshots must match. One file per PR. | CSS (GLM) | S each |
 | 6 | **Desktop desk widths.** Give the list a minimum (`minmax(18rem, 1fr)`) and let the tack board shrink first, so titles never wrap word by word at 905–1366px. | CSS (GLM), checked by Core | S |
@@ -81,3 +81,19 @@ Order: 0 now; then 2 and 4 (small, independent); then 1 and 3 together, since th
 
 - Phone width and touch were not reproduced in a browser (the window would not shrink below 905px here); the off-pane flight is read from code and layout. QA should confirm step 0 on a phone.
 - Dark mode was not looked at for the nest drawing; `nest.svg` restates its own dark colours.
+
+## 4. Open spec questions for the human
+
+God will settle these with the human before the restructure (steps 1 to 9) is built. Step 0 does not depend on them.
+
+1. **Rambo at rest.** DESIGN-DIRECTION §2 says his lower third hides behind the dish's rim. That needs a rim drawn above him, a third layer. Still wanted, or is "standing in the dish" enough?
+2. **Desktop capture line.** On desktop the capture line and nest sit in the masthead and scroll away with the page, and Rambo goes with them. Should they stay pinned on screen as they do on a phone, so he is always within reach?
+3. **Dazed.** Dropped on the page he stays dazed for 8 seconds, then runs home. Is 8 seconds right? Should scrolling or turning the page send him home early?
+4. **Writing a row that is off screen.** After a capture made on the planner page (phone), or while scrolled down, the new row is off screen. Today he skips the flight and the row just appears. Should the page turn or scroll to the row so he can write it?
+5. **Layers.** Should Rambo sit under the gear menu and dialogs (proposed in step 4), or stay above everything? Should the tack pin and bin go under him?
+6. **Desktop widths.** Between 905 and 1366px, which gives way first: the tack board, the planner or the list? What is the narrowest the list may get?
+7. **Breakpoint.** The phone layout ends at 700px, so a tablet held upright (768px) gets the desktop layout. Is that right?
+8. **Phone pages.** Which page opens first? Should the capture bar show on the planner page too?
+9. **Motion budget.** Which motions are must-haves for speed and feel: flight to the row, letter-by-letter writing, splat, skitter home, idle breathing, page curl? Which can go if they cost time?
+10. **Listening feedback.** While he is held and listening, what should show: a pose, a bubble, live transcript text? What should a browser without speech recognition show?
+11. **Already pending from #262:** theme follows the OS or a manual switch.
