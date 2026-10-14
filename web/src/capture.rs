@@ -151,13 +151,9 @@ pub(crate) fn CaptureBox(
                 });
                 // He sets off for the nest now, not when the flight is over.
                 if state.get_untracked() == mascot::State::Flying
-                    && let Some(nest) = nest_ref.get_untracked()
+                    && let Some(nest) = crate::rambo::nest_box(nest_ref)
                 {
-                    let rect = nest.get_bounding_client_rect();
-                    pen_pos.set((
-                        rect.left() + rect.width() / 2.0,
-                        rect.top() + rect.height() / 2.0,
-                    ));
+                    pen_pos.set(mascot::nest_home(nest));
                 }
                 let set_state = set_state;
                 let timer = Timeout::new(crate::tuning::FLY_MS, move || {
