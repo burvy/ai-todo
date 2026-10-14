@@ -7,6 +7,7 @@ edition = "2024"
 axum = { version = "0.8", features = ["multipart"] }
 include_dir = "0.7"
 capture = { path = "../crates/capture" }
+dates = { path = "../crates/dates" }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 anyhow = "1"
 chrono-tz = "0.10"

@@ -20,7 +20,9 @@ if ($LASTEXITCODE -ne 0) { throw 'cargo build failed' }
 # A fresh folder every time, so no local test data (data\) or old files ride along.
 if (Test-Path $stage) { Remove-Item -Recurse -Force -ErrorAction Stop $stage }
 New-Item -ItemType Directory -Force -ErrorAction Stop -Path $stage | Out-Null
-Copy-Item -Force -ErrorAction Stop (Join-Path $repoRoot 'target\release\rambl-server.exe') (Join-Path $stage 'rambl-server.exe')
+# Ask cargo where it built, so CARGO_TARGET_DIR or a config's target-dir is honoured.
+$targetDir = (cargo metadata --no-deps --format-version 1 --manifest-path (Join-Path $repoRoot 'Cargo.toml') | ConvertFrom-Json).target_directory
+Copy-Item -Force -ErrorAction Stop (Join-Path $targetDir 'release\rambl-server.exe') (Join-Path $stage 'rambl-server.exe')
 @'
 TYPESAFE_API_KEY=
 RAMBL_PORT=3160
