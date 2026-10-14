@@ -48,22 +48,36 @@ pub(crate) fn Rambo(
     /// What a dazed Rambo has written on the page, one path per drag
     strokes: RwSignal<Vec<ink::Path>>,
 ) -> impl IntoView {
-    // At home he sits on the nest wherever the page has carried it. He is a
-    // fixed layer and the nest is not, so every time the page moves he
-    // measures it again.
-    let follow_nest = move || {
-        if state.get_untracked() == mascot::State::Home
-            && let Some(home) = nest_centre(nest_ref)
-        {
-            pen_pos.set(home);
-        }
-    };
-    Effect::new(move |_| {
-        state.track();
-        follow_nest();
-    });
+    // Measure the nest's center so Rambo knows where to sit at home.
+    // Update on mount, on resize, and whenever state changes to Home.
     #[cfg(target_arch = "wasm32")]
-    on_page_moved(follow_nest);
+    {
+        // Reactive effect: re-measure when state changes (so returning home updates pen_pos)
+        Effect::new(move |_| {
+            let _ = state.get(); // track state
+            if let Some(nest) = nest_ref.get() {
+                let rect = nest.get_bounding_client_rect();
+                let cx = rect.left() + rect.width() / 2.0;
+                let cy = rect.top() + rect.height() / 2.0;
+                if matches!(state.get_untracked(), mascot::State::Home) {
+                    pen_pos.set((cx, cy));
+                }
+            }
+        });
+        // Also measure on window resize (non-reactive, just a listener)
+        window_event_listener(leptos::ev::resize, move |_| {
+            if matches!(state.get_untracked(), mascot::State::Home) {
+                if let Some(nest) = nest_ref.get() {
+                    let rect = nest.get_bounding_client_rect();
+                    let cx = rect.left() + rect.width() / 2.0;
+                    let cy = rect.top() + rect.height() / 2.0;
+                    pen_pos.set((cx, cy));
+                }
+            }
+        });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (nest_ref, pen_pos, state);
 
     // Home again, the page he wrote on is tidied away with him.
     Effect::new(move |_| {
@@ -71,6 +85,34 @@ pub(crate) fn Rambo(
             strokes.set(Vec::new());
         }
     });
+
+    // Keep the ask bubble on screen: measure its width and clamp its position.
+    let bubble_offset = RwSignal::new(0.0_f64);
+    let bubble_ref = NodeRef::<leptos::html::Span>::new();
+    #[cfg(target_arch = "wasm32")]
+    {
+        let bubble_offset = bubble_offset;
+        let bubble_ref = bubble_ref;
+        Effect::new(move |_| {
+            if !matches!(state.get(), mascot::State::Asking { .. }) {
+                bubble_offset.set(0.0);
+                return;
+            }
+            let Some(bubble) = bubble_ref.get() else {
+                return;
+            };
+            let rect = bubble.get_bounding_client_rect();
+            let bubble_width = rect.width();
+            let rambo_x = pen_pos.get().0;
+            let viewport = web_sys::window().unwrap().inner_width().unwrap() as f64;
+            // Margin: --space-2 (0.5rem = 8px) from each edge.
+            let margin = 8.0;
+            let offset = clamp_bubble_left(rambo_x, bubble_width, viewport, margin);
+            bubble_offset.set(offset);
+        });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (bubble_offset, bubble_ref);
 
     // The run home: hops along `skitter_point` from where he sat dazed to the
     // middle of the nest, then home.
@@ -80,23 +122,15 @@ pub(crate) fn Rambo(
             mascot::Event::Return,
         ));
         let Some(home) = nest_centre(nest_ref) else {
-            set_state.set(mascot::transition(
-                &state.get_untracked(),
-                mascot::Event::Return,
-            ));
+            set_state.set(mascot::State::Home);
             return;
         };
         if mascot::prefers_reduced_motion() {
-            set_state.set(mascot::transition(
-                &state.get_untracked(),
-                mascot::Event::Return,
-            ));
+            set_state.set(mascot::State::Home);
             return;
         }
         let start = pen_pos.get_untracked();
         let begun = js_sys::Date::now();
-        // The nest can move while he runs (the page scrolls), so he aims at
-        // where it is now, not where it was when he set off.
         let run = std::rc::Rc::new(std::cell::Cell::new(None::<IntervalHandle>));
         let handle = set_interval_with_handle(
             {
@@ -106,7 +140,6 @@ pub(crate) fn Rambo(
                         ((js_sys::Date::now() - begun) / f64::from(mascot::SKITTER_MS)) as f32;
                     let running = state.get_untracked() == mascot::State::Skittering;
                     if running {
-                        let home = nest_centre(nest_ref).unwrap_or(home);
                         pen_pos.set(mascot::skitter_point(start, home, 3, 14.0, progress));
                     }
                     if !running || progress >= 1.0 {
@@ -516,12 +549,7 @@ pub(crate) fn Rambo(
                         land_dazed(false);
                     }
                     mascot::State::Inking => {
-                        // The browser took the gesture over: he lands where he
-                        // is, like a drop on the page.
-                        set_state.set(mascot::transition(
-                            &state.get_untracked(),
-                            mascot::Event::DropEmpty,
-                        ));
+                        set_state.set(mascot::State::Dazed);
                         arm_daze();
                     }
                     _ => {}
@@ -554,7 +582,11 @@ pub(crate) fn Rambo(
                 {move || brain_speech.get().map(|line| view! { <span class="brain-line">{line}</span> })}
                 {move || match state.get() {
                     mascot::State::Asking { ref title, .. } => view! {
-                        <span class="ask">
+                            <span
+                                class="ask"
+                                node_ref=bubble_ref
+                                style=move || format!("left: calc(50% + {:.1}px)", bubble_offset.get())
+                            >
                             <span>{format!("Hey! What do you want with \"{title}\"?")}</span>
                             <button type="button" on:click=move |_| {
                                 if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
@@ -562,23 +594,22 @@ pub(crate) fn Rambo(
                                     edit_request.set(Some(id.clone()));
                                     listen_for_edit(id);
                                 }
-                                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
                             }>"Edit"</button>
                             <button type="button" on:click=move |_| {
-                                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
+                                set_state.set(mascot::State::Home);
                             }>"Move"</button>
                             <button type="button" on:click=move |_| {
                                 if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
                                     let task_id = task_id.clone();
                                     // The list's tick, so a repeat's day is marked on its own date.
                                     let action = snapshot.with_untracked(|s| tick_action(s, &task_id));
-                                    let sink = EditSink { set_snapshot, set_error };
+                                    let sink = EditSink { set_snapshot, set_error, view_settings };
                                     let set_state_clone = set_state;
                                     wasm_bindgen_futures::spawn_local(async move {
                                         if let Some(action) = action {
                                             apply_tick(&TaskId(task_id), action, sink).await;
                                         }
-                                        set_state_clone.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
+                                        set_state_clone.set(mascot::State::Home);
                                     });
                                 }
                             }>"Done"</button>
@@ -594,7 +625,7 @@ pub(crate) fn Rambo(
                                             Ok(new_snap) => set_snapshot_clone.set(new_snap),
                                             Err(e) => set_error.set(Some(series_note(&e))),
                                         }
-                                        set_state_clone.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
+                                        set_state_clone.set(mascot::State::Home);
                                     });
                                 }
                             }>"×"</button>
@@ -648,33 +679,6 @@ fn nest_centre(nest_ref: NodeRef<leptos::html::Button>) -> Option<(f64, f64)> {
     ))
 }
 
-/// Calls `moved` whenever the page may have shifted under a fixed layer: any
-/// scroll (the window's, or the panes' sideways one on a phone), a resize, the
-/// page changing size as tasks load and a scrollbar appears, and the fonts
-/// settling. None of these but the resize reaches a plain window listener.
-#[cfg(target_arch = "wasm32")]
-fn on_page_moved(moved: impl Fn() + Copy + 'static) {
-    let Some(window) = web_sys::window() else {
-        return;
-    };
-    let listener = wasm_bindgen::closure::Closure::<dyn Fn()>::new(moved);
-    let callback = listener.as_ref().unchecked_ref();
-    // Scroll does not bubble; the capture phase hears every scroller.
-    let _ = window.add_event_listener_with_callback_and_bool("scroll", callback, true);
-    let _ = window.add_event_listener_with_callback("resize", callback);
-    if let Some(root) = window.document().and_then(|doc| doc.document_element())
-        && let Ok(observer) = web_sys::ResizeObserver::new(callback)
-    {
-        observer.observe(&root);
-    }
-    // Rambo lives as long as the page, and so do his listeners.
-    listener.forget();
-    wasm_bindgen_futures::spawn_local(async move {
-        crate::tasks::write::wait_for_fonts().await;
-        moved();
-    });
-}
-
 /// The task row under a point, looking past Rambo himself: he is under the
 /// pointer while he is carried, so the topmost element there is always him.
 fn row_under(x: f64, y: f64) -> Option<web_sys::Element> {
@@ -684,4 +688,83 @@ fn row_under(x: f64, y: f64) -> Option<web_sys::Element> {
         .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
         .filter(|el| el.closest(".rambo").ok().flatten().is_none())
         .find_map(|el| el.closest("li[data-id]").ok().flatten())
+}
+
+/// Clamp the ask bubble's horizontal offset so it stays within the viewport.
+///
+/// Returns the offset (in px) to add to the centered position (`50%` of
+/// Rambo's button). A positive value shifts the bubble right, negative shifts
+/// it left. The bubble must keep at least `margin` px from each viewport edge.
+///
+/// - `rambo_x`: Rambo's center X in viewport coordinates
+/// - `bubble_width`: measured width of the bubble
+/// - `viewport_width`: inner width of the browser window
+/// - `margin`: minimum padding from the viewport edge
+pub fn clamp_bubble_left(rambo_x: f64, bubble_width: f64, viewport_width: f64, margin: f64) -> f64 {
+    // The bubble is centered on Rambo. Compute its left and right edges.
+    let bubble_left = rambo_x - bubble_width / 2.0;
+    let bubble_right = rambo_x + bubble_width / 2.0;
+
+    let mut offset = 0.0;
+
+    // If the bubble extends past the left edge, shift it right.
+    if bubble_left < margin {
+        offset += margin - bubble_left;
+    }
+
+    // If the bubble extends past the right edge, shift it left.
+    if bubble_right > viewport_width - margin {
+        offset -= bubble_right - (viewport_width - margin);
+    }
+
+    offset
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bubble_centered_when_fits() {
+        // Rambo at 500, bubble 200px, viewport 1000px, margin 16px.
+        // Bubble spans 400–600, well within 16–984.
+        assert!((clamp_bubble_left(500.0, 200.0, 1000.0, 16.0) - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn bubble_clamped_to_left_edge() {
+        // Rambo at 30, bubble 200px, viewport 1000px, margin 16px.
+        // Bubble spans -70 to 130. Left edge is -70, needs +86 to reach margin 16.
+        let offset = clamp_bubble_left(30.0, 200.0, 1000.0, 16.0);
+        assert!((offset - 86.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn bubble_clamped_to_right_edge() {
+        // Rambo at 970, bubble 200px, viewport 1000px, margin 16px.
+        // Bubble spans 870 to 1070. Right edge is 1070, needs -70 to reach 984.
+        let offset = clamp_bubble_left(970.0, 200.0, 1000.0, 16.0);
+        assert!((offset - (-70.0)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn bubble_clamped_both_edges_shifts_right() {
+        // Rambo at 10, bubble 200px, viewport 1000px, margin 16px.
+        // Bubble spans -90 to 110. Left needs +106 to reach margin.
+        // After shift: bubble at 16 to 116. Right is fine.
+        let offset = clamp_bubble_left(10.0, 200.0, 1000.0, 16.0);
+        assert!((offset - 106.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn bubble_wider_than_viewport_clamps_to_margin() {
+        // Rambo at 500, bubble 1200px, viewport 1000px, margin 16px.
+        // Bubble spans -100 to 1100. Left needs +116. Right needs -116.
+        // Both apply: +116 - 116 = 0 (centered, can't fit either way).
+        let offset = clamp_bubble_left(500.0, 1200.0, 1000.0, 16.0);
+        // Left edge: 500 - 600 = -100, needs +116
+        // Right edge: 500 + 600 = 1100, needs -116
+        // Net: 0
+        assert!((offset - 0.0).abs() < f64::EPSILON);
+    }
 }
