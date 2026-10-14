@@ -409,7 +409,7 @@ pub fn PaperTime(
                         </div>
                     })}
                     <div class="paper-actions">
-                        <button type="button" on:click=move |_| open.set(false)>"Done"</button>
+                        <button type="button" on:click=move |_| open.set(false)>"Close"</button>
                         <button
                             type="button"
                             on:click=move |_| {
@@ -445,6 +445,56 @@ fn roving_keys(event: leptos::ev::KeyboardEvent) {
         .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok());
     if let Some(sibling) = sibling {
         let _ = sibling.focus();
+    }
+}
+
+/// A group of paper radios: one choice of a few, each a handwritten word with a
+/// hand-drawn ring. Arrows move the choice (and the focus) the way native radios do;
+/// only the chosen one is a tab stop.
+#[component]
+pub fn PaperRadios<T>(
+    label: &'static str,
+    options: Vec<(T, &'static str)>,
+    #[prop(into)] value: Signal<T>,
+    #[prop(into)] set: Callback<T>,
+) -> impl IntoView
+where
+    T: Copy + PartialEq + Send + Sync + 'static,
+{
+    let group = NodeRef::<leptos::html::Div>::new();
+    let choices: Vec<T> = options.iter().map(|(choice, _)| *choice).collect();
+    let step = move |event: leptos::ev::KeyboardEvent| {
+        let delta = match event.key().as_str() {
+            "ArrowRight" | "ArrowDown" => 1,
+            "ArrowLeft" | "ArrowUp" => choices.len() - 1,
+            _ => return,
+        };
+        event.prevent_default();
+        let at = choices
+            .iter()
+            .position(|choice| *choice == value.get_untracked());
+        if let Some(next) = at.map(|at| choices[(at + delta) % choices.len()]) {
+            set.run(next);
+            focus_roving(group);
+        }
+    };
+    view! {
+        <div class="paper-radios" role="radiogroup" aria-label=label node_ref=group on:keydown=step>
+            {options
+                .into_iter()
+                .map(|(choice, name)| view! {
+                    <button
+                        type="button"
+                        role="radio"
+                        class="paper-radio"
+                        class:picked=move || value.get() == choice
+                        aria-checked=move || (value.get() == choice).to_string()
+                        tabindex=move || if value.get() == choice { "0" } else { "-1" }
+                        on:click=move |_| set.run(choice)
+                    >{name}</button>
+                })
+                .collect_view()}
+        </div>
     }
 }
 

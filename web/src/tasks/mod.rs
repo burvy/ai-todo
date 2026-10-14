@@ -14,7 +14,7 @@ use crate::clock::Clock;
 use crate::edits::{EditSink, confirmed, held, patch_and_show, series_note, toggle_done_body};
 #[cfg(target_arch = "wasm32")]
 use crate::pen;
-use crate::pickers::{PaperDate, PaperDateTime, PaperTime};
+use crate::pickers::{PaperDate, PaperDateTime, PaperRadios, PaperTime};
 use crate::{api, mascot, row, settings, week};
 use fields::{
     EditWhen, WEEKDAY_CHOICES, due_display, local_input_value, series_from_dialog,
@@ -832,9 +832,16 @@ pub(crate) fn TaskList(
                             {(!recurring).then(|| view! {
                             <fieldset>
                                 <legend>"When"</legend>
-                                <label><input type="radio" name="when" checked=move || edit_when.get() == EditWhen::Anytime on:change=move |_| set_edit_when.set(EditWhen::Anytime) /> "Anytime"</label>
-                                <label><input type="radio" name="when" checked=move || edit_when.get() == EditWhen::DueBy on:change=move |_| set_edit_when.set(EditWhen::DueBy) /> "Due by"</label>
-                                <label><input type="radio" name="when" checked=move || edit_when.get() == EditWhen::At on:change=move |_| set_edit_when.set(EditWhen::At) /> "Scheduled at"</label>
+                                <PaperRadios
+                                    label="When"
+                                    options=vec![
+                                        (EditWhen::Anytime, "Anytime"),
+                                        (EditWhen::DueBy, "Due by"),
+                                        (EditWhen::At, "Scheduled at"),
+                                    ]
+                                    value=edit_when
+                                    set=move |kind: EditWhen| set_edit_when.set(kind)
+                                />
                                 <PaperDateTime
                                     value=edit_datetime
                                     set=move |value: String| {
