@@ -48,7 +48,7 @@ pub(crate) fn Rambo(
     /// True while you are typing, so he peeks over at the box
     typing: ReadSignal<bool>,
     /// What a dazed Rambo has written on the page, one path per drag
-    strokes: RwSignal<Vec<ink::Path>>,
+    strokes: RwSignal<Vec<ink::Stroke>>,
 ) -> impl IntoView {
     // At home he sits on the nest wherever the page has carried it. He is a
     // fixed layer and the nest is not, so every time the page moves he
@@ -86,13 +86,6 @@ pub(crate) fn Rambo(
                 bubble_offset(pen_pos.get().0, width, screen, tuning::BUBBLE_EDGE_PX)
             });
         bubble_shift.set(shift);
-    });
-
-    // Home again, the page he wrote on is tidied away with him.
-    Effect::new(move |_| {
-        if state.get() == mascot::State::Home && !strokes.with_untracked(Vec::is_empty) {
-            strokes.set(Vec::new());
-        }
     });
 
     // The run home: hops along `skitter_point` from where he sat dazed to the
@@ -415,7 +408,12 @@ pub(crate) fn Rambo(
                         // Dazed: this drag writes, starting where the nib is now.
                         let below = rambo.get_bounding_client_rect().height() * mascot::NIB_BELOW;
                         nib_below.set(below);
-                        strokes.update(|strokes| strokes.push(vec![(ox, oy + below)]));
+                        strokes.update(|strokes| {
+                            strokes.push(ink::Stroke::new(
+                                pen.get_untracked(),
+                                ink::Sample { x: ox, y: oy + below, t: ev.time_stamp() },
+                            ))
+                        });
                     }
                     if let Some(el) = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
                         let _ = el.set_pointer_capture(ev.pointer_id());
@@ -442,7 +440,7 @@ pub(crate) fn Rambo(
                         let below = nib_below.get();
                         strokes.update(|strokes| {
                             if let Some(stroke) = strokes.last_mut() {
-                                stroke.push((x, y + below));
+                                stroke.samples.push(ink::Sample { x, y: y + below, t: ev.time_stamp() });
                             }
                         });
                     }

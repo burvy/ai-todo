@@ -105,7 +105,7 @@ pub fn App() -> impl IntoView {
     let (typing, set_typing) = signal(false);
     let pen_pos = RwSignal::new((0.0_f64, 0.0));
     // What a dazed Rambo has written on the page, one path per drag.
-    let strokes = RwSignal::new(Vec::<ink::Path>::new());
+    let strokes = RwSignal::new(Vec::<ink::Stroke>::new());
     // Transcript buffer: Rambo fills it while listening, CaptureBox reads it
     let capture_text = RwSignal::new(String::new());
     // Pen queue: task IDs the client just created, so the pen writes only those rows
@@ -209,15 +209,7 @@ pub fn App() -> impl IntoView {
         </main>
         <scrap::ScrapCorner scraps set_snapshot set_error />
         // The ink a dazed Rambo leaves: above the page, below him.
-        <inklayer::InkLayer
-            dots=Signal::derive(move || {
-                let pen = view_settings.get().pen;
-                strokes.with(|strokes| {
-                    strokes.iter().flat_map(|stroke| inklayer::trail_of(stroke, pen)).collect()
-                })
-            })
-            pen=Signal::derive(move || view_settings.get().pen)
-        />
+        <inklayer::InkLayer strokes />
         // Rambo: independent fixed layer above everything, not part of the capture form
         <Rambo
             state=mascot_state

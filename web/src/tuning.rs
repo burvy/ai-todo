@@ -16,6 +16,55 @@ pub const BUBBLE_EDGE_PX: f64 = 8.0;
 
 const _: () = assert!(60 % MINUTE_STEP == 0);
 
+// ---- Rambo's ink (web/src/ink.rs, inklayer.rs, interview 4 item 2). Speeds in px
+// per ms, times in ms.
+
+/// How far apart the dabs of a stroke lie, in px: closer than the narrowest dab is
+/// wide (a ballpoint's quick, tapered end is about 1.1 px), so the line never shows
+/// dots. Safe range 0.5 to 1.0.
+pub const INK_STEP_PX: f64 = 1.0;
+/// Up to this speed a stroke is the nib's full width. Safe range 0.1 to 0.6.
+pub const INK_SLOW_SPEED: f64 = 0.3;
+/// From this speed on a stroke is as thin as it gets. Safe range 1 to 4, above
+/// `INK_SLOW_SPEED`.
+pub const INK_FAST_SPEED: f64 = 2.0;
+/// The width of the quickest stroke, as a share of the nib's. Safe range 0.35 to 0.9.
+pub const INK_FAST_SHARE: f64 = 0.55;
+/// How quickly the width follows a change of speed, per dab, 0 to 1. Safe range
+/// 0.05 to 0.4: higher and the line steps where the hand speeds up.
+pub const INK_WIDTH_EASE: f64 = 0.15;
+/// How far along a long stroke the nib lands and lifts (the taper), in px. Safe
+/// range 4 to 24.
+pub const INK_TAPER_PX: f64 = 10.0;
+/// The end of a stroke in Rambo's own tint, in px. Safe range 6 to 30.
+pub const INK_TAIL_PX: f64 = 20.0;
+/// How long fresh ink takes to dry, in ms, and how much of it shows once dry.
+/// Safe ranges 300 to 2000 ms and 0.6 to 0.95.
+pub const INK_DRY_MS: f64 = 900.0;
+pub const INK_DRY_ALPHA: f64 = 0.75;
+/// The thinnest a stroke gets, as a dab's radius in px: a nib's hairline. It keeps
+/// the quickest cross-stroke wider than the dab spacing, so it never breaks into
+/// dots. Safe range 0.5 to 1.0, above half of `INK_STEP_PX`.
+pub const INK_HAIRLINE_PX: f64 = 0.6;
+/// The slant of a broad nib, in degrees from the page's horizontal: the hand's
+/// natural angle. A broad nib draws thick across it and thin along it. Safe range
+/// 25 to 55.
+pub const INK_NIB_ANGLE_DEG: f64 = 40.0;
+/// How long ink stays on the page before it starts to fade, and how long the fade
+/// takes, in ms. Safe ranges 3000 to 20000 and 1000 to 5000.
+pub const INK_HOLD_MS: f64 = 6000.0;
+pub const INK_FADE_OUT_MS: f64 = 2400.0;
+/// How much earlier the thinnest ink starts to fade than ink at the nib's full
+/// width, in ms. Safe range 0 to 1500.
+pub const INK_FADE_THIN_LEAD_MS: f64 = 800.0;
+
+const _: () = assert!(
+    INK_SLOW_SPEED < INK_FAST_SPEED
+        && INK_DRY_MS < INK_HOLD_MS - INK_FADE_THIN_LEAD_MS
+        && INK_STEP_PX <= 1.0
+        && INK_HAIRLINE_PX * 2.0 > INK_STEP_PX
+);
+
 // ---- the scribble-out delete (DESIGN-DIRECTION §9, "Gestures, final")
 
 /// Share of a row's width a swipe must cover for letting go to delete it; short of
