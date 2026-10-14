@@ -368,7 +368,7 @@ pub fn App() -> impl IntoView {
     let (brain_event, set_brain_event) = signal::<Option<rambl_brain::Event>>(None);
     // The tack board reports what just happened on it — a task cut out and
     // tacked, a tidy-up, a crumple. Rambo's poses for those land with Funny's
-    // mood work (docs/DESIGN-DECISIONS.md, "Rambo styles"), so for now the
+    // mood work (docs/DESIGN-DIRECTION.md, "Rambo styles"), so for now the
     // signal is one the board writes and this effect clears: a subscriber
     // mounted between the two gets the cue exactly once.
     let (tack_cue, set_tack_cue) = signal::<Option<tack::Cue>>(None);
