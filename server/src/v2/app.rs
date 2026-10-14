@@ -721,6 +721,36 @@ impl<S: Store> App<S> {
         &self.store
     }
 
+    /// Put back a task the user has just deleted (the scrap undo): its title, length,
+    /// time, done state, place in the list, label, priority and creation time come back
+    /// as they were. The id is a fresh one, because ids are unique across every user and
+    /// one sent by a client cannot be trusted not to name someone else's. A repeat's day
+    /// is not a stored task; its undo clears the skip on the series instead.
+    pub fn restore(&mut self, task: Task, user: &str, tz: Tz) -> Result<Snapshot, ApiError> {
+        check_title(&task.title)?;
+        check_duration(task.duration_min)?;
+        if task.source == Source::Series {
+            return Err(ApiError {
+                code: ErrorCode::BadRequest,
+                message: "a repeat's day is put back on its series, not restored".into(),
+            });
+        }
+        let ctx = self.ctx(tz);
+        let mut tasks = self.load(user)?;
+        check_room(tasks.len(), 1)?;
+        let task = Task {
+            id: Self::fresh_id(),
+            title: task.title.trim().to_owned(),
+            updated_at: ctx.now,
+            ..task
+        };
+        self.store
+            .put(user, task.clone())
+            .map_err(Self::storage_error)?;
+        tasks.push(task);
+        self.snapshot_now(user, tasks, &ctx, tz)
+    }
+
     pub fn delete(&mut self, id: &str, user: &str, tz: Tz) -> Result<Snapshot, ApiError> {
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
@@ -1354,6 +1384,50 @@ mod tests {
             priority: Priority::Low,
             source: Source::Text,
         }
+    }
+
+    #[test]
+    fn a_restored_task_comes_back_as_it_was_under_a_fresh_id() {
+        let (mut app, _) = app();
+        let snapshot = app
+            .create(draft("Water the plants"), "u1", Tz::UTC)
+            .unwrap();
+        let mut gone = snapshot.tasks[0].clone();
+        gone.done = true;
+        gone.order = 7;
+        gone.priority = Priority::High;
+        app.delete(&gone.id.0, "u1", Tz::UTC).unwrap();
+
+        let back = app.restore(gone.clone(), "u1", Tz::UTC).unwrap();
+        let task = &back.tasks[0];
+        assert_ne!(task.id, gone.id, "a client's id is never stored");
+        assert_eq!(
+            (
+                task.title.as_str(),
+                task.done,
+                task.order,
+                task.priority,
+                task.created
+            ),
+            ("Water the plants", true, 7, Priority::High, gone.created)
+        );
+        assert_eq!(task.when, gone.when);
+    }
+
+    #[test]
+    fn a_repeat_s_day_is_not_restored_as_a_task() {
+        let (mut app, _) = app();
+        let snapshot = app.create(draft("Gym"), "u1", Tz::UTC).unwrap();
+        let mut day = snapshot.tasks[0].clone();
+        day.source = Source::Series;
+        let error = app.restore(day, "u1", Tz::UTC).unwrap_err();
+        assert_eq!(error.code, ErrorCode::BadRequest);
+        let mut blank = snapshot.tasks[0].clone();
+        blank.title = "  ".into();
+        assert!(
+            app.restore(blank, "u1", Tz::UTC).is_err(),
+            "the create checks apply"
+        );
     }
 
     /// Creating one task reads the store once. It used to read it twice: once to find

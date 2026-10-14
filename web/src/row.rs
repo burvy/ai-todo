@@ -1,8 +1,8 @@
 //! What a press on a task row has become.
 //!
 //! A row answers three gestures from the same finger: a tap, a press-and-hold
-//! that picks the row up to reorder it, and a swipe to the right that crosses
-//! it out. The browser cannot tell them apart, and guessing wrong is expensive —
+//! that picks the row up to reorder it, and a swipe to the right that scribbles
+//! it out, the ink following the finger. The browser cannot tell them apart, and guessing wrong is expensive —
 //! a tap that becomes a drag throws the user's list around, a hold that stays
 //! a tap never reorders anything — so every decision is a pure function of the
 //! pointer's travel and how long it has been down, and all of it is unit
@@ -18,9 +18,11 @@ pub const HOLD_MS: u32 = 280;
 /// doing.
 pub const SLOP_PX: f64 = 8.0;
 
-/// Rightward travel that makes a swipe a delete when the pointer lets go:
-/// short of it, the row snaps home.
+/// The least rightward travel that deletes when the pointer lets go: a flick
+/// needs this much, a slow swipe a share of the row (see [`scribble_commits`]).
 pub const SWIPE_PX: f64 = 64.0;
+
+use crate::tuning::{SCRIBBLE_COMMIT_SHARE, SCRIBBLE_FLICK_PX_PER_MS, SCRIBBLE_LOOP_PX};
 
 /// What a press on a row has turned into so far. Every state is decided, and
 /// only `Pressed` is still undecided.
@@ -62,47 +64,65 @@ pub fn advance(g: Gesture, dx: f64, dy: f64, held_ms: u32) -> Gesture {
     }
 }
 
-/// What letting go means. `dx` is how far right the pointer finished.
+/// What letting go means.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Release {
     /// A tap. The row's own controls - the box, the title, the x - take it.
     Tap,
     /// Dropped somewhere in the list: reorder onto whatever row is under it.
     Reorder,
-    /// Cross the row out and delete it.
+    /// Finish the scribble across the row and delete it.
     Delete,
-    /// Not far enough to mean it: put the row back where it was.
+    /// Not far enough to mean it: the ink lifts away and the row stays.
     SnapBack,
     /// A scroll, not ours. Nothing to undo.
     Scroll,
 }
 
-/// What releasing a pointer does, given what the gesture had become.
-pub fn release(g: Gesture, dx: f64) -> Release {
+/// What releasing a pointer does, given what the gesture had become. A swipe is
+/// judged by [`scribble_commits`] on how far right it finished (`dx`) across a row
+/// `width` wide, and how fast it was going (`velocity`, px per ms).
+pub fn release(g: Gesture, dx: f64, width: f64, velocity: f64) -> Release {
     match g {
         Gesture::Pressed => Release::Tap,
         Gesture::Lifted => Release::Reorder,
         Gesture::Scrolling => Release::Scroll,
-        Gesture::Swiping => match swipe_action(dx, SWIPE_PX) {
-            SwipeAction::Delete => Release::Delete,
-            SwipeAction::SnapBack => Release::SnapBack,
-        },
+        Gesture::Swiping if scribble_commits(dx, width, velocity) => Release::Delete,
+        Gesture::Swiping => Release::SnapBack,
     }
 }
 
-/// How far a row travelled to the right, and what that means.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SwipeAction {
-    Delete,
-    SnapBack,
+/// Whether letting go of a swipe deletes the row: past a share of its width, or a
+/// flick past [`SWIPE_PX`]. Slow and short, the user is still deciding.
+pub fn scribble_commits(dx: f64, width: f64, velocity: f64) -> bool {
+    let reach = (width * SCRIBBLE_COMMIT_SHARE).max(SWIPE_PX);
+    dx >= reach || (dx >= SWIPE_PX && velocity >= SCRIBBLE_FLICK_PX_PER_MS)
 }
 
-pub fn swipe_action(delta_x: f64, threshold: f64) -> SwipeAction {
-    if delta_x >= threshold {
-        SwipeAction::Delete
-    } else {
-        SwipeAction::SnapBack
+/// How much of the scribble the finger has drawn, 0 to 1: the ink is under the
+/// finger, never ahead of it.
+pub fn ink_drawn(dx: f64, width: f64) -> f64 {
+    if width <= 0.0 {
+        return 0.0;
     }
+    (dx / width).clamp(0.0, 1.0)
+}
+
+/// The scribble across a row `width` by `height`, as an SVG path: loops from the
+/// left edge to the right through the middle of the row. It is drawn whole and
+/// revealed as far as the swipe has gone.
+pub fn scribble_path(width: f64, height: f64) -> String {
+    let (top, bottom) = (height * 0.3, height * 0.7);
+    let step = SCRIBBLE_LOOP_PX / 2.0;
+    let steps = ((width / step).ceil() as u32).max(1);
+    let loops: String = (1..=steps)
+        .map(|i| {
+            let x = (f64::from(i) * step).min(width);
+            let y = if i % 2 == 1 { top } else { bottom };
+            format!(" L{x:.1} {y:.1}")
+        })
+        .collect();
+    format!("M0 {:.1}{loops}", height / 2.0)
 }
 
 /// Where a row lands relative to the row it was dropped on, which the drop
@@ -124,7 +144,10 @@ pub fn lands_above(y: f64, top: f64, bottom: f64) -> bool {
 /// Not gated on the target: `web-sys` compiles for the host too, and the row's
 /// `view!` names these in both builds. On the host they are never called.
 pub mod dom {
-    use super::{Gesture, HOLD_MS, Release, Slot, advance, lands_above, release};
+    use super::{
+        Gesture, HOLD_MS, Release, Slot, advance, ink_drawn, lands_above, release, scribble_path,
+    };
+    use crate::tuning::{SCRIBBLE_FINISH_MS, SCRIBBLE_LIFT_MS};
     use std::cell::RefCell;
     use std::rc::Rc;
     use wasm_bindgen::JsCast;
@@ -145,6 +168,8 @@ pub mod dom {
         y: f64,
         started_ms: f64,
         gesture: Gesture,
+        /// The row's width when the press began: how far the scribble can go.
+        width: f64,
     }
 
     impl Press {
@@ -191,6 +216,89 @@ pub mod dom {
         row.class_list().remove_1("row-swiping").ok();
     }
 
+    const SVG: &str = "http://www.w3.org/2000/svg";
+    /// The ink's easing: a strong ease-out, so it answers the instant you let go.
+    const INK_EASE: &str = "cubic-bezier(0.23, 1, 0.32, 1)";
+
+    /// The scribble's path on `row`, laid across it the first time it is asked for.
+    fn ink_path(row: &web_sys::Element, width: f64) -> Option<web_sys::Element> {
+        if let Some(path) = row.query_selector(".scribble-ink path").ok().flatten() {
+            return Some(path);
+        }
+        let doc = row.owner_document()?;
+        let height = row.get_bounding_client_rect().height();
+        let svg = doc.create_element_ns(Some(SVG), "svg").ok()?;
+        svg.set_attribute("class", "scribble-ink").ok()?;
+        svg.set_attribute("viewBox", &format!("0 0 {width:.1} {height:.1}"))
+            .ok()?;
+        svg.set_attribute("preserveAspectRatio", "none").ok()?;
+        svg.set_attribute("aria-hidden", "true").ok()?;
+        let path = doc.create_element_ns(Some(SVG), "path").ok()?;
+        path.set_attribute("d", &scribble_path(width, height))
+            .ok()?;
+        // A path one unit long, so the dash offset is the share left undrawn.
+        path.set_attribute("pathLength", "1").ok()?;
+        svg.append_child(&path).ok()?;
+        row.append_child(&svg).ok()?;
+        Some(path)
+    }
+
+    /// Show the scribble drawn `drawn` of the way across, under the finger.
+    fn draw_ink(row: &web_sys::Element, width: f64, drawn: f64) {
+        if let Some(path) = ink_path(row, width) {
+            path.set_attribute(
+                "style",
+                &format!("stroke-dasharray: 1; stroke-dashoffset: {:.3}", 1.0 - drawn),
+            )
+            .ok();
+        }
+    }
+
+    /// Let go of a swipe: finish the scribble across the row, or lift the ink away.
+    fn end_ink(row: &web_sys::Element, commit: bool) {
+        let Some(path) = row.query_selector(".scribble-ink path").ok().flatten() else {
+            return;
+        };
+        let ms = match (crate::mascot::prefers_reduced_motion(), commit) {
+            (true, _) => 0,
+            (false, true) => SCRIBBLE_FINISH_MS,
+            (false, false) => SCRIBBLE_LIFT_MS,
+        };
+        let offset = if commit { 0 } else { 1 };
+        path.set_attribute(
+            "style",
+            &format!(
+                "stroke-dasharray: 1; stroke-dashoffset: {offset}; \
+                 transition: stroke-dashoffset {ms}ms {INK_EASE}"
+            ),
+        )
+        .ok();
+        if !commit {
+            let row = row.clone();
+            gloo_timers::callback::Timeout::new(ms, move || remove_ink(&row)).forget();
+        }
+    }
+
+    fn remove_ink(row: &web_sys::Element) {
+        if let Some(svg) = row.query_selector(".scribble-ink").ok().flatten() {
+            svg.remove();
+        }
+    }
+
+    /// Take the ink off the row `row_id`: its delete did not go through.
+    pub fn clear_ink(row_id: &str) {
+        let row = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|doc| {
+                doc.query_selector(&format!("li[data-id=\"{row_id}\"]"))
+                    .ok()
+                    .flatten()
+            });
+        if let Some(row) = row {
+            remove_ink(&row);
+        }
+    }
+
     /// The row a press landed on, unless it landed on one of the row's own
     /// controls - the box, the title's button, the x - which keep their own
     /// clicks and must not be turned into a drag.
@@ -224,6 +332,7 @@ pub mod dom {
             y: f64::from(ev.client_y()),
             started_ms: js_sys::Date::now(),
             gesture: Gesture::Pressed,
+            width: row.get_bounding_client_rect().width(),
         });
         // A finger that never moves still picks the row up when the hold runs
         // out, so the lift cannot depend on a pointermove arriving.
@@ -248,7 +357,7 @@ pub mod dom {
     pub fn drag(presses: &Presses, ev: &leptos::ev::PointerEvent) {
         // The borrow ends before anything touches the DOM, so a handler that
         // reads this state back cannot deadlock the cell.
-        let (row, gesture, dx, dy) = {
+        let (row, gesture, dx, dy, width) = {
             let mut slot = presses.borrow_mut();
             let Some(p) = slot.as_mut() else {
                 return;
@@ -258,14 +367,15 @@ pub mod dom {
             }
             let (dx, dy) = p.travel(ev);
             p.gesture = advance(p.gesture, dx, dy, p.held_ms());
-            (p.row.clone(), p.gesture, dx, dy)
+            (p.row.clone(), p.gesture, dx, dy, p.width)
         };
         match gesture {
             Gesture::Pressed => {}
             Gesture::Scrolling => move_row(&row, 0.0, 0.0),
             Gesture::Swiping => {
+                // The row stays put; the ink follows the finger across it.
                 row.class_list().add_1("row-swiping").ok();
-                move_row(&row, dx, 0.0);
+                draw_ink(&row, width, ink_drawn(dx, width));
             }
             Gesture::Lifted => {
                 row.class_list().add_1("row-lifted").ok();
@@ -304,9 +414,15 @@ pub mod dom {
         }
         let dx = f64::from(ev.client_x()) - press.x;
         let (x, y) = (f64::from(ev.client_x()), f64::from(ev.client_y()));
-        let outcome = release(press.gesture, dx);
+        let velocity = dx / f64::from(press.held_ms().max(1));
+        let outcome = release(press.gesture, dx, press.width, velocity);
         let _ = press.row.release_pointer_capture(press.pointer_id);
         settle(&press.row);
+        match outcome {
+            Release::Delete => end_ink(&press.row, true),
+            Release::SnapBack => end_ink(&press.row, false),
+            Release::Tap | Release::Reorder | Release::Scroll => remove_ink(&press.row),
+        }
         Some((outcome, press.row.get_attribute("data-id")?, x, y))
     }
 
@@ -316,6 +432,7 @@ pub mod dom {
         if let Some(press) = presses.borrow_mut().take() {
             let _ = press.row.release_pointer_capture(press.pointer_id);
             settle(&press.row);
+            remove_ink(&press.row);
         }
     }
 }
@@ -323,6 +440,11 @@ pub mod dom {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A desktop list row, where a share of the width is less than SWIPE_PX, and a
+    /// pointer moving too slowly to count as a flick.
+    const ROW: f64 = 120.0;
+    const SLOW: f64 = 0.01;
 
     fn held(g: Gesture, dx: f64, dy: f64, ms: u32) -> Gesture {
         advance(g, dx, dy, ms)
@@ -332,7 +454,7 @@ mod tests {
     fn a_touch_that_does_not_move_or_wait_is_still_a_tap() {
         assert_eq!(held(Gesture::Pressed, 0.0, 0.0, 0), Gesture::Pressed);
         assert_eq!(held(Gesture::Pressed, 1.0, 0.0, 100), Gesture::Pressed);
-        assert_eq!(release(Gesture::Pressed, 2.0), Release::Tap);
+        assert_eq!(release(Gesture::Pressed, 2.0, ROW, SLOW), Release::Tap);
     }
 
     #[test]
@@ -354,13 +476,16 @@ mod tests {
             held(Gesture::Scrolling, 0.0, 90.0, HOLD_MS + 900),
             Gesture::Scrolling
         );
-        assert_eq!(release(Gesture::Scrolling, 0.0), Release::Scroll);
+        assert_eq!(release(Gesture::Scrolling, 0.0, ROW, SLOW), Release::Scroll);
     }
 
     #[test]
     fn travelling_right_crosses_the_row_out() {
         assert_eq!(held(Gesture::Pressed, SWIPE_PX, 0.0, 50), Gesture::Swiping);
-        assert_eq!(release(Gesture::Swiping, SWIPE_PX), Release::Delete);
+        assert_eq!(
+            release(Gesture::Swiping, SWIPE_PX, ROW, SLOW),
+            Release::Delete
+        );
         // A diagonal that happens to go far right is still a scroll unless the
         // rightward travel clearly wins.
         assert_eq!(
@@ -376,13 +501,19 @@ mod tests {
     #[test]
     fn a_swipe_that_is_backed_out_snaps_home() {
         assert_eq!(held(Gesture::Pressed, 90.0, 0.0, 50), Gesture::Swiping);
-        assert_eq!(release(Gesture::Swiping, 20.0), Release::SnapBack);
+        assert_eq!(
+            release(Gesture::Swiping, 20.0, ROW, SLOW),
+            Release::SnapBack
+        );
         // Right, but not far enough to mean it: the row goes back unharmed.
         assert_eq!(
             held(Gesture::Pressed, SWIPE_PX - 1.0, 0.0, 50),
             Gesture::Swiping
         );
-        assert_eq!(release(Gesture::Swiping, SWIPE_PX - 1.0), Release::SnapBack);
+        assert_eq!(
+            release(Gesture::Swiping, SWIPE_PX - 1.0, ROW, SLOW),
+            Release::SnapBack
+        );
     }
 
     #[test]
@@ -393,7 +524,7 @@ mod tests {
             held(g, f64::from(step) * 2.0, 1.0, step * 4)
         });
         assert_eq!(gesture, Gesture::Swiping);
-        assert_eq!(release(gesture, 80.0), Release::Delete);
+        assert_eq!(release(gesture, 80.0, ROW, SLOW), Release::Delete);
     }
 
     #[test]
@@ -408,7 +539,7 @@ mod tests {
         // it must not delete it.
         let lifted = held(Gesture::Pressed, 0.0, 0.0, HOLD_MS);
         assert_eq!(held(lifted, 200.0, 0.0, HOLD_MS + 200), Gesture::Lifted);
-        assert_eq!(release(Gesture::Lifted, 200.0), Release::Reorder);
+        assert_eq!(release(Gesture::Lifted, 200.0, ROW, SLOW), Release::Reorder);
     }
 
     #[test]
@@ -422,16 +553,55 @@ mod tests {
     }
 
     #[test]
-    fn swipe_action_past_threshold_deletes() {
-        assert_eq!(swipe_action(80.0, 50.0), SwipeAction::Delete);
+    fn a_phone_row_needs_a_real_swipe_or_a_flick() {
+        let phone = 350.0;
+        let reach = phone * SCRIBBLE_COMMIT_SHARE;
+        assert!(
+            !scribble_commits(reach - 1.0, phone, SLOW),
+            "still deciding"
+        );
+        assert!(scribble_commits(reach, phone, SLOW));
+        // A quick flick deletes from SWIPE_PX on, but never from a nudge.
+        assert!(scribble_commits(SWIPE_PX, phone, SCRIBBLE_FLICK_PX_PER_MS));
+        assert!(!scribble_commits(SWIPE_PX - 1.0, phone, 1.0));
+        assert_eq!(
+            release(Gesture::Swiping, reach - 1.0, phone, SLOW),
+            Release::SnapBack
+        );
     }
+
     #[test]
-    fn short_swipe_snaps_back() {
-        assert_eq!(swipe_action(20.0, 50.0), SwipeAction::SnapBack);
+    fn the_ink_is_under_the_finger_and_never_ahead() {
+        assert_eq!(ink_drawn(0.0, 300.0), 0.0);
+        assert_eq!(ink_drawn(150.0, 300.0), 0.5);
+        assert_eq!(ink_drawn(900.0, 300.0), 1.0, "past the edge: drawn whole");
+        assert_eq!(ink_drawn(-40.0, 300.0), 0.0, "back left of where it began");
+        assert_eq!(ink_drawn(40.0, 0.0), 0.0, "a row with no width");
     }
+
     #[test]
-    fn exactly_threshold_deletes() {
-        assert_eq!(swipe_action(50.0, 50.0), SwipeAction::Delete);
+    fn the_scribble_loops_across_the_row_and_stays_on_it() {
+        let (width, height) = (300.0, 40.0);
+        let path = scribble_path(width, height);
+        let points: Vec<(f64, f64)> = path
+            .split(['M', 'L'])
+            .filter_map(|point| {
+                let mut xy = point.split_whitespace().map(|n| n.parse::<f64>().ok());
+                Some((xy.next()??, xy.next()??))
+            })
+            .collect();
+        assert_eq!(points.first(), Some(&(0.0, 20.0)));
+        assert_eq!(
+            points.last().map(|p| p.0),
+            Some(width),
+            "reaches the right edge"
+        );
+        assert!(
+            points.windows(2).all(|w| w[1].0 > w[0].0),
+            "always left to right"
+        );
+        assert!(points.iter().all(|&(_, y)| (0.0..=height).contains(&y)));
+        assert!(points.len() > 30, "loops, not a line: {}", points.len());
     }
 
     #[test]

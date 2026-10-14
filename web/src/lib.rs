@@ -25,6 +25,7 @@ mod capture;
 mod edits;
 mod pane;
 mod rambo;
+mod scrap;
 mod tasks;
 
 use crate::capture::CaptureBox;
@@ -124,6 +125,8 @@ pub fn App() -> impl IntoView {
     let edit_request = RwSignal::new(None::<TaskId>);
     // The task whose edit sheet is open: the list owns it, Rambo listens while it is
     let open_sheet = RwSignal::new(None::<TaskId>);
+    // The scrap a swiped-out row leaves in the corner, to tape it back
+    let scraps = RwSignal::new(None::<scrap::Scrap>);
     // Capture form ref so Rambo can requestSubmit on release
     let form_ref = NodeRef::<leptos::html::Form>::new();
     // Nest ref so Rambo (independent fixed layer) can measure where to sit at home
@@ -193,7 +196,7 @@ pub fn App() -> impl IntoView {
                 }
             >
             <div class="tasks-pane">
-                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request open_sheet />
+                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request open_sheet scraps />
                 <tack::TackBoard snapshot set_snapshot set_error view_settings set_cue=set_tack_cue />
             </div>
             <week::WeekGrid
@@ -204,6 +207,7 @@ pub fn App() -> impl IntoView {
                 capture_text
             />
         </main>
+        <scrap::ScrapCorner scraps set_snapshot set_error />
         // The ink a dazed Rambo leaves: above the page, below him.
         <inklayer::InkLayer
             dots=Signal::derive(move || {

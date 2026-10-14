@@ -97,6 +97,7 @@ Anonymous users do not sign in. Their account and tasks are deleted after 30 day
 | `POST /api/v1/tasks` | `TaskDraft` | `Snapshot` |
 | `PATCH /api/v1/tasks/{id}` | any of `title, duration_min, when, done, label, priority`, plus `updated_at` (the version the page last saw) | `Snapshot`; `409 stale_update` if the task changed since `updated_at` |
 | `POST /api/v1/tasks/{id}/revise` | `{instruction}` (goes through the capture pipeline for one clause) | `Snapshot` |
+| `POST /api/v1/tasks/restore` | `Task` as it was before its delete (the scrap undo); stored under a fresh id, a repeat's day is refused | `Snapshot` |
 | `PUT /api/v1/tasks/order` | `{ids: [...]}` (full order) | `Snapshot` |
 | `DELETE /api/v1/tasks/{id}` | none | `Snapshot` |
 | `POST /api/v1/import` | multipart `file` (.ics) **or** JSON `{tasks: [Task]}` (matching `GET /api/v1/export`) | `{created: [id], updated: [id], snapshot}`. ICS: events become tasks (`At`, `source: Calendar`); same UID updates the existing task. A moved instance of a repeating event (its series' UID plus a `RECURRENCE-ID`) is matched on both, and a UID repeated within one file keeps its last copy. Cancelled and transparent events are skipped. Overlapping `At` tasks are allowed and drawn side by side. JSON: every imported task gets a fresh id, the caller as owner, and newest-first ordering, and must meet the same title and duration limits as any task. Bad JSON or an invalid task returns 400 and writes nothing (all or nothing). Body capped at 2 MiB, max 500 tasks per import. |

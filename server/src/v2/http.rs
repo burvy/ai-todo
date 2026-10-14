@@ -412,6 +412,7 @@ fn build_router_with(
         .route("/api/v1/snapshot", get(snapshot))
         .route("/api/v1/tasks", post(create))
         .route("/api/v1/tasks/order", put(reorder))
+        .route("/api/v1/tasks/restore", post(restore))
         .route("/api/v1/settings", get(get_settings).patch(patch_settings))
         .route("/api/v1/import", post(import))
         .route("/api/v1/tasks/{id}", patch(update).delete(remove))
@@ -1006,6 +1007,18 @@ async fn update(
     let tz = zone(&headers)?;
     let mut app = shared.app.lock_recover();
     Ok(Json(app.patch(&id, patch, &user, tz)?))
+}
+
+/// `POST /api/v1/tasks/restore`: a task the user just deleted, back as it was.
+async fn restore(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+    Json(task): Json<Task>,
+) -> Result<Json<Snapshot>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
+    let tz = zone(&headers)?;
+    let mut app = shared.app.lock_recover();
+    Ok(Json(app.restore(task, &user, tz)?))
 }
 
 async fn remove(
@@ -2672,6 +2685,38 @@ mod tests {
             .id
             .0
             .clone()
+    }
+
+    #[tokio::test]
+    async fn a_deleted_task_can_be_taped_back() {
+        let router = router_at(sunday_night());
+        let id = create_task(&router, "Post the letter").await;
+        let (_, body) = send(&router, "DELETE", &format!("/api/v1/tasks/{id}"), None).await;
+        assert!(
+            serde_json::from_value::<Snapshot>(body)
+                .unwrap()
+                .tasks
+                .is_empty()
+        );
+
+        let (_, before) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        assert!(
+            serde_json::from_value::<Snapshot>(before)
+                .unwrap()
+                .tasks
+                .is_empty()
+        );
+        let gone = format!(
+            r#"{{"id":"{id}","title":"Post the letter","duration_min":30,"when":{{"kind":"anytime"}},"done":false,"order":3,"label":"Other","priority":"low","source":"text","created":"2026-10-11T20:00:00Z","updated_at":"2026-10-11T20:00:00Z"}}"#
+        );
+        let (status, body) = send(&router, "POST", "/api/v1/tasks/restore", Some(&gone)).await;
+        assert_eq!(status, StatusCode::OK);
+        let tasks = serde_json::from_value::<Snapshot>(body).unwrap().tasks;
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(
+            (tasks[0].title.as_str(), tasks[0].order),
+            ("Post the letter", 3)
+        );
     }
 
     #[tokio::test]
