@@ -147,13 +147,13 @@ impl Spring {
 
     /// Moves on by `dt` seconds toward `target`.
     pub(crate) fn step(&mut self, target: f64, pull: Pull, dt: f64) {
-        self.step_pushed(target, pull, None, dt);
+        self.step_with_push(target, pull, None, dt);
     }
 
     /// Moves on by `dt` seconds toward `target` while something pushes the leaf's free
     /// corner from underneath. The push is an extra acceleration on `open`, and it never
     /// lifts the leaf past its `reach`, so a push cannot complete a turn.
-    pub(crate) fn step_pushed(&mut self, target: f64, pull: Pull, push: Option<Push>, dt: f64) {
+    pub(crate) fn step_with_push(&mut self, target: f64, pull: Pull, push: Option<Push>, dt: f64) {
         let mut left = dt.clamp(0.0, 0.1);
         while left > 0.0 {
             let h = left.min(SUBSTEP);
@@ -247,7 +247,7 @@ mod tests {
         };
         let mut leaf = Spring::new(0.0, 0.0);
         for _ in 0..240 {
-            leaf.step_pushed(0.0, pull, Some(push), 1.0 / 60.0);
+            leaf.step_with_push(0.0, pull, Some(push), 1.0 / 60.0);
             assert!(
                 leaf.x <= push.reach + 1e-12,
                 "never past the reach: {}",
@@ -270,7 +270,7 @@ mod tests {
         let (mut a, mut b) = (Spring::new(0.6, 1.0), Spring::new(0.6, 1.0));
         for _ in 0..30 {
             a.step(0.0, pull, 1.0 / 60.0);
-            b.step_pushed(0.0, pull, None, 1.0 / 60.0);
+            b.step_with_push(0.0, pull, None, 1.0 / 60.0);
         }
         assert_eq!(a, b);
     }
