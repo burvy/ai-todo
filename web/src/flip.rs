@@ -121,6 +121,14 @@ pub(crate) struct Pull {
     pub(crate) zeta: f64,
 }
 
+/// A push on the leaf from underneath: `accel` in `open` per second squared, and how far
+/// `reach` (0 to 1) it can lift the leaf, short of the turn completing.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Push {
+    pub(crate) accel: f64,
+    pub(crate) reach: f64,
+}
+
 /// The longest slice of time stepped in one go, in seconds: a slow frame is split so the
 /// spring stays stable.
 const SUBSTEP: f64 = 1.0 / 240.0;
@@ -139,17 +147,31 @@ impl Spring {
 
     /// Moves on by `dt` seconds toward `target`.
     pub(crate) fn step(&mut self, target: f64, pull: Pull, dt: f64) {
+        self.step_with_push(target, pull, None, dt);
+    }
+
+    /// Moves on by `dt` seconds toward `target` while something pushes the leaf's free
+    /// corner from underneath. The push is an extra acceleration on `open`, and it never
+    /// lifts the leaf past its `reach`, so a push cannot complete a turn.
+    pub(crate) fn step_with_push(&mut self, target: f64, pull: Pull, push: Option<Push>, dt: f64) {
         let mut left = dt.clamp(0.0, 0.1);
         while left > 0.0 {
             let h = left.min(SUBSTEP);
             left -= h;
             let accel = -pull.omega * pull.omega * (self.x - target)
-                - 2.0 * pull.zeta * pull.omega * self.v;
+                - 2.0 * pull.zeta * pull.omega * self.v
+                + push.map_or(0.0, |push| push.accel);
+            let before = self.x;
             self.v += accel * h;
             self.x += self.v * h;
             if !(0.0..=1.0).contains(&self.x) {
                 self.x = self.x.clamp(0.0, 1.0);
                 self.v *= -FLIP_WALL_BOUNCE;
+            }
+            // A leaf already past the reach is not pulled down to it: the push just adds nothing.
+            if let Some(push) = push.filter(|push| self.x > push.reach) {
+                self.x = self.x.min(before.max(push.reach));
+                self.v = self.v.min(0.0);
             }
         }
     }
@@ -176,6 +198,24 @@ pub(crate) fn edge_px(width: f64, angle: f64, distance: f64) -> f64 {
     width * angle.cos() * distance / (distance - toward_viewer)
 }
 
+/// Whether the leaf lies over `point` (px from the page's top left corner, the spine along
+/// its left edge) when it is `open`, for a page `width` by `height` px seen from `distance`
+/// px away: the leaf's footprint is the page's own, cut off at its free edge.
+/// `x` is measured from the spine; on the turn back the leaf lies the other way, so the caller
+/// mirrors `x` by `Turn`.
+#[allow(
+    dead_code,
+    reason = "asked for by Rambo being caught under the leaf, engine step 11"
+)]
+pub(crate) fn leaf_covers(
+    open: f64,
+    (width, height): (f64, f64),
+    distance: f64,
+    (x, y): (f64, f64),
+) -> bool {
+    (0.0..=height).contains(&y) && (0.0..=edge_px(width, angle(open), distance)).contains(&x)
+}
+
 /// How far the leaf has swung, in radians, when it is `open` (0 to 1): the angle at which
 /// its free edge, seen flat on, is `1 - open` of the page's width from the spine, so a
 /// finger holding that edge keeps pace with it. (The viewer's perspective carries the edge
@@ -198,6 +238,96 @@ mod tests {
 
     const W: f64 = 390.0;
     const FAR: f64 = 1e9;
+
+    #[test]
+    fn a_push_lifts_the_leaf_but_never_past_its_reach_and_it_falls_back() {
+        let pull = Pull {
+            omega: crate::tuning::FLIP_FALL_OMEGA,
+            zeta: crate::tuning::FLIP_FALL_DAMPING,
+        };
+        let push = Push {
+            accel: 400.0,
+            reach: 0.3,
+        };
+        let mut leaf = Spring::new(0.0, 0.0);
+        for _ in 0..240 {
+            leaf.step_with_push(0.0, pull, Some(push), 1.0 / 60.0);
+            assert!(
+                leaf.x <= push.reach + 1e-12,
+                "never past the reach: {}",
+                leaf.x
+            );
+        }
+        assert!(leaf.x > 0.1, "it was lifted: {}", leaf.x);
+        for _ in 0..240 {
+            leaf.step(0.0, pull, 1.0 / 60.0);
+        }
+        assert!(leaf.at_rest(0.0), "released, it settles flat again");
+    }
+
+    #[test]
+    fn a_push_does_not_snap_a_leaf_already_past_its_reach() {
+        let pull = Pull {
+            omega: 1.0,
+            zeta: 1.0,
+        };
+        let mut leaf = Spring::new(0.8, 0.0);
+        leaf.step_with_push(
+            0.8,
+            pull,
+            Some(Push {
+                accel: 400.0,
+                reach: 0.3,
+            }),
+            1.0 / 60.0,
+        );
+        assert!(leaf.x > 0.7, "left where it was: {}", leaf.x);
+    }
+
+    #[test]
+    fn no_push_is_the_plain_spring() {
+        let pull = Pull {
+            omega: crate::tuning::FLIP_FALL_OMEGA,
+            zeta: crate::tuning::FLIP_FALL_DAMPING,
+        };
+        let (mut a, mut b) = (Spring::new(0.6, 1.0), Spring::new(0.6, 1.0));
+        for _ in 0..30 {
+            a.step(0.0, pull, 1.0 / 60.0);
+            b.step_with_push(0.0, pull, None, 1.0 / 60.0);
+        }
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn the_leaf_covers_what_lies_between_the_spine_and_its_free_edge() {
+        let (page, far) = ((W, 800.0), FAR);
+        assert!(
+            leaf_covers(0.0, page, far, (W - 1.0, 400.0)),
+            "flat: all of it"
+        );
+        assert!(
+            !leaf_covers(0.0, page, far, (W - 1.0, 801.0)),
+            "below the page"
+        );
+        assert!(
+            !leaf_covers(0.5, page, far, (W * 0.75, 100.0)),
+            "half open: only half"
+        );
+        assert!(leaf_covers(0.5, page, far, (W * 0.25, 100.0)));
+        assert!(
+            !leaf_covers(0.5, page, far, (-1.0, 100.0)),
+            "behind the spine"
+        );
+        let covered = |open: f64| {
+            (0..=39)
+                .filter(|i| leaf_covers(open, page, far, (f64::from(*i) * 10.0, 5.0)))
+                .count()
+        };
+        assert!(
+            covered(0.2) >= covered(0.6),
+            "the more open, the less is covered"
+        );
+    }
 
     #[test]
     fn a_left_swipe_turns_the_list_and_a_right_swipe_turns_back_from_the_planner() {
