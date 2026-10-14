@@ -134,6 +134,14 @@ fn focus_roving(scope: NodeRef<leptos::html::Div>) {
     );
 }
 
+/// Whether focus leaving the picker closes its page: only when it really went somewhere
+/// else. Not while a press inside is under way, and not while the page is rebuilding the
+/// thing that had the focus (a month step replaces the day grid, and the browser reports
+/// the focused day vanishing as the focus leaving, with nowhere to go).
+fn closes_on_focus_leave(to_inside: bool, inside_is_busy: bool) -> bool {
+    !to_inside && !inside_is_busy
+}
+
 /// A handwritten field that opens `page` beneath it. Escape or leaving the field
 /// closes it; `on_open` runs as it opens (to place the cursor).
 #[component]
@@ -143,9 +151,14 @@ fn PaperField(
     placeholder: &'static str,
     open: RwSignal<bool>,
     scope: NodeRef<leptos::html::Div>,
+    /// True while the page rebuilds what holds the focus (the day grid on a month step).
+    rebuilding: RwSignal<bool>,
     children: ChildrenFn,
 ) -> impl IntoView {
     let field = NodeRef::<leptos::html::Button>::new();
+    // A press inside the picker is under way: some browsers (touch ones, Safari) do not
+    // focus a tapped button, so the focus leaves for nothing and must not close it.
+    let pressing = RwSignal::new(false);
     // Closing from the page (a pick, Done, Escape) drops the focus with the page it
     // sat on; hand it back to the field. Focus that already moved elsewhere stays.
     Effect::new(move |was_open: Option<bool>| {
@@ -163,14 +176,17 @@ fn PaperField(
     view! {
         <div
             class="paper-picker"
+            on:pointerdown=move |_| pressing.set(true)
+            on:pointerup=move |_| pressing.set(false)
+            on:pointercancel=move |_| pressing.set(false)
             on:focusout=move |event| {
                 // Focus moving to something outside the picker closes the page.
-                let inside = event
+                let to_inside = event
                     .related_target()
                     .and_then(|target| target.dyn_into::<web_sys::Node>().ok())
                     .zip(event.current_target().and_then(|t| t.dyn_into::<web_sys::Node>().ok()))
                     .is_some_and(|(target, root)| root.contains(Some(&target)));
-                if !inside {
+                if closes_on_focus_leave(to_inside, pressing.get_untracked() || rebuilding.get_untracked()) {
                     open.set(false);
                 }
             }
@@ -222,6 +238,17 @@ pub fn PaperDate(
     let open = RwSignal::new(false);
     let scope = NodeRef::new();
     let cursor = RwSignal::new(start.get_untracked());
+    let rebuilding = RwSignal::new(false);
+    // Moves the day cursor; the grid may be rebuilt under the focus, which must not
+    // close the page.
+    let go = move |day: NaiveDate, refocus: bool| {
+        rebuilding.set(true);
+        cursor.set(day);
+        set_timeout(move || rebuilding.set(false), std::time::Duration::ZERO);
+        if refocus {
+            focus_roving(scope);
+        }
+    };
     Effect::new(move |_| {
         if open.get() {
             cursor.set(parse_day(&value.get_untracked()).unwrap_or_else(|| start.get_untracked()));
@@ -240,7 +267,7 @@ pub fn PaperDate(
     };
 
     view! {
-        <PaperField label shown placeholder="Pick a day" open scope>
+        <PaperField label shown placeholder="Pick a day" open scope rebuilding>
             <div class="paper-month">
                 <button
                     type="button"
@@ -248,7 +275,7 @@ pub fn PaperDate(
                     aria-label="Previous month"
                     on:click=move |_| {
                         if let Some(day) = step_day(cursor.get_untracked(), "PageUp") {
-                            cursor.set(day);
+                            go(day, false);
                         }
                     }
                 >"‹"</button>
@@ -261,7 +288,7 @@ pub fn PaperDate(
                     aria-label="Next month"
                     on:click=move |_| {
                         if let Some(day) = step_day(cursor.get_untracked(), "PageDown") {
-                            cursor.set(day);
+                            go(day, false);
                         }
                     }
                 >"›"</button>
@@ -279,8 +306,7 @@ pub fn PaperDate(
                     let key = event.key();
                     if let Some(day) = step_day(cursor.get_untracked(), &key) {
                         event.prevent_default();
-                        cursor.set(day);
-                        focus_roving(scope);
+                        go(day, true);
                     }
                 }
             >
@@ -343,7 +369,7 @@ pub fn PaperTime(
     let write = move |next: u16| set.run(hhmm(next % (24 * 60)));
 
     view! {
-        <PaperField label shown placeholder="Pick a time" open scope>
+        <PaperField label shown placeholder="Pick a time" open scope rebuilding=RwSignal::new(false)>
             {move || {
                 let twelve = clock.get().twelve_hour();
                 let hours: Vec<u16> = if twelve { (1..=12).collect() } else { (0..24).collect() };
@@ -597,6 +623,16 @@ mod tests {
         let with_seven = minute_choices(Some(7));
         assert!(with_seven.contains(&7));
         assert!(with_seven.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn only_a_real_move_of_the_focus_elsewhere_closes_the_page() {
+        assert!(closes_on_focus_leave(false, false), "focus went elsewhere");
+        assert!(!closes_on_focus_leave(true, false), "focus stayed inside");
+        assert!(
+            !closes_on_focus_leave(false, true),
+            "a press or a rebuild inside is under way"
+        );
     }
 
     #[test]
