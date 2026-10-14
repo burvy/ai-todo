@@ -154,6 +154,18 @@ pub fn park_nib(row: &web_sys::Element, pen_pos: RwSignal<(f64, f64)>) {
     }
 }
 
+/// Keep the nib parked on `row`'s title on every engine frame until the returned
+/// handle is stopped. A new row is still moving into place while he flies to it
+/// (arrivals move), and his hops read their far end every frame, so parking once
+/// before the flight sent him to where the row had been: he overshot, or waited
+/// there, and then snapped onto the row when he began to write.
+pub fn follow_row(row: web_sys::Element, pen_pos: RwSignal<(f64, f64)>) -> crate::engine::Handle {
+    crate::engine::on_tick(move |_| {
+        park_nib(&row, pen_pos);
+        crate::engine::Flow::Go
+    })
+}
+
 /// The title's line boxes as laid out now, in reading order. Measured again on
 /// every frame: the page may scroll under the pen while he writes.
 fn lines_of(title: &web_sys::Element) -> Vec<LineBox> {
