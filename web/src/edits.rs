@@ -121,6 +121,26 @@ pub(crate) fn revise_body(snapshot: &Snapshot, id: &str, heard: &str) -> Option<
     })
 }
 
+/// Whether a change Rambo heard for `heard_for` may be sent: only while that task's
+/// sheet is still the one open. Closed, or showing another task, it is dropped.
+pub(crate) fn heard_edit_applies(
+    heard_for: Option<&todo_core::TaskId>,
+    open_sheet: Option<&todo_core::TaskId>,
+) -> bool {
+    heard_for.is_some() && heard_for == open_sheet
+}
+
+/// Whether the sheet Rambo is listening for has just closed or moved to another
+/// task, so the listening must end. A sheet not yet open (Edit was just chosen) is
+/// not one that left.
+pub(crate) fn sheet_left(
+    heard_for: Option<&todo_core::TaskId>,
+    was_open: Option<&todo_core::TaskId>,
+    now_open: Option<&todo_core::TaskId>,
+) -> bool {
+    heard_for.is_some() && was_open == heard_for && now_open != heard_for
+}
+
 /// Whether Rambo should listen for a change to `id` when its sheet opens.
 pub(crate) fn revisable(snapshot: &Snapshot, id: &str) -> bool {
     revisable_task(snapshot, id).is_some()
@@ -230,6 +250,32 @@ mod tests {
         {
             assert!(revise_body(&snapshot, &row.id.0, "make it Friday").is_none());
         }
+    }
+
+    #[test]
+    fn a_heard_change_only_lands_on_its_own_open_sheet() {
+        use todo_core::TaskId;
+        let (a, b) = (TaskId("a".into()), TaskId("b".into()));
+        assert!(heard_edit_applies(Some(&a), Some(&a)));
+        assert!(!heard_edit_applies(Some(&a), None), "the sheet was closed");
+        assert!(
+            !heard_edit_applies(Some(&a), Some(&b)),
+            "another task's sheet"
+        );
+        assert!(
+            !heard_edit_applies(None, Some(&a)),
+            "nothing was being listened for"
+        );
+
+        // Closing the sheet, or opening another task's, ends the listening.
+        assert!(sheet_left(Some(&a), Some(&a), None));
+        assert!(sheet_left(Some(&a), Some(&a), Some(&b)));
+        // Edit was just chosen and the sheet is opening: keep listening.
+        assert!(!sheet_left(Some(&a), None, Some(&a)));
+        assert!(!sheet_left(Some(&a), None, None));
+        // A refill keeps it open on the same task.
+        assert!(!sheet_left(Some(&a), Some(&a), Some(&a)));
+        assert!(!sheet_left(None, Some(&a), None), "not listening at all");
     }
 
     #[test]

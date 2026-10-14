@@ -109,6 +109,23 @@ struct EditForm {
     time: String,
 }
 
+/// The sheet after a refill: each field takes the server's `fresh` value unless the
+/// user has `typed` in it since the sheet showed `shown`.
+fn keep_typed(shown: &EditForm, typed: EditForm, fresh: EditForm) -> EditForm {
+    fn pick<T: PartialEq>(shown: &T, typed: T, fresh: T) -> T {
+        if typed == *shown { fresh } else { typed }
+    }
+    EditForm {
+        title: pick(&shown.title, typed.title, fresh.title),
+        duration: pick(&shown.duration, typed.duration, fresh.duration),
+        when: pick(&shown.when, typed.when, fresh.when),
+        datetime: pick(&shown.datetime, typed.datetime, fresh.datetime),
+        weekdays: pick(&shown.weekdays, typed.weekdays, fresh.weekdays),
+        until: pick(&shown.until, typed.until, fresh.until),
+        time: pick(&shown.time, typed.time, fresh.time),
+    }
+}
+
 fn edit_form(snapshot: &Snapshot, id: &str) -> Option<EditForm> {
     let task = held(snapshot, id)?;
     let (when, datetime) = match task.when {
@@ -298,11 +315,13 @@ pub(crate) fn TaskList(
     pen_pos: RwSignal<(f64, f64)>,
     /// A row to open the edit sheet on, set by Rambo's "Edit".
     edit_request: RwSignal<Option<TaskId>>,
+    /// The task whose edit sheet is open; Rambo listens for its change while it is.
+    open_sheet: RwSignal<Option<TaskId>>,
 ) -> impl IntoView {
     #[cfg(not(target_arch = "wasm32"))]
     let _ = pen_pos;
     let (selected_label, set_selected_label) = signal(load_label_filter());
-    let (editing_task, set_editing_task) = signal::<Option<TaskId>>(None);
+    let (editing_task, set_editing_task) = (open_sheet.read_only(), open_sheet.write_only());
     let (edit_title, set_edit_title) = signal(String::new());
     let (edit_duration, set_edit_duration) = signal(String::new());
     let (edit_when, set_edit_when) = signal(EditWhen::Anytime);
@@ -314,10 +333,30 @@ pub(crate) fn TaskList(
     let edit_until = RwSignal::new(String::new());
     let edit_time = RwSignal::new(String::new());
     // Open the edit sheet on a row: from a click on it, or from Rambo's "Edit".
+    // What the sheet was last filled with: a refill after Rambo's heard change keeps
+    // any field the user has typed in since.
+    let shown = StoredValue::new(None::<EditForm>);
     let open_editor = move |id: &TaskId| {
-        let Some(form) = snapshot.with_untracked(|s| edit_form(s, &id.0)) else {
+        let Some(fresh) = snapshot.with_untracked(|s| edit_form(s, &id.0)) else {
             return;
         };
+        let refill = editing_task.get_untracked().as_ref() == Some(id);
+        let form = match shown.get_value() {
+            Some(before) if refill => {
+                let typed = EditForm {
+                    title: edit_title.get_untracked(),
+                    duration: edit_duration.get_untracked(),
+                    when: edit_when.get_untracked(),
+                    datetime: edit_datetime.get_untracked(),
+                    weekdays: edit_weekdays.get_untracked(),
+                    until: edit_until.get_untracked(),
+                    time: edit_time.get_untracked(),
+                };
+                keep_typed(&before, typed, fresh.clone())
+            }
+            _ => fresh.clone(),
+        };
+        shown.set_value(Some(fresh));
         set_edit_title.set(form.title);
         set_edit_duration.set(form.duration);
         set_edit_when.set(form.when);
@@ -1290,6 +1329,24 @@ mod tests {
             external_uid: None,
         });
         snapshot
+    }
+
+    #[test]
+    fn a_refill_keeps_what_the_user_typed() {
+        let shown = edit_form(&snapshot_with_series(false), "sgym:2026-10-15").expect("listed");
+        let mut typed = shown.clone();
+        typed.title = "Gym with Sam".into();
+        let mut fresh = shown.clone();
+        fresh.title = "Gym (server)".into();
+        fresh.datetime = "2026-10-16T15:00".into();
+
+        let refilled = keep_typed(&shown, typed, fresh);
+        assert_eq!(refilled.title, "Gym with Sam", "typed meanwhile: kept");
+        assert_eq!(
+            refilled.datetime, "2026-10-16T15:00",
+            "untouched: the server's new value"
+        );
+        assert_eq!(refilled.duration, shown.duration);
     }
 
     #[test]

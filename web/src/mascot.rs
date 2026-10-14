@@ -103,9 +103,12 @@ pub const NIB_BELOW: f64 = 0.42;
 /// How far outside the nest's edge a drop still counts as putting him back.
 pub const NEST_SLACK_PX: f64 = 16.0;
 /// Milliseconds he must be held still before he listens. A drag only carries
-/// him; listening starts on this long press, on Edit, or from the keyboard.
+/// him; listening starts on this long press, on Edit, or from the keyboard. Safe
+/// range 300 to 1000: shorter and a slow start to a drag listens, longer and a
+/// hold feels ignored.
 pub const LISTEN_HOLD_MS: u32 = 450;
 /// How far the pointer may wander during that hold and still count as still.
+/// Safe range 4 to 16 px: a resting finger on a phone shakes a few pixels.
 pub const LISTEN_SLOP_PX: f64 = 8.0;
 /// Minimum drop velocity (px/ms) to trigger a hard-drop splat.
 pub const HARD_DROP_VELOCITY: f64 = 0.5;

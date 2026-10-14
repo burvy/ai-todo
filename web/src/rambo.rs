@@ -5,7 +5,9 @@ use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
 
-use crate::edits::{EditSink, revisable, revise_and_show, revise_body, series_note};
+use crate::edits::{
+    EditSink, heard_edit_applies, revisable, revise_and_show, revise_body, series_note, sheet_left,
+};
 use crate::tasks::{apply_tick, delete_with_scribble, tick_action};
 use crate::{ink, mascot, settings, speech, voice};
 
@@ -35,6 +37,8 @@ pub(crate) fn Rambo(
     form_ref: NodeRef<leptos::html::Form>,
     /// Set to the task he was dropped on when you choose "Edit": the list opens its sheet
     edit_request: RwSignal<Option<TaskId>>,
+    /// The task whose edit sheet is open, if any: listening for an edit ends with it
+    open_sheet: RwSignal<Option<TaskId>>,
     /// The nest button: Rambo measures its bounding box to know where home is
     nest_ref: NodeRef<leptos::html::Button>,
     /// The tool he holds: it decides which drawing of each pose he wears
@@ -284,6 +288,7 @@ pub(crate) fn Rambo(
                             set_error,
                         },
                         edit_request,
+                        open_sheet,
                     );
                 }
             },
@@ -302,6 +307,23 @@ pub(crate) fn Rambo(
             Err(message) => set_error.set(Some(message)),
         }
     };
+
+    // Closing the sheet, or opening another task's, ends the listening for it, and
+    // what was heard is dropped rather than sent.
+    Effect::new(move |was: Option<Option<TaskId>>| {
+        let now = open_sheet.get();
+        if let Some(was) = was
+            && sheet_left(editing.get_untracked().as_ref(), was.as_ref(), now.as_ref())
+        {
+            editing.set(None);
+            edit_session.with_value(|session| {
+                if let Some(session) = session {
+                    session.stop();
+                }
+            });
+        }
+        now
+    });
 
     // Clone closures for multiple event handlers
     let still_move = still.clone();
@@ -597,17 +619,21 @@ fn send_heard_edit(
     snapshot: ReadSignal<Snapshot>,
     sink: EditSink,
     edit_request: RwSignal<Option<TaskId>>,
+    open_sheet: RwSignal<Option<TaskId>>,
 ) {
     let Some(id) = editing.try_update(Option::take).flatten() else {
         return;
     };
+    if !heard_edit_applies(Some(&id), open_sheet.get_untracked().as_ref()) {
+        return;
+    }
     let Some(body) = snapshot.with_untracked(|s| revise_body(s, &id.0, &heard.get_untracked()))
     else {
         return;
     };
     wasm_bindgen_futures::spawn_local(async move {
         if revise_and_show(&id, body, sink).await {
-            // The sheet was filled when it opened: fill it again from the result.
+            // Fill the sheet again from the result; fields typed meanwhile are kept.
             edit_request.set(Some(id));
         }
     });
