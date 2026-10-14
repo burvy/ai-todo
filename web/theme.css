@@ -84,7 +84,8 @@
      with the same number, so change both together. */
   --hour-h: 64px;
   --capture-clear: calc(56px + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px)); /* what a phone's fixed capture bar covers at the bottom */
-  --page-foot-h: 2rem; /* the note at a phone page's foot, which the tack tab rides above */
+  --page-foot-h: 2rem; /* the note at a phone page's foot */
+  --page-top: calc(var(--gutter) + var(--space-2) + var(--space-4)); /* what lies above a phone's pages */
 
   /* Layers, lowest to highest: the one scale every z-index reads (docs/FRONTEND-PLAN.md
      1.5). Rambo and his bubbles sit under the gear menu and the edit sheet (which is a
@@ -1510,13 +1511,23 @@ li.task-row:focus-within .delete-mark {
   margin: 0;
 }
 
-/* The note at the page's foot, in the hand, at the left so Rambo's bubble, which sits at the right, never covers it: a phone's two pages say where the other
-   one is, and a tap turns to it. A desk shows both pages, so it hides there. */
+/* The note at the foot of a phone page, in the hand. It is part of the page, so it turns
+   with it; each page is as tall as the screen above the capture bar so the note sits at
+   that foot, and the page's own content stops short of it. A desk shows both pages and
+   hides it. */
+@media (max-width: 700px) {
+  main > * {
+    box-sizing: border-box;
+    align-content: start;
+    min-height: calc(100dvh - var(--page-top) - var(--capture-clear));
+    padding-bottom: var(--page-foot-h);
+  }
+}
+
 .page-foot {
-  position: fixed;
-  left: var(--gutter);
-  bottom: var(--capture-clear);
-  z-index: var(--layer-sticky);
+  position: absolute;
+  left: 0;
+  bottom: 0;
   min-height: var(--page-foot-h);
   padding: 0 var(--space-1);
   font-family: var(--font-hand);

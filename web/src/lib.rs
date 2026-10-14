@@ -177,6 +177,13 @@ pub fn App() -> impl IntoView {
             <div class="tasks-pane">
                 <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request open_sheet scraps />
                 <tack::TackBoard snapshot set_snapshot set_error view_settings set_cue=set_tack_cue />
+                <PageFoot
+                    page=0
+                    turn=std::rc::Rc::new({
+                        let turner = turner.clone();
+                        move || turner.turn_to(1)
+                    })
+                />
             </div>
             <week::WeekGrid
                 snapshot=snapshot
@@ -185,6 +192,10 @@ pub fn App() -> impl IntoView {
                 set_snapshot=set_snapshot
                 set_error=set_error
                 capture_text
+                turn_back=std::rc::Rc::new({
+                    let turner = turner.clone();
+                    move || turner.turn_to(0)
+                })
             />
             // What a turning page draws between the two panes: the shadow it casts on
             // the next page, the curl's rise, and the lifted flap with its own shadow. Hidden until a turn.
@@ -196,17 +207,6 @@ pub fn App() -> impl IntoView {
                 <div class="bend-flap"><i class="bend-strip bend-ridge"></i></div>
             </div>
         </main>
-        // The note at the page's foot says where the other page is; tapping it turns the page.
-        <button
-            type="button"
-            class="page-foot"
-            on:click={
-                let turner = turner.clone();
-                move |_| turner.turn_to(1 - pane.get_untracked())
-            }
-        >
-            {move || page_foot_note(pane.get())}
-        </button>
         <scrap::ScrapCorner scraps set_snapshot set_error />
         // The ink a dazed Rambo leaves: above the page, below him.
         <inklayer::InkLayer
@@ -250,6 +250,17 @@ pub fn start() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
     leptos::mount::mount_to_body(App);
+}
+
+/// The note at the foot of a phone's page, in the page itself so it turns with it: it says
+/// where the other page is, and tapping it turns there. A desk shows both pages, so it hides.
+#[component]
+pub(crate) fn PageFoot(page: u8, turn: std::rc::Rc<dyn Fn()>) -> impl IntoView {
+    view! {
+        <button type="button" class="page-foot" on:click=move |_| turn()>
+            {page_foot_note(page)}
+        </button>
+    }
 }
 
 /// What the note at a phone page's foot says: where the other page is.

@@ -66,6 +66,8 @@ pub fn WeekGrid(
     set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
     capture_text: RwSignal<String>,
+    /// Turn to the list's page: what the note at this page's foot does.
+    turn_back: std::rc::Rc<dyn Fn()>,
 ) -> impl IntoView {
     let grid_ref = NodeRef::<leptos::html::Div>::new();
     let (now_minutes, set_now_minutes) = signal(current_minutes());
@@ -177,6 +179,7 @@ pub fn WeekGrid(
                 <crate::settings::GearMenu settings set_settings set_snapshot set_error />
             </div>
             <h2 id="week-heading">"Planner"</h2>
+            <crate::PageFoot page=1 turn=turn_back />
             <div class="week-scroll" node_ref=grid_ref>
                 <div class="week" style=move || format!("--days: {}", settings.get().days)>
                     <For each=days key=|day| *day let:day>
