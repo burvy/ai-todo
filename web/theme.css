@@ -523,8 +523,6 @@ a {
   border-radius: var(--radius-round);
   cursor: grab;
   touch-action: none;
-  /* At home, let clicks pass through to the nest button below */
-  pointer-events: none;
   /* CSS variables for writing position — ignored at home */
   --pen-x: 0px;
   --pen-y: 0px;
@@ -551,17 +549,6 @@ a {
     calc(var(--pen-x) - 50%),
     calc(var(--pen-y) - 50%)
   );
-}
-
-/* When Rambo is away from home (dragging, flying, writing, etc.), capture pointer events */
-.rambo.is-dragging,
-.rambo.is-flying,
-.rambo.is-recovering,
-.rambo.is-splatting,
-.rambo.is-skittering,
-.rambo.is-asking,
-.rambo.is-writing {
-  pointer-events: auto;
 }
 
 .rambo:active {

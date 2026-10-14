@@ -851,7 +851,7 @@ fn CaptureBox(
                 class="nest"
                 aria-label="Submit task"
             >
-                // Rambo sits here; his pointer-events:none at home lets clicks reach the nest
+                // Rambo sits here as a sibling element; clicking the nest area around him submits
             </button>
             <Rambo
                 state
