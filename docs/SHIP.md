@@ -21,29 +21,36 @@ git status --short                                          # must print nothing
 
 cd "..\burvy-dev"
 git pull
-pwsh -File .\build.ps1 -Deploy -Modules primer-wasm -Servers rambl,primer -RamblDir ..\ai-todo-release
+.\build.ps1 -Deploy -Modules primer-wasm -Servers rambl,primer -RamblDir ..\ai-todo-release
 ```
 
-Run it with PowerShell 7 (`pwsh`). It ends by opening `burvy-dev\deploy\`, which holds
+Run it from a PowerShell 7 (`pwsh`) prompt. `-RamblDir` arrives with burvy-dev PR #3;
+without it the build takes `..\ai-todo`, whatever branch that checkout is on. From cold
+it takes about half an hour. It ends by opening `burvy-dev\deploy\`, which holds
 `rambl-server.exe` with the web page compiled in, `primer-server.exe` and the site under
 `burvy-dev\dist\`. Note the commit you built: `git -C ..\ai-todo-release log -1 --oneline`.
 
 ## 2. Check the exe starts from an empty folder
 
 Before sending it anywhere, run it once on the development machine with a throwaway
-settings file, on a spare port:
+settings file, on a port nothing else holds (another Rambl may already be on 3160):
 
 ```powershell
+$l = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0); $l.Start()
+$port = $l.LocalEndpoint.Port; $l.Stop()
 $t = New-Item -ItemType Directory "$env:TEMP\rambl-smoke-$(Get-Date -f yyyyMMddHHmmss)"
 Copy-Item "Z:\3. Rust Projects\burvy-dev\deploy\rambl-server.exe" $t
-"RAMBL_PORT=3199`nRAMBL_DEFAULT_TZ=America/New_York" | Set-Content "$t\rambl.env"
+"RAMBL_PORT=$port`nRAMBL_DEFAULT_TZ=America/New_York" | Set-Content "$t\rambl.env"
 $p = Start-Process "$t\rambl-server.exe" -WorkingDirectory $t -PassThru
-curl.exe -s -o NUL -w "%{http_code}`n" http://127.0.0.1:3199/
-curl.exe -s -o NUL -w "%{http_code}`n" http://127.0.0.1:3199/api/v1/config
+Start-Sleep 3
+curl.exe -s -o NUL -w "%{http_code}`n" http://127.0.0.1:$port/
+curl.exe -s -o NUL -w "%{http_code}`n" http://127.0.0.1:$port/api/v1/config
 Stop-Process -Id $p.Id
 ```
 
-Both lines must print `200`, and `$t\data\rambl.db` must exist afterwards. Delete `$t`.
+The exe's window must say `Rambl is listening on 127.0.0.1:<port>`, both lines must
+print `200`, and `$t\data\rambl.db` must exist afterwards. A `200` alone proves nothing
+if the port was already taken: something else answered. Delete `$t`.
 
 ## 3. Copy it over RustDesk
 
