@@ -271,13 +271,14 @@ pub const HOP_MIN_PX: f64 = 12.0;
 /// How high a short hop rises, as a share of its length: a small hop is a small
 /// arc. Safe range 0.15 to 0.6.
 pub const HOP_RISE: f64 = 0.35;
-/// The height, in px, where a hop stops rising at `HOP_RISE`: past it a hop rises
-/// only `HOP_LONG_RISE` of its length. Safe range 8 to 40.
+/// The height, in px, where a hop stops rising at `HOP_RISE`: past it a hop's
+/// height still grows, by `HOP_LONG_RISE` of each extra px, so a longer hop is
+/// always higher, never stuck at one height. Safe range 8 to 40.
 pub const HOP_HEIGHT_PX: f64 = 22.0;
-/// How high a long hop rises, as a share of its length: lower than a short hop's
-/// round arc, but still clearly a hop, never the glide Interview 4 removed. Safe
-/// range 0.08 to 0.2.
-pub const HOP_LONG_RISE: f64 = 0.12;
+/// How much taller a long hop gets per extra px of its length: lower than a short
+/// hop's round arc, but never nothing, so a long trip is a higher arc, never the
+/// glide Interview 4 removed. Safe range 0.05 to 0.12.
+pub const HOP_LONG_RISE: f64 = 0.072;
 /// The highest any hop rises above the straight way, in px, however long: two hops
 /// across a desk stay a pen's hops, not a ball's. Safe range 32 to 80.
 pub const HOP_HEIGHT_MAX_PX: f64 = 48.0;
