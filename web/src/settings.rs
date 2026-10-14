@@ -167,6 +167,14 @@ pub fn GearMenu(
 
     let close = move |_| set_open.set(false);
 
+    // Escape closes the sheet from wherever the focus sits; a press on the
+    // page around the menu is caught by the backdrop.
+    window_event_listener(leptos::ev::keydown, move |event| {
+        if event.key() == "Escape" && open.get_untracked() {
+            set_open.set(false);
+        }
+    });
+
     view! {
         <div class="gear-wrap">
             <button

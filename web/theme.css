@@ -855,16 +855,23 @@ a {
   );
 }
 
-/* Status text below Rambo */
+/* Rambo's speech strip: his lines and his ask menu, anchored to the capture
+   bar just left of his nest, so both read as spoken beside him — and nothing
+   behind them but the capture line itself, never a task row. The strip never
+   catches a tap (the ask menu turns them back on), and its width is capped
+   inside the bar, so it can never leave the screen. A bubble is the one thing
+   on this page allowed to be round. */
 .mascot-status {
-  position: fixed;
-  bottom: calc(2 * var(--tap) + var(--space-2) + env(safe-area-inset-bottom, 0px));
-  right: var(--gutter);
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  right: calc(var(--tap) * 1.25 + var(--space-2));
   z-index: 50;
   display: block;
-  min-height: 1.2em;
+  text-align: right;
   font-size: var(--text-sm);
-  max-width: 20rem;
+  max-width: min(24rem, calc(100% - var(--tap) * 1.25 - 3 * var(--space-2)));
+  pointer-events: none;
 }
 
 .brain-line,
@@ -874,14 +881,22 @@ a {
   color: var(--ink-soft);
 }
 
-/* Rambo's ask: a speech bubble pinned above the capture bar. A bubble is the
-   one thing on this page allowed to be round. */
+/* His lines are written in the paper bubble, the same sheet as the ask menu:
+   bare italic text floating at the page corner read as a glitch (Fable's QA). */
+.brain-line {
+  display: inline-block;
+  max-width: 100%;
+  padding: var(--space-3);
+  background-color: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+/* Rambo's ask: Edit / Move / Done for the task he was dropped on. */
 .ask {
-  position: absolute;
-  z-index: 4;
-  left: var(--gutter);
-  right: var(--gutter);
-  max-width: 24rem;
+  display: inline-block;
+  max-width: 100%;
   margin-top: var(--space-2);
   padding: var(--space-3);
   font-family: var(--font-heading);
@@ -890,6 +905,8 @@ a {
   border: 1px solid var(--rule);
   border-radius: 12px;
   box-shadow: var(--shadow);
+  pointer-events: auto;
+  text-align: left;
 }
 
 .ask button {
@@ -1063,9 +1080,15 @@ a {
 
 .label-filters {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: var(--space-2);
   margin-bottom: var(--space-3);
+  /* One scrollable strip: a wrapped row can strand a single tab ("Other")
+     whenever the data decides the break, which the owner banned. The padding
+     keeps focus outlines from being clipped by the scroll box. */
+  overflow-x: auto;
+  padding: var(--space-1) 0;
+  scrollbar-width: none;
 }
 
 .label-filters button {
@@ -1283,13 +1306,21 @@ a {
 
 .gear-choices {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
+  flex-wrap: nowrap;
+  gap: var(--space-1);
+  /* The pen row is the widest one and the menu sheet never gets wider than
+     20rem, so it must scroll rather than wrap one tool onto its own line. */
+  overflow-x: auto;
+  padding: var(--space-1) 0;
+  scrollbar-width: none;
 }
 
 .gear-choices button {
   min-height: var(--tap);
-  padding: 0 var(--space-2);
+  padding: 0 var(--space-1);
+  /* A step smaller so all five pens fit the sheet's width at 390px. */
+  font-size: var(--text-sm);
+  white-space: nowrap;
 }
 
 .gear-menu label {
