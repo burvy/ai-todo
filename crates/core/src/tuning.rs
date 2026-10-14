@@ -20,5 +20,10 @@ pub const TASK_MAX_DURATION_MIN: u16 = 480;
 /// [`TASK_MIN_DURATION_MIN`] and [`TASK_MAX_DURATION_MIN`].
 pub const TASK_DEFAULT_DURATION_MIN: u16 = 30;
 
+/// Days of series occurrences a snapshot carries when the caller names no window:
+/// today plus this many. The server and the page both read it, so the page never asks
+/// for a window the server does not default to. Safe range 1 to 366, the server's widest.
+pub const DEFAULT_WINDOW_DAYS: u32 = 7;
+
 const _: () = assert!(TASK_MIN_DURATION_MIN <= TASK_DEFAULT_DURATION_MIN);
 const _: () = assert!(TASK_DEFAULT_DURATION_MIN <= TASK_MAX_DURATION_MIN);

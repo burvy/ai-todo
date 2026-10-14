@@ -451,7 +451,7 @@ pub(crate) fn Rambo(
                                 if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
                                     let task_id_str = task_id.clone();
                                     let body = snapshot.with_untracked(|s| next_priority_body(s, &task_id_str));
-                                    let sink = EditSink { set_snapshot, set_error, view_settings };
+                                    let sink = EditSink { set_snapshot, set_error };
                                     let set_state_clone = set_state;
                                     wasm_bindgen_futures::spawn_local(async move {
                                         if let Some(body) = body {
@@ -469,7 +469,7 @@ pub(crate) fn Rambo(
                                     let task_id = task_id.clone();
                                     // The list's tick, so a repeat's day is marked on its own date.
                                     let action = snapshot.with_untracked(|s| tick_action(s, &task_id));
-                                    let sink = EditSink { set_snapshot, set_error, view_settings };
+                                    let sink = EditSink { set_snapshot, set_error };
                                     let set_state_clone = set_state;
                                     wasm_bindgen_futures::spawn_local(async move {
                                         if let Some(action) = action {

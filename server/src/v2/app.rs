@@ -18,7 +18,8 @@ use todo_core::{
 
 use super::ics_import::ParsedCalendar;
 use super::store::{Store, StoreError};
-use super::tuning::{DEFAULT_WINDOW_DAYS, MAX_TASKS_PER_USER, MAX_TITLE_CHARS};
+use super::tuning::{MAX_TASKS_PER_USER, MAX_TITLE_CHARS};
+use todo_core::tuning::DEFAULT_WINDOW_DAYS;
 use todo_core::tuning::{TASK_MAX_DURATION_MIN, TASK_MIN_DURATION_MIN};
 
 /// Working hours used when placing floating tasks. Local time, every day.

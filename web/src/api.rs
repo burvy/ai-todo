@@ -5,6 +5,7 @@ use js_sys;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use todo_core::tuning::DEFAULT_WINDOW_DAYS;
 use todo_core::{ApiError as CoreApiError, ErrorCode, Snapshot, TaskId, When};
 use uuid::Uuid;
 
@@ -322,10 +323,18 @@ impl PatchTaskBody {
     }
 }
 
-/// GET /api/v1/snapshot?from=YYYY-MM-DD&days=7
-pub async fn fetch_snapshot(from: &str, days: u8) -> Result<Snapshot, ApiError> {
-    let url = format!("/api/v1/snapshot?from={from}&days={days}");
-    let response = Request::get(&url).identity().send_checked().await?;
+/// The snapshot URL for the default window starting at `from`. Every fetch uses it, so a
+/// snapshot never depends on which call ran last.
+fn snapshot_url(from: &str) -> String {
+    format!("/api/v1/snapshot?from={from}&days={DEFAULT_WINDOW_DAYS}")
+}
+
+/// GET /api/v1/snapshot for the default window from `from`.
+pub async fn fetch_snapshot(from: &str) -> Result<Snapshot, ApiError> {
+    let response = Request::get(&snapshot_url(from))
+        .identity()
+        .send_checked()
+        .await?;
     response
         .json::<Snapshot>()
         .await
@@ -636,6 +645,14 @@ mod tests {
             }
             other => panic!("expected the server's refusal, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn every_snapshot_fetch_asks_for_the_servers_default_window() {
+        assert_eq!(
+            snapshot_url("2026-10-14"),
+            "/api/v1/snapshot?from=2026-10-14&days=7"
+        );
     }
 
     #[test]

@@ -435,7 +435,7 @@ pub(crate) fn TaskList(
                             let task_id_clone = task_id.clone();
                             move |_| {
                                 let task_id_clone = task_id_clone.clone();
-                                let sink = EditSink { set_snapshot, set_error, view_settings };
+                                let sink = EditSink { set_snapshot, set_error };
                                 let Some(action) =
                                     snapshot.with_untracked(|s| tick_action(s, &task_id_clone.0))
                                 else {
@@ -926,7 +926,7 @@ pub(crate) fn TaskList(
                                             let Some(body) = snapshot.with_untracked(|s| toggle_done_body(s, &task_id.0)) else {
                                                 return;
                                             };
-                                            let sink = EditSink { set_snapshot, set_error, view_settings };
+                                            let sink = EditSink { set_snapshot, set_error };
                                             wasm_bindgen_futures::spawn_local(async move {
                                                 if patch_and_show(&task_id, body, sink).await {
                                                     set_editing_task.set(None);
@@ -1023,7 +1023,7 @@ pub(crate) fn TaskList(
                                             let Some(seen) = snapshot.with_untracked(|s| held(s, &task_id.0).map(|task| task.updated_at)) else {
                                                 return;
                                             };
-                                            let sink = EditSink { set_snapshot, set_error, view_settings };
+                                            let sink = EditSink { set_snapshot, set_error };
                                             let body = api::PatchTaskBody::new()
                                                 .title(title)
                                                 .duration_min(duration.unwrap_or(1))

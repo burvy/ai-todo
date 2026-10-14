@@ -3,7 +3,7 @@
 use leptos::prelude::*;
 use todo_core::Snapshot;
 
-use crate::{api, settings};
+use crate::api;
 
 /// The task `id` as the list holds it right now.
 ///
@@ -96,13 +96,11 @@ fn refused_note(error: &api::ApiError, reloaded: bool) -> &'static str {
     }
 }
 
-/// Where an edit's result goes: the list it replaces, the note that explains a refusal,
-/// and the view settings that say how many days the list covers.
+/// Where an edit's result goes: the list it replaces and the note that explains a refusal.
 #[derive(Clone, Copy)]
 pub(crate) struct EditSink {
     pub(crate) set_snapshot: WriteSignal<Snapshot>,
     pub(crate) set_error: WriteSignal<Option<String>>,
-    pub(crate) view_settings: ReadSignal<settings::Settings>,
 }
 
 /// Sends an edit and shows what the server now holds. Returns whether the edit applied.
@@ -123,8 +121,7 @@ pub(crate) async fn patch_and_show(
             true
         }
         Err(error) => {
-            let days = sink.view_settings.get_untracked().days;
-            let reloaded = match api::fetch_snapshot(&api::today_date(), days).await {
+            let reloaded = match api::fetch_snapshot(&api::today_date()).await {
                 Ok(snapshot) => {
                     sink.set_snapshot.set(snapshot);
                     true

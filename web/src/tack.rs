@@ -924,7 +924,6 @@ pub fn TackBoard(
                     let sink = crate::edits::EditSink {
                         set_snapshot,
                         set_error,
-                        view_settings,
                     };
                     wasm_bindgen_futures::spawn_local(async move {
                         if let Some(body) = body {

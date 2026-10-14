@@ -77,9 +77,6 @@ pub const MAX_TASKS_PER_USER: usize = 5000;
 
 // ---- the snapshot window
 
-/// Days of series occurrences a snapshot carries when the caller names no window:
-/// today plus this many. Safe range 1 to [`MAX_WINDOW_DAYS`].
-pub const DEFAULT_WINDOW_DAYS: u32 = 7;
 /// The widest window a caller may ask for, in days: a year, the horizon the scheduler
 /// itself fills. Safe range 31 to 366; a wider window makes a bigger snapshot to
 /// expand and send.
