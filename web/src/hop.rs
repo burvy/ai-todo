@@ -6,7 +6,8 @@
 //! the run home, and later the engine's throws that land).
 
 use crate::tuning::{
-    HOP_HEIGHT_PX, HOP_MAX, HOP_MIN_PX, HOP_MS, HOP_RISE, HOP_SPAN_PX, HOP_SQUASH,
+    HOP_HEIGHT_MAX_PX, HOP_HEIGHT_PX, HOP_LONG_RISE, HOP_MAX, HOP_MIN_PX, HOP_MS, HOP_RISE,
+    HOP_SPAN_PX, HOP_SQUASH,
 };
 
 /// A run of hops from `from`, planned for the distance it had to cover. The far
@@ -85,7 +86,7 @@ impl Hop {
         let flight = ((share - TAKE_OFF) / (TOUCH_DOWN - TAKE_OFF)).clamp(0.0, 1.0);
         let along = (f64::from(hop) + flight) / f64::from(self.hops);
         let span = (to.0 - self.from.0).hypot(to.1 - self.from.1) / f64::from(self.hops);
-        let height = (span * HOP_RISE).min(HOP_HEIGHT_PX);
+        let height = arc_height(span);
         Frame {
             pos: (
                 self.from.0 + (to.0 - self.from.0) * along,
@@ -95,6 +96,16 @@ impl Hop {
             squash: HOP_SQUASH * squash_at(share),
         }
     }
+}
+
+/// How high a hop `span` px long rises above the straight way, in px. A short hop
+/// is a round arc ([`HOP_RISE`] of its length); a long one is flatter
+/// ([`HOP_LONG_RISE`]) but still grows with its length, so a long phone trip in
+/// few hops never reads as a glide; no hop rises past [`HOP_HEIGHT_MAX_PX`].
+fn arc_height(span: f64) -> f64 {
+    (span * HOP_RISE)
+        .min(HOP_HEIGHT_PX.max(span * HOP_LONG_RISE))
+        .min(HOP_HEIGHT_MAX_PX)
 }
 
 /// His squash `share` of the way through one hop, read off [`SQUASH_KEYS`].
@@ -200,6 +211,32 @@ mod tests {
                 "{pair:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_longer_hop_rises_higher_up_to_a_ceiling() {
+        let spans = (1..=2000).map(f64::from);
+        let heights: Vec<f64> = spans.clone().map(arc_height).collect();
+        assert!(
+            heights.windows(2).all(|pair| pair[0] <= pair[1]),
+            "a longer hop never rises lower"
+        );
+        for (span, height) in spans.zip(heights) {
+            assert!(height <= HOP_HEIGHT_MAX_PX, "{span}: {height}");
+            assert!(
+                height >= (span * HOP_LONG_RISE).min(HOP_HEIGHT_MAX_PX),
+                "{span}: never flatter than a long hop: {height}"
+            );
+        }
+        // A phone's longest trip, capture box to top row, in two hops: each rises
+        // twice the height where a short hop stops rising, the old cap that made them
+        // read flat.
+        let phone_hop = 740.0 / f64::from(HOP_MAX);
+        assert!(
+            arc_height(phone_hop) >= 2.0 * HOP_HEIGHT_PX,
+            "{}",
+            arc_height(phone_hop)
+        );
     }
 
     #[test]
