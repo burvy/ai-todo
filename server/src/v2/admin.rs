@@ -10,6 +10,7 @@ use todo_core::{Clock, SystemClock};
 
 use super::auth::Plan;
 use super::store::{Block, SqliteStore, Store, UsageOrder, UsageRow};
+use super::tuning::ADMIN_TOP_ROWS;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
@@ -67,15 +68,15 @@ block/unblock ip <addr>, pause/unpause <email|id>, or plan <email|id> <anon|free
                 .map(|rank| rank.parse::<usize>().map_err(|_| BAD_RANK))
                 .collect::<Result<_, &str>>()?;
             if numbers.is_empty() {
-                numbers.push(TOP);
+                numbers.push(ADMIN_TOP_ROWS);
             }
             if numbers.contains(&0) {
                 return Err(BAD_RANK);
             }
             // `top 10 5` is the same request as `top 5 10`, not a mistake to refuse.
             Command::Top {
-                from: numbers.iter().min().copied().unwrap_or(TOP),
-                to: numbers.iter().max().copied().unwrap_or(TOP),
+                from: numbers.iter().min().copied().unwrap_or(ADMIN_TOP_ROWS),
+                to: numbers.iter().max().copied().unwrap_or(ADMIN_TOP_ROWS),
                 order,
             }
         }
@@ -99,7 +100,7 @@ pub fn run(store: &dyn Store, command: Command) -> Result<String, String> {
     match command {
         Command::Usage => {
             let usage = store
-                .usage_today(SystemClock.now().date_naive(), TOP)
+                .usage_today(SystemClock.now().date_naive(), ADMIN_TOP_ROWS)
                 .map_err(|error| error.to_string())?;
             let mut lines = vec!["users today:".to_owned()];
             lines.extend(usage.users.iter().map(|(id, n)| format!("  {n:>5}  {id}")));
@@ -250,9 +251,6 @@ fn known_user(store: &dyn Store, who: &str) -> Result<String, String> {
 fn today() -> chrono::NaiveDate {
     SystemClock.now().date_naive()
 }
-
-/// Rows shown by `usage`.
-pub const TOP: usize = 10;
 
 pub fn resolve(store: &dyn Store, target: Target) -> Result<Block, String> {
     match target {
@@ -482,8 +480,8 @@ mod tests {
         assert_eq!(
             parse_command("top"),
             Ok(Command::Top {
-                from: TOP,
-                to: TOP,
+                from: ADMIN_TOP_ROWS,
+                to: ADMIN_TOP_ROWS,
                 order: all
             })
         );

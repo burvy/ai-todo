@@ -12,7 +12,8 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use super::LockExt;
-use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
+use super::tuning::{ACTIVITY_THROTTLE, DB_BUSY_TIMEOUT, USAGE_RETENTION_DAYS};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use todo_core::{
     DaySettings, ExceptionKind, Label, Priority, Series, SeriesException, SeriesId, Source, Task,
@@ -26,9 +27,6 @@ fn parse_plan(value: &str) -> super::auth::Plan {
         _ => super::auth::Plan::Free,
     }
 }
-
-/// An anonymous user's `last_activity_at` is refreshed at most this often.
-const ACTIVITY_THROTTLE: Duration = Duration::hours(1);
 
 /// The `file:line` of the call site, recorded in a [`Failure`].
 macro_rules! at {
@@ -1280,7 +1278,7 @@ impl SqliteStore {
         let conn = Connection::open(path).map_err(|e| backend(e, at!()))?;
         // The admin console opens a second handle on the same file. Wait for a write
         // lock rather than failing a request straight away.
-        conn.busy_timeout(std::time::Duration::from_secs(5))
+        conn.busy_timeout(DB_BUSY_TIMEOUT)
             .map_err(|e| backend(e, at!()))?;
         let store = Self {
             conn: Mutex::new(conn),
@@ -2122,9 +2120,6 @@ impl Store for SqliteStore {
     }
 }
 
-/// Usage counts are kept this many days; older rows are dropped on write.
-const USAGE_RETENTION_DAYS: i64 = 30;
-
 /// Drop per-day counts older than the retention window.
 fn prune_before(conn: &Connection, today: NaiveDate) -> Result<(), StoreError> {
     let cutoff = (today - chrono::Duration::days(USAGE_RETENTION_DAYS)).to_string();
@@ -2451,6 +2446,7 @@ fn source_from_stored(text: &str) -> Source {
 /// Every spelling each enum can be stored as, for the round-trip test.
 #[cfg(test)]
 mod tests {
+    use chrono::Duration;
     const LABELS: [Label; 6] = [
         Label::School,
         Label::Work,

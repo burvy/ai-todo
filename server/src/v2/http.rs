@@ -24,20 +24,15 @@ use super::auth::{self, TokenVerifier};
 use super::ics_export::build_ics;
 use super::ics_import;
 use super::store::{Store, StoreError};
+use super::tuning::{
+    CAPTURE_MAX_CHARS, CAPTURE_MAX_CLAUSES, DEFAULT_ANON_IDS_PER_IP, DEFAULT_ANON_JEV_DAILY_CAP,
+    DEFAULT_JEV_DAILY_CAP, DEFAULT_PAID_JEV_DAILY_CAP, DEFAULT_SIGNINS_PER_IP, DEFAULT_WINDOW_DAYS,
+    IMPORT_MAX_BODY_BYTES, IMPORT_MAX_TASKS, MAX_WINDOW_DAYS,
+};
 use capture::{Revision, capture_text};
 use chrono::{Datelike, NaiveDate, Utc};
 use judge::AnyJudge;
 use todo_core::{LocalContext, Source, TaskId};
-
-/// Maximum body size for a JSON import (2 MiB).
-const IMPORT_MAX_BODY: usize = 2 * 1024 * 1024;
-/// Maximum number of tasks in one JSON import.
-const IMPORT_MAX_TASKS: usize = 500;
-/// The longest text one capture may carry, in characters. Each clause of it is a Jev
-/// question, and the whole capture counts as one use of the daily cap.
-const CAPTURE_MAX_CHARS: usize = 20_000;
-/// The most clauses one capture may split into, for the same reason.
-const CAPTURE_MAX_CLAUSES: usize = 60;
 
 const TZ_HEADER: HeaderName = HeaderName::from_static("x-rambl-tz");
 const ANON_HEADER: HeaderName = HeaderName::from_static("x-rambl-anon");
@@ -358,17 +353,6 @@ fn router_with_verifier(
         false,
     )
 }
-
-/// Captures per user per day before capture stops using Jev, for a signed-in user.
-pub const DEFAULT_JEV_DAILY_CAP: u32 = 200;
-/// The same for a user on the paid plan.
-pub const DEFAULT_PAID_JEV_DAILY_CAP: u32 = 1000;
-/// The same for an anonymous user.
-pub const DEFAULT_ANON_JEV_DAILY_CAP: u32 = 30;
-/// Anonymous ids one client address may be issued per day.
-pub const DEFAULT_ANON_IDS_PER_IP: u32 = 20;
-/// Sign-in attempts one client address may make per day.
-pub const DEFAULT_SIGNINS_PER_IP: u32 = 60;
 
 impl Default for Caps {
     fn default() -> Self {
@@ -977,10 +961,6 @@ struct SnapshotWindow {
     days: Option<u32>,
 }
 
-const DEFAULT_WINDOW_DAYS: u32 = 7;
-/// A year, matching the horizon the scheduler itself fills.
-const MAX_WINDOW_DAYS: u32 = 366;
-
 async fn create(
     State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
@@ -1142,13 +1122,13 @@ async fn import(
 
     // JSON import path: same shape as GET /api/v1/export.
     let body = request.into_body();
-    let bytes = axum::body::to_bytes(body, IMPORT_MAX_BODY)
+    let bytes = axum::body::to_bytes(body, IMPORT_MAX_BODY_BYTES)
         .await
         .map_err(|e| bad_request(e.to_string()))?;
-    if bytes.len() > IMPORT_MAX_BODY {
+    if bytes.len() > IMPORT_MAX_BODY_BYTES {
         return Err(bad_request(format!(
             "request body too large (max {} bytes)",
-            IMPORT_MAX_BODY
+            IMPORT_MAX_BODY_BYTES
         )));
     }
 
@@ -2642,7 +2622,7 @@ mod tests {
     #[tokio::test]
     async fn a_task_title_past_the_limit_is_a_400() {
         let router = router_at(sunday_night());
-        let title = "t".repeat(app::MAX_TITLE_CHARS + 1);
+        let title = "t".repeat(crate::v2::tuning::MAX_TITLE_CHARS + 1);
         let draft = format!(
             r#"{{"title":"{title}","duration_min":30,"when":{{"kind":"anytime"}},"label":"Other","priority":"low","source":"text"}}"#
         );

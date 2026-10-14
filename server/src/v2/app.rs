@@ -18,13 +18,8 @@ use todo_core::{
 
 use super::ics_import::ParsedCalendar;
 use super::store::{Store, StoreError};
-
-pub const MIN_DURATION_MIN: u16 = 5;
-pub const MAX_DURATION_MIN: u16 = 480;
-
-/// How many days of series occurrences a snapshot carries when the caller did
-/// not name a window: the same default the view settings use (today + 7).
-const DEFAULT_EXPANSION_DAYS: u32 = 7;
+use super::tuning::{DEFAULT_WINDOW_DAYS, MAX_TASKS_PER_USER, MAX_TITLE_CHARS};
+use todo_core::tuning::{TASK_MAX_DURATION_MIN, TASK_MIN_DURATION_MIN};
 
 /// Working hours used when placing floating tasks. Local time, every day.
 fn working_hours(tz: Tz, settings: &DaySettings) -> WorkingHours {
@@ -227,7 +222,7 @@ impl<S: Store> App<S> {
             ctx,
             tz,
             today,
-            today + Duration::days(i64::from(DEFAULT_EXPANSION_DAYS)),
+            today + Duration::days(i64::from(DEFAULT_WINDOW_DAYS)),
         )
     }
 
@@ -695,7 +690,7 @@ impl<S: Store> App<S> {
             );
         }
         if let Some(minutes) = revision.duration_min {
-            task.duration_min = minutes.clamp(MIN_DURATION_MIN, MAX_DURATION_MIN);
+            task.duration_min = minutes.clamp(TASK_MIN_DURATION_MIN, TASK_MAX_DURATION_MIN);
         }
         if let Some(priority) = revision.priority {
             task.priority = priority;
@@ -1034,7 +1029,10 @@ pub struct ImportedSeries {
 /// An event's length, kept inside the same limits as any task.
 fn event_minutes(start: DateTime<Utc>, end: DateTime<Utc>) -> u16 {
     let minutes = (end - start).num_minutes();
-    minutes.clamp(i64::from(MIN_DURATION_MIN), i64::from(MAX_DURATION_MIN)) as u16
+    minutes.clamp(
+        i64::from(TASK_MIN_DURATION_MIN),
+        i64::from(TASK_MAX_DURATION_MIN),
+    ) as u16
 }
 
 /// Refuses an edit made against a version older than the stored one, so the last
@@ -1048,12 +1046,6 @@ fn check_fresh(task: &Task, seen: Option<DateTime<Utc>>) -> Result<(), ApiError>
         _ => Ok(()),
     }
 }
-
-/// The longest title a task or series may have, in characters.
-pub const MAX_TITLE_CHARS: usize = 500;
-/// The most tasks one person may hold. Every call loads and plans the whole list under
-/// one lock, so an unbounded list lets one account slow everyone down.
-pub const MAX_TASKS_PER_USER: usize = 5000;
 
 pub fn check_title(title: &str) -> Result<(), ApiError> {
     if title.trim().is_empty() {
@@ -1083,10 +1075,12 @@ pub fn check_room(held: usize, adding: usize) -> Result<(), ApiError> {
 }
 
 pub fn check_duration(minutes: u16) -> Result<(), ApiError> {
-    if !(MIN_DURATION_MIN..=MAX_DURATION_MIN).contains(&minutes) {
+    if !(TASK_MIN_DURATION_MIN..=TASK_MAX_DURATION_MIN).contains(&minutes) {
         return Err(ApiError {
             code: ErrorCode::BadRequest,
-            message: format!("duration_min must be {MIN_DURATION_MIN} to {MAX_DURATION_MIN}"),
+            message: format!(
+                "duration_min must be {TASK_MIN_DURATION_MIN} to {TASK_MAX_DURATION_MIN}"
+            ),
         });
     }
     Ok(())

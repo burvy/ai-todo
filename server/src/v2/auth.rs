@@ -10,17 +10,13 @@
 //! user and no sign-in is needed. That keeps `run-local.sh` and the tests working
 //! without a Google project.
 
-use std::time::Duration;
-
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
 
 use super::store::{Store, StoreError};
+use super::tuning::{GOOGLE_TIMEOUT, SESSION_LENGTH};
 use todo_core::ErrorCode;
-
-/// How long a sign-in lasts before the session token stops working.
-pub const SESSION_LENGTH: Duration = Duration::from_secs(60 * 60 * 24 * 90);
 
 /// The user every request runs as when `GOOGLE_CLIENT_ID` is unset.
 ///
@@ -134,7 +130,7 @@ impl GoogleVerifier {
         Self {
             // A Google that never answers must not hold a sign-in open for ever.
             http: reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
+                .timeout(GOOGLE_TIMEOUT)
                 .build()
                 .unwrap_or_default(),
             client_id: client_id.into(),
