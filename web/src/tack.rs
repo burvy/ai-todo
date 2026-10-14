@@ -920,8 +920,8 @@ pub fn TackBoard(
                 &bin_rect,
             ) {
                 DropAction::Restore => {
-                    let body = snapshot.with_untracked(|s| crate::toggle_done_body(s, &id));
-                    let sink = crate::EditSink {
+                    let body = snapshot.with_untracked(|s| crate::edits::toggle_done_body(s, &id));
+                    let sink = crate::edits::EditSink {
                         set_snapshot,
                         set_error,
                         view_settings,
@@ -930,7 +930,7 @@ pub fn TackBoard(
                         if let Some(body) = body {
                             // The snapshot effect reconciles the strip away
                             // once the server says the task is not done.
-                            crate::patch_and_show(&TaskId(id), body, sink).await;
+                            crate::edits::patch_and_show(&TaskId(id), body, sink).await;
                         }
                     });
                     // Until the PATCH answers, the strip goes back to where it
