@@ -21,6 +21,12 @@
   --ink-soft: #75604a;
   --ink-faint: #6e5a43;
 
+  /* Rambo's body: petrol blue-green, the only cool colour on the desk.
+     Brass cap and clip use --accent. Spec: docs/DESIGN-DIRECTION.md §1 */
+  --rambo: #146272;       /* body */
+  --rambo-deep: #004552;  /* outline, shaded side, pupils */
+  --rambo-tint: #4a939f;  /* highlight stripe, ink tail, bubble rim */
+
   /* Rambo's inks, one per tool in the gear menu: a row he writes with a
      quill is brown, with a ballpoint blue, with a marker heavy black. */
   --ink-pencil: #4a4034;
@@ -104,6 +110,10 @@
 
   --ink-soft: #c9b693;
   --ink-faint: #b3a17e;
+
+  --rambo: #64bbc4;       /* body */
+  --rambo-deep: #358e9b;  /* outline, shaded side, pupils */
+  --rambo-tint: #a3dde0;  /* highlight stripe, ink tail, bubble rim */
 
   --ink-pencil: #d8cbb4;
   --ink-ballpoint: #9fc0e8;
@@ -498,16 +508,17 @@ a {
 
 /* ── Rambo: one mascot, one element, rests in the capture nest ── */
 
-/* The nest: replaces the Add button at the end of the capture line.
-   Clicking it submits the form. Rambo sits inside it when at home. */
+/* The nest: a shallow paper dish, fixed size. Phone 56px, desktop 64px.
+   Clicking it submits the form. Rambo sits over it when at home.
+   Spec: docs/DESIGN-DIRECTION.md §2 */
 .nest {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: calc(var(--tap) * 1.25);
-  height: calc(var(--tap) * 1.25);
-  min-width: calc(var(--tap) * 1.25);
-  min-height: calc(var(--tap) * 1.25);
+  width: 56px;
+  height: 56px;
+  min-width: 56px;
+  min-height: 56px;
   padding: 0;
   background: transparent;
   border: none;
@@ -518,7 +529,8 @@ a {
 
 /* The single Rambo button: independent fixed layer above everything.
    Not a child of the nest — positioned by measuring the nest's bounding box.
-   --pen-x and --pen-y are always the center of the button. */
+   --pen-x and --pen-y are always the center of the button.
+   Phone 64px, desktop 80px (1.4x the old size). Spec: docs/DESIGN-DIRECTION.md §2 */
 .rambo {
   position: fixed;
   top: 0;
@@ -529,8 +541,8 @@ a {
   );
   z-index: 50;
   display: inline-flex;
-  width: calc(var(--tap) * 1.25 - 4px);
-  height: calc(var(--tap) * 1.25 - 4px);
+  width: 64px;
+  height: 64px;
   padding: var(--space-1);
   background-color: var(--paper-sunken);
   border: 1px solid var(--rule-strong);
@@ -557,11 +569,20 @@ a {
   /* Moods move the drawing, never the button: the button's transform belongs
      to dragging, flying and splatting. */
   transform-origin: 50% 88%;
+  /* Idle breathe: slow 4s cycle — 1px rise, 1° tilt. He is alive before you touch him.
+     Spec: docs/DESIGN-DIRECTION.md §2 */
+  animation: rambo-breathe 4s ease-in-out infinite;
 }
 
-/* ── Rambo's moods ──
-   The drawing says who he is; the pose class says how he moves. Every rule here
-   is scoped to `.rambo` at the nest, so a mood never fights a drag. */
+@keyframes rambo-breathe {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0);
+  }
+  50% {
+    transform: translateY(-1px) rotate(1deg);
+  }
+}
 
 .rambo.pose-teasing img {
   animation: rambo-peek 1.7s ease-in-out infinite;
@@ -1489,6 +1510,19 @@ a {
 
   .week-scroll {
     max-height: 70vh;
+  }
+
+  /* Nest and Rambo are larger on desktop. Spec: docs/DESIGN-DIRECTION.md §2 */
+  .nest {
+    width: 64px;
+    height: 64px;
+    min-width: 64px;
+    min-height: 64px;
+  }
+
+  .rambo {
+    width: 80px;
+    height: 80px;
   }
 }
 

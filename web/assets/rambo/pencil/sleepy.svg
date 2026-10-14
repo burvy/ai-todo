@@ -1,8 +1,7 @@
 <!-- PLACEHOLDER: replace me, see art/GUIDE.md -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 112" role="img" aria-label="Rambo (pencil), sleepy">
   <style>
-    svg{--rambo-barrel:#E1C38C;--rambo-cap:#A7865D;--rambo-nib:#ECD7AF;--rambo-lead:#3E2F1F;--rambo-ink:#3E2F1F;--rambo-eye:#FCFAF4;--rambo-pupil:#3E2F1F;--rambo-blush:#D08770;--rambo-fx:#A7865D;--rambo-brow:#3E2F1F}
-    @media (prefers-color-scheme:dark){svg{--rambo-barrel:#B5976D;--rambo-cap:#8F6134;--rambo-nib:#C9AE85;--rambo-ink:#8F6134;--rambo-fx:#B5976D;--rambo-brow:#4A331D}}
+    svg{--rambo-barrel:var(--rambo);--rambo-cap:var(--accent);--rambo-nib:var(--accent);--rambo-lead:var(--rambo-deep);--rambo-ink:var(--rambo-deep);--rambo-eye:#FCFAF4;--rambo-pupil:var(--rambo-deep);--rambo-blush:#D08770;--rambo-fx:var(--rambo-tint);--rambo-brow:var(--rambo-deep)}
     .pen-barrel{fill:var(--rambo-barrel)}
     .pen-cap{fill:var(--rambo-cap)}
     .pen-nib{fill:var(--rambo-nib)}
