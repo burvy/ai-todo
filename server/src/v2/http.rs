@@ -1714,8 +1714,8 @@ mod tests {
         let router = router_at(sunday_night());
         let (status, body) = send(&router, "GET", "/api/v1/settings", None).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["deadline"], "23:59:00");
-        assert_eq!(body["placement"], "12:00:00");
+        assert_eq!(body["deadline"], "23:59");
+        assert_eq!(body["placement"], "12:00");
 
         // One field at a time: the other stays as it was.
         let (status, body) = send(
@@ -1726,10 +1726,10 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(body["deadline"], "17:00:00");
-        assert_eq!(body["placement"], "12:00:00");
+        assert_eq!(body["deadline"], "17:00");
+        assert_eq!(body["placement"], "12:00");
         let (_, body) = send(&router, "GET", "/api/v1/settings", None).await;
-        assert_eq!(body["deadline"], "17:00:00");
+        assert_eq!(body["deadline"], "17:00");
     }
 
     #[tokio::test]
@@ -1745,7 +1745,7 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         let (_, body) = send(&router, "GET", "/api/v1/settings", None).await;
         assert_eq!(
-            body["placement"], "12:00:00",
+            body["placement"], "12:00",
             "a refused patch applies none of it"
         );
     }

@@ -843,6 +843,9 @@ impl Store for MemoryStore {
         self.users
             .lock_recover()
             .retain(|held| !gone.contains(&held.id));
+        self.day_settings
+            .lock_recover()
+            .retain(|owner, _| !gone.contains(owner));
         Ok(gone.len())
     }
 
@@ -1030,6 +1033,7 @@ impl Store for MemoryStore {
             .retain(|(owner, _, _)| owner != user);
         self.users.lock_recover().retain(|held| held.id != user);
         self.activity.lock_recover().remove(user);
+        self.day_settings.lock_recover().remove(user);
         self.sessions
             .lock_recover()
             .retain(|(_, owner, _)| owner != user);
@@ -3765,6 +3769,36 @@ mod tests {
         conn.pragma_update(None, "user_version", version as i64)
             .unwrap();
         conn
+    }
+
+    fn deleting_an_account_takes_its_day_settings_with_it(store: &dyn Store) {
+        use super::super::auth::{Me, Plan};
+        let dana = Me {
+            id: "dana".into(),
+            email: "dana@example.com".into(),
+            name: "dana".into(),
+            picture: None,
+            plan: Plan::Free,
+        };
+        store
+            .upsert_user_and_session(&dana, "tok-dana", at(23))
+            .unwrap();
+        let mine = todo_core::DaySettings {
+            deadline: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+            ..todo_core::DaySettings::default()
+        };
+        store.set_day_settings("dana", mine).unwrap();
+        store.delete_user("dana").unwrap();
+        assert_eq!(
+            store.day_settings("dana").unwrap(),
+            todo_core::DaySettings::default()
+        );
+    }
+
+    #[test]
+    fn both_stores_forget_day_settings_with_the_account() {
+        deleting_an_account_takes_its_day_settings_with_it(&MemoryStore::new());
+        deleting_an_account_takes_its_day_settings_with_it(&SqliteStore::open_in_memory().unwrap());
     }
 
     #[test]

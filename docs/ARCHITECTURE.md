@@ -89,7 +89,7 @@ Anonymous users do not sign in. Their account and tasks are deleted after 30 day
 | `POST /api/v1/auth/google` | `{credential}` (a Google ID token) | `{token, user}`. The token is checked against Google's `tokeninfo`; the audience must equal `GOOGLE_CLIENT_ID` and `email_verified` must be true. Sessions last 90 days. |
 | `POST /api/v1/auth/signout` | none | 204. Ends this session only. |
 | `GET /api/v1/me` | none | `{id, email, name, picture}` |
-| `GET /api/v1/settings` | none | `{deadline, placement}`, this user's day-only times as `HH:MM:SS` (defaults `23:59:00` and `12:00:00`). |
+| `GET /api/v1/settings` | none | `{deadline, placement}`, this user's day-only times as `HH:MM` (defaults `23:59` and `12:00`). |
 | `PATCH /api/v1/settings` | `{deadline?, placement?}`, each `HH:MM` | The settings that now hold. Absent fields stay; `deadline` `00:00` is a 400 and changes nothing. |
 | `DELETE /api/v1/me` | none | 204. Removes the account, its sessions and every task it owns. |
 | `GET /api/v1/snapshot?from=YYYY-MM-DD&days=7` | none | `Snapshot`. The window bounds the plan (today and 7 days by default); the task list is always the whole list, and pinned tasks keep their placement whatever the window is. |

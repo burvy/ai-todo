@@ -53,10 +53,28 @@ impl LocalContext {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DaySettings {
     /// When "by Friday" is due: the deadline lands at this time on that day.
+    #[serde(with = "hh_mm")]
     pub deadline: NaiveTime,
     /// Where on that day the task is placed when the user has given no times of their
     /// own to learn from.
+    #[serde(with = "hh_mm")]
     pub placement: NaiveTime,
+}
+
+/// A time of day on the wire as `HH:MM`, the shape the settings are typed and read in.
+/// Reading also takes `HH:MM:SS`.
+mod hh_mm {
+    use chrono::NaiveTime;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(time: &NaiveTime, out: S) -> Result<S::Ok, S::Error> {
+        out.collect_str(&time.format("%H:%M"))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(input: D) -> Result<NaiveTime, D::Error> {
+        let text = String::deserialize(input)?;
+        text.parse().map_err(serde::de::Error::custom)
+    }
 }
 
 impl Default for DaySettings {
@@ -327,6 +345,22 @@ pub struct ApiError {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn day_settings_are_written_hh_mm_and_read_with_or_without_seconds() {
+        let settings = DaySettings::default();
+        let json = serde_json::to_string(&settings).unwrap();
+        assert_eq!(json, r#"{"deadline":"23:59","placement":"12:00"}"#);
+        assert_eq!(
+            serde_json::from_str::<DaySettings>(&json).unwrap(),
+            settings
+        );
+        let with_seconds = r#"{"deadline":"23:59:00","placement":"12:00:00"}"#;
+        assert_eq!(
+            serde_json::from_str::<DaySettings>(with_seconds).unwrap(),
+            settings
+        );
+    }
 
     fn context(now: DateTime<Utc>) -> LocalContext {
         LocalContext {
