@@ -111,7 +111,7 @@ fn is_pronoun_object_action(clause: &str) -> bool {
 
 fn is_time_fragment(clause: &str) -> bool {
     let lower = clause.trim().to_ascii_lowercase();
-    lower.split_whitespace().count() <= 5
+    lower.split_whitespace().count() <= crate::tuning::TIME_FRAGMENT_MAX_WORDS
         && [
             "by ",
             "before ",

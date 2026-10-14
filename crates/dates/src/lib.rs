@@ -5,6 +5,7 @@
 
 mod phrases;
 mod repeats;
+pub mod tuning;
 
 pub use repeats::{RecurrenceMatch, recurrence};
 

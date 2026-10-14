@@ -173,7 +173,7 @@ fn starts_new_quoted_message(line: &str, lower: &str) -> bool {
     // A signature often starts with "From: Jane" alone, but a quoted message
     // nearly always repeats several headers.
     line.split_once(':')
-        .is_some_and(|(_, v)| v.trim().len() > 3)
+        .is_some_and(|(_, v)| v.trim().len() > crate::tuning::QUOTE_HEADER_MIN_CHARS)
 }
 
 /// Parse the date formats that turn up in real Outlook exports.

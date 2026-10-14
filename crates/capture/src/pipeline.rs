@@ -5,15 +5,12 @@ use anyhow::Result;
 use chrono::NaiveTime;
 use dates::{Candidate, Value, candidates};
 use judge::{ClauseAnswer, ClauseQuestion, Judge};
+use todo_core::tuning::{TASK_DEFAULT_DURATION_MIN, TASK_MAX_DURATION_MIN, TASK_MIN_DURATION_MIN};
 use todo_core::{LocalContext, Source, TaskDraft};
 
 use crate::leadin;
 use crate::segment::split_clauses;
-
-/// Used when Jev has no duration candidate to choose.
-pub const DEFAULT_DURATION_MIN: u16 = 30;
-const MIN_DURATION_MIN: u16 = 5;
-const MAX_DURATION_MIN: u16 = 480;
+use crate::tuning::IS_TASK_THRESHOLD;
 
 /// Turn a capture into task drafts. Clauses Jev does not judge to be tasks are dropped.
 /// `deadline` is the user's day-only deadline time: "by Friday" is due then.
@@ -201,7 +198,7 @@ fn draft(
     deadline: NaiveTime,
     ctx: &LocalContext,
 ) -> Option<TaskDraft> {
-    if answer.is_task < 0.5 {
+    if answer.is_task < IS_TASK_THRESHOLD {
         return None;
     }
     let spans = title_spans(clause, found);
@@ -231,11 +228,11 @@ fn draft(
     let duration = answer
         .duration
         .and_then(|index| durations.get(index).copied())
-        .unwrap_or(DEFAULT_DURATION_MIN);
+        .unwrap_or(TASK_DEFAULT_DURATION_MIN);
 
     Some(TaskDraft {
         title,
-        duration_min: duration.clamp(MIN_DURATION_MIN, MAX_DURATION_MIN),
+        duration_min: duration.clamp(TASK_MIN_DURATION_MIN, TASK_MAX_DURATION_MIN),
         when: dates::when_from(day, time, deadline, ctx),
         label: answer.label,
         priority: answer.priority,
@@ -440,7 +437,7 @@ mod tests {
     #[tokio::test]
     async fn duration_defaults_and_is_clamped() {
         let out = drafts("Buy milk", answer()).await;
-        assert_eq!(out[0].duration_min, DEFAULT_DURATION_MIN);
+        assert_eq!(out[0].duration_min, TASK_DEFAULT_DURATION_MIN);
         let mut long = answer();
         long.duration = Some(0);
         let out = drafts("Read the book for about an hour", long).await;

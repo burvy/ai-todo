@@ -4,6 +4,8 @@
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Weekday};
 use todo_core::LocalContext;
 
+use crate::tuning::SAME_DAY_CUTOFF;
+
 /// The one weekday table. Every weekday rule reads from here.
 pub const WEEKDAYS: [(&str, Weekday); 7] = [
     ("monday", Weekday::Mon),
@@ -49,12 +51,13 @@ pub fn weekday(word: &str) -> Option<Weekday> {
         .map(|(_, day)| *day)
 }
 
-/// The coming `target`: today when it is that weekday and the local time is before 17:00,
-/// otherwise the next one, a week away when it is the same weekday after 17:00.
+/// The coming `target`: today when it is that weekday and the local time is before
+/// [`SAME_DAY_CUTOFF`], otherwise the next one, a week away when it is the same weekday
+/// after it.
 fn upcoming(target: Weekday, ctx: &LocalContext) -> NaiveDate {
     let today = ctx.today();
-    let before_five = ctx.local(ctx.now).time() < NaiveTime::from_hms_opt(17, 0, 0).unwrap();
-    if today.weekday() == target && before_five {
+    let still_today = ctx.local(ctx.now).time() < SAME_DAY_CUTOFF;
+    if today.weekday() == target && still_today {
         today
     } else {
         today + Duration::days(days_ahead(today.weekday(), target))
