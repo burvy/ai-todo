@@ -1403,7 +1403,7 @@ li.task-row:focus-within .delete-mark {
   max-width: min(36rem, calc(100vw - 2 * var(--gutter)));
   margin: 0;
   transform: translateX(-50%);
-  background-color: color-mix(in srgb, var(--danger) 7%, transparent);
+  background-color: color-mix(in srgb, var(--danger) 7%, var(--paper));
   box-shadow: 0 6px 16px -10px rgba(0, 0, 0, 0.45);
   pointer-events: none;
 }
