@@ -106,6 +106,9 @@ edits its series, which revise cannot, so he does not listen there.
 b. Drag Rambo onto a task, then choose **Edit**, **Move**, **Done**, or **×**.
 c. Code: `web/src/rambo.rs:Rambo`, which sets `edit_request` for
 `web/src/tasks/mod.rs:TaskList` to open its sheet; `web/src/api.rs:patch_task, delete_task`.
+d. The sheet's days and times are picked on the paper's own pickers (handwritten
+numbers, keyboard reachable, the paper's 12- or 24-hour clock), never the browser's:
+`web/src/pickers.rs:PaperDate, PaperTime, PaperDateTime`; numbers in `web/src/tuning.rs`.
 
 ### 5. Labels and priorities
 a. Tasks carry one of six labels and one of four priorities.

@@ -326,6 +326,26 @@ mod tests {
         assert_eq!(typed_when(EditWhen::Anytime, "", None), Ok(When::Anytime));
     }
 
+    /// The paper pickers write a lone day or a lone time when only one is picked;
+    /// the save path still answers with the BUG-7 messages.
+    #[test]
+    fn typed_when_reads_what_the_paper_pickers_write() {
+        use crate::pickers::join_datetime;
+        assert_eq!(
+            typed_when(EditWhen::At, &join_datetime("", ""), None),
+            Err("Pick a time")
+        );
+        assert_eq!(
+            typed_when(EditWhen::At, &join_datetime("2026-10-14", ""), None),
+            Err("That is not a time")
+        );
+        assert_eq!(
+            typed_when(EditWhen::At, &join_datetime("", "09:30"), None),
+            Err("That is not a time")
+        );
+        assert!(typed_when(EditWhen::At, &join_datetime("2026-10-14", "09:30"), None).is_ok());
+    }
+
     /// The same three messages apply to the `At` kind (no deadline task needed).
     #[test]
     fn typed_when_at_kind_has_same_error_messages() {
