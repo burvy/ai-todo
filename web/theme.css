@@ -186,8 +186,8 @@ body {
   max-width: 1100px;
   margin: 0 auto;
   padding: var(--gutter);
-  /* Room for the fixed capture bar, plus the phone's home-indicator inset. */
-  padding-bottom: calc(var(--tap) + 2 * var(--space-2) + env(safe-area-inset-bottom, 0px));
+  /* Room for the fixed capture bar (56px nest + 2× padding + border), plus the phone's home-indicator inset. */
+  padding-bottom: calc(56px + 2 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
   color: var(--ink);
   font: var(--text-base) / 1.55 var(--font-body);
   background-color: var(--paper);
@@ -1385,7 +1385,7 @@ li.task-row:focus-within .delete-mark {
   margin: var(--space-2) 0;
   padding: var(--space-2) var(--space-3);
   color: var(--danger);
-  background-color: color-mix(in srgb, var(--danger) 7%, var(--paper));
+  background-color: color-mix(in srgb, var(--danger) 7%, transparent);
   border: none;
   border-left: 3px solid var(--danger);
   border-radius: 0;
@@ -1403,7 +1403,7 @@ li.task-row:focus-within .delete-mark {
   max-width: min(36rem, calc(100vw - 2 * var(--gutter)));
   margin: 0;
   transform: translateX(-50%);
-  background-color: color-mix(in srgb, var(--danger) 7%, var(--paper));
+  background-color: color-mix(in srgb, var(--danger) 7%, transparent);
   box-shadow: 0 6px 16px -10px rgba(0, 0, 0, 0.45);
   pointer-events: none;
 }
