@@ -432,6 +432,8 @@ pub(crate) fn TaskList(
             .get()
             .tasks
             .into_iter()
+            // A done task has torn off the list and hangs at the pin.
+            .filter(|task| !task.done)
             .filter(|task| selected_label.get().is_none_or(|label| task.label == label))
             .collect::<Vec<_>>()
     };
@@ -565,10 +567,6 @@ pub(crate) fn TaskList(
                     {
                         let task_id = task.id.clone();
                         let task_title = task.title.clone();
-                        let task_done_label = match occurrence_parts(&task.id.0) {
-                            Some((_, date)) => format!("Mark {task_title} on {date} as done"),
-                            None => format!("Mark {task_title} as done"),
-                        };
                         // An occurrence row carries the small hand-drawn repeat mark, and
                         // loses the one-row delete: its × would refuse the id, and a whole
                         // series is only ever deleted from the dialog, with a confirm.
@@ -591,22 +589,6 @@ pub(crate) fn TaskList(
                         let render_task_id = task_id.0.clone();
                         let render_task_id_attr = render_task_id.clone();
                         let render_task_title = task_title.clone();
-
-                        let toggle_done = {
-                            let task_id_clone = task_id.clone();
-                            move |_| {
-                                let task_id_clone = task_id_clone.clone();
-                                let sink = EditSink { set_snapshot, set_error };
-                                let Some(action) =
-                                    snapshot.with_untracked(|s| tick_action(s, &task_id_clone.0))
-                                else {
-                                    return;
-                                };
-                                wasm_bindgen_futures::spawn_local(async move {
-                                    apply_tick(&task_id_clone, action, sink).await;
-                                });
-                            }
-                        };
 
                         let delete_task = {
                             let task_id_clone = task_id.clone();
@@ -671,18 +653,22 @@ pub(crate) fn TaskList(
                                     // it themselves; a scroll and a backed-out
                                     // swipe leave the list exactly as it was.
                                     row::Release::Tap | row::Release::Scroll | row::Release::SnapBack => {}
-                                    row::Release::Delete => {
+                                    row::Release::Done => {
                                         let task_id = TaskId(drop_task_id_clone.clone());
                                         let set_snapshot = set_snapshot_clone;
                                         #[cfg(target_arch = "wasm32")]
                                         crate::sound::play(crate::sound::Cue::Scribble);
                                         wasm_bindgen_futures::spawn_local(async move {
-                                            // The swipe drew the ink; it finishes across
-                                            // the row before the row goes.
+                                            // The swipe drew the ink; it finishes across the row,
+                                            // and the row, done, tears off and flies to the pin.
                                             gloo_timers::future::TimeoutFuture::new(tuning::SCRIBBLE_FINISH_MS).await;
-                                            match delete_scribbled(&task_id, snapshot, scraps).await {
-                                                Ok(new_snap) => set_snapshot.set(new_snap),
-                                                Err(_) => row::dom::clear_ink(&task_id.0),
+                                            scrap::note_departure(&task_id.0);
+                                            if let Some(action) = snapshot.with_untracked(|s| tick_action(s, &task_id.0)) {
+                                                apply_tick(&task_id, action, EditSink { set_snapshot, set_error }).await;
+                                            }
+                                            // Refused: the ink comes off and the row stays.
+                                            if snapshot.with_untracked(|s| held(s, &task_id.0).is_some_and(|task| !task.done)) {
+                                                row::dom::clear_ink(&task_id.0);
                                             }
                                         });
                                     }
@@ -749,17 +735,6 @@ pub(crate) fn TaskList(
                             }
                         }
                     >
-                        <input
-                            type="checkbox"
-                            // The browser ticks the box before the server answers; a
-                            // refused tick must untick it again from what the list holds.
-                            prop:checked={
-                                let id = task.id.0.clone();
-                                move || snapshot.with(|s| held(s, &id).is_some_and(|task| task.done))
-                            }
-                            on:change=toggle_done
-                            aria-label=task_done_label
-                        />
                         <span
                             class="task-open"
                             on:click={

@@ -1111,20 +1111,16 @@ mod tests {
     /// scale in `:root`, so no loose number can put Rambo over a dialog again.
     #[test]
     fn every_z_index_reads_the_layer_scale() {
-        for (name, css) in [
-            ("theme.css", include_str!("../theme.css")),
-            ("tack.css", include_str!("../tack.css")),
-        ] {
-            let loose: Vec<_> = css
-                .lines()
-                .filter(|line| line.trim_start().starts_with("z-index:"))
-                .filter(|line| !line.contains("var(--layer-"))
-                .collect();
-            assert!(
-                loose.is_empty(),
-                "{name} has loose z-index numbers: {loose:?}"
-            );
-        }
+        let css = include_str!("../theme.css");
+        let loose: Vec<_> = css
+            .lines()
+            .filter(|line| line.trim_start().starts_with("z-index:"))
+            .filter(|line| !line.contains("var(--layer-"))
+            .collect();
+        assert!(
+            loose.is_empty(),
+            "theme.css has loose z-index numbers: {loose:?}"
+        );
     }
 
     /// Rambo and his bubbles sit under the edit sheet and the gear menu; the sheet is
@@ -1143,7 +1139,7 @@ mod tests {
         assert!(layer("rambo-bubble") < layer("menu"));
         assert!(layer("menu") < layer("sheet"));
         assert!(layer("note") < layer("rambo"));
-        // The capture bar is above everything sticky: the phone tack board, day names.
+        // The capture bar is above everything sticky: day names.
         assert!(layer("sticky") < layer("capture"));
     }
 }

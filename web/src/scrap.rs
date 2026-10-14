@@ -11,12 +11,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use chrono::NaiveDate;
 use leptos::prelude::*;
-use todo_core::{Snapshot, Task};
+use todo_core::{Snapshot, Task, TaskId};
 
 use crate::api;
 use crate::edits::series_note;
 use crate::tasks::occurrence_parts;
-use crate::tuning::{SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS};
+use crate::tuning::{PIN_SHOWN, SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS};
 
 /// What taping a scrap back does.
 #[derive(Clone, Debug, PartialEq)]
@@ -47,6 +47,45 @@ impl Spot {
 pub fn fly_offset(row: Spot, hung: Spot) -> (f64, f64) {
     let ((row_x, row_y), (hung_x, hung_y)) = (row.centre(), hung.centre());
     (row_x - hung_x, row_y - hung_y)
+}
+
+thread_local! {
+    /// Where the row of a task just marked done stood, noted before the list loses it, so
+    /// its strip at the pin can fly from there. Taken once, when the strip is drawn.
+    static DEPARTURES: std::cell::RefCell<std::collections::HashMap<String, Spot>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// Note where the row `id` stands now, for the strip that is about to hang at the pin.
+pub fn note_departure(id: &str) {
+    if let Some(spot) = row_spot(id) {
+        DEPARTURES.with(|noted| noted.borrow_mut().insert(id.to_owned(), spot));
+    }
+}
+
+fn take_departure(id: &str) -> Option<Spot> {
+    DEPARTURES.with(|noted| noted.borrow_mut().remove(id))
+}
+
+/// A done task hanging at the pin: plain data, drawn as a strip. Its look and flight
+/// come from the page's transform, so something else can drive them.
+#[derive(Clone, Debug, PartialEq)]
+struct Hung {
+    id: TaskId,
+    title: String,
+}
+
+/// The done tasks hanging at the pin, newest first, at most [`PIN_SHOWN`].
+fn hung_at_the_pin(snapshot: &Snapshot) -> Vec<Hung> {
+    let mut done: Vec<&Task> = snapshot.tasks.iter().filter(|task| task.done).collect();
+    done.sort_by_key(|task| std::cmp::Reverse(task.updated_at));
+    done.into_iter()
+        .take(PIN_SHOWN)
+        .map(|task| Hung {
+            id: task.id.clone(),
+            title: task.title.clone(),
+        })
+        .collect()
 }
 
 /// The scraps lying in the corner, oldest first. A newer delete lays a new scrap
@@ -223,6 +262,13 @@ fn fly(scrap: &web_sys::HtmlElement, from: Spot) {
     let _ = classes.remove_1("flying");
 }
 
+/// A stable number for a task id, so the same strip always hangs the same way.
+fn hash_ticket(id: &str) -> u32 {
+    id.bytes().fold(7_u32, |sum, byte| {
+        sum.wrapping_mul(31).wrapping_add(u32::from(byte))
+    })
+}
+
 /// How far a scrap hangs off true, in degrees: each swings a little differently.
 fn sway_deg(ticket: u32) -> i32 {
     (ticket * 37 % 9) as i32 - 4
@@ -273,12 +319,55 @@ async fn tape_back(
 /// none. Each scrap is kept by its ticket, so a new one arriving does not replay the others.
 #[component]
 pub fn ScrapCorner(
+    snapshot: ReadSignal<Snapshot>,
     scraps: RwSignal<Vec<Scrap>>,
     set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
 ) -> impl IntoView {
     view! {
         <div class="scrap-pile">
+            <For
+                each=move || snapshot.with(hung_at_the_pin)
+                key=|hung| hung.id.clone()
+                children=move |hung| {
+                    let hung_ref = NodeRef::<leptos::html::Button>::new();
+                    let id = hung.id.0.clone();
+                    Effect::new(move |flown: Option<bool>| {
+                        let ready = hung_ref.get().inspect(|button| {
+                            if flown != Some(true)
+                                && let Some(from) = take_departure(&id)
+                            {
+                                fly(button, from);
+                            }
+                        });
+                        ready.is_some()
+                    });
+                    let label = format!("Tape \"{}\" back: not done after all", hung.title);
+                    let style = format!("{}deg", sway_deg(hash_ticket(&hung.id.0)));
+                    view! {
+                        <button
+                            type="button"
+                            class="scrap-undo done"
+                            node_ref=hung_ref
+                            style:--hang=style
+                            aria-label=label
+                            title="Tap to tape it back"
+                            on:click=move |_| {
+                                let id = hung.id.clone();
+                                let Some(action) = snapshot.with_untracked(|s| crate::tasks::tick_action(s, &id.0)) else {
+                                    return;
+                                };
+                                let sink = crate::edits::EditSink { set_snapshot, set_error };
+                                wasm_bindgen_futures::spawn_local(async move {
+                                    crate::tasks::apply_tick(&id, action, sink).await;
+                                });
+                            }
+                        >
+                            <s>{hung.title.clone()}</s>
+                        </button>
+                    }
+                }
+            />
             <For
                 each=move || scraps.get()
                 key=|scrap| scrap.ticket
@@ -495,6 +584,36 @@ mod tests {
             fly_offset(hung, hung),
             (0.0, 0.0),
             "already there: no flight"
+        );
+    }
+
+    #[test]
+    fn the_pin_holds_the_newest_done_tasks_and_no_more() {
+        let mut snapshot = api::fixture_snapshot();
+        let template = snapshot.tasks[0].clone();
+        snapshot.tasks.clear();
+        for n in 0..PIN_SHOWN as i64 + 3 {
+            let mut task = template.clone();
+            task.id = TaskId(format!("t{n}"));
+            task.title = format!("Task {n}");
+            task.done = n % 2 == 0 || n > 4;
+            task.updated_at = template.updated_at + chrono::Duration::minutes(n);
+            snapshot.tasks.push(task);
+        }
+        let hung = hung_at_the_pin(&snapshot);
+        assert_eq!(hung.len(), PIN_SHOWN);
+        assert!(
+            hung.windows(2)
+                .all(|pair| pair[0].id.0 > pair[1].id.0 || pair[0].id.0.len() > pair[1].id.0.len()),
+            "newest first"
+        );
+        assert!(
+            snapshot
+                .tasks
+                .iter()
+                .filter(|t| !t.done)
+                .all(|t| hung.iter().all(|h| h.id != t.id)),
+            "only done tasks hang"
         );
     }
 

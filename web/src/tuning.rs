@@ -100,6 +100,10 @@ pub const SCRAP_SLIDE_MS: u32 = 240;
 /// The most scraps lying in the corner at once; a new delete beyond it sends the oldest
 /// away. Safe range 1 to 5: two quick deletes keep two, but the pile never fills the page.
 pub const SCRAP_MAX: usize = 3;
+/// The most done tasks hanging at the pin at once, newest first; the older ones stay done
+/// (and in the planner's history) but are not drawn, so the column never runs past the page.
+/// Safe range 3 to 10.
+pub const PIN_SHOWN: usize = 6;
 /// How often the scrap's undo clock is read, in ms: it only runs while the page is
 /// in view. Safe range 50 to 500; a hidden tab may tick slower, which only pauses.
 pub const SCRAP_TICK_MS: u32 = 100;

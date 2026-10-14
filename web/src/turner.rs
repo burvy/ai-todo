@@ -6,7 +6,7 @@
 //! `.bend-fx`. When the turn ends the row comes back with the right pane in view.
 //! A press is only a page turn once it is a sideways swipe the right way on a pane that
 //! has a page to turn to; everything else, the task rows' own swipes, the planner grid's
-//! scroll, the tack board, the edit sheet, is left alone.
+//! scroll, the edit sheet, is left alone.
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) use imp::Turner;
@@ -56,8 +56,7 @@ mod imp {
     };
 
     /// Presses that start here are not page turns: they have their own scroll or swipe.
-    const OWN_GESTURE: &str =
-        ".week-scroll, .task-dialog, .tack-board, input, textarea, select, .paper-picker";
+    const OWN_GESTURE: &str = ".week-scroll, .task-dialog, input, textarea, select, .paper-picker";
 
     /// Where the page turn is.
     enum Phase {
