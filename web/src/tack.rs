@@ -846,7 +846,7 @@ pub fn TackBoard(
                 let y = client_y - origin.1 - 6.0;
                 let _ = el.set_attribute(
                     "style",
-                    &format!("transform: translate({x:.1}px, {y:.1}px) rotate(3deg); z-index: 99;"),
+                    &format!("transform: translate({x:.1}px, {y:.1}px) rotate(3deg); z-index: var(--layer-lifted);"),
                 );
             }
         }

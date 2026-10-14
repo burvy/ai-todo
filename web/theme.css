@@ -84,6 +84,23 @@
      with the same number, so change both together. */
   --hour-h: 64px;
 
+  /* Layers, lowest to highest: the one scale every z-index reads (docs/FRONTEND-PLAN.md
+     1.5). Rambo and his bubbles sit under the edit sheet, whose paper pickers open
+     inside it, and under the gear menu; only a drag in progress rides above him. */
+  --layer-behind: -1;
+  --layer-page: 2; /* ink, curl, placements, a lifted row, the desktop tack board */
+  --layer-capture: 3; /* the capture bar, the landing */
+  --layer-sticky: 4; /* day names, the phone tack board */
+  --layer-note: 40; /* the page note */
+  --layer-rambo: 50;
+  --layer-rambo-bubble: 51; /* his ask bubble */
+  --layer-drag: 60; /* the drag ghost, the tack pin */
+  --layer-bin: 70; /* the tack bin, a drop target during a drag */
+  --layer-menu-backdrop: 80;
+  --layer-menu: 81; /* the gear menu */
+  --layer-sheet: 90; /* the edit sheet and the pickers inside it */
+  --layer-lifted: 99; /* a strip being carried, above its pile inside the tack board */
+
   /* Motion. */
   --dur-fast: 120ms;
   --dur: 200ms;
@@ -312,7 +329,7 @@ main.turning-back::after {
   content: "";
   position: fixed;
   inset: 0;
-  z-index: 2;
+  z-index: var(--layer-page);
   pointer-events: none;
 }
 
@@ -485,7 +502,7 @@ li.task-row {
 }
 
 li.task-row.row-lifted {
-  z-index: 2;
+  z-index: var(--layer-page);
   position: relative;
   box-shadow: 0 10px 22px -12px rgba(0, 0, 0, 0.45);
   background: var(--parchment, #f6efdd);
@@ -539,7 +556,7 @@ li.task-row:focus-within .delete-mark {
   left: 0;
   right: 0;
   bottom: 0;
-  z-index: 3;
+  z-index: var(--layer-capture);
   display: flex;
   gap: var(--space-2);
   padding: var(--space-2) var(--gutter);
@@ -591,7 +608,7 @@ li.task-row:focus-within .delete-mark {
     calc(var(--pen-x) - 50%),
     calc(var(--pen-y) - 50%)
   );
-  z-index: 50;
+  z-index: var(--layer-rambo);
   display: inline-flex;
   width: 64px;
   height: 64px;
@@ -775,7 +792,7 @@ li.task-row:focus-within .delete-mark {
   );
   animation: rambo-splat-burst 400ms ease-out forwards;
   pointer-events: none;
-  z-index: -1;
+  z-index: var(--layer-behind);
 }
 
 @keyframes rambo-splat-burst {
@@ -837,7 +854,7 @@ li.task-row:focus-within .delete-mark {
   bottom: calc(100% + var(--space-1));
   left: 50%;
   transform: translateX(-50%);
-  z-index: 50;
+  z-index: var(--layer-rambo);
   display: block;
   text-align: right;
   font-size: var(--text-sm);
@@ -870,7 +887,7 @@ li.task-row:focus-within .delete-mark {
   bottom: calc(100% + var(--space-2));
   left: 50%;
   transform: translateX(-50%);
-  z-index: 51;
+  z-index: var(--layer-rambo-bubble);
   width: max-content;
   max-width: 24rem;
   padding: var(--space-3);
@@ -939,7 +956,7 @@ li.task-row:focus-within .delete-mark {
   top: 0;
   /* Above the slips (2) and the landing outline (3): the hours slide under
      the band, never across it. */
-  z-index: 4;
+  z-index: var(--layer-sticky);
   margin: 0 0 var(--space-1);
   background-color: var(--paper);
   font-family: var(--font-hand-neat);
@@ -990,7 +1007,7 @@ li.task-row:focus-within .delete-mark {
    the pointer; a small layer puts the paper's edge back under the pen. */
 .placement {
   position: absolute;
-  z-index: 2;
+  z-index: var(--layer-page);
   left: 0;
   right: 0;
   padding: var(--space-1);
@@ -1061,7 +1078,7 @@ li.task-row:focus-within .delete-mark {
 
 .drag-ghost {
   position: fixed;
-  z-index: 60;
+  z-index: var(--layer-drag);
   pointer-events: none;
   padding: var(--space-1) var(--space-2);
   background-color: var(--paper);
@@ -1077,7 +1094,7 @@ li.task-row:focus-within .delete-mark {
    guide line waiting to be inked. */
 .landing {
   position: absolute;
-  z-index: 3;
+  z-index: var(--layer-capture);
   left: 0;
   right: 0;
   border: 1px dashed var(--accent);
@@ -1159,7 +1176,7 @@ li.task-row:focus-within .delete-mark {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  z-index: 10;
+  z-index: var(--layer-sheet);
   width: min(32rem, calc(100vw - 2 * var(--gutter)));
   max-height: calc(100dvh - 2 * var(--gutter));
   overflow-y: auto;
@@ -1277,7 +1294,7 @@ li.task-row:focus-within .delete-mark {
   position: absolute;
   top: calc(100% + var(--space-2));
   right: 0;
-  z-index: 9;
+  z-index: var(--layer-menu);
   width: min(20rem, calc(100vw - 2 * var(--gutter)));
   max-height: calc(100dvh - 6rem);
   overflow-y: auto;
@@ -1291,7 +1308,7 @@ li.task-row:focus-within .delete-mark {
 .gear-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 8;
+  z-index: var(--layer-menu-backdrop);
 }
 
 .gear-menu h3 {
@@ -1398,7 +1415,7 @@ li.task-row:focus-within .delete-mark {
   position: fixed;
   top: var(--space-2);
   left: 50%;
-  z-index: 40;
+  z-index: var(--layer-note);
   width: max-content;
   max-width: min(36rem, calc(100vw - 2 * var(--gutter)));
   margin: 0;
@@ -1486,14 +1503,14 @@ li.task-row:focus-within .delete-mark {
 }
 
 /* The ink a dazed Rambo writes. A layer above the page and below Rambo, and
-   never over the capture line (z-index 3) or a dialog (10). It takes no
+   never over the capture line or a dialog (see the layer scale in :root). It takes no
    pointer: Rambo is the thing you pull, and the trail is what follows him. */
 .ink-layer {
   position: fixed;
   inset: 0;
   width: 100%;
   height: 100%;
-  z-index: 2;
+  z-index: var(--layer-page);
   pointer-events: none;
 }
 
@@ -1693,7 +1710,7 @@ li.task-row:focus-within .delete-mark {
 .paper-step { min-width: var(--tap); min-height: var(--tap); font-size: var(--text-xl); }
 /* Paper radios (the sheet's When): a word with a hand-drawn ring before it; the
    chosen one's ring is filled in the pen's ink. */
-.paper-radios { display: grid; }
+.paper-radios { display: grid; justify-items: start; }
 .paper-radio {
   display: flex;
   align-items: center;
@@ -1715,6 +1732,8 @@ li.task-row:focus-within .delete-mark {
   background: radial-gradient(circle, var(--accent) 0 40%, transparent 45%);
 }
 .paper-radio.picked { color: var(--accent); }
+.paper-radio:focus-visible { outline: none; }
+.paper-radio:focus-visible::before { outline: 2px solid var(--accent); outline-offset: 2px; }
 .paper-weekdays,
 .paper-days { display: grid; grid-template-columns: repeat(7, minmax(var(--tap), 1fr)); text-align: center; }
 .paper-weekdays { color: var(--ink-faint); font-size: var(--text-sm); }

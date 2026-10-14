@@ -1037,4 +1037,42 @@ mod tests {
             .collect();
         assert!(eased.is_empty(), "eases outside a flight: {eased:?}");
     }
+
+    /// docs/FRONTEND-PLAN.md 1.5: every z-index in the style sheets names a rung of the
+    /// scale in `:root`, so no loose number can put Rambo over a dialog again.
+    #[test]
+    fn every_z_index_reads_the_layer_scale() {
+        for (name, css) in [
+            ("theme.css", include_str!("../theme.css")),
+            ("tack.css", include_str!("../tack.css")),
+        ] {
+            let loose: Vec<_> = css
+                .lines()
+                .filter(|line| line.trim_start().starts_with("z-index:"))
+                .filter(|line| !line.contains("var(--layer-"))
+                .collect();
+            assert!(
+                loose.is_empty(),
+                "{name} has loose z-index numbers: {loose:?}"
+            );
+        }
+    }
+
+    /// Rambo and his bubbles sit under the edit sheet and the gear menu; the sheet is
+    /// the highest rung a person can open.
+    #[test]
+    fn rambo_and_his_bubbles_sit_under_the_sheet() {
+        let css = include_str!("../theme.css");
+        let layer = |name: &str| -> i32 {
+            css.lines()
+                .find_map(|line| line.trim().strip_prefix(&format!("--layer-{name}:")))
+                .and_then(|rest| rest.split(';').next())
+                .and_then(|value| value.trim().parse().ok())
+                .unwrap_or_else(|| panic!("--layer-{name} is not a plain number in :root"))
+        };
+        assert!(layer("rambo") < layer("rambo-bubble"));
+        assert!(layer("rambo-bubble") < layer("menu"));
+        assert!(layer("menu") < layer("sheet"));
+        assert!(layer("note") < layer("rambo"));
+    }
 }
