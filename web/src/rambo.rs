@@ -74,11 +74,17 @@ pub(crate) fn Rambo(
             mascot::Event::Return,
         ));
         let Some(home) = nest_centre(nest_ref) else {
-            set_state.set(mascot::State::Home);
+            set_state.set(mascot::transition(
+                &state.get_untracked(),
+                mascot::Event::Return,
+            ));
             return;
         };
         if mascot::prefers_reduced_motion() {
-            set_state.set(mascot::State::Home);
+            set_state.set(mascot::transition(
+                &state.get_untracked(),
+                mascot::Event::Return,
+            ));
             return;
         }
         let start = pen_pos.get_untracked();
@@ -401,7 +407,12 @@ pub(crate) fn Rambo(
                         land_dazed(false);
                     }
                     mascot::State::Inking => {
-                        set_state.set(mascot::State::Dazed);
+                        // The browser took the gesture over: he lands where he
+                        // is, like a drop on the page.
+                        set_state.set(mascot::transition(
+                            &state.get_untracked(),
+                            mascot::Event::DropEmpty,
+                        ));
                         arm_daze();
                     }
                     _ => {}
@@ -446,12 +457,12 @@ pub(crate) fn Rambo(
                                         if let Some(body) = body {
                                             patch_and_show(&todo_core::TaskId(task_id_str), body, sink).await;
                                         }
-                                        set_state_clone.set(mascot::State::Home);
+                                        set_state_clone.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
                                     });
                                 }
                             }>"Edit"</button>
                             <button type="button" on:click=move |_| {
-                                set_state.set(mascot::State::Home);
+                                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
                             }>"Move"</button>
                             <button type="button" on:click=move |_| {
                                 if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
@@ -464,7 +475,7 @@ pub(crate) fn Rambo(
                                         if let Some(action) = action {
                                             apply_tick(&TaskId(task_id), action, sink).await;
                                         }
-                                        set_state_clone.set(mascot::State::Home);
+                                        set_state_clone.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
                                     });
                                 }
                             }>"Done"</button>
@@ -480,7 +491,7 @@ pub(crate) fn Rambo(
                                             Ok(new_snap) => set_snapshot_clone.set(new_snap),
                                             Err(e) => set_error.set(Some(series_note(&e))),
                                         }
-                                        set_state_clone.set(mascot::State::Home);
+                                        set_state_clone.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
                                     });
                                 }
                             }>"×"</button>

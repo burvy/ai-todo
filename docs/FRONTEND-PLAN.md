@@ -191,6 +191,7 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
   - Each new event or arm has a test in `mascot.rs` (input state and event, then the expected state).
   - FE-1's check list passes for drag, drop, put-back, going home and capture-then-write.
 - Do not touch: CSS, `pen_pos`, timers, the daze time.
+- TODO (owner's rule, 2026-10-14; Tuning step): Rambo reacts visibly before he moves: a beat of notice and an expression, then the move. FE-4 adds no timers, so the beat is not here; its length goes into `web/src/tuning.rs` as `NOTICE_BEAT_MS` with the Tuning step below.
 
 **FE-5: dead code and undefined colours** · CSS + Rust · small · after FE-3
 - Why: the cloud audit (1.8, items 21–24) found code nothing calls and colours nothing defines. Less code means less for every later ticket to read.
@@ -210,7 +211,7 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
 
 Several GLM agents at once drain the usage budget, so only one builds at a time (owner, interview 2). God dispatches the next ticket when the last one is reviewed. Keep tickets small. Current order:
 
-1. FE-4: state changes through `transition` (Huang, running).
+1. FE-4: state changes through `transition` (Claudio, taking over Huang's work).
 2. Ping: paper and nest art (journal paper, DESIGN-DIRECTION §9). **Waits for the picked assets:** Dario is sourcing candidates (hive `ASSETS-PLAN.md`); Ping builds on the ones chosen, in asset slots.
 3. FE-3: CSS tidy (Chuan).
 4. FE-2: art follows the page theme (Zhipu).
@@ -230,7 +231,7 @@ Several GLM agents at once drain the usage budget, so only one builds at a time 
 
 Each becomes a ticket when the steps before it have landed, written with what they taught us. The order is a guess, and so is the split into steps. Fable's review of #268 and the owner's answers (DESIGN-DIRECTION §9) are the guidance.
 
-- **Tuning.** Constants into `web/src/tuning.rs`, following `docs/TUNING.md` (#270, one `tuning.rs` per crate), then the CSS times as `--t-*`, each with a guard test. The daze becomes about 3s here. Where CSS and Rust disagree today (`FLY_MS = 450` against the CSS flight), Rust wins.
+- **Tuning.** Constants into `web/src/tuning.rs`, following `docs/TUNING.md` (#270, one `tuning.rs` per crate), then the CSS times as `--t-*`, each with a guard test. The daze becomes about 3s here. Where CSS and Rust disagree today (`FLY_MS = 450` against the CSS flight), Rust wins. Adds the owner's notice beat (see the TODO in FE-4): before any move he shows he noticed, for `NOTICE_BEAT_MS`.
 - **z-index tokens.** Name the stacking, a guard test that every `z-index` is a token, and put Rambo under dialogs (answered). Note in THEME.md that a `showModal()` dialog sits above every token.
 - **Cascade layers.** Wrap every rule in its layer, keeping today's order where rules compete; pixel diff identical.
 - **Two-element Rambo** at 1.4x, with the rim clip. Paired review with Emilio.
