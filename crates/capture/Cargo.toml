@@ -13,4 +13,5 @@ todo-core = { path = "../core" }
 
 [dev-dependencies]
 chrono-tz = "0.10"
+scheduler = { path = "../scheduler" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
