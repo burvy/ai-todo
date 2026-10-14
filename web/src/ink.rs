@@ -426,13 +426,16 @@ pub fn faded(age_ms: f64) -> bool {
     age_ms >= INK_HOLD_MS + INK_FADE_OUT_MS
 }
 
-/// The list page's box in the window, in px, while it lies open at rest.
+/// The list page's box in the window, in px, while it lies open at rest, and how far its
+/// rows have scrolled inside it (on a phone the page is its own scroller).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PageBox {
     pub left: f64,
     pub top: f64,
     pub width: f64,
     pub height: f64,
+    pub scroll_left: f64,
+    pub scroll_top: f64,
 }
 
 impl PageBox {
@@ -456,7 +459,10 @@ pub fn surface_at(x: f64, y: f64, list: Option<PageBox>) -> Surface {
 /// too; a page that cannot be measured (mid-turn) leaves the point where it is.
 pub fn on_surface(on: Surface, x: f64, y: f64, list: Option<PageBox>) -> (f64, f64) {
     match (on, list) {
-        (Surface::List, Some(page)) => (x - page.left, y - page.top),
+        (Surface::List, Some(page)) => (
+            x - page.left + page.scroll_left,
+            y - page.top + page.scroll_top,
+        ),
         _ => (x, y),
     }
 }
@@ -826,7 +832,26 @@ mod tests {
         top: -300.0,
         width: 340.0,
         height: 1200.0,
+        scroll_left: 0.0,
+        scroll_top: 0.0,
     };
+
+    #[test]
+    fn ink_on_a_page_scrolled_inside_itself_lies_where_its_rows_are() {
+        // A phone: the page stays put in the window and its rows scroll 600 px inside
+        // it. A point 50 px down the window is 650 px down the page's rows.
+        let scrolled = PageBox {
+            top: 0.0,
+            height: 763.0,
+            scroll_top: 600.0,
+            ..PAGE
+        };
+        assert_eq!(surface_at(100.0, 50.0, Some(scrolled)), Surface::List);
+        assert_eq!(
+            on_surface(Surface::List, 100.0, 50.0, Some(scrolled)),
+            (80.0, 650.0)
+        );
+    }
 
     #[test]
     fn ink_begun_over_the_open_list_lies_on_it_in_its_own_coordinates() {

@@ -424,7 +424,11 @@ mod imp {
                     target,
                     pull,
                 } => {
-                    spring.step(*target, *pull, tick.dt);
+                    // Stepped by the engine's fixed step, so the leaf falls the same at
+                    // any frame rate.
+                    for _ in 0..tick.steps {
+                        spring.step(*target, *pull, crate::engine::ENGINE_DT_S);
+                    }
                     self.draw(&flight.stage, spring.x);
                     spring.at_rest(*target)
                 }

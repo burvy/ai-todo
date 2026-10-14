@@ -175,6 +175,9 @@ fn run_frames(
         if laid.with_untracked(Vec::is_empty) {
             // The last ink on this surface has gone: a clean sheet, and the frames stop.
             fresh_sheet(&canvas, &context);
+            if let Some(sheet) = canvas.get_untracked() {
+                page_layer(&sheet, None);
+            }
             painting.set(false);
             return crate::engine::Flow::Stop;
         }
@@ -239,6 +242,13 @@ fn fresh_sheet(
     let Some(canvas) = canvas.get_untracked() else {
         return;
     };
+    // The page's layer is as tall as all the rows, scrolled past or not, so its sheet can
+    // stick to the part of the page that shows wherever the rows have got to.
+    let rows = canvas
+        .parent_element()
+        .and_then(|layer| layer.parent_element())
+        .map(|page| page.scroll_height());
+    page_layer(&canvas, rows);
     let ratio = window().device_pixel_ratio();
     let (w, h) = (
         (f64::from(canvas.client_width()) * ratio) as u32,
@@ -259,6 +269,21 @@ fn fresh_sheet(
         f64::from(canvas.offset_top()),
     );
     let _ = context.set_transform(ratio, 0.0, 0.0, ratio, -dx * ratio, -dy * ratio);
+}
+
+/// Sizes the list page's ink layer to `height` px, or back to nothing; the floor's
+/// canvas has no layer and is left alone.
+#[cfg(target_arch = "wasm32")]
+fn page_layer(canvas: &web_sys::HtmlCanvasElement, height: Option<i32>) {
+    let Some(layer) = canvas
+        .parent_element()
+        .filter(|layer| layer.class_list().contains("page-ink"))
+        .and_then(|layer| layer.dyn_into::<web_sys::HtmlElement>().ok())
+    else {
+        return;
+    };
+    let height = height.map_or(String::new(), |px| format!("{px}px"));
+    let _ = layer.style().set_property("height", &height);
 }
 
 /// The page's value of a colour token, so the canvas paints exactly what the CSS

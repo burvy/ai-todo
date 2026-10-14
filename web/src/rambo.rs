@@ -796,12 +796,15 @@ fn list_page() -> Option<ink::PageBox> {
     }
     let page = main.query_selector(".tasks-pane").ok().flatten()?;
     let rect = page.get_bounding_client_rect();
-    // From inside the page's border, where its ink sheet's box starts.
+    // From inside the page's border, where its ink layer starts, and counting the rows
+    // scrolled past inside it.
     Some(ink::PageBox {
         left: rect.left() + f64::from(page.client_left()),
         top: rect.top() + f64::from(page.client_top()),
         width: rect.width(),
         height: rect.height(),
+        scroll_left: f64::from(page.scroll_left()),
+        scroll_top: f64::from(page.scroll_top()),
     })
 }
 

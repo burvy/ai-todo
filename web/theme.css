@@ -2001,8 +2001,13 @@ li.task-row:focus-within .delete-mark {
 /* Ink on the list is part of the page: it scrolls and turns with the paper. Its sheet
    sticks to the window inside the page, so it is never taller than the screen. */
 .page-ink {
+  /* As tall as all the rows while ink lies on them (`inklayer::page_layer`): the page may
+     scroll inside itself, and a box at inset 0 would cover only its first screen. */
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 0;
   z-index: var(--layer-page);
   pointer-events: none;
 }

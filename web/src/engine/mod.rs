@@ -7,7 +7,7 @@ mod sched;
 
 pub(crate) use run::{every, next_frame, now, on_tick};
 #[cfg(target_arch = "wasm32")]
-pub(crate) use sched::Tick;
+pub(crate) use sched::{ENGINE_DT_S, Tick};
 pub(crate) use sched::{Flow, Handle};
 
 #[cfg(test)]

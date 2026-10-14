@@ -11,12 +11,21 @@ use std::rc::Rc;
 /// picks up where it left off instead of leaping.
 const MAX_FRAME_S: f64 = 0.1;
 
+/// The engine's fixed step, in seconds: physics steps by exactly this, however fast the
+/// screen draws, so a throw goes the same on a 60 Hz phone and a 144 Hz monitor.
+pub(crate) const ENGINE_DT_S: f64 = 1.0 / 120.0;
+
+/// The most fixed steps one frame takes. A frame later than that drops the rest of the
+/// backlog instead of stepping in a burst.
+const MAX_STEPS: u32 = 8;
+
 /// What a job sees on a frame: the loop's time in ms (the browser's animation clock,
-/// never the wall clock) and the seconds since the last frame.
+/// never the wall clock), and how many fixed [`ENGINE_DT_S`] steps the time since the
+/// last frame makes, with what was left over from earlier frames counted in.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Tick {
     pub(crate) now: f64,
-    pub(crate) dt: f64,
+    pub(crate) steps: u32,
 }
 
 /// Whether a job wants to run again.
@@ -65,6 +74,8 @@ pub(crate) struct Loop {
     /// The last frame's time, while frames follow one another; none once the loop has
     /// slept, so the first frame after it is a frame of no time.
     last: Option<f64>,
+    /// Time not yet stepped, in seconds, always less than one fixed step.
+    left_over: f64,
 }
 
 impl Loop {
@@ -105,13 +116,22 @@ impl Loop {
             .last
             .map_or(0.0, |last| ((now - last) / 1000.0).clamp(0.0, MAX_FRAME_S));
         self.last = Some(now);
+        let owed = self.left_over + dt;
+        // A hair under a whole step still counts as one, so 1/120 s is one step.
+        let whole = (owed / ENGINE_DT_S + 1e-9).floor();
+        let steps = (whole as u32).min(MAX_STEPS);
+        self.left_over = if steps == MAX_STEPS {
+            0.0
+        } else {
+            (owed - whole * ENGINE_DT_S).max(0.0)
+        };
         let due = self
             .jobs
             .iter()
             .filter(|job| job.live.get() && job.is_due(now))
             .cloned()
             .collect();
-        (Tick { now, dt }, due)
+        (Tick { now, steps }, due)
     }
 
     /// Closes a frame: stopped jobs go, and the loop says what it needs next.
@@ -120,6 +140,7 @@ impl Loop {
         let wake = self.wake();
         if wake != Wake::Frame {
             self.last = None;
+            self.left_over = 0.0;
         }
         wake
     }
@@ -189,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_job_sees_the_seconds_between_frames_and_none_on_the_first() {
+    fn a_frame_job_sees_the_steps_between_frames_and_none_on_the_first() {
         let lp = RefCell::new(Loop::default());
         let seen = log();
         let s = seen.clone();
@@ -204,13 +225,51 @@ mod tests {
             [
                 Tick {
                     now: 1000.0,
-                    dt: 0.0
+                    steps: 0
                 },
                 Tick {
                     now: 1016.0,
-                    dt: 0.016
+                    steps: 1
                 }
             ]
+        );
+    }
+
+    /// The fixed steps a frame job is given over frames at `times` ms.
+    fn steps_over(times: &[f64]) -> Vec<u32> {
+        let lp = RefCell::new(Loop::default());
+        let seen = log();
+        let s = seen.clone();
+        lp.borrow_mut().every_frame(move |tick| {
+            s.borrow_mut().push(tick);
+            Flow::Go
+        });
+        for &t in times {
+            frame(&lp, t);
+        }
+        seen.borrow().iter().map(|tick| tick.steps).collect()
+    }
+
+    #[test]
+    fn fixed_steps_keep_pace_with_time_at_any_frame_rate() {
+        // A second of 60 Hz frames and of 144 Hz frames is 120 steps either way.
+        for hz in [60.0, 144.0] {
+            let times: Vec<f64> = (0..=hz as usize).map(|i| i as f64 * 1000.0 / hz).collect();
+            let total: u32 = steps_over(&times).iter().sum();
+            assert!((119..=120).contains(&total), "{hz} Hz: {total}");
+        }
+        // A 60 Hz frame is two steps; none is lost.
+        assert_eq!(
+            steps_over(&[0.0, 1000.0 / 60.0, 2000.0 / 60.0, 50.0]),
+            [0, 2, 2, 2]
+        );
+    }
+
+    #[test]
+    fn a_late_frame_takes_at_most_a_few_steps_and_drops_the_rest() {
+        assert_eq!(
+            steps_over(&[0.0, 500.0, 500.0 + 1000.0 / 120.0]),
+            [0, MAX_STEPS, 1]
         );
     }
 
@@ -225,7 +284,7 @@ mod tests {
         });
         frame(&lp, 0.0);
         frame(&lp, 30_000.0);
-        assert_eq!(seen.borrow()[1].dt, MAX_FRAME_S);
+        assert_eq!(seen.borrow()[1].steps, MAX_STEPS);
     }
 
     #[test]
@@ -248,7 +307,7 @@ mod tests {
             Flow::Stop
         });
         frame(&lp, 5000.0);
-        assert_eq!(seen.borrow()[0].dt, 0.0);
+        assert_eq!(seen.borrow()[0].steps, 0);
     }
 
     #[test]
@@ -328,6 +387,6 @@ mod tests {
         assert!(seen.borrow().is_empty());
         frame(&lp, 16.0);
         assert_eq!(seen.borrow().len(), 1);
-        assert_eq!(seen.borrow()[0].dt, 0.016);
+        assert_eq!(seen.borrow()[0].steps, 1);
     }
 }
