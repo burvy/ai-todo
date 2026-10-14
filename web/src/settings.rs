@@ -77,6 +77,7 @@ const DEFAULTS: Settings = Settings {
     mode: RamblMode::Interactive,
     theme: Theme::Light,
     sounds: true,
+    rambo_talks: true,
     pen: Pen::FountainPen,
     clock: Clock::Twelve,
 };
@@ -100,6 +101,14 @@ pub struct Settings {
     /// Times are written as `9 am` by default; `24:00` style is a gear choice.
     #[serde(default)]
     pub clock: Clock,
+    /// Rambo talks on by default (docs/DESIGN-DIRECTION.md 3). The bubble shows
+    /// either way; this only decides whether there is a voice with it.
+    #[serde(default = "rambo_talks_on")]
+    pub rambo_talks: bool,
+}
+
+fn rambo_talks_on() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -121,6 +130,7 @@ impl Settings {
             theme: self.theme,
             sounds: self.sounds,
             clock: self.clock,
+            rambo_talks: self.rambo_talks,
         }
     }
 
@@ -161,10 +171,26 @@ pub fn GearMenu(
         })
     };
     let toggle_sounds = move || {
-        update(Settings {
+        let next = Settings {
             sounds: !settings.get().sounds,
             ..settings.get()
-        })
+        };
+        update(next);
+        // Muting the page cuts him off mid-sentence too, not just the next one.
+        if !next.sounds {
+            crate::voice::cancel();
+        }
+    };
+    let toggle_rambo_talks = move || {
+        let next = Settings {
+            rambo_talks: !settings.get().rambo_talks,
+            ..settings.get()
+        };
+        update(next);
+        // Turning him off mid-sentence should stop the sentence, not the next one.
+        if !next.rambo_talks || !next.sounds {
+            crate::voice::cancel();
+        }
     };
     let set_pen = move |pen: Pen| {
         update(Settings {
@@ -246,6 +272,16 @@ pub fn GearMenu(
                             >{move || if settings.get().sounds { "On" } else { "Off" }}
                             </button>
                         </div>
+                        <label>
+                            "Rambo talks "
+                            <button
+                                type="button"
+                                aria-pressed=move || settings.get().rambo_talks.to_string()
+                                class:active=move || settings.get().rambo_talks
+                                on:click=move |_| toggle_rambo_talks()
+                            >{move || if settings.get().rambo_talks { "On" } else { "Off" }}
+                            </button>
+                        </label>
                         <h3>"Rambo"</h3>
                         <div class="gear-choices" role="group" aria-label="Rambo's pen">
                             <For each=|| [Pen::FountainPen, Pen::Pencil, Pen::Ballpoint, Pen::Quill, Pen::Marker] key=|p| *p let:pen>
@@ -471,6 +507,30 @@ mod tests {
         assert_eq!(Settings::default().theme, Theme::Light);
         assert!(Settings::default().sounds);
         assert_eq!(Settings::default().pen, Pen::FountainPen);
+    }
+
+    #[test]
+    fn rambo_talks_defaults_on_and_a_stored_choice_is_kept() {
+        // Settings stored before the voice existed have no key for it, so the
+        // `#[serde(default)]` has to give Rambo his voice rather than take it away.
+        let stored_before_the_voice =
+            Settings::parse_or_default(r#"{"start_hour":8,"end_hour":18}"#);
+        assert!(stored_before_the_voice.rambo_talks, "voice on by default");
+
+        // Once the reader has turned it off, that is the answer that sticks.
+        let turned_off = Settings::parse_or_default(
+            r#"{"start_hour":8,"end_hour":18,"days":7,"rambo_talks":false}"#,
+        );
+        assert!(!turned_off.rambo_talks, "a stored choice is kept");
+
+        // Turning it back on is stored like any other choice.
+        assert!(
+            Settings::parse_or_default(
+                r#"{"start_hour":8,"end_hour":18,"days":7,"rambo_talks":true}"#
+            )
+            .rambo_talks,
+            "and so is turning it back on"
+        );
     }
 
     #[test]
