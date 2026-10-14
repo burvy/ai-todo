@@ -555,7 +555,7 @@ pub(crate) fn Rambo(
     // and let go. What had the finger's Down lets go of it first, so a row never
     // swipes or lifts beneath him.
     let draw_over = {
-        let (daze, nib_below, finger) = (daze.clone(), nib_below.clone(), finger.clone());
+        let (nib_below, finger) = (nib_below.clone(), finger.clone());
         let (moved, grab_state) = (moved.clone(), grab_state.clone());
         move |watch: Watch| {
             watch.tick.stop();
@@ -567,8 +567,6 @@ pub(crate) fn Rambo(
                 return;
             };
             let_go(&watch.on, watch.id);
-            // In hand he never skitters off on his own.
-            daze.set(daze.get().wrapping_add(1));
             *moved.borrow_mut() = false;
             *grab_state.borrow_mut() = Some(watch.at);
             let mut held = gesture::Recognizer::new();
