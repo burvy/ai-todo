@@ -1,6 +1,8 @@
 //! The scrap a swiped-out row leaves in the page corner (DESIGN-DIRECTION §9,
 //! "Undo is the scrap"). Tap it within [`SCRAP_UNDO_MS`] and the task is taped
-//! back as it was; after that it slides away and the delete stands.
+//! back as it was; after that it slides away and the delete stands. Every delete
+//! lays one, whichever control made it: the undo belongs to the delete, not the
+//! gesture. Its clock only runs while the page is in view.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -11,7 +13,7 @@ use todo_core::{Snapshot, Task};
 use crate::api;
 use crate::edits::series_note;
 use crate::tasks::occurrence_parts;
-use crate::tuning::{SCRAP_SLIDE_MS, SCRAP_UNDO_MS};
+use crate::tuning::{SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS};
 
 /// What taping a scrap back does.
 #[derive(Clone, Debug, PartialEq)]
@@ -52,6 +54,21 @@ fn owns(scrap: Option<&Scrap>, ticket: u32) -> bool {
     scrap.is_some_and(|scrap| scrap.ticket == ticket)
 }
 
+/// The undo time left after one more tick. It only runs while the page is in view:
+/// switch apps and come back, and the scrap is still lying where it was.
+fn after_tick(left_ms: u32, hidden: bool) -> u32 {
+    match hidden {
+        true => left_ms,
+        false => left_ms.saturating_sub(SCRAP_TICK_MS),
+    }
+}
+
+fn page_hidden() -> bool {
+    web_sys::window()
+        .and_then(|window| window.document())
+        .is_some_and(|document| document.hidden())
+}
+
 /// Lay the scrap of a row just deleted, replacing any scrap already there.
 pub fn lay(scraps: RwSignal<Option<Scrap>>, title: String, undo: Undo) {
     static NEXT: AtomicU32 = AtomicU32::new(0);
@@ -62,22 +79,45 @@ pub fn lay(scraps: RwSignal<Option<Scrap>>, title: String, undo: Undo) {
         leaving: false,
         ticket,
     }));
-    gloo_timers::callback::Timeout::new(SCRAP_UNDO_MS, move || {
+    let still_ours = move || scraps.with_untracked(|scrap| owns(scrap.as_ref(), ticket));
+    wasm_bindgen_futures::spawn_local(async move {
+        let mut left_ms = SCRAP_UNDO_MS;
+        while left_ms > 0 {
+            gloo_timers::future::TimeoutFuture::new(SCRAP_TICK_MS).await;
+            if !still_ours() {
+                return;
+            }
+            left_ms = after_tick(left_ms, page_hidden());
+        }
         scraps.update(|scrap| {
-            if owns(scrap.as_ref(), ticket)
-                && let Some(scrap) = scrap.as_mut()
-            {
+            if let Some(scrap) = scrap.as_mut() {
                 scrap.leaving = true;
             }
         });
-        gloo_timers::callback::Timeout::new(SCRAP_SLIDE_MS, move || {
-            if scraps.with_untracked(|scrap| owns(scrap.as_ref(), ticket)) {
-                scraps.set(None);
-            }
-        })
-        .forget();
-    })
-    .forget();
+        gloo_timers::future::TimeoutFuture::new(SCRAP_SLIDE_MS).await;
+        if still_ours() {
+            scraps.set(None);
+        }
+    });
+}
+
+/// Delete `task_id` with `delete`, then lay its scrap. The undo is read from the
+/// list before the delete, so it tapes the row back as the list held it.
+pub async fn delete_and_lay<F>(
+    task_id: &todo_core::TaskId,
+    snapshot: ReadSignal<Snapshot>,
+    scraps: RwSignal<Option<Scrap>>,
+    delete: F,
+) -> Result<Snapshot, api::ApiError>
+where
+    F: std::future::Future<Output = Result<Snapshot, api::ApiError>>,
+{
+    let undo = snapshot.with_untracked(|held| undo_for(held, &task_id.0));
+    let result = delete.await;
+    if let (Ok(_), Some((title, undo))) = (&result, undo) {
+        lay(scraps, title, undo);
+    }
+    result
 }
 
 /// Tape the scrap's task back, then show the list the server answers with.
@@ -165,6 +205,16 @@ mod tests {
                 date: NaiveDate::from_ymd_opt(2026, 10, 15).unwrap(),
             }
         );
+    }
+
+    #[test]
+    fn the_undo_clock_stops_while_the_page_is_hidden() {
+        assert_eq!(after_tick(SCRAP_UNDO_MS, true), SCRAP_UNDO_MS);
+        assert_eq!(
+            after_tick(SCRAP_UNDO_MS, false),
+            SCRAP_UNDO_MS - SCRAP_TICK_MS
+        );
+        assert_eq!(after_tick(SCRAP_TICK_MS / 2, false), 0, "never below zero");
     }
 
     #[test]

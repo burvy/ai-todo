@@ -2713,10 +2713,116 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let tasks = serde_json::from_value::<Snapshot>(body).unwrap().tasks;
         assert_eq!(tasks.len(), 1);
-        assert_eq!(
-            (tasks[0].title.as_str(), tasks[0].order),
-            ("Post the letter", 3)
+        assert_eq!(tasks[0].title, "Post the letter");
+    }
+
+    #[tokio::test]
+    async fn a_restore_is_checked_like_a_create() {
+        let router = router_at(sunday_night());
+        let task = |title: &str, minutes: u32| {
+            format!(
+                r#"{{"id":"t1","title":"{title}","duration_min":{minutes},"when":{{"kind":"anytime"}},"done":false,"order":0,"label":"Other","priority":"low","source":"text","created":"2026-10-11T20:00:00Z","updated_at":"2026-10-11T20:00:00Z"}}"#
+            )
+        };
+        for (body, why) in [
+            (task("", 30), "an empty title"),
+            (task(&"x".repeat(5000), 30), "an over-long title"),
+            (task("Nap", 0), "no length"),
+            (task("Nap", 100_000), "a length past a u16"),
+        ] {
+            let (status, _) = send(&router, "POST", "/api/v1/tasks/restore", Some(&body)).await;
+            assert!(status.is_client_error(), "{why}: {status}");
+        }
+        let (_, body) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        assert!(
+            serde_json::from_value::<Snapshot>(body)
+                .unwrap()
+                .tasks
+                .is_empty(),
+            "nothing was stored"
         );
+    }
+
+    /// A restore naming another user's task id stores a new task for the caller
+    /// only: the other user's task is untouched.
+    #[tokio::test]
+    async fn a_restore_with_another_user_s_id_touches_only_the_caller() {
+        let verifier = PerCredential(vec![
+            (
+                "sam-credential",
+                auth::TokenInfo::for_test("google-1", "sam@example.com"),
+            ),
+            (
+                "lee-credential",
+                auth::TokenInfo::for_test("google-2", "lee@example.com"),
+            ),
+        ]);
+        let router = super::router_with_verifier(
+            App::new(
+                Box::new(MemoryStore::default()) as Box<dyn Store>,
+                Arc::new(FixedClock(sunday_night())),
+            ),
+            AnyJudge::Fake(judge::FakeJudge),
+            Box::new(verifier),
+            false,
+            Caps::default(),
+            None,
+            TrustedProxies::default(),
+        );
+        let sam = sign_in_with(&router, "sam-credential").await;
+        let lee = sign_in_with(&router, "lee-credential").await;
+        let (_, body) = send_as(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(&draft_titled("Sam's errand")),
+            Some(&sam),
+        )
+        .await;
+        let sams = serde_json::from_value::<Snapshot>(body).unwrap().tasks;
+        let mut stolen = sams[0].clone();
+        stolen.title = "Lee's overwrite".into();
+        let body = serde_json::to_string(&stolen).unwrap();
+
+        let (status, body) = send_as(
+            &router,
+            "POST",
+            "/api/v1/tasks/restore",
+            Some(&body),
+            Some(&lee),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let lees = serde_json::from_value::<Snapshot>(body).unwrap().tasks;
+        assert_eq!(lees.len(), 1);
+        assert_ne!(lees[0].id, sams[0].id, "stored under a fresh id");
+
+        let (_, body) = send_as(&router, "GET", "/api/v1/snapshot", None, Some(&sam)).await;
+        assert_eq!(
+            serde_json::from_value::<Snapshot>(body).unwrap().tasks,
+            sams,
+            "Sam's task is untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn hostile_restore_fields_are_tamed_over_http() {
+        let router = router_at(sunday_night());
+        let hostile = format!(
+            r#"{{"id":"t1","title":"Pay rent","duration_min":30,"when":{{"kind":"due_by","time":"2026-10-12T17:00:00Z"}},"done":false,"order":{},"label":"Other","priority":"low","source":"text","created":"2999-01-01T00:00:00Z","updated_at":"2026-10-11T20:00:00Z","due_tz":"{}","external_uid":"{}"}}"#,
+            i64::MIN,
+            "Nowhere/".repeat(500),
+            "uid".repeat(5000),
+        );
+        let (status, body) = send(&router, "POST", "/api/v1/tasks/restore", Some(&hostile)).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let task = serde_json::from_value::<Snapshot>(body).unwrap().tasks[0].clone();
+        assert_eq!(task.order, -1, "one step from an empty list, not i64::MIN");
+        assert_eq!(task.due_tz.as_deref(), Some("America/New_York"));
+        assert_eq!(task.external_uid, None);
+        assert!(task.created <= sunday_night());
+        // A capture after it still finds a place above.
+        create_task(&router, "Call the bank").await;
     }
 
     #[tokio::test]

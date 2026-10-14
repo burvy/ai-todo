@@ -22,7 +22,11 @@ pub const SLOP_PX: f64 = 8.0;
 /// needs this much, a slow swipe a share of the row (see [`scribble_commits`]).
 pub const SWIPE_PX: f64 = 64.0;
 
-use crate::tuning::{SCRIBBLE_COMMIT_SHARE, SCRIBBLE_FLICK_PX_PER_MS, SCRIBBLE_LOOP_PX};
+use crate::tack::hash_unit;
+use crate::tuning::{
+    SCRIBBLE_BAND, SCRIBBLE_COMMIT_SHARE, SCRIBBLE_FLICK_PX_PER_MS, SCRIBBLE_JITTER,
+    SCRIBBLE_LOOP_PX,
+};
 
 /// What a press on a row has turned into so far. Every state is decided, and
 /// only `Pressed` is still undecided.
@@ -108,21 +112,38 @@ pub fn ink_drawn(dx: f64, width: f64) -> f64 {
     (dx / width).clamp(0.0, 1.0)
 }
 
-/// The scribble across a row `width` by `height`, as an SVG path: loops from the
-/// left edge to the right through the middle of the row. It is drawn whole and
-/// revealed as far as the swipe has gone.
-pub fn scribble_path(width: f64, height: f64) -> String {
-    let (top, bottom) = (height * 0.3, height * 0.7);
-    let step = SCRIBBLE_LOOP_PX / 2.0;
-    let steps = ((width / step).ceil() as u32).max(1);
-    let loops: String = (1..=steps)
-        .map(|i| {
-            let x = (f64::from(i) * step).min(width);
-            let y = if i % 2 == 1 { top } else { bottom };
-            format!(" L{x:.1} {y:.1}")
+/// Where a row's words sit inside the row, in px from its top-left corner: the
+/// first line's height, and from where the words start to where they end.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Words {
+    pub left: f64,
+    pub right: f64,
+    pub top: f64,
+    pub bottom: f64,
+}
+
+/// The scribble across a row's `words`, as an SVG path: loops from where the words
+/// start to where they end, inside their [`SCRIBBLE_BAND`]. Each loop's width and
+/// height wander by [`SCRIBBLE_JITTER`], seeded by `seed` (the row's id). It is
+/// drawn whole and revealed as far as the swipe has gone.
+pub fn scribble_path(words: Words, seed: &str) -> String {
+    let (low, high) = SCRIBBLE_BAND;
+    let height = words.bottom - words.top;
+    let (top, bottom) = (words.top + height * low, words.top + height * high);
+    let (middle, reach) = ((top + bottom) / 2.0, (bottom - top) / 2.0);
+    let jitter = |i: usize, salt: u8| SCRIBBLE_JITTER * hash_unit(&format!("{seed}:{i}"), salt);
+    let mut x = words.left;
+    let loops: String = (1_usize..)
+        .map_while(|i| {
+            (x < words.right).then(|| {
+                x = (x + SCRIBBLE_LOOP_PX / 2.0 * (1.0 + jitter(i, 0))).min(words.right);
+                let side = if i % 2 == 1 { -1.0 } else { 1.0 };
+                let y = middle + side * reach * (1.0 - jitter(i, 1).abs());
+                format!(" L{x:.1} {y:.1}")
+            })
         })
         .collect();
-    format!("M0 {:.1}{loops}", height / 2.0)
+    format!("M{:.1} {middle:.1}{loops}", words.left)
 }
 
 /// Where a row lands relative to the row it was dropped on, which the drop
@@ -145,7 +166,8 @@ pub fn lands_above(y: f64, top: f64, bottom: f64) -> bool {
 /// `view!` names these in both builds. On the host they are never called.
 pub mod dom {
     use super::{
-        Gesture, HOLD_MS, Release, Slot, advance, ink_drawn, lands_above, release, scribble_path,
+        Gesture, HOLD_MS, Release, Slot, Words, advance, ink_drawn, lands_above, release,
+        scribble_path,
     };
     use crate::tuning::{SCRIBBLE_FINISH_MS, SCRIBBLE_LIFT_MS};
     use std::cell::RefCell;
@@ -227,6 +249,7 @@ pub mod dom {
         }
         let doc = row.owner_document()?;
         let height = row.get_bounding_client_rect().height();
+        let seed = row.get_attribute("data-id").unwrap_or_default();
         let svg = doc.create_element_ns(Some(SVG), "svg").ok()?;
         svg.set_attribute("class", "scribble-ink").ok()?;
         svg.set_attribute("viewBox", &format!("0 0 {width:.1} {height:.1}"))
@@ -234,13 +257,38 @@ pub mod dom {
         svg.set_attribute("preserveAspectRatio", "none").ok()?;
         svg.set_attribute("aria-hidden", "true").ok()?;
         let path = doc.create_element_ns(Some(SVG), "path").ok()?;
-        path.set_attribute("d", &scribble_path(width, height))
+        path.set_attribute("d", &scribble_path(words_in(row), &seed))
             .ok()?;
         // A path one unit long, so the dash offset is the share left undrawn.
         path.set_attribute("pathLength", "1").ok()?;
         svg.append_child(&path).ok()?;
         row.append_child(&svg).ok()?;
         Some(path)
+    }
+
+    /// Where `row`'s title sits inside it: its first line, start to end. A row
+    /// with no title is crossed out whole.
+    fn words_in(row: &web_sys::Element) -> Words {
+        let frame = row.get_bounding_client_rect();
+        let whole = Words {
+            left: 0.0,
+            right: frame.width(),
+            top: 0.0,
+            bottom: frame.height(),
+        };
+        let Some(title) = row.query_selector(".pen-title").ok().flatten() else {
+            return whole;
+        };
+        let Some(first) = title.get_client_rects().get(0) else {
+            return whole;
+        };
+        let text = title.get_bounding_client_rect();
+        Words {
+            left: text.left() - frame.left(),
+            right: text.right() - frame.left(),
+            top: first.top() - frame.top(),
+            bottom: first.bottom() - frame.top(),
+        }
     }
 
     /// Show the scribble drawn `drawn` of the way across, under the finger.
@@ -579,29 +627,75 @@ mod tests {
         assert_eq!(ink_drawn(40.0, 0.0), 0.0, "a row with no width");
     }
 
-    #[test]
-    fn the_scribble_loops_across_the_row_and_stays_on_it() {
-        let (width, height) = (300.0, 40.0);
-        let path = scribble_path(width, height);
-        let points: Vec<(f64, f64)> = path
-            .split(['M', 'L'])
+    fn points(path: &str) -> Vec<(f64, f64)> {
+        path.split(['M', 'L'])
             .filter_map(|point| {
                 let mut xy = point.split_whitespace().map(|n| n.parse::<f64>().ok());
                 Some((xy.next()??, xy.next()??))
             })
-            .collect();
-        assert_eq!(points.first(), Some(&(0.0, 20.0)));
+            .collect()
+    }
+
+    #[test]
+    fn the_scribble_crosses_the_words_and_nothing_else() {
+        // A title from 40px (past the checkbox) to 220px, its line 10 to 30px down.
+        let words = Words {
+            left: 40.0,
+            right: 220.0,
+            top: 10.0,
+            bottom: 30.0,
+        };
+        let points = points(&scribble_path(words, "t1"));
         assert_eq!(
-            points.last().map(|p| p.0),
-            Some(width),
-            "reaches the right edge"
+            points.first().map(|p| p.0),
+            Some(40.0),
+            "starts at the words"
         );
+        assert_eq!(points.last().map(|p| p.0), Some(220.0), "ends with them");
         assert!(
             points.windows(2).all(|w| w[1].0 > w[0].0),
             "always left to right"
         );
-        assert!(points.iter().all(|&(_, y)| (0.0..=height).contains(&y)));
-        assert!(points.len() > 30, "loops, not a line: {}", points.len());
+        let (low, high) = SCRIBBLE_BAND;
+        let band = (10.0 + 20.0 * low - 0.05)..=(10.0 + 20.0 * high + 0.05);
+        assert!(
+            points.iter().all(|(_, y)| band.contains(y)),
+            "inside the letters' height: {points:?}"
+        );
+        assert!(points.len() > 15, "loops, not a line: {}", points.len());
+    }
+
+    #[test]
+    fn each_row_scribbles_its_own_way() {
+        let words = Words {
+            left: 0.0,
+            right: 300.0,
+            top: 0.0,
+            bottom: 24.0,
+        };
+        assert_eq!(
+            scribble_path(words, "a"),
+            scribble_path(words, "a"),
+            "seeded"
+        );
+        assert_ne!(scribble_path(words, "a"), scribble_path(words, "b"));
+        // Not a sawtooth: the loops are not all one width or one height.
+        let points = points(&scribble_path(words, "a"));
+        let widths: Vec<i64> = points
+            .windows(2)
+            .map(|w| ((w[1].0 - w[0].0) * 10.0).round() as i64)
+            .collect();
+        let heights: Vec<i64> = points.iter().map(|p| (p.1 * 10.0).round() as i64).collect();
+        assert!(widths[..widths.len() - 1].windows(2).any(|w| w[0] != w[1]));
+        assert!(
+            heights
+                .iter()
+                .skip(1)
+                .step_by(2)
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                > 1
+        );
     }
 
     #[test]

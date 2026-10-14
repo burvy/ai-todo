@@ -294,22 +294,33 @@ pub async fn on_delete_requested(_task_id: todo_core::TaskId) {}
 /// bypass both are the two that must not scribble, and each says why.
 ///
 /// An occurrence of a repeat is not a stored task: deleting its row skips that one
-/// date, the way the series endpoint describes (docs/ARCHITECTURE.md 7.1).
+/// date, the way the series endpoint describes (docs/ARCHITECTURE.md 7.1). Either
+/// way the row's scrap is laid, to tape it back.
 pub async fn delete_with_scribble(
     task_id: &todo_core::TaskId,
+    snapshot: ReadSignal<Snapshot>,
+    scraps: RwSignal<Option<scrap::Scrap>>,
 ) -> Result<todo_core::Snapshot, api::ApiError> {
     on_delete_requested(task_id.clone()).await;
-    delete_scribbled(task_id).await
+    delete_scribbled(task_id, snapshot, scraps).await
 }
 
-/// Delete a task whose row is already scribbled out: the swipe drew the ink itself.
+/// Delete a task whose row is already scribbled out (the swipe drew the ink
+/// itself), and lay its scrap.
 pub async fn delete_scribbled(
     task_id: &todo_core::TaskId,
+    snapshot: ReadSignal<Snapshot>,
+    scraps: RwSignal<Option<scrap::Scrap>>,
 ) -> Result<todo_core::Snapshot, api::ApiError> {
-    match occurrence_parts(&task_id.0) {
-        Some((series, date)) => api::mark_occurrence(series, &date.to_string(), "skipped").await,
-        None => api::delete_task(task_id).await,
-    }
+    let delete = async {
+        match occurrence_parts(&task_id.0) {
+            Some((series, date)) => {
+                api::mark_occurrence(series, &date.to_string(), "skipped").await
+            }
+            None => api::delete_task(task_id).await,
+        }
+    };
+    scrap::delete_and_lay(task_id, snapshot, scraps, delete).await
 }
 
 #[component]
@@ -592,7 +603,7 @@ pub(crate) fn TaskList(
                                 wasm_bindgen_futures::spawn_local(async move {
                                     // Rambo crosses the title out first; the task
                                     // only leaves once the ink has dried.
-                                    if let Ok(new_snap) = delete_with_scribble(&task_id_clone).await {
+                                    if let Ok(new_snap) = delete_with_scribble(&task_id_clone, snapshot, scraps).await {
                                         set_snapshot_clone.set(new_snap);
                                     }
                                 });
@@ -648,22 +659,14 @@ pub(crate) fn TaskList(
                                     row::Release::Delete => {
                                         let task_id = TaskId(drop_task_id_clone.clone());
                                         let set_snapshot = set_snapshot_clone;
-                                        // Read before the delete: the scrap tapes the row
-                                        // back as the list held it.
-                                        let undo = snapshot.with_untracked(|s| scrap::undo_for(s, &task_id.0));
                                         #[cfg(target_arch = "wasm32")]
                                         crate::sound::play(crate::sound::Cue::Scribble);
                                         wasm_bindgen_futures::spawn_local(async move {
                                             // The swipe drew the ink; it finishes across
                                             // the row before the row goes.
                                             gloo_timers::future::TimeoutFuture::new(tuning::SCRIBBLE_FINISH_MS).await;
-                                            match delete_scribbled(&task_id).await {
-                                                Ok(new_snap) => {
-                                                    set_snapshot.set(new_snap);
-                                                    if let Some((title, undo)) = undo {
-                                                        scrap::lay(scraps, title, undo);
-                                                    }
-                                                }
+                                            match delete_scribbled(&task_id, snapshot, scraps).await {
+                                                Ok(new_snap) => set_snapshot.set(new_snap),
                                                 Err(_) => row::dom::clear_ink(&task_id.0),
                                             }
                                         });
@@ -1045,7 +1048,7 @@ pub(crate) fn TaskList(
                                                 // The row is behind the dialog, but it
                                                 // is the user's row: it gets crossed
                                                 // out like any other delete.
-                                                if let Ok(new_snap) = delete_with_scribble(&task_id).await {
+                                                if let Ok(new_snap) = delete_with_scribble(&task_id, snapshot, scraps).await {
                                                     set_snapshot.set(new_snap);
                                                     set_editing_task.set(None);
                                                 }

@@ -237,6 +237,7 @@ pub fn App() -> impl IntoView {
             edit_request
             open_sheet
             nest_ref
+            scraps
             pen=Signal::derive(move || view_settings.get().pen)
             typing
             strokes

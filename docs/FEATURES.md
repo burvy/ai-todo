@@ -83,13 +83,14 @@ ticks, the title opens the dialog, the x deletes;
 - a **press-and-hold** picks the row up to move it, on mouse and on touch
 alike;
 - a **swipe right** (mostly horizontal) **scribbles the row out**: the row stays
-put and Rambo's ink loops across it under your finger. Let go past
+put and Rambo's ink loops across its words under your finger, in the page's
+ink, each row's loops its own (seeded by the row). Let go past
 `SCRIBBLE_COMMIT_SHARE` of the row (or flick past `row::SWIPE_PX`) and the ink
-finishes across and the row is deleted; short of that, the ink lifts away. The
-deleted row leaves a **paper scrap** in the bottom-left corner for
-`SCRAP_UNDO_MS`: tap it and the task is taped back as it was (`POST
+finishes across and the row is deleted; short of that, the ink lifts away. Every
+delete (the swipe, the row's x, Rambo's x, the sheet's x) leaves a **paper scrap**
+in the bottom-left corner for `SCRAP_UNDO_MS` of time the page is in view: tap it and the task is taped back as it was (`POST
 /api/v1/tasks/restore`; a repeat's day has its skip cleared), otherwise it slides
-away. Times and thresholds are in `web/src/tuning.rs`; the scrap is
+away. The scrap is paper, so it slides and never fades. Times and thresholds are in `web/src/tuning.rs`; the scrap is
 `web/src/scrap.rs`.
 e. A finger that slides before the hold is a **scroll**, and the row keeps its
 hands off it. That is also what keeps the gestures apart from the page flip: a

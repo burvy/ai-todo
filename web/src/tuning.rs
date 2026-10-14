@@ -27,6 +27,14 @@ pub const SCRIBBLE_COMMIT_SHARE: f64 = 0.4;
 pub const SCRIBBLE_FLICK_PX_PER_MS: f64 = 0.11;
 /// The width of one loop of the scribble, in px. Safe range 8 to 24.
 pub const SCRIBBLE_LOOP_PX: f64 = 14.0;
+/// The band of a line of text the scribble's loops stay inside, as shares of the
+/// line's height from its top: about the x-height, so it crosses the letters and not
+/// the gap between rows. Safe range 0.2 to 0.9, the first below the second.
+pub const SCRIBBLE_BAND: (f64, f64) = (0.35, 0.8);
+/// How much each loop's width and height may wander, as a share of a loop, seeded by
+/// the row's id: a hand's scribble, never a machine's sawtooth, and the same row
+/// always scribbles the same. Safe range 0 to 0.45.
+pub const SCRIBBLE_JITTER: f64 = 0.3;
 /// How long a committed scribble takes to finish across the row, in ms. Safe range
 /// 120 to 300: the system answering, so quick.
 pub const SCRIBBLE_FINISH_MS: u32 = 180;
@@ -40,3 +48,8 @@ pub const SCRIBBLE_LIFT_MS: u32 = 200;
 pub const SCRAP_UNDO_MS: u32 = 5000;
 /// How long the scrap takes to slide in or away, in ms. Safe range 150 to 400.
 pub const SCRAP_SLIDE_MS: u32 = 240;
+/// How often the scrap's undo clock is read, in ms: it only runs while the page is
+/// in view. Safe range 50 to 500; a hidden tab may tick slower, which only pauses.
+pub const SCRAP_TICK_MS: u32 = 100;
+
+const _: () = assert!(SCRIBBLE_BAND.0 < SCRIBBLE_BAND.1);
