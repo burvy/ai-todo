@@ -302,7 +302,7 @@ pub fn step_with(
 /// Idle steps before he starts doing something of his own.
 const IDLE_AFTER: u32 = 3;
 
-/// The pose, the line and the cooldown for reacting to something.
+/// The pose, the animation and the line for reacting to something.
 fn react(
     brain: &mut Brain,
     situation: &str,
