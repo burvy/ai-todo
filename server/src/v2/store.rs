@@ -29,6 +29,13 @@ fn parse_plan(value: &str) -> super::auth::Plan {
 /// An anonymous user's `last_activity_at` is refreshed at most this often.
 const ACTIVITY_THROTTLE: Duration = Duration::hours(1);
 
+/// The `file:line` of the call site, recorded in a [`Failure`].
+macro_rules! at {
+    () => {
+        concat!(file!(), ":", line!())
+    };
+}
+
 /// Where the v2 database lives when `RAMBL_DATA` is not set.
 pub const DEFAULT_DATA_PATH: &str = "data/rambl.db";
 
@@ -256,7 +263,39 @@ pub enum StoreError {
     /// `external_uid`.
     Conflict(String),
     /// The database itself failed.
-    Backend(String),
+    Backend(Failure),
+}
+
+/// A database failure: where it happened, SQLite's extended error code when it gave
+/// one, and its message. Kept whole so a log line says which call failed and why.
+#[derive(Debug)]
+pub struct Failure {
+    /// `file:line` of the call that failed.
+    pub at: &'static str,
+    /// SQLite's extended result code, such as 266 for `SQLITE_IOERR_READ`.
+    pub code: Option<i32>,
+    pub message: String,
+}
+
+impl Failure {
+    /// A failure that did not come from SQLite.
+    pub fn plain(at: &'static str, message: String) -> Self {
+        Self {
+            at,
+            code: None,
+            message,
+        }
+    }
+}
+
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.at)?;
+        if let Some(code) = self.code {
+            write!(f, " (sqlite {code})")?;
+        }
+        write!(f, ": {}", self.message)
+    }
 }
 
 impl std::fmt::Display for StoreError {
@@ -264,7 +303,7 @@ impl std::fmt::Display for StoreError {
         match self {
             StoreError::NotFound => write!(f, "no such task"),
             StoreError::Conflict(why) => write!(f, "conflict: {why}"),
-            StoreError::Backend(why) => write!(f, "storage failed: {why}"),
+            StoreError::Backend(failure) => write!(f, "storage failed at {failure}"),
         }
     }
 }
@@ -1159,14 +1198,17 @@ impl SqliteStore {
             && !parent.as_os_str().is_empty()
         {
             std::fs::create_dir_all(parent).map_err(|e| {
-                StoreError::Backend(format!("could not create {}: {e}", parent.display()))
+                StoreError::Backend(Failure::plain(
+                    at!(),
+                    format!("could not create {}: {e}", parent.display()),
+                ))
             })?;
         }
-        let conn = Connection::open(path).map_err(|e| StoreError::Backend(e.to_string()))?;
+        let conn = Connection::open(path).map_err(|e| backend(e, at!()))?;
         // The admin console opens a second handle on the same file. Wait for a write
         // lock rather than failing a request straight away.
         conn.busy_timeout(std::time::Duration::from_secs(5))
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| backend(e, at!()))?;
         let store = Self {
             conn: Mutex::new(conn),
         };
@@ -1178,9 +1220,7 @@ impl SqliteStore {
     #[cfg(test)]
     pub fn open_in_memory() -> Result<Self, StoreError> {
         let store = Self {
-            conn: Mutex::new(
-                Connection::open_in_memory().map_err(|e| StoreError::Backend(e.to_string()))?,
-            ),
+            conn: Mutex::new(Connection::open_in_memory().map_err(|e| backend(e, at!()))?),
         };
         store.migrate()?;
         Ok(store)
@@ -1192,27 +1232,26 @@ impl SqliteStore {
         let conn = self.conn.lock_recover();
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| backend(e, at!()))?;
         if version >= SCHEMA_VERSION {
             return Ok(());
         }
 
         let tx = conn
             .unchecked_transaction()
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| backend(e, at!()))?;
         // Only what this file has not seen: a migration is not safe to run twice (an
         // `ADD COLUMN` fails the second time), and the file already holds the first
         // `version` of them.
         for statement in MIGRATIONS.iter().skip(version as usize) {
-            tx.execute_batch(statement)
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
+            tx.execute_batch(statement).map_err(|e| backend(e, at!()))?;
         }
         if version < 10 {
-            hash_plain_sessions(&tx).map_err(|e| StoreError::Backend(e.to_string()))?;
+            hash_plain_sessions(&tx).map_err(|e| backend(e, at!()))?;
         }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
-        tx.commit().map_err(|e| StoreError::Backend(e.to_string()))
+            .map_err(|e| backend(e, at!()))?;
+        tx.commit().map_err(|e| backend(e, at!()))
     }
 
     /// Number of rows held, for the tests that count directly.
@@ -1233,12 +1272,14 @@ impl Store for SqliteStore {
                 "SELECT {TASK_COLUMNS} FROM v2_tasks WHERE user_id = ?1 \
                  ORDER BY \"order\" ASC, created ASC, id ASC"
             ))
-            .map_err(backend)?;
-        let rows = stmt.query_map(params![user], read_task).map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
+        let rows = stmt
+            .query_map(params![user], read_task)
+            .map_err(|e| backend(e, at!()))?;
 
         let mut tasks = Vec::new();
         for row in rows {
-            tasks.push(row.map_err(backend)?);
+            tasks.push(row.map_err(|e| backend(e, at!()))?);
         }
         Ok(tasks)
     }
@@ -1305,23 +1346,23 @@ impl Store for SqliteStore {
                 "DELETE FROM v2_tasks WHERE id = ?1 AND user_id = ?2",
                 params![id.0, user],
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(removed > 0)
     }
 
     fn set_order(&self, user: &str, ids: &[TaskId]) -> Result<(), StoreError> {
         let mut conn = self.conn.lock_recover();
-        let tx = conn.transaction().map_err(backend)?;
+        let tx = conn.transaction().map_err(|e| backend(e, at!()))?;
         {
             let mut stmt = tx
                 .prepare("UPDATE v2_tasks SET \"order\" = ?3 WHERE id = ?1 AND user_id = ?2")
-                .map_err(backend)?;
+                .map_err(|e| backend(e, at!()))?;
             for (position, id) in ids.iter().enumerate() {
                 stmt.execute(params![id.0, user, position as i64])
-                    .map_err(backend)?;
+                    .map_err(|e| backend(e, at!()))?;
             }
         }
-        tx.commit().map_err(backend)
+        tx.commit().map_err(|e| backend(e, at!()))
     }
 
     fn find_by_uid(&self, user: &str, uid: &str) -> Result<Option<Task>, StoreError> {
@@ -1330,12 +1371,14 @@ impl Store for SqliteStore {
             .prepare(&format!(
                 "SELECT {TASK_COLUMNS} FROM v2_tasks WHERE external_uid = ?1 AND user_id = ?2"
             ))
-            .map_err(backend)?;
-        let mut rows = stmt.query(params![uid, user]).map_err(backend)?;
-        let Some(row) = rows.next().map_err(backend)? else {
+            .map_err(|e| backend(e, at!()))?;
+        let mut rows = stmt
+            .query(params![uid, user])
+            .map_err(|e| backend(e, at!()))?;
+        let Some(row) = rows.next().map_err(|e| backend(e, at!()))? else {
             return Ok(None);
         };
-        Ok(Some(read_task(row).map_err(backend)?))
+        Ok(Some(read_task(row).map_err(|e| backend(e, at!()))?))
     }
 
     fn series(&self, user: &str) -> Result<Vec<Series>, StoreError> {
@@ -1346,13 +1389,13 @@ impl Store for SqliteStore {
                  external_uid, created, \"order\" FROM v2_series WHERE user_id = ?1 \
                  ORDER BY \"order\" ASC, created ASC, id ASC",
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         let rows = stmt
             .query_map(params![user], read_series)
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         let mut held = Vec::new();
         for row in rows {
-            held.push(row.map_err(backend)?);
+            held.push(row.map_err(|e| backend(e, at!()))?);
         }
         Ok(held)
     }
@@ -1405,19 +1448,19 @@ impl Store for SqliteStore {
 
     fn delete_series(&self, user: &str, id: &SeriesId) -> Result<bool, StoreError> {
         let mut conn = self.conn.lock_recover();
-        let tx = conn.transaction().map_err(backend)?;
+        let tx = conn.transaction().map_err(|e| backend(e, at!()))?;
         let removed = tx
             .execute(
                 "DELETE FROM v2_series WHERE id = ?1 AND user_id = ?2",
                 params![id.0, user],
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         tx.execute(
             "DELETE FROM v2_series_exceptions WHERE series_id = ?1 AND user_id = ?2",
             params![id.0, user],
         )
-        .map_err(backend)?;
-        tx.commit().map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
+        tx.commit().map_err(|e| backend(e, at!()))?;
         Ok(removed > 0)
     }
 
@@ -1428,13 +1471,13 @@ impl Store for SqliteStore {
                 "SELECT date, kind, moved_when, moved_tz FROM v2_series_exceptions \
                  WHERE user_id = ?1 AND series_id = ?2 ORDER BY date ASC",
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         let rows = stmt
             .query_map(params![user, id.0], read_exception)
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         let mut held = Vec::new();
         for row in rows {
-            held.push(row.map_err(backend)?);
+            held.push(row.map_err(|e| backend(e, at!()))?);
         }
         Ok(held)
     }
@@ -1464,7 +1507,7 @@ impl Store for SqliteStore {
                     moved_tz,
                 ],
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(())
     }
 
@@ -1482,7 +1525,7 @@ impl Store for SqliteStore {
                  WHERE user_id = ?1 AND series_id = ?2 AND date = ?3",
                 params![user, id.0, date.to_string()],
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(removed > 0)
     }
 
@@ -1493,7 +1536,7 @@ impl Store for SqliteStore {
         expires_at: chrono::DateTime<Utc>,
     ) -> Result<(), StoreError> {
         let mut conn = self.conn.lock_recover();
-        let tx = conn.transaction().map_err(backend)?;
+        let tx = conn.transaction().map_err(|e| backend(e, at!()))?;
         // First sign-in creates the user, later ones refresh the name and picture, so
         // a rename at Google reaches the app.
         tx.execute(
@@ -1510,7 +1553,7 @@ impl Store for SqliteStore {
                 user.plan.as_str()
             ],
         )
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
         tx.execute(
             "INSERT INTO v2_sessions (token, user_id, expires_at, created_at) \
              VALUES (?1, ?2, ?3, ?4)",
@@ -1521,8 +1564,8 @@ impl Store for SqliteStore {
                 format_ts(Utc::now())
             ],
         )
-        .map_err(backend)?;
-        tx.commit().map_err(backend)
+        .map_err(|e| backend(e, at!()))?;
+        tx.commit().map_err(|e| backend(e, at!()))
     }
 
     fn delete_session(&self, token: &str) -> Result<(), StoreError> {
@@ -1532,7 +1575,7 @@ impl Store for SqliteStore {
                 "DELETE FROM v2_sessions WHERE token = ?1",
                 params![hash_token(token)],
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(())
     }
 
@@ -1548,41 +1591,41 @@ impl Store for SqliteStore {
                  FROM v2_sessions JOIN v2_users ON v2_users.id = v2_sessions.user_id \
                  WHERE v2_sessions.token = ?1 AND v2_sessions.expires_at > ?2",
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         let mut rows = stmt
             .query(params![hash_token(token), format_ts(now)])
-            .map_err(backend)?;
-        let Some(row) = rows.next().map_err(backend)? else {
+            .map_err(|e| backend(e, at!()))?;
+        let Some(row) = rows.next().map_err(|e| backend(e, at!()))? else {
             return Ok(None);
         };
         Ok(Some(super::auth::Me {
-            id: row.get(0).map_err(backend)?,
-            email: row.get(1).map_err(backend)?,
-            name: row.get(2).map_err(backend)?,
-            picture: row.get(3).map_err(backend)?,
-            plan: parse_plan(&row.get::<_, String>(4).map_err(backend)?),
+            id: row.get(0).map_err(|e| backend(e, at!()))?,
+            email: row.get(1).map_err(|e| backend(e, at!()))?,
+            name: row.get(2).map_err(|e| backend(e, at!()))?,
+            picture: row.get(3).map_err(|e| backend(e, at!()))?,
+            plan: parse_plan(&row.get::<_, String>(4).map_err(|e| backend(e, at!()))?),
         }))
     }
 
     fn delete_user(&self, user: &str) -> Result<(), StoreError> {
         let mut conn = self.conn.lock_recover();
-        let tx = conn.transaction().map_err(backend)?;
+        let tx = conn.transaction().map_err(|e| backend(e, at!()))?;
         // Tasks go first: SQLite cannot cascade here because user_id is a column
         // added by migration with a default, not a declared constraint.
         tx.execute("DELETE FROM v2_tasks WHERE user_id = ?1", params![user])
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         tx.execute("DELETE FROM v2_series WHERE user_id = ?1", params![user])
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         tx.execute(
             "DELETE FROM v2_series_exceptions WHERE user_id = ?1",
             params![user],
         )
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
         tx.execute("DELETE FROM v2_sessions WHERE user_id = ?1", params![user])
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         tx.execute("DELETE FROM v2_users WHERE id = ?1", params![user])
-            .map_err(backend)?;
-        tx.commit().map_err(backend)
+            .map_err(|e| backend(e, at!()))?;
+        tx.commit().map_err(|e| backend(e, at!()))
     }
 
     fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
@@ -1594,7 +1637,7 @@ impl Store for SqliteStore {
                 params![user, day.to_string()],
                 |row| row.get(0),
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(count as u32)
     }
 
@@ -1605,7 +1648,7 @@ impl Store for SqliteStore {
              ON CONFLICT (user_id, ip, day) DO UPDATE SET n = n + 1",
             params![user, ip, day.to_string()],
         )
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
         // The all-time total, which the per-day counts cannot answer for once they are
         // pruned.
         conn.execute(
@@ -1613,7 +1656,7 @@ impl Store for SqliteStore {
              ON CONFLICT (user_id) DO UPDATE SET calls = calls + 1",
             params![user],
         )
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
         prune_before(&conn, day)
     }
 
@@ -1626,7 +1669,7 @@ impl Store for SqliteStore {
                 params![ip, day.to_string()],
                 |row| row.get(0),
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(count as u32)
     }
 
@@ -1640,7 +1683,7 @@ impl Store for SqliteStore {
                 params![ip, day.to_string()],
                 |row| row.get(0),
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         prune_before(&conn, day)?;
         Ok(count as u32)
     }
@@ -1653,7 +1696,7 @@ impl Store for SqliteStore {
                 "INSERT OR IGNORE INTO v2_blocks (kind, value) VALUES (?1, ?2)",
                 params![kind, value],
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(())
     }
 
@@ -1666,7 +1709,7 @@ impl Store for SqliteStore {
                 "DELETE FROM v2_blocks WHERE kind = ?1 AND value = ?2",
                 params![kind, value],
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(changed > 0)
     }
 
@@ -1680,7 +1723,7 @@ impl Store for SqliteStore {
                 params![user, ip],
                 |row| row.get(0),
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(found)
     }
 
@@ -1688,14 +1731,14 @@ impl Store for SqliteStore {
         let conn = self.conn.lock_recover();
         let mut stmt = conn
             .prepare("SELECT kind, value FROM v2_blocks ORDER BY kind, value")
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         let rows = stmt
             .query_map([], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
             })
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         rows.map(|row| {
-            let (kind, value) = row.map_err(backend)?;
+            let (kind, value) = row.map_err(|e| backend(e, at!()))?;
             Ok(if kind == "user" {
                 Block::User(value)
             } else {
@@ -1737,7 +1780,7 @@ impl Store for SqliteStore {
                 vec![Box::new(top as i64), Box::new(day.to_string())],
             ),
         };
-        let mut stmt = conn.prepare(sql).map_err(backend)?;
+        let mut stmt = conn.prepare(sql).map_err(|e| backend(e, at!()))?;
         let rows = stmt
             .query_map(
                 rusqlite::params_from_iter(params.iter().map(|value| value.as_ref())),
@@ -1750,8 +1793,8 @@ impl Store for SqliteStore {
                     })
                 },
             )
-            .map_err(backend)?;
-        rows.map(|row| row.map_err(backend)).collect()
+            .map_err(|e| backend(e, at!()))?;
+        rows.map(|row| row.map_err(|e| backend(e, at!()))).collect()
     }
 
     fn is_user_blocked(&self, user: &str) -> Result<bool, StoreError> {
@@ -1763,7 +1806,7 @@ impl Store for SqliteStore {
                 params![user],
                 |row| row.get(0),
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(found)
     }
 
@@ -1776,7 +1819,7 @@ impl Store for SqliteStore {
                 params![user],
                 |row| row.get(0),
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(found)
     }
 
@@ -1789,7 +1832,7 @@ impl Store for SqliteStore {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(backend)
+            .map_err(|e| backend(e, at!()))
     }
     fn user_plan(&self, user: &str) -> Result<super::auth::Plan, StoreError> {
         if user == super::auth::LOCAL_USER {
@@ -1806,7 +1849,7 @@ impl Store for SqliteStore {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(plan.map_or(super::auth::Plan::Anon, |plan| parse_plan(&plan)))
     }
 
@@ -1818,7 +1861,7 @@ impl Store for SqliteStore {
                 "UPDATE v2_users SET plan = ?1 WHERE id = ?2",
                 params![plan.as_str(), user],
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         if changed == 0 {
             return Err(StoreError::NotFound);
         }
@@ -1827,14 +1870,14 @@ impl Store for SqliteStore {
 
     fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError> {
         let mut conn = self.conn.lock_recover();
-        let tx = conn.transaction().map_err(backend)?;
+        let tx = conn.transaction().map_err(|e| backend(e, at!()))?;
         let is_anonymous: bool = tx
             .query_row(
                 "SELECT EXISTS (SELECT 1 FROM v2_users WHERE id = ?1 AND plan = 'anon')",
                 params![anonymous],
                 |row| row.get(0),
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         if !is_anonymous {
             return Ok(());
         }
@@ -1846,29 +1889,29 @@ impl Store for SqliteStore {
              )",
             params![anonymous, user],
         )
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
         tx.execute(
             "UPDATE v2_tasks SET user_id = ?1 WHERE user_id = ?2",
             params![user, anonymous],
         )
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
         tx.execute(
             "UPDATE v2_series SET user_id = ?1 WHERE user_id = ?2",
             params![user, anonymous],
         )
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
         tx.execute(
             "UPDATE v2_series_exceptions SET user_id = ?1 WHERE user_id = ?2",
             params![user, anonymous],
         )
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
         // The anonymous id ends here: a copy of it held elsewhere must stop working.
         tx.execute(
             "DELETE FROM v2_users WHERE id = ?1 AND plan = 'anon'",
             params![anonymous],
         )
-        .map_err(backend)?;
-        tx.commit().map_err(backend)
+        .map_err(|e| backend(e, at!()))?;
+        tx.commit().map_err(|e| backend(e, at!()))
     }
     fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
         let found: Option<String> = self
@@ -1880,7 +1923,7 @@ impl Store for SqliteStore {
                 |row| row.get(0),
             )
             .optional()
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(found.is_some())
     }
 
@@ -1893,7 +1936,7 @@ impl Store for SqliteStore {
                  VALUES (?1, '', '', NULL, ?2, 'anon', ?2)",
                 params![user, format_ts(now)],
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(())
     }
 
@@ -1905,13 +1948,13 @@ impl Store for SqliteStore {
                  WHERE id = ?1 AND plan = 'anon' AND last_activity_at < ?3",
                 params![user, format_ts(now), format_ts(now - ACTIVITY_THROTTLE)],
             )
-            .map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
         Ok(())
     }
 
     fn expire_anonymous(&self, cutoff: DateTime<Utc>) -> Result<usize, StoreError> {
         let mut conn = self.conn.lock_recover();
-        let tx = conn.transaction().map_err(backend)?;
+        let tx = conn.transaction().map_err(|e| backend(e, at!()))?;
         let cutoff = format_ts(cutoff);
         let stale = "SELECT id FROM v2_users WHERE plan = 'anon' AND last_activity_at <= ?1";
         // The series' own rows go first, for the same reason the tasks do: nothing
@@ -1921,24 +1964,24 @@ impl Store for SqliteStore {
             &format!("DELETE FROM v2_series_exceptions WHERE user_id IN ({stale})"),
             params![cutoff],
         )
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
         tx.execute(
             &format!("DELETE FROM v2_series WHERE user_id IN ({stale})"),
             params![cutoff],
         )
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
         tx.execute(
             &format!("DELETE FROM v2_tasks WHERE user_id IN ({stale})"),
             params![cutoff],
         )
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
         let users = tx
             .execute(
                 &format!("DELETE FROM v2_users WHERE id IN ({stale})"),
                 params![cutoff],
             )
-            .map_err(backend)?;
-        tx.commit().map_err(backend)?;
+            .map_err(|e| backend(e, at!()))?;
+        tx.commit().map_err(|e| backend(e, at!()))?;
         Ok(users)
     }
 }
@@ -1954,7 +1997,7 @@ fn prune_before(conn: &Connection, today: NaiveDate) -> Result<(), StoreError> {
             &format!("DELETE FROM {table} WHERE day < ?1"),
             params![cutoff],
         )
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
     }
     Ok(())
 }
@@ -1979,13 +2022,13 @@ fn top_users_today(
             "SELECT {column}, SUM(n) AS total FROM v2_capture_counts WHERE day = ?1
              GROUP BY {column} ORDER BY total DESC, {column} LIMIT ?2"
         ))
-        .map_err(backend)?;
+        .map_err(|e| backend(e, at!()))?;
     let rows = stmt
         .query_map(params![day.to_string(), top as i64], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u32))
         })
-        .map_err(backend)?;
-    rows.map(|row| row.map_err(backend)).collect()
+        .map_err(|e| backend(e, at!()))?;
+    rows.map(|row| row.map_err(|e| backend(e, at!()))).collect()
 }
 
 /// The `top` most frequent values, most frequent first, ties by name. The memory
@@ -2038,8 +2081,16 @@ fn read_task(row: &rusqlite::Row<'_>) -> Result<Task, rusqlite::Error> {
     })
 }
 
-fn backend(error: rusqlite::Error) -> StoreError {
-    StoreError::Backend(error.to_string())
+fn backend(error: rusqlite::Error, at: &'static str) -> StoreError {
+    let code = match &error {
+        rusqlite::Error::SqliteFailure(ffi, _) => Some(ffi.extended_code),
+        _ => None,
+    };
+    StoreError::Backend(Failure {
+        at,
+        code,
+        message: error.to_string(),
+    })
 }
 
 // ---- series (ARCHITECTURE.md 7.1) ----
@@ -2162,7 +2213,7 @@ fn conflict(error: rusqlite::Error) -> StoreError {
             },
             message,
         ) => StoreError::Conflict(message.unwrap_or_else(|| "constraint violated".into())),
-        other => StoreError::Backend(other.to_string()),
+        other => backend(other, at!()),
     }
 }
 
@@ -3298,12 +3349,31 @@ mod tests {
         for error in [
             StoreError::NotFound,
             StoreError::Conflict("two tasks claim one uid".into()),
-            StoreError::Backend("disk is full".into()),
+            StoreError::Backend(Failure::plain(at!(), "disk is full".into())),
         ] {
             let message = error.to_string();
             assert!(!message.is_empty(), "{error:?} rendered nothing");
             assert!(!message.contains('{'), "{error:?} leaked a format brace");
         }
+    }
+
+    #[test]
+    fn a_backend_failure_names_the_call_and_the_sqlite_code() {
+        let sqlite = rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error {
+                code: rusqlite::ffi::ErrorCode::SystemIoFailure,
+                extended_code: 266,
+            },
+            Some("disk I/O error".into()),
+        );
+        assert_eq!(
+            backend(sqlite, "store.rs:42").to_string(),
+            "storage failed at store.rs:42 (sqlite 266): disk I/O error"
+        );
+        assert_eq!(
+            StoreError::Backend(Failure::plain("store.rs:7", "disk is full".into())).to_string(),
+            "storage failed at store.rs:7: disk is full"
+        );
     }
 
     #[test]
