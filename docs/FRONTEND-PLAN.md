@@ -57,6 +57,32 @@ Raw numbers, no scale. What they say today:
 - At 905px wide the To do column is about 100px: the tack board takes 160px and the planner the rest, so titles wrap word by word ("Send / — / 30 min · / Wed 8:30 / am"). The desktop grid needs a minimum for the list.
 - When writing ends, the pen does not fly home: `FlyHome` keeps `pen_pos` at the end of the row, then he jumps when the state turns `Home`.
 
+### 1.8 The cloud audit (issue #259)
+
+A read-only audit of `web/src` and the CSS on 3fc7aba, made by the cloud session in headless Chromium with mouse and touch. Its trace of the release bug agrees with 1.1. It adds one detail: on touch, Chromium never matched `:active`, so the corner jump on a re-grab was a PC bug. Its other findings, and where each one lands in this plan:
+
+| # | Finding | Lands in |
+|---|---|---|
+| 1 | Done strips are never pinned: `just_done` is built from the same snapshot as `listed`, so it is always empty (`tack.rs`) | bug backlog (2.5) |
+| 2 | Saved strip positions are wiped on load: the reconcile runs on the empty first snapshot and saves it | bug backlog |
+| 3 | Crumple and restore on a repeat-day strip send a `series:date` id the server refuses | bug backlog |
+| 4 | Rambo's Edit only cycles priority, and Move only sends him home; spec 8.1 promises real ones | bug backlog |
+| 5 | Planner day and hour labels never refresh (after midnight, or a clock-format change) | bug backlog |
+| 6 | Rambo reacts to "task added" on every page load (`brain.rs`) | bug backlog |
+| 7 | The edit dialog is not modal (`open`, not `showModal()`): no backdrop, the page stays clickable | z-index step: switch to `showModal()`, which also puts it above Rambo, as answered |
+| 8 | Every invalid time says "does not exist on this day (clocks change)" (`tasks/fields.rs`) | bug backlog |
+| 9 | The snapshot's date window depends on who fetched last; changing the days setting never re-fetches | bug backlog |
+| 10 | The pen queue is never drained with reduced motion or Lobotomized, and a mid-run reset drops rows | interruptions step (the pausable queue) |
+| 11 | `pen_pos` has four writers, counting the nest measure | resolver step (as 1.3) |
+| 12 | A row's hold timer is not tied to its press: tap, release and press again within 280ms, and the old timer lifts the new press | gesture step |
+| 13–15 | Two occurrence-id parsers; a planner move that bypasses `patch_and_show`; the overdue rule written twice; two copies of `prefers_reduced_motion` | bug backlog (13, 14); ticker step (15) |
+| 16 | Reduced motion is mostly ignored: the `*` reset has zero specificity, so every class rule beats it | cascade layers step: in the last layer it wins whatever the specificity |
+| 17–18 | The phone tack board (z 4) covers the capture bar (z 3); everything competes in one stacking context, so day names paint over the capture bar and the ink | z-index step |
+| 19 | Rambo's bubbles are children of his transformed button: they tilt 34° and shrink while he writes, run off a 360px screen, and `.ask` nests buttons in a button (invalid HTML) | two-element step: bubbles become siblings of the button in the Rambo layer |
+| 20 | Torn strip edges never show (opaque background over a `z-index: -1` edge) | notebook look |
+| 21, 24 | Undefined `--coffee`; hard-coded `.error` colour; no dark `--fold-shadow`; body padding 68px under a 72px bar; the 720px breakpoint | FE-5 (21, 24 except the breakpoint); FE-3 (breakpoint) |
+| 22–23 | Dead Rust (unused API functions, native-only stubs, HTML drag handlers Rambo never fires) and CSS no element uses (`.mic`, `.task-editor`, `.delete`, `.import`, `.swipe-*`, four `pose-*`, the `prefers-color-scheme` block in `tack.css`) | FE-5 |
+
 ## 2. Plan
 
 **This plan is revised after every step lands.** Only the next few steps are written as tickets; the later ones are intent, re-planned with what each step teaches us. Any agent may propose a change to god at any time. Sections 2.1 and 2.2 are what stays stable; everything after them can move.
@@ -164,6 +190,20 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
   - FE-1's check list passes for drag, drop, put-back, going home and capture-then-write.
 - Do not touch: CSS, `pen_pos`, timers, the daze time.
 
+**FE-5: dead code and undefined colours** · CSS + Rust · small · after FE-3
+- Why: the cloud audit (1.8, items 21–24) found code nothing calls and colours nothing defines. Less code means less for every later ticket to read.
+- Files: `web/theme.css`, `web/tack.css`, `web/src/api.rs`, `web/src/mascot.rs`, `web/src/week.rs`, `web/src/tasks/mod.rs`, `web/src/edits.rs`, `web/src/lib.rs`.
+- Do:
+  - Delete the CSS rules for selectors no element uses: `.mic`, `.task-editor`, `.delete`, `.import`, `.swipe-deleted`, `.swipe-snapped`, `.rambo.pose-teasing`, `.pose-dozing`, `.pose-happy`, `.pose-sulking`, and the `prefers-color-scheme` block in `tack.css`. Before deleting each one, grep `web/src` for the class name, including in `format!` strings, and keep any that is used.
+  - Delete the unused Rust: `api::use_snapshot`, `api::revise_task`, `api::capture_file`, the `PatchTaskBody::label` and `source` builders, and the `on:drop`/`on:dragover` handlers in `week.rs`. Leave `mascot::is_away` and the native-only stubs alone unless clippy or the wasm32 check pass without them.
+  - Fix the undefined colours: the placement grip's `var(--coffee)` becomes `var(--ink)` (the coffee colour). In `tack.css`, `--tack-ink` and `--tack-accent` use `var(--ink)` and `var(--accent)` directly, which is what their fallbacks give today. Add a dark value for `--fold-shadow`, and make the `.error` background a token.
+  - Make the body's bottom padding match the phone capture bar's height.
+- Accept:
+  - For each deleted selector and function, the PR lists the grep that shows nothing uses it.
+  - Pixel diff: identical in light, apart from the placement grip, which now shows. Dark differs only where the new dark values apply, and the PR names them.
+  - Gate green, with the wasm32 check.
+- Do not touch: the planner drop behaviour (dropping Rambo on a planner block is a later fix), anything the audit did not name.
+
 ### 2.4 Later steps: intent only
 
 Each becomes a ticket when the steps before it have landed, written with what they taught us. The order is a guess, and so is the split into steps. Fable's review of #268 and the owner's answers (DESIGN-DIRECTION §9) are the guidance.
@@ -182,6 +222,20 @@ Each becomes a ticket when the steps before it have landed, written with what th
 - **Split the big files**, move-only, last.
 
 Not front end, already with others: stripping lead-ins such as "Add a task to…" from titles (Dario, capture and Jev).
+
+### 2.5 Bug backlog from the audit
+
+Small functional bugs found by the cloud audit (1.8). Each is one GLM-sized ticket once written: file, a test that fails first, the fix. None of them waits for the restructure. Suggested order, most visible first:
+
+1. Done strips are never pinned (item 1).
+2. Saved strip positions are wiped on load (2).
+3. Repeat-day strips: crumple and restore use the occurrence path (3).
+4. Planner labels refresh at midnight and on a clock-format change (5).
+5. No "task added" reaction on page load (6).
+6. One date window for every fetch, re-fetched when the days setting changes (9).
+7. The right error for an empty or invalid time (8).
+8. One occurrence-id parser; the planner move goes through `patch_and_show`; one overdue rule (13, 14).
+9. Rambo's Edit and Move do what they say, and dropping him on a planner block asks (4, 22). This needs a short spec from the owner first.
 
 ## 3. Not checked
 
