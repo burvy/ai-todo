@@ -86,9 +86,16 @@ pub fn App() -> impl IntoView {
     let fx_ref = NodeRef::<leptos::html::Div>::new();
     let turner = turner::Turner::new(main_ref, fx_ref, set_pane);
     #[cfg(target_arch = "wasm32")]
-    let track = move |_: leptos::ev::Event| {
-        if let Some(element) = main_ref.get() {
-            set_pane.set(nearest_pane(&element));
+    let track = {
+        let turner = turner.clone();
+        move |_: leptos::ev::Event| {
+            // A turn scrolls `main` itself to stack the panes; that is not a switch.
+            if turner.turning() {
+                return;
+            }
+            if let Some(element) = main_ref.get() {
+                set_pane.set(nearest_pane(&element));
+            }
         }
     };
     #[cfg(not(target_arch = "wasm32"))]
@@ -206,12 +213,13 @@ pub fn App() -> impl IntoView {
                 capture_text
             />
             // What a turning page draws between the two panes: the shadow it casts on
-            // the next page, and the lifted flap with its own. Hidden until a turn.
+            // the next page, the curl's rise, and the lifted flap with its own shadow. Hidden until a turn.
             <div class="bend-fx" node_ref=fx_ref aria-hidden="true">
                 <div class="bend-away"><i class="bend-strip bend-cast"></i></div>
-                <div class="bend-flapbox">
-                    <div class="bend-flap"><i class="bend-strip bend-crease"></i></div>
-                </div>
+                <div class="bend-kept"><i class="bend-strip bend-rise"></i></div>
+                <div class="bend-shadow bend-shadow-far"></div>
+                <div class="bend-shadow bend-shadow-near"></div>
+                <div class="bend-flap"><i class="bend-strip bend-ridge"></i></div>
             </div>
         </main>
         <scrap::ScrapCorner scraps set_snapshot set_error />

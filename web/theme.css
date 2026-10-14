@@ -107,11 +107,17 @@
 
   /* The page turn (docs/FRONTEND-PLAN.md; web/src/bend.rs). Looks only: the numbers
      that decide a turn are in web/src/tuning.rs. */
-  --bend-shade: color-mix(in srgb, var(--ink) 26%, transparent);
-  --bend-underside: color-mix(in srgb, var(--paper) 88%, var(--ink));
+  /* Shadows are black in both modes: dark paper has light ink, so mixing from the ink
+     would glow. Only the ridge's highlight comes from the paper. */
+  --bend-shade: color-mix(in srgb, black 32%, transparent);
+  --bend-rise-shade: color-mix(in srgb, black 14%, transparent);
+  --bend-flap-shadow: color-mix(in srgb, black 9%, transparent);
+  --bend-ridge: color-mix(in srgb, var(--paper) 92%, white);
+  --bend-underside: color-mix(in srgb, var(--paper) 96%, var(--ink));
   --bend-shadow: 3.5rem; /* how far the page's shadow reaches onto the next page */
-  --bend-crease: 2.25rem; /* how much of the flap curves away from the fold */
-  --bend-lift: 0.6rem; /* how soft the flap's shadow on the page below is */
+  --bend-foot: 0.5rem; /* the cast starts this far past the fold: the curl's foot */
+  --bend-rise: 1.25rem; /* how far the kept paper darkens as it rises into the fold */
+  --bend-ridge-w: 0.75rem; /* the bright ridge on the flap at the fold */
 
   /* Motion. */
   --dur-fast: 120ms;
@@ -340,6 +346,7 @@ main.bending > .bend-under {
 main.bending > .bend-front {
   position: relative;
   z-index: var(--layer-turn-front);
+  will-change: clip-path;
 }
 
 .bend-fx {
@@ -358,7 +365,6 @@ main.bending > .bend-fx {
 }
 
 .bend-away,
-.bend-flapbox,
 .bend-flap {
   position: absolute;
   inset: 0;
@@ -376,31 +382,48 @@ main.bending > .bend-fx {
     translateY(-200vmax);
 }
 
-/* The shadow the turning page casts on the one beneath, darkest at the fold. */
+/* Three strips along the fold make it a curl, not a crease: the kept paper darkens as it
+   rises into the fold, the ridge is the brightest line, and the flap's underside, the
+   same sheet seen from behind, falls away from it. */
+.bend-away,
+.bend-kept,
+.bend-flap,
+.bend-shadow {
+  will-change: clip-path;
+}
+
+/* The shadow the turning page casts on the one beneath, darkest just past the fold. */
 .bend-cast {
   width: var(--bend-shadow);
-  margin-left: calc(-1 * var(--bend-shadow));
+  margin-left: calc(-1 * (var(--bend-shadow) + var(--bend-foot)));
   background: linear-gradient(to right, transparent, var(--bend-shade));
 }
 
-/* The lifted flap: the paper's back, a little darker than its face, shaded where it
-   curves away from the fold and throwing its own soft shadow on the page below. */
-.bend-flapbox {
-  filter: drop-shadow(0 0 var(--bend-lift) var(--bend-shade));
+.bend-kept,
+.bend-shadow {
+  position: absolute;
+  inset: 0;
 }
 
+.bend-rise {
+  width: var(--bend-rise);
+  background: linear-gradient(to right, var(--bend-rise-shade), transparent);
+}
+
+/* The flap's shadow on the page below: two copies of its shape, pushed a little off. */
+.bend-shadow {
+  background: var(--bend-flap-shadow);
+}
+
+/* The lifted flap: the paper's back, the same sheet a touch darker, with its grain. */
 .bend-flap {
   background-color: var(--bend-underside);
+  background-image: var(--texture-paper);
 }
 
-.bend-crease {
-  width: var(--bend-crease);
-  background: linear-gradient(
-    to right,
-    var(--bend-shade),
-    color-mix(in srgb, var(--paper) 40%, transparent) 55%,
-    transparent
-  );
+.bend-ridge {
+  width: var(--bend-ridge-w);
+  background: linear-gradient(to right, var(--bend-ridge), transparent);
 }
 
 .tasks-pane {

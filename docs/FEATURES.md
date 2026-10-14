@@ -98,10 +98,14 @@ swipe left is never this row's to delete, so it reaches the panes and turns the
 page (DESIGN-DECISIONS 3).
 g. On a phone the page turns by **bending from the finger's corner**: swipe left on the
 list, or swipe right on the planner outside its grid, or press a pane button. The page
-folds along the line halfway between the corner and the finger and follows it, with the
-flap (paper underside) and a shadow on the next page; letting go past a share of the
-width or in a flick turns it, short of that it springs back. With reduced motion it
-slides. Geometry and decisions: `web/src/bend.rs` (tested); browser side:
+folds along the line halfway between the corner and the finger and follows it. The
+corner rises as it travels (`BEND_LIFT`), so the fold leans and the flap grows out of
+the corner. Three strips along the fold make the curl (the kept paper darkens into it,
+a bright ridge, the underside with the page's grain), the flap's shadow is drawn as two
+offset copies, not a blur, and shadows are black in light and dark. Letting go past a
+share of the width or in a flick turns it; short of that it falls flat and rebounds a
+little. A button's turn is eased in and out. While a turn runs the pane tabs do not
+move. With reduced motion it slides. Geometry and decisions: `web/src/bend.rs` (tested); browser side:
 `web/src/turner.rs`; numbers in `web/src/tuning.rs`, looks in `web/theme.css` `--bend-*`.
 f. Rows for series occurrences are not reorderable: a drag that starts or lands
 on one does nothing (occurrences share the series' row, not a slot of their own —

@@ -47,11 +47,12 @@ mod imp {
     use wasm_bindgen::JsCast;
     use web_sys::{Element, HtmlElement};
 
-    use crate::bend::{self, Pt, Settle, Turn};
+    use crate::bend::{self, Ease, Pt, Settle, Turn};
     use crate::pane::{nearest_pane, show_pane};
     use crate::tuning::{
-        BEND_BUTTON_ARC, BEND_BUTTON_MS, BEND_COMPLETE_MS, BEND_FULL_TURN, BEND_SLIDE_MS,
-        BEND_SPRING_MS, PHONE_MEDIA,
+        BEND_BUTTON_ARC, BEND_BUTTON_MS, BEND_COMPLETE_MS, BEND_FULL_TURN, BEND_LIFT,
+        BEND_LIFT_CAP, BEND_SHADOW_FAR_PX, BEND_SHADOW_NEAR_PX, BEND_SLIDE_MS, BEND_SPRING_MS,
+        PHONE_MEDIA,
     };
 
     /// Presses that start here are not page turns: they have their own scroll or swipe.
@@ -87,6 +88,8 @@ mod imp {
         w: f64,
         h: f64,
         corner: Pt,
+        /// The corner is at the bottom of what shows, so it rises toward the middle.
+        low: bool,
         turn: Turn,
         /// Reduced motion: slide the page instead of bending it.
         slide: bool,
@@ -100,6 +103,7 @@ mod imp {
         to: Pt,
         ms: f64,
         outcome: Settle,
+        ease: Ease,
         arc: f64,
         started: f64,
     }
@@ -234,6 +238,12 @@ mod imp {
             }
         }
 
+        /// Whether a turn is under way, with the panes stacked and `main` scrolled by
+        /// the turn itself: the scroll tracker must not read that as a switch of page.
+        pub(crate) fn turning(&self) -> bool {
+            matches!(*self.0.phase.borrow(), Phase::Dragging(_) | Phase::Settling)
+        }
+
         pub(crate) fn up(&self, ev: &leptos::ev::PointerEvent) {
             self.release(ev, false);
         }
@@ -271,14 +281,16 @@ mod imp {
             } else {
                 BEND_BUTTON_MS
             };
-            self.run(
+            self.run(Flight {
                 stage,
-                Pt::new(0.0, 0.0),
-                self.finish_drag(&stage),
-                ms,
-                Settle::Complete,
-                BEND_BUTTON_ARC,
-            );
+                from: Pt::new(0.0, 0.0),
+                to: self.finish_drag(&stage),
+                ms: f64::from(ms),
+                outcome: Settle::Complete,
+                ease: Ease::InOut,
+                arc: BEND_BUTTON_ARC,
+                started: 0.0,
+            });
         }
 
         fn release(&self, ev: &leptos::ev::PointerEvent, cancelled: bool) {
@@ -312,7 +324,20 @@ mod imp {
                             },
                         ),
                     };
-                    self.run(stage, from, to, ms, outcome, 0.0);
+                    let ease = match outcome {
+                        Settle::Complete => Ease::Out,
+                        Settle::SpringBack => Ease::Fall,
+                    };
+                    self.run(Flight {
+                        stage,
+                        from,
+                        to,
+                        ms: f64::from(ms),
+                        outcome,
+                        ease,
+                        arc: 0.0,
+                        started: 0.0,
+                    });
                 }
                 _ => {}
             }
@@ -366,6 +391,7 @@ mod imp {
                     w,
                     h,
                     corner,
+                    low,
                     turn,
                     slide: crate::mascot::prefers_reduced_motion(),
                 },
@@ -393,6 +419,7 @@ mod imp {
                 );
                 return;
             }
+            let drag = bend::lifted(drag, stage.low, stage.h, BEND_LIFT, BEND_LIFT_CAP);
             let finger = Pt::new(stage.corner.x + drag.x, stage.corner.y + drag.y);
             let Some(shapes) = bend::bend(stage.w, stage.h, stage.corner, finger) else {
                 el_style(&front, "clip-path", "none");
@@ -404,29 +431,32 @@ mod imp {
             el_style(&fx, "--bend-x", &format!("{:.1}px", shapes.fold.x));
             el_style(&fx, "--bend-y", &format!("{:.1}px", shapes.fold.y));
             el_style(&fx, "--bend-angle", &format!("{:.4}rad", shapes.angle));
-            if let Some(away) = fx.first_element_child() {
-                el_style(&away, "clip-path", &bend::polygon_css(&shapes.away));
-            }
-            if let Some(flap) = fx
-                .last_element_child()
-                .and_then(|flapbox| flapbox.first_element_child())
-            {
-                el_style(&flap, "clip-path", &bend::polygon_css(&shapes.flap));
-            }
+            let clip = |part: &str, poly: &[Pt]| {
+                if let Some(el) = fx.query_selector(part).ok().flatten() {
+                    el_style(&el, "clip-path", &bend::polygon_css(poly));
+                }
+            };
+            clip(".bend-away", &shapes.away);
+            clip(".bend-kept", &shapes.kept);
+            clip(".bend-flap", &shapes.flap);
+            // The flap's shadow on the page below: two copies of the flap pushed a little
+            // away from the fold, instead of a blur that is redrawn every frame.
+            clip(
+                ".bend-shadow-near",
+                &bend::shifted(&shapes.flap, shapes.angle, BEND_SHADOW_NEAR_PX),
+            );
+            clip(
+                ".bend-shadow-far",
+                &bend::shifted(&shapes.flap, shapes.angle, BEND_SHADOW_FAR_PX),
+            );
         }
 
-        /// Animates the corner from `from` to `to` and then ends the turn.
-        fn run(&self, stage: Stage, from: Pt, to: Pt, ms: u32, outcome: Settle, arc: f64) {
-            let flight = Flight {
-                stage,
-                from,
-                to,
-                ms: f64::from(ms),
-                outcome,
-                arc,
+        /// Animates the corner along `flight` and then ends the turn.
+        fn run(&self, flight: Flight) {
+            self.frame(Flight {
                 started: now(),
-            };
-            self.frame(flight);
+                ..flight
+            });
         }
 
         fn frame(&self, flight: Flight) {
@@ -436,11 +466,12 @@ mod imp {
                 to,
                 ms,
                 outcome,
+                ease,
                 arc,
                 started,
             } = flight;
             let t = ((now() - started) / ms).clamp(0.0, 1.0);
-            let mut at = bend::eased(from, to, t);
+            let mut at = bend::eased(from, to, t, ease);
             // A button's turn lifts the corner on the way and sets it down at the end.
             at.y -= arc * stage.h * 4.0 * t * (1.0 - t);
             self.draw(&stage, at);
