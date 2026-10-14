@@ -82,6 +82,9 @@ pub enum Event {
     WriteCaret,
     /// Fly to a fresh task row and write it.
     WriteRow,
+    /// The row he was about to write is not on screen (the other pane on a
+    /// phone, or scrolled away): he writes nothing and stays home.
+    SkipRow,
     /// Finish writing and fly home.
     FlyHome,
 }
@@ -134,9 +137,11 @@ pub fn transition(state: &State, event: Event) -> State {
         // Asking: choose or return goes home.
         (State::Asking { .. }, Event::Choose | Event::Return) => State::Home,
 
-        // Writing caret: fly home when done, or fly to a row (after Add).
+        // Writing caret: fly home when done, or fly to a row (after Add). A
+        // row he cannot see is skipped without a flight.
         (State::WritingCaret, Event::FlyHome) => State::Flying,
         (State::WritingCaret, Event::WriteRow) => State::Flying,
+        (State::WritingCaret, Event::SkipRow) => State::Home,
 
         // Flying to a row: arrive and write.
         (State::Flying, Event::WriteRow) => State::WritingRow,
@@ -637,6 +642,19 @@ mod tests {
     }
 
     #[test]
+    fn a_row_he_cannot_see_is_skipped_without_a_flight() {
+        // After Add he sits at the caret; a new row that is off screen (the
+        // other pane on a phone, or scrolled away) leaves nothing to fly to,
+        // and he must not be left hovering at a caret the user has left.
+        assert_eq!(
+            transition(&State::WritingCaret, Event::SkipRow),
+            State::Home
+        );
+        // Already home, the skip changes nothing.
+        assert_eq!(transition(&State::Home, Event::SkipRow), State::Home);
+    }
+
+    #[test]
     fn every_drawing_defines_every_colour_it_uses() {
         // The art is shown through <img>, which never sees the page's CSS: a
         // colour the file uses but does not define itself paints Rambo black.
@@ -856,6 +874,58 @@ mod tests {
                     .collect::<Vec<_>>()
             })
             .collect()
+    }
+
+    /// Every argument handed to a `.set(...)` signal write, trimmed. A call
+    /// whose argument names a `State` constructor writes the mascot's state
+    /// directly instead of asking `transition`.
+    fn direct_state_sets(source: &str) -> Vec<&str> {
+        let mut found = Vec::new();
+        let mut rest = source;
+        while let Some((_, after)) = rest.split_once(".set(") {
+            // The argument runs to the parenthesis that closes the call.
+            let mut depth = 1;
+            let end = after
+                .char_indices()
+                .find_map(|(i, c)| match c {
+                    '(' => {
+                        depth += 1;
+                        None
+                    }
+                    ')' => {
+                        depth -= 1;
+                        (depth == 0).then_some(i)
+                    }
+                    _ => None,
+                })
+                .unwrap_or(after.len());
+            let arg = after[..end].trim();
+            if arg.starts_with("State::") || arg.starts_with("mascot::State::") {
+                found.push(arg);
+            }
+            rest = &after[end..];
+        }
+        found
+    }
+
+    #[test]
+    fn every_state_change_goes_through_the_machine() {
+        // The DOM layer never writes a `State` into the signal; it asks
+        // `transition`, so the machine's tests cover every path the page can
+        // take. `set(transition(&State::…, …))` is fine: that `State` is the
+        // *before*, not the write.
+        for (name, source) in [
+            ("rambo.rs", include_str!("rambo.rs")),
+            ("tasks/mod.rs", include_str!("tasks/mod.rs")),
+            ("tasks/write.rs", include_str!("tasks/write.rs")),
+            ("capture.rs", include_str!("capture.rs")),
+        ] {
+            let direct = direct_state_sets(source);
+            assert!(
+                direct.is_empty(),
+                "{name} writes a State directly instead of asking `transition`: {direct:?}"
+            );
+        }
     }
 
     #[test]
