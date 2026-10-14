@@ -483,6 +483,9 @@ main.flipping > .bend-front {
   /* The pin's column down the right edge belongs to the pile; the list stops short of it. */
   position: relative;
   padding-right: var(--pin-w);
+  /* A strip sliding off the page, or hanging a few degrees off true, must not widen the
+     document: on a phone that widened the layout (a 441 px scrollWidth on a 390 px screen). */
+  overflow-x: clip;
   /* The list is the written page: it alone gets the notebook's red margin. */
   border-left: 1px solid var(--margin-line);
   padding-left: var(--space-3);
