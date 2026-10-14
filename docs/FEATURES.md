@@ -96,6 +96,13 @@ e. A finger that slides before the hold is a **scroll**, and the row keeps its
 hands off it. That is also what keeps the gestures apart from the page flip: a
 swipe left is never this row's to delete, so it reaches the panes and turns the
 page (DESIGN-DECISIONS 3).
+g. On a phone the page turns by **bending from the finger's corner**: swipe left on the
+list, or swipe right on the planner outside its grid, or press a pane button. The page
+folds along the line halfway between the corner and the finger and follows it, with the
+flap (paper underside) and a shadow on the next page; letting go past a share of the
+width or in a flick turns it, short of that it springs back. With reduced motion it
+slides. Geometry and decisions: `web/src/bend.rs` (tested); browser side:
+`web/src/turner.rs`; numbers in `web/src/tuning.rs`, looks in `web/theme.css` `--bend-*`.
 f. Rows for series occurrences are not reorderable: a drag that starts or lands
 on one does nothing (occurrences share the series' row, not a slot of their own —
 ARCHITECTURE.md 7.1 lists reordering them as out of scope). A slip dropped where

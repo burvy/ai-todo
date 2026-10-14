@@ -41,24 +41,9 @@ pub(crate) fn nearest_pane(element: &web_sys::HtmlElement) -> u8 {
     )
 }
 
-/// Milliseconds of quiet after the last scroll event before the turn is called
-/// over. `scrollend` is not everywhere yet, and a fixed guess is worse than the
-/// scroll going quiet: while the pages are still moving, scroll events keep
-/// arriving and the curl keeps its lean.
-#[cfg(target_arch = "wasm32")]
-pub(crate) const SETTLE_MS: u32 = 220;
-
-/// Which way the curl leans while the pages are turning, and nothing at all
-/// when the scroll has not left the page it settled on. `from` is the page the
-/// last turn ended on, `nearest` the page the scroll is closest to now.
-#[cfg(any(target_arch = "wasm32", test))]
-pub(crate) fn curl_for(from: u8, nearest: u8) -> Option<bool> {
-    (from != nearest).then_some(nearest == 1)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{curl_for, pane_at};
+    use super::pane_at;
 
     /// The body of the first rule in `css` whose selector line is exactly `selector`.
     fn rule<'a>(css: &'a str, selector: &str) -> &'a str {
@@ -127,21 +112,5 @@ mod tests {
         assert_eq!(pane_at(400.0, 400.0), 1);
         assert_eq!(pane_at(900.0, 400.0), 1, "never past the last pane");
         assert_eq!(pane_at(100.0, 0.0), 0, "no width yet, so the first pane");
-    }
-
-    #[test]
-    fn a_turn_leans_the_curl_towards_the_page_it_is_going_to() {
-        // The scroll is the turn now: whatever direction the finger went, the
-        // curl leans the way the pages are travelling.
-        assert_eq!(curl_for(0, 1), Some(true), "list → planner");
-        assert_eq!(curl_for(1, 0), Some(false), "planner → list");
-    }
-
-    #[test]
-    fn a_scroll_that_stays_on_its_page_is_not_a_turn() {
-        // Vertical scrolling, a rubber-band at the end, and the quiet after a
-        // turn has settled all leave the pages where they were: no curl.
-        assert_eq!(curl_for(0, 0), None);
-        assert_eq!(curl_for(1, 1), None);
     }
 }

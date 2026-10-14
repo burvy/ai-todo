@@ -1,4 +1,3 @@
-use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
@@ -21,17 +20,18 @@ pub mod tuning;
 pub mod voice;
 pub mod week;
 
+mod bend;
 mod capture;
 mod edits;
 mod pane;
 mod rambo;
 mod scrap;
 mod tasks;
+mod turner;
 
 use crate::capture::CaptureBox;
-use crate::pane::show_pane;
 #[cfg(target_arch = "wasm32")]
-use crate::pane::{SETTLE_MS, curl_for, nearest_pane};
+use crate::pane::nearest_pane;
 use crate::rambo::Rambo;
 use crate::tasks::TaskList;
 
@@ -79,38 +79,19 @@ pub fn App() -> impl IntoView {
     account::start();
     let main_ref = NodeRef::<leptos::html::Main>::new();
     let (pane, set_pane) = signal(0_u8);
-    // The page turn is the browser's own scroll: `main` is a scroll-snap row, so a
-    // real touch never reaches a pointer handler — the browser scrolls and
-    // cancels the pointer. The curl therefore follows the scroll, and stops
-    // when the scroll settles. Some(true) = turning forward (list → planner).
-    let page = RwSignal::new(0_u8);
-    let turning = RwSignal::new(None::<bool>);
-    let settling = std::rc::Rc::new(std::cell::RefCell::new(None::<Timeout>));
+    // The page turn (bend.rs, turner.rs): the page bends from the finger's corner. The
+    // browser's own scroll still moves `main` when a pane is shown, and `track` keeps the
+    // pane switch in step with it.
+    let fx_ref = NodeRef::<leptos::html::Div>::new();
+    let turner = turner::Turner::new(main_ref, fx_ref, set_pane);
     #[cfg(target_arch = "wasm32")]
-    let curl = move |_: leptos::ev::Event| {
-        let Some(element) = main_ref.get() else {
-            return;
-        };
-        set_pane.set(nearest_pane(&element));
-        turning.set(curl_for(page.get_untracked(), nearest_pane(&element)));
-        if let Some(timer) = settling.borrow_mut().take() {
-            timer.cancel();
+    let track = move |_: leptos::ev::Event| {
+        if let Some(element) = main_ref.get() {
+            set_pane.set(nearest_pane(&element));
         }
-        let (main_ref, page, turning) = (main_ref, page, turning);
-        settling
-            .borrow_mut()
-            .replace(Timeout::new(SETTLE_MS, move || {
-                let Some(element) = main_ref.get() else {
-                    return;
-                };
-                page.set(nearest_pane(&element));
-                turning.set(None);
-            }));
     };
     #[cfg(not(target_arch = "wasm32"))]
-    let curl = |_: leptos::ev::Event| {};
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = (page, turning, settling);
+    let track = |_: leptos::ev::Event| {};
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
     let (typing, set_typing) = signal(false);
@@ -177,22 +158,39 @@ pub fn App() -> impl IntoView {
                 type="button"
                 class:active=move || pane.get() == 0
                 aria-pressed=move || (pane.get() == 0).to_string()
-                on:click=move |_| show_pane(main_ref, 0, set_pane)
+                on:click={
+                    let turner = turner.clone();
+                    move |_| turner.turn_to(0)
+                }
             >"To do"</button>
             <button
                 type="button"
                 class:active=move || pane.get() == 1
                 aria-pressed=move || (pane.get() == 1).to_string()
-                on:click=move |_| show_pane(main_ref, 1, set_pane)
+                on:click={
+                    let turner = turner.clone();
+                    move |_| turner.turn_to(1)
+                }
             >"Planner"</button>
         </nav>
         <main
                 node_ref=main_ref
-                on:scroll=curl
-                class=move || match turning.get() {
-                    Some(true) => "turning-forward",
-                    Some(false) => "turning-back",
-                    None => "",
+                on:scroll=track
+                on:pointerdown={
+                    let turner = turner.clone();
+                    move |ev| turner.down(&ev)
+                }
+                on:pointermove={
+                    let turner = turner.clone();
+                    move |ev| turner.moved(&ev)
+                }
+                on:pointerup={
+                    let turner = turner.clone();
+                    move |ev| turner.up(&ev)
+                }
+                on:pointercancel={
+                    let turner = turner.clone();
+                    move |ev| turner.cancel(&ev)
                 }
             >
             <div class="tasks-pane">
@@ -206,6 +204,14 @@ pub fn App() -> impl IntoView {
                 set_error=set_error
                 capture_text
             />
+            // What a turning page draws between the two panes: the shadow it casts on
+            // the next page, and the lifted flap with its own. Hidden until a turn.
+            <div class="bend-fx" node_ref=fx_ref aria-hidden="true">
+                <div class="bend-away"><i class="bend-strip bend-cast"></i></div>
+                <div class="bend-flapbox">
+                    <div class="bend-flap"><i class="bend-strip bend-crease"></i></div>
+                </div>
+            </div>
         </main>
         <scrap::ScrapCorner scraps set_snapshot set_error />
         // The ink a dazed Rambo leaves: above the page, below him.
