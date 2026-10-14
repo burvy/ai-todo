@@ -1795,6 +1795,63 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   margin: 0;
 }
 
+/* A task waiting to be placed (the ask bubble's Move, web/src/placing.rs): a note in the
+   bubble's hand, with the same torn scraps for its choices. It floats over the foot of the
+   planner, so the grid never moves for it, and it slides up from below the screen's edge
+   into place and back down out of sight: paper moves, it never fades (only ink and the tape
+   patch fade). Closed, it is still there, off the screen, hidden and inert. */
+.placing-note {
+  --placing-bottom: var(--space-4);
+  position: fixed;
+  left: var(--space-3);
+  right: var(--space-3);
+  bottom: var(--placing-bottom);
+  z-index: var(--layer-note);
+  width: fit-content;
+  max-width: 24rem;
+  margin-inline: auto;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-heading);
+  font-size: var(--text-sm);
+  background-color: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  /* Its own height, the gap under it and room for its shadow: just out of sight. */
+  translate: 0 calc(100% + var(--placing-bottom) + var(--space-4));
+  visibility: hidden;
+  transition:
+    translate var(--dur) var(--leave-ease),
+    visibility 0s linear var(--dur);
+}
+
+.placing-note.open {
+  translate: 0 0;
+  visibility: visible;
+  transition:
+    translate var(--dur) var(--arrive-ease),
+    visibility 0s;
+}
+
+/* On a phone the capture bar is at the foot of the screen: the note sits above it. */
+@media (max-width: 700px) {
+  .placing-note {
+    --placing-bottom: calc(var(--capture-clear) + var(--space-2));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .placing-note,
+  .placing-note.open {
+    transition: none;
+  }
+}
+
+/* Every hour is somewhere to put it. */
+.hours.placing {
+  cursor: pointer;
+}
+
 /* The note at the foot of a phone page, in the hand. It is part of the page, so it turns
    with it.
    Each page is as tall as the screen above the capture bar, so the note sits at that foot,

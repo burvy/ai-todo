@@ -174,7 +174,7 @@ h. Code: `web/src/row.rs` (the gesture rules, unit-tested) and its `dom` module
 
 ### 4. Edit through Rambo
 a. Dropping Rambo on a task offers actions: **Edit** opens that task's edit sheet,
-**Done** toggles completion, **Move** does nothing yet. There is no delete in the bubble; tapping off it is never mind. On Edit
+**Done** toggles completion, **Move** turns the page to the planner to place it (III.7). There is no delete in the bubble; tapping off it is never mind. On Edit
 Rambo also listens: say the change ("make it Friday at 3") and the server's revise
 call (Jev) applies it, then the sheet shows the result. A repeating task's sheet
 edits its series, which revise cannot, so he does not listen there.
@@ -313,6 +313,23 @@ a. The page is aged paper: warm palette, serif headings, a tiled paper texture t
 b. Look at the page background in light and dark mode; with `web/assets/theme/*.svg` deleted it still reads as parchment.
 c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics: `web/assets/theme/paper.svg`, `paper-dark.svg` (placeholders).
 
+### 7. Move from the ask bubble
+a. Choosing **Move** in Rambo's ask bubble turns the page to the planner, where the
+task waits to be placed. A note at the planner's top asks where it goes: tap an hour
+to start it there (snapped to the quarter hour; a mouse outlines the slot first), or
+tap Rambo's offer of the next free time, the earliest quarter hour from now inside
+working hours where the task's length fits without overlapping another slip. **Leave
+it**, Esc or turning back to the list leaves the task where it was; the page stays
+on the planner. The note floats over the planner's foot (the grid never moves for it)
+and slides up into place and back down out of sight rather than popping; it never fades. One day of a
+repeating series moves as that day only, as a dragged slip does. Choices for a slip
+Rambo is dropped on in the planner (move, longer or shorter, take it off) are
+(planned).
+b. Drop Rambo on a task, choose Move, then tap an hour or the "Next free" scrap.
+c. Code: `web/src/rambo.rs:Rambo` sets `move_request`; `web/src/lib.rs:App` turns
+the page; `web/src/placing.rs:PlacingNote, next_free`;
+`web/src/week.rs:WeekGrid, place_at`.
+
 ## IV. RAMBL, THE MASCOT
 
 ### 1. Talk button
@@ -371,7 +388,8 @@ a. Dropping Rambo on a task opens a small bubble with Edit, Move and Done, drawn
 paper scraps. Tapping anywhere off the bubble (him too) or pressing Esc is never mind. Edit opens the task dialog (`<dialog class="task-dialog">` in `web/src/tasks/mod.rs`).
 b. Drag the pen onto a task row and choose an action.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:Choice, asking_dismissed_by`;
-`web/src/api.rs:patch_task`. Move is a stub until moving a task lands: he goes home.
+`web/src/api.rs:patch_task`. Move sets `move_request`; the planner places the task
+(III.7).
 
 ### 5. Reduced motion
 a. With reduced motion enabled, Rambo returns immediately instead of animating.

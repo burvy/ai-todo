@@ -20,11 +20,11 @@ struct Drag {
     y: f64,
 }
 
-/// Where the slip would land: a planner day and a minute of that day.
+/// Where a task would start: a planner day (0 is today) and a minute of that day.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Slot {
-    day: i64,
-    minutes: u16,
+pub(crate) struct Slot {
+    pub(crate) day: i64,
+    pub(crate) minutes: u16,
 }
 
 /// How far a phone finger must hold still before its slip lifts onto it, so
@@ -69,6 +69,8 @@ pub fn WeekGrid(
     mascot_state: ReadSignal<crate::mascot::State>,
     /// Turn to the list's page: what the note at this page's foot does.
     turn_back: std::rc::Rc<dyn Fn()>,
+    /// A task Rambo was asked to move: it waits for a tap on an hour.
+    move_request: RwSignal<Option<TaskId>>,
 ) -> impl IntoView {
     let grid_ref = NodeRef::<leptos::html::Div>::new();
     let (now_minutes, set_now_minutes) = signal(current_minutes());
@@ -193,6 +195,36 @@ pub fn WeekGrid(
         #[cfg(not(target_arch = "wasm32"))]
         let _ = set_at_earliest;
     };
+    // The waiting task lands where it is told, and the planner stops waiting.
+    let place = Callback::new(move |slot: Slot| {
+        let Some(id) = move_request.get_untracked() else {
+            return;
+        };
+        move_request.set(None);
+        landing.set(None);
+        #[cfg(target_arch = "wasm32")]
+        place_at(&id, slot, snapshot, set_snapshot, set_error);
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = (id, slot);
+    });
+    // While a task waits, the hour under the pointer is where a tap puts it: outlined
+    // under a mouse, placed on the tap. A held slip keeps its own outline.
+    let waiting_slot = move |ev: &leptos::ev::PointerEvent| {
+        if move_request.with_untracked(Option::is_none) || drag.with_untracked(Option::is_some) {
+            return None;
+        }
+        #[cfg(target_arch = "wasm32")]
+        return hour_at(
+            f64::from(ev.client_x()),
+            f64::from(ev.client_y()),
+            &settings.get_untracked(),
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let _ = ev;
+            None
+        }
+    };
     let days = move || (0..settings.get().days).collect::<Vec<_>>();
     let hours = move || (settings.get().start_hour..settings.get().end_hour).collect::<Vec<_>>();
     view! {
@@ -203,6 +235,7 @@ pub fn WeekGrid(
                 <crate::settings::GearMenu settings set_settings set_snapshot set_error />
             </div>
             <crate::PageFoot page=1 turn=turn_back />
+            <crate::placing::PlacingNote snapshot settings move_request place />
             <div
                 class="week-scroll"
                 class:at-earliest=at_earliest
@@ -215,7 +248,29 @@ pub fn WeekGrid(
                             <h3 class="day-name" class:today=day == 0>
                                 {day_label(&planner_context(&snapshot.get().tz), i64::from(day))}
                             </h3>
-                            <div class="hours">
+                            <div
+                                class="hours"
+                                class:placing=move || move_request.with(Option::is_some)
+                                on:pointermove=move |ev| {
+                                    if ev.pointer_type() == "mouse"
+                                        && let Some(slot) = waiting_slot(&ev)
+                                    {
+                                        landing.set(Some(slot));
+                                    }
+                                }
+                                on:pointerleave=move |_| {
+                                    if move_request.with_untracked(Option::is_some)
+                                        && drag.with_untracked(Option::is_none)
+                                    {
+                                        landing.set(None);
+                                    }
+                                }
+                                on:pointerup=move |ev| {
+                                    if let Some(slot) = waiting_slot(&ev) {
+                                        place.run(slot);
+                                    }
+                                }
+                            >
                                 <Show
                                     when=move || {
                                         landing.get().is_some_and(|slot| slot.day == i64::from(day))
@@ -557,7 +612,6 @@ fn drop_minute(offset_px: f32, planner_start_hour: u8, planner_end_hour: u8, hou
 
 /// The instant a slot starts: planner day + minute of the day, read in the
 /// planner's zone. None where the local time does not exist (DST jump).
-#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn drop_start(ctx: &LocalContext, day: i64, minutes: u16) -> Option<DateTime<Utc>> {
     use chrono::TimeZone as _;
     let date = ctx.today() + chrono::Duration::days(day);
@@ -804,44 +858,7 @@ fn PlacementBlock(
             if slot == current {
                 return;
             }
-            let Some(instant) = drop_start(&ctx, slot.day, slot.minutes) else {
-                set_error.set(Some(
-                "The clock skips that time that day (daylight change), so it cannot start then."
-                    .into(),
-            ));
-                return;
-            };
-            // The guard stays fresh from the last snapshot the page saw: if the
-            // task changed elsewhere meanwhile, the server refuses the move.
-            let snap = snapshot.get_untracked();
-            let Some(task) = snap.tasks.iter().find(|task| task.id == end_id) else {
-                return;
-            };
-            // One day of a repeating series is a 'moved' exception on the series,
-            // never a task PATCH: the row here is one expanded occurrence of the
-            // whole rule, and its id names the original local date.
-            let occurrence = occurrence_of(&task.id);
-            let updated_at = task.updated_at;
-            drop(snap);
-            let id = end_id.clone();
-            wasm_bindgen_futures::spawn_local(async move {
-                let result = match occurrence {
-                    Some((series_id, date)) => {
-                        crate::api::move_series_occurrence(&series_id, date, When::At(instant))
-                            .await
-                    }
-                    None => {
-                        let body = crate::api::PatchTaskBody::new()
-                            .when(When::At(instant))
-                            .updated_at(updated_at);
-                        crate::api::patch_task(&id, body).await
-                    }
-                };
-                match result {
-                    Ok(new_snapshot) => set_snapshot.set(new_snapshot),
-                    Err(e) => set_error.set(Some(format!("Move failed: {e}"))),
-                }
-            });
+            place_at(&end_id, slot, snapshot, set_snapshot, set_error);
         }
     };
 
@@ -906,6 +923,57 @@ fn PlacementBlock(
     }
 }
 
+/// Starts task `id` at `slot`, as a dropped slip or a tapped hour says.
+#[cfg(target_arch = "wasm32")]
+fn place_at(
+    id: &TaskId,
+    slot: Slot,
+    snapshot: ReadSignal<Snapshot>,
+    set_snapshot: WriteSignal<Snapshot>,
+    set_error: WriteSignal<Option<String>>,
+) {
+    let snap = snapshot.get_untracked();
+    let ctx = planner_context(&snap.tz);
+    let Some(instant) = drop_start(&ctx, slot.day, slot.minutes) else {
+        set_error.set(Some(
+            "The clock skips that time that day (daylight change), so it cannot start then.".into(),
+        ));
+        return;
+    };
+    // The guard stays fresh from the last snapshot the page saw: if the
+    // task changed elsewhere meanwhile, the server refuses the move.
+    let Some(updated_at) = snap
+        .tasks
+        .iter()
+        .find(|task| task.id == *id)
+        .map(|task| task.updated_at)
+    else {
+        return;
+    };
+    // One day of a repeating series is a 'moved' exception on the series,
+    // never a task PATCH: the row here is one expanded occurrence of the
+    // whole rule, and its id names the original local date.
+    let occurrence = occurrence_of(id);
+    let id = id.clone();
+    wasm_bindgen_futures::spawn_local(async move {
+        let result = match occurrence {
+            Some((series_id, date)) => {
+                crate::api::move_series_occurrence(&series_id, date, When::At(instant)).await
+            }
+            None => {
+                let body = crate::api::PatchTaskBody::new()
+                    .when(When::At(instant))
+                    .updated_at(updated_at);
+                crate::api::patch_task(&id, body).await
+            }
+        };
+        match result {
+            Ok(new_snapshot) => set_snapshot.set(new_snapshot),
+            Err(e) => set_error.set(Some(format!("Move failed: {e}"))),
+        }
+    });
+}
+
 /// What sits under a point: the planner day column (from data-day) and the
 /// pixel top of its hour rows, or None when the point is off the planner.
 #[cfg(target_arch = "wasm32")]
@@ -943,6 +1011,20 @@ fn landing_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
         day: location.0,
         minutes,
     })
+}
+
+/// The hour under a point on the screen, as a day and a quarter hour: what a tap
+/// while a task waits, or Rambo dropped on the planner, points at. None off the
+/// planner or over a slip, which is a task of its own.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn hour_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
+    let over_slip = leptos::prelude::document()
+        .element_from_point(x as f32, y as f32)
+        .is_some_and(|el| el.closest(".placement").ok().flatten().is_some());
+    if over_slip {
+        return None;
+    }
+    landing_at(x, y, settings)
 }
 
 /// The paper a not-yet-lifted finger slides over: `main` along its length,

@@ -30,6 +30,7 @@ mod flip_turner;
 #[cfg(any(target_arch = "wasm32", test))]
 mod fold;
 mod fold_turner;
+mod placing;
 mod rambo;
 mod rip_ui;
 mod scrap;
@@ -102,6 +103,8 @@ pub fn App() -> impl IntoView {
     let pen_queue = RwSignal::new(Vec::<TaskId>::new());
     // A row Rambo was asked to edit: the task list opens its edit sheet
     let edit_request = RwSignal::new(None::<TaskId>);
+    // A row Rambo was asked to move: the planner waits for a tap on an hour
+    let move_request = RwSignal::new(None::<TaskId>);
     // The task whose edit sheet is open: the list owns it, Rambo listens while it is
     let open_sheet = RwSignal::new(None::<TaskId>);
     // The scrap a swiped-out row leaves in the corner, to tape it back
@@ -120,6 +123,22 @@ pub fn App() -> impl IntoView {
             )
         {
             set_talking.set(true);
+        }
+    });
+
+    // Asked to move a task, the page turns to the planner, where it waits; turned back
+    // to the list, nothing waits any more.
+    Effect::new({
+        let turner = turner.clone();
+        move |_| {
+            if move_request.with(Option::is_some) {
+                turner.turn_to(1);
+            }
+        }
+    });
+    Effect::new(move |_| {
+        if pane.get() == 0 {
+            move_request.set(None);
         }
     });
 
@@ -211,6 +230,7 @@ pub fn App() -> impl IntoView {
                     let turner = turner.clone();
                     move || turner.turn_to(0)
                 })
+                move_request
             />
             // What a turning page draws over the two panes, hidden until a turn: for the
             // book flip, the light on the leaf and the shadow it throws on the page under it
@@ -247,6 +267,7 @@ pub fn App() -> impl IntoView {
             capture_text
             form_ref
             edit_request
+            move_request
             open_sheet
             nest_ref
             pen=Signal::derive(move || view_settings.get().pen)
