@@ -90,7 +90,7 @@ pub enum Event {
 }
 
 /// Milliseconds he stays dazed, untouched, before he skitters home on his own.
-pub const DAZED_MS: u32 = 8000;
+pub const DAZED_MS: u32 = 3000;
 /// Milliseconds the splat wobble lasts on a hard drop.
 pub const SPLAT_MS: u32 = 400;
 /// Milliseconds Rambo keeps peeking over at you after your last keystroke.
