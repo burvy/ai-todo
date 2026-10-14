@@ -4,7 +4,7 @@ mod fields;
 #[cfg(target_arch = "wasm32")]
 mod scribble;
 #[cfg(target_arch = "wasm32")]
-mod write;
+pub(crate) mod write;
 
 use chrono::{DateTime, NaiveDate, Utc, Weekday};
 use leptos::prelude::*;
@@ -325,7 +325,6 @@ pub(crate) fn TaskList(
                         if !is_ready {
                             break;
                         }
-                        set_state.set(mascot::transition(&state, mascot::Event::WriteRow));
                         let row = web_sys::window()
                             .and_then(|w| w.document())
                             .and_then(|doc| {
@@ -333,6 +332,13 @@ pub(crate) fn TaskList(
                                     .ok()
                                     .flatten()
                             });
+                        // A row off the screen (the other pane on a phone, or
+                        // scrolled away) is left as it is; he stays home.
+                        if !row.as_ref().is_some_and(write::in_view) {
+                            set_state.set(mascot::State::Home);
+                            continue;
+                        }
+                        set_state.set(mascot::transition(&state, mascot::Event::WriteRow));
                         // Clip the title and park the nib at the line's start.
                         // The fonts settle first: parking on fallback metrics
                         // would put the pen somewhere the line does not start.

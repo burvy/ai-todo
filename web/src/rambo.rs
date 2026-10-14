@@ -42,36 +42,22 @@ pub(crate) fn Rambo(
     /// What a dazed Rambo has written on the page, one path per drag
     strokes: RwSignal<Vec<ink::Path>>,
 ) -> impl IntoView {
-    // Measure the nest's center so Rambo knows where to sit at home.
-    // Update on mount, on resize, and whenever state changes to Home.
+    // At home he sits on the nest wherever the page has carried it. He is a
+    // fixed layer and the nest is not, so every time the page moves he
+    // measures it again.
+    let follow_nest = move || {
+        if state.get_untracked() == mascot::State::Home
+            && let Some(home) = nest_centre(nest_ref)
+        {
+            pen_pos.set(home);
+        }
+    };
+    Effect::new(move |_| {
+        state.track();
+        follow_nest();
+    });
     #[cfg(target_arch = "wasm32")]
-    {
-        // Reactive effect: re-measure when state changes (so returning home updates pen_pos)
-        Effect::new(move |_| {
-            let _ = state.get(); // track state
-            if let Some(nest) = nest_ref.get() {
-                let rect = nest.get_bounding_client_rect();
-                let cx = rect.left() + rect.width() / 2.0;
-                let cy = rect.top() + rect.height() / 2.0;
-                if matches!(state.get_untracked(), mascot::State::Home) {
-                    pen_pos.set((cx, cy));
-                }
-            }
-        });
-        // Also measure on window resize (non-reactive, just a listener)
-        window_event_listener(leptos::ev::resize, move |_| {
-            if matches!(state.get_untracked(), mascot::State::Home) {
-                if let Some(nest) = nest_ref.get() {
-                    let rect = nest.get_bounding_client_rect();
-                    let cx = rect.left() + rect.width() / 2.0;
-                    let cy = rect.top() + rect.height() / 2.0;
-                    pen_pos.set((cx, cy));
-                }
-            }
-        });
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = (nest_ref, pen_pos, state);
+    on_page_moved(follow_nest);
 
     // Home again, the page he wrote on is tidied away with him.
     Effect::new(move |_| {
@@ -97,6 +83,8 @@ pub(crate) fn Rambo(
         }
         let start = pen_pos.get_untracked();
         let begun = js_sys::Date::now();
+        // The nest can move while he runs (the page scrolls), so he aims at
+        // where it is now, not where it was when he set off.
         let run = std::rc::Rc::new(std::cell::Cell::new(None::<IntervalHandle>));
         let handle = set_interval_with_handle(
             {
@@ -106,6 +94,7 @@ pub(crate) fn Rambo(
                         ((js_sys::Date::now() - begun) / f64::from(mascot::SKITTER_MS)) as f32;
                     let running = state.get_untracked() == mascot::State::Skittering;
                     if running {
+                        let home = nest_centre(nest_ref).unwrap_or(home);
                         pen_pos.set(mascot::skitter_point(start, home, 3, 14.0, progress));
                     }
                     if !running || progress >= 1.0 {
@@ -515,6 +504,33 @@ fn nest_centre(nest_ref: NodeRef<leptos::html::Button>) -> Option<(f64, f64)> {
         rect.left() + rect.width() / 2.0,
         rect.top() + rect.height() / 2.0,
     ))
+}
+
+/// Calls `moved` whenever the page may have shifted under a fixed layer: any
+/// scroll (the window's, or the panes' sideways one on a phone), a resize, the
+/// page changing size as tasks load and a scrollbar appears, and the fonts
+/// settling. None of these but the resize reaches a plain window listener.
+#[cfg(target_arch = "wasm32")]
+fn on_page_moved(moved: impl Fn() + Copy + 'static) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let listener = wasm_bindgen::closure::Closure::<dyn Fn()>::new(moved);
+    let callback = listener.as_ref().unchecked_ref();
+    // Scroll does not bubble; the capture phase hears every scroller.
+    let _ = window.add_event_listener_with_callback_and_bool("scroll", callback, true);
+    let _ = window.add_event_listener_with_callback("resize", callback);
+    if let Some(root) = window.document().and_then(|doc| doc.document_element())
+        && let Ok(observer) = web_sys::ResizeObserver::new(callback)
+    {
+        observer.observe(&root);
+    }
+    // Rambo lives as long as the page, and so do his listeners.
+    listener.forget();
+    wasm_bindgen_futures::spawn_local(async move {
+        crate::tasks::write::wait_for_fonts().await;
+        moved();
+    });
 }
 
 /// The task row under a point, looking past Rambo himself: he is under the

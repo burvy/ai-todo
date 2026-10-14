@@ -116,6 +116,23 @@ pub fn place_nib(pen_pos: RwSignal<(f64, f64)>, x: f64, y: f64) {
     pen_pos.set(center);
 }
 
+/// Whether `row` shows on screen, so the pen can fly to it.
+pub fn in_view(row: &web_sys::Element) -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let size = |dim: Result<wasm_bindgen::JsValue, _>| dim.ok().and_then(|v| v.as_f64());
+    let (Some(width), Some(height)) = (size(window.inner_width()), size(window.inner_height()))
+    else {
+        return false;
+    };
+    let rect = row.get_bounding_client_rect();
+    pen::on_screen(
+        (rect.left(), rect.top(), rect.right(), rect.bottom()),
+        (width, height),
+    )
+}
+
 /// Park the nib at the left edge of `row`'s line, before the flight, so
 /// the pen arrives exactly where it is about to start writing.
 pub fn park_nib(row: &web_sys::Element, pen_pos: RwSignal<(f64, f64)>) {
