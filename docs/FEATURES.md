@@ -232,22 +232,24 @@ the box stay put; swipe a row right and watch it travel to the pin.
 f. Code: `web/src/lib.rs:App, PageFoot`; `web/src/week.rs:WeekGrid` (the planner page, the
 gear); `web/src/scrap.rs` (the pin); `web/theme.css` (`.capture`, `.nest`, `.nest-rim`, the
 phone block with `100dvh`); numbers in `web/src/tuning.rs`.
-g. **The page rips.** On a phone, a swipe to the right on bare paper of the list page (not on
-a task, and mostly level: `RIP_MIN_PX`, `RIP_MAX_SLOPE`) tears the page along the swipe. The
-tear is a real hole, a ragged slit up to `RIP_GAP_PX` wide: the planner page, which lies
-under the list while a tear lasts, shows through it live (its own slips and lines, not a
-picture). It follows the finger, never goes back, stops short of the pin's column, and never
+g. **The page rips.** A swipe to the right on bare paper of the list page (a finger on a phone, a
+mouse drag on a desk; not on a task, and mostly level: `RIP_MIN_PX`, `RIP_MAX_SLOPE`) tears the
+page along the swipe. The tear is a real hole, a ragged slit up to `RIP_GAP_PX` wide: the
+planner page shows through it live (its own slips and lines, not a picture). On a phone the
+planner already lies under the list; on a desk, where the two pages are a spread side by side,
+it slides left under the list for as long as the tear lasts (`TEAR_SLIDE_MS`) and slides back.
+The tear follows the finger, never goes back, stops short of the pin's column, and never
 touches a task's words: a press too near a row tears nothing (`rip::lane`). One tear at a
 time. When the finger lets go Rambo notices, hops to the tear and tapes it: a strip of tape
 every `TAPE_EVERY_PX` across it is laid from one end over `TAPE_LAY_MS`, `TAPE_AT_MS` after
 the finger lets go. After `TEAR_HOLD_MS` the tape and the tear fade away together over
 `TEAR_FADE_MS`, the one thing besides ink that fades; Rambo has hopped home by then. Only a
-resting Rambo (in his nest) goes; a busy one leaves the repair to the page. He is grumpy while he mends
-(`Pose::Sulking`). A desk (two pages side by
-side) has no rip: the planner is already beside the list. Try it: on a phone, swipe right
-across the empty part of the list page.
+resting Rambo (in his nest) goes; a busy one leaves the repair to the page. He is grumpy
+while he mends (`Pose::Sulking`). The tear is cleared by a one-shot on the engine's clock
+(`engine::every`), with everything else that moves. Try it: swipe or drag right across the
+empty part of the list page.
 Code: `web/src/rip.rs` (the rules: `is_rip`, `lane`, `Tear::outline`, `sheet_path`,
-`stage`; pure and tested), `web/src/rip_ui.rs:Ripper, TearLayer` (the pointer, the hole,
+`slide_px`; pure and tested), `web/src/rip_ui.rs:Ripper, TearLayer` (the pointer, the hole,
 the tape), `web/src/mascot.rs:State::Mending, Event::Mend`, `web/theme.css` (`main.torn`,
 `.tear-layer`, `.tape`); numbers in `web/src/tuning.rs` (`RIP_*`, `TAPE_*`, `TEAR_*`,
 `MEND_MS`).
