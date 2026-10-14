@@ -155,6 +155,9 @@ pub(crate) fn Rambo(
     let world = std::rc::Rc::new(std::cell::RefCell::new(crate::engine::World::new(
         pen_pos.get_untracked(),
     )));
+    // His pose on top of where he is: lean, size, sink, the writing pose
+    // (`engine::look`). With `shown`, his button's only transform.
+    let look = RwSignal::new(world.borrow().look());
     let ticking = std::rc::Rc::new(std::cell::Cell::new(false));
     let wake = move || {
         if ticking.replace(true) {
@@ -170,12 +173,17 @@ pub(crate) fn Rambo(
                 reduced_motion: mascot::prefers_reduced_motion(),
                 leaf: crate::engine::leaf(),
             };
-            let (brain, draw, at_rest) = {
+            let (brain, draw, posed, at_rest) = {
                 let mut world = world.borrow_mut();
                 world.adopt(state.get_untracked());
                 world.advance(tick.steps, &anchors);
                 crate::engine::set_push(world.leaf_push());
-                (world.rambo.brain.clone(), world.draw(), world.at_rest())
+                (
+                    world.rambo.brain.clone(),
+                    world.draw(),
+                    world.look(),
+                    world.at_rest(),
+                )
             };
             if brain != state.get_untracked() {
                 set_state.set(brain);
@@ -185,6 +193,9 @@ pub(crate) fn Rambo(
             }
             if squash.get_untracked() != draw.squash {
                 squash.set(draw.squash);
+            }
+            if look.get_untracked() != posed {
+                look.set(posed);
             }
             if noticing.get_untracked() != draw.notice {
                 noticing.set(draw.notice);
@@ -772,8 +783,7 @@ pub(crate) fn Rambo(
             aria-label="Grab Rambo to listen"
             // Which pen he writes with: the gear menu sets it, remembered per device.
             data-pen=move || view_settings.get().pen.slug()
-            style:--pen-x=move || format!("{:.1}px", shown.get().0)
-            style:--pen-y=move || format!("{:.1}px", shown.get().1)
+            style:transform=move || look.get().transform(shown.get())
             style:--hop-squash=move || format!("{:.3}", squash.get())
             on:pointerdown={
                 let nib_below = nib_below.clone();

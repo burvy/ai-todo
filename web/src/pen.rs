@@ -260,7 +260,7 @@ pub fn on_screen(
 
 /// Where his centre sits so his nib lands on `(x, y)` while he writes a row, his
 /// box `box_h` px tall (it is larger on a desktop than on a phone). He leans and
-/// shrinks about his nib (`transform-origin: 50% 100%` on `.rambo.is-writing`), so
+/// shrinks about his nib (the writing-a-row pose turns about it, `engine::look`), so
 /// the nib is always the bottom of his upright box, half a box below the centre,
 /// whatever the lean.
 pub fn row_nib_center(x: f64, y: f64, box_h: f64) -> (f64, f64) {

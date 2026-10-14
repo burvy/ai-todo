@@ -3,6 +3,7 @@
 //! every so often in its time (`every`); the loop sleeps when none is waiting.
 
 mod link;
+mod look;
 mod run;
 mod sched;
 mod world;

@@ -311,6 +311,22 @@ pub const NOTICE_PERK: f64 = 0.06;
 /// he is glued to the finger with no weight at all.
 pub const RIDE_OMEGA: f64 = 40.0;
 
+/// How long he takes to ease from one pose into the next when his state changes, in
+/// ms (`engine::look`), eased in and out so no frame jumps. Safe range 100 to 240:
+/// shorter and the change snaps, longer and he still leans the old way after he has
+/// set off.
+pub const POSE_BLEND_MS: f64 = 160.0;
+/// How far he leans into where he is going, in degrees per px/s of sideways speed: a
+/// hop runs at up to about 6000 px/s. Safe range 0.0005 to 0.002: lower and a fast hop
+/// stays upright, higher and every hop pins him at `LEAN_MAX_DEG`.
+pub const LEAN_PER_PX_S: f64 = 0.001;
+/// How long his lean takes to follow his speed, in ms: a hop's speed rises and falls
+/// within it, and the lean eases after it instead of snapping. Safe range 50 to 200.
+pub const LEAN_EASE_MS: f64 = 100.0;
+/// The most he leans into a move, in degrees. Safe range 4 to 12: past that he reads
+/// as falling, not running.
+pub const LEAN_MAX_DEG: f64 = 8.0;
+
 /// How far above a finger he rides while held, in px between the finger and his
 /// bottom edge: a fingertip covers more than its point. Safe range 8 to 48.
 pub const HELD_GAP_TOUCH_PX: f64 = 20.0;

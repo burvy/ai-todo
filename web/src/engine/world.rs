@@ -6,6 +6,7 @@
 //! element. The brain is [`mascot::transition`], unchanged; this decides only how his
 //! body follows it, so behaviours end on state, never on a guessed CSS duration.
 
+use super::look::{self, Look};
 use super::sched::ENGINE_DT_S;
 use crate::hop::Hop;
 use crate::mascot::{self, Event, Pose, State};
@@ -169,6 +170,11 @@ pub(crate) struct Rambo {
     /// scrolling under him and not a reason to hop.
     settled_home: bool,
     draw: Draw,
+    /// His pose when his state last changed, which he eases out of.
+    look_from: Look,
+    /// His lean into his move, eased after his speed every step (`look::eased_sway`).
+    sway: f64,
+    look: Look,
 }
 
 /// Everything the engine moves. Today that is Rambo; the nest, ink and the turn join it
@@ -188,12 +194,16 @@ impl World {
                 brain: State::Home,
                 pos: home,
                 vel: (0.0, 0.0),
-                since: 0.0,
+                // Long settled in his pose.
+                since: -crate::tuning::POSE_BLEND_MS,
                 run: None,
                 owed: None,
                 settling: false,
                 settled_home: true,
                 draw: Draw::at(home),
+                look_from: look::pose(&State::Home, 0.0, false),
+                look: look::pose(&State::Home, 0.0, false),
+                sway: 0.0,
             },
             now: 0.0,
         }
@@ -202,6 +212,14 @@ impl World {
     /// How he is drawn now.
     pub(crate) fn draw(&self) -> Draw {
         self.rambo.draw
+    }
+
+    /// How he is posed now (`engine::look`).
+    pub(crate) fn look(&self) -> Look {
+        Look {
+            lean_deg: self.rambo.look.lean_deg + self.rambo.sway,
+            ..self.rambo.look
+        }
     }
 
     /// An event for his brain from outside the world (a gesture, the capture box).
@@ -219,6 +237,7 @@ impl World {
             return;
         }
         rambo.owed = mascot::notice(&rambo.brain, &next);
+        rambo.look_from = rambo.look;
         rambo.settling = rambo.brain == State::Flying && next == State::WritingRow;
         rambo.brain = next;
         rambo.since = self.now;
@@ -237,6 +256,8 @@ impl World {
             State::Splatting | State::Dazed | State::Covered
         );
         !timed
+            && look::still(&rambo.brain, self.now - rambo.since)
+            && rambo.sway.abs() < look::SWAY_GONE_DEG
             && rambo.brain != State::Dragging
             && !mascot::hops_there(&rambo.brain, rambo.settled_home)
             && !rambo.settling
@@ -260,6 +281,17 @@ impl World {
         if let Some(event) = self.timer_due() {
             self.tell(event);
         }
+        self.move_body(anchors);
+        let rambo = &mut self.rambo;
+        let ms = self.now - rambo.since;
+        let to = look::pose(&rambo.brain, ms, anchors.reduced_motion);
+        rambo.look = look::blended(&rambo.look_from, &to, ms, anchors.reduced_motion);
+        let toward = look::sway_toward(&rambo.brain, rambo.vel, anchors.reduced_motion);
+        rambo.sway = look::eased_sway(rambo.sway, toward, STEP_MS);
+    }
+
+    /// His body follows what his state asks.
+    fn move_body(&mut self, anchors: &Anchors) {
         let drive = behaviour(
             &self.rambo.brain,
             self.rambo.settled_home,
@@ -429,6 +461,9 @@ mod tests {
         }
     }
 
+    /// Long enough for his lean into a run to die away.
+    const SWAY_DIES_MS: f64 = 600.0;
+
     /// Steps for `ms` of world time.
     fn steps(ms: f64) -> u32 {
         (ms / STEP_MS).ceil() as u32
@@ -446,6 +481,7 @@ mod tests {
     #[test]
     fn settled_at_home_he_moves_with_the_nest_exactly_and_never_hops() {
         let mut world = World::new(NEST);
+        assert_eq!(world.look().sink, 1.0, "sunk in the nest from the start");
         let scrolled = Anchors {
             nest: (340.0, 700.0),
             ..anchors((0.0, 0.0))
@@ -510,7 +546,15 @@ mod tests {
         let spot = (200.0, 500.0);
         world.adopt(asking());
         world.advance(1, &anchors(spot));
-        assert!(world.at_rest(), "on his spot at once, the run gone");
+        assert_eq!(
+            world.draw(),
+            Draw::at(spot),
+            "on his spot at once, the run gone"
+        );
+        assert!(!world.at_rest(), "still easing into the asking pose");
+        world.advance(steps(crate::tuning::POSE_BLEND_MS), &anchors(spot));
+        world.advance(steps(SWAY_DIES_MS), &anchors(spot));
+        assert!(world.at_rest());
         world.advance(steps(10_000.0), &anchors(spot));
         assert!(world.at_rest());
         assert_eq!(world.rambo.brain, asking(), "nothing in the world undid it");
@@ -608,6 +652,33 @@ mod tests {
     }
 
     #[test]
+    fn hopping_home_his_lean_follows_his_hops_and_never_jumps() {
+        let fell = (40.0, 200.0);
+        let mut world = dropped_at(fell);
+        world.advance(steps(f64::from(mascot::DAZED_MS)), &anchors(fell));
+        assert_eq!(world.rambo.brain, State::Skittering);
+        let mut was = world.look().lean_deg;
+        let mut most: f64 = 0.0;
+        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + 1500.0) {
+            world.advance(1, &anchors(fell));
+            let lean = world.look().lean_deg;
+            assert!(
+                (lean - was).abs() < 1.0,
+                "a jump in his lean: {was} -> {lean}"
+            );
+            most = most.max(world.rambo.sway.abs());
+            was = lean;
+        }
+        assert!(most > 0.5, "he leans into the run: {most}");
+        assert!(
+            most < crate::tuning::LEAN_MAX_DEG,
+            "never pinned at the most: {most}"
+        );
+        assert!(world.at_rest(), "home, upright and asleep");
+        assert!(world.look().lean_deg.abs() < look::SWAY_GONE_DEG);
+    }
+
+    #[test]
     fn dropped_he_stays_dazed_where_he_fell_then_hops_home_and_is_home() {
         let fell = (120.0, 300.0);
         let mut world = dropped_at(fell);
@@ -629,6 +700,7 @@ mod tests {
         assert!(lifted, "he hopped home, off the ground");
         assert_eq!(world.rambo.brain, State::Home);
         assert_eq!(world.draw(), Draw::at(NEST));
+        world.advance(steps(SWAY_DIES_MS), &anchors(fell));
         assert!(world.at_rest());
     }
 
