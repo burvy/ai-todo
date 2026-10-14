@@ -391,8 +391,8 @@ fn day_label(ctx: &LocalContext, day: i64) -> String {
         .format("%a %-d")
         .to_string()
 }
-/// A slip shorter than a full hour carries its words beside it (see
-/// theme.css on `.placement.short`); an hour or more holds them inside.
+/// A slip shorter than a full hour writes its words a size smaller (see
+/// theme.css on `.placement.short`); every slip holds them inside its edges.
 const SHORT_SLIP_PX: f32 = HOUR_PX;
 
 /// What a slip's row in the week grid is keyed on: the task AND its slot. Keying
