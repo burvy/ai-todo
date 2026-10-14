@@ -1623,37 +1623,56 @@ li.task-row:focus-within .delete-mark {
     --page-top: 0px;
   }
 
+  /* The screen is the page and the capture bar: the document never scrolls. Each page is
+     exactly the screen above the bar, and a long list scrolls inside its page. */
+  html,
   body {
-    padding-top: 0;
-    padding-left: 0;
-    padding-right: 0;
+    overflow: hidden;
+  }
+
+  body {
+    height: 100dvh;
+    padding: 0;
+  }
+
+  main {
+    height: calc(100dvh - var(--capture-clear));
   }
 
   main > * {
     position: relative;
     box-sizing: border-box;
-    align-content: start;
-    min-height: calc(100dvh - var(--page-top) - var(--capture-clear));
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
     padding-top: calc(var(--gutter) + env(safe-area-inset-top, 0px));
     padding-right: calc(var(--gutter) + env(safe-area-inset-right, 0px));
-    padding-bottom: var(--page-foot-h);
+    padding-bottom: 0;
     padding-left: calc(var(--gutter) + env(safe-area-inset-left, 0px));
+  }
+
+  /* A column, so the page's foot note can rest at the screen's foot when the list is short. */
+  main > .tasks-pane,
+  main > .planner-page {
+    display: flex;
+    flex-direction: column;
+  }
+
+  main > * > * {
+    flex: none;
   }
 }
 
-/* The note stays at the foot of the screen while the page is in view, and rests at the
-   page's own foot at its end: a rail as tall as the page, the note sticking inside it. */
+/* The note stays at the foot of the screen whatever the list's length: the last thing in the
+   page, sticking to the bottom of the page's own scroll. */
 .page-foot-rail {
-  position: absolute;
-  top: 0;
+  position: sticky;
   bottom: 0;
-  left: 0;
+  margin-top: auto;
   pointer-events: none;
 }
 
 .page-foot {
-  position: sticky;
-  top: calc(100dvh - var(--capture-clear) - var(--page-foot-h));
   pointer-events: auto;
   /* Paper under the words, so a row that runs behind the note does not show through. */
   background-color: color-mix(in srgb, var(--paper) 94%, transparent);
