@@ -108,15 +108,15 @@ pub const LINGER_MS: u32 = 2000;
 /// Extra width, in px of glyph advance, that the pen lift over a space costs: the
 /// nib hops the gap and pauses before the next word. Safe range 0 to 24.
 pub const WORD_GAP_W: f64 = 10.0;
-/// Stroke time per glyph: the pace of his hand. Safe range 70 to 160 ms; v1 wrote at
-/// about this pace, slower than typing so it reads as considered writing.
-pub const WRITE_PER_GLYPH_MS: u32 = 110;
+/// Stroke time per glyph: the pace of his hand. Safe range 90 to 180 ms: slower than
+/// typing, so it reads as considered writing.
+pub const WRITE_PER_GLYPH_MS: u32 = 130;
 /// The shortest a title takes to write, so a short one still reads as writing.
 /// Safe range 400 to 1200 ms.
 pub const WRITE_MIN_MS: u32 = 700;
 /// The longest a title takes to write, so a long one still finishes. Safe range
-/// 1800 to 5000 ms.
-pub const WRITE_MAX_MS: u32 = 3200;
+/// 3000 to 6000 ms: lower and a long title is rushed at half a short one's pace.
+pub const WRITE_MAX_MS: u32 = 4500;
 /// The beat the nib rests on the line after landing, before the first stroke.
 /// Safe range 0 to 300 ms.
 pub const WRITE_SETTLE_MS: u32 = 140;
@@ -127,10 +127,31 @@ pub const WRITE_FINISH_MS: u32 = 250;
 /// scrolled away) before its rest of the title simply appears. Safe range 5000 to
 /// 60000 ms.
 pub const WRITE_HOLD_MAX_MS: u32 = 15_000;
-/// How far past its edges the ink may show, in px, so a letter's flourish above
-/// the line or past the last stroke is not cut. Safe range 0 to 4.
-pub const INK_BLEED_PX: f64 = 2.0;
+/// How long a glyph's ink takes to appear once the nib passes its middle, in ms. Ink
+/// is the one thing that fades in. Safe range 40 to 160.
+pub const INK_FADE_MS: u32 = 90;
+/// How far the nib presses into the paper at each glyph's first stroke, in px. Safe
+/// range 0 to 3.
+pub const WRITE_DIP_PX: f64 = 1.5;
+/// The share of a glyph's stroke the press takes to ease off. Safe range 0.1 to 0.6.
+pub const WRITE_DIP_SHARE: f64 = 0.35;
+/// How far the pen lifts off the paper over a word gap, in px. Safe range 0 to 4.
+pub const WRITE_LIFT_PX: f64 = 2.0;
+/// How far his lean wanders from glyph to glyph, either way, in degrees. Safe range
+/// 0 to 4.
+pub const WRITE_WOBBLE_DEG: f64 = 2.0;
+/// The dip as he lands on the line, in px, and how long it takes to settle, in ms.
+/// Safe ranges 0 to 4 px and 30 to 120 ms; the settle fits in `WRITE_SETTLE_MS`.
+pub const WRITE_TOUCHDOWN_PX: f64 = 2.0;
+pub const WRITE_TOUCHDOWN_MS: u32 = 60;
+/// The flick as the last letter closes: a lift in px, a turn in degrees, and how
+/// long it is held in ms, before `WRITE_FINISH_MS`. Safe ranges 0 to 4 px, 0 to 8
+/// degrees and 60 to 200 ms.
+pub const WRITE_FLICK_PX: f64 = 2.0;
+pub const WRITE_FLICK_DEG: f64 = 4.0;
+pub const WRITE_FLICK_MS: u32 = 120;
 
 const _: () = assert!(WRITE_MIN_MS < WRITE_MAX_MS);
+const _: () = assert!(WRITE_TOUCHDOWN_MS <= WRITE_SETTLE_MS);
 // A title that is merely slow to write is never cut short as "waited too long".
 const _: () = assert!(WRITE_MAX_MS < WRITE_HOLD_MAX_MS);

@@ -5,14 +5,18 @@
 //!
 //! A fresh row's title is inked under the nib: each glyph is given time in
 //! proportion to the width it occupies on the page, and every word gap also
-//! pays for the pen's lift. A title that wraps is written line after line, the
-//! nib riding each line's baseline. The pen lingers [`LINGER_MS`](crate::tuning::LINGER_MS) at the capture
+//! pays for the pen's lift. A glyph's ink appears as the nib passes its middle,
+//! so a title that wraps is written line after line, the nib riding the
+//! baseline of the glyph it is on. His hand moves with the strokes: a press at
+//! each glyph, a lift over each gap, a little wobble. The pen lingers [`LINGER_MS`](crate::tuning::LINGER_MS) at the capture
 //! caret after typing stops before flying home. Its timings are in
 //! [`crate::tuning`].
 
 use crate::mascot::State;
 use crate::tuning::{
-    INK_BLEED_PX, WORD_GAP_W, WRITE_HOLD_MAX_MS, WRITE_MAX_MS, WRITE_MIN_MS, WRITE_PER_GLYPH_MS,
+    WORD_GAP_W, WRITE_DIP_PX, WRITE_DIP_SHARE, WRITE_FLICK_DEG, WRITE_FLICK_PX, WRITE_HOLD_MAX_MS,
+    WRITE_LIFT_PX, WRITE_MAX_MS, WRITE_MIN_MS, WRITE_PER_GLYPH_MS, WRITE_TOUCHDOWN_MS,
+    WRITE_TOUCHDOWN_PX, WRITE_WOBBLE_DEG,
 };
 /// Even the narrowest glyph costs this much of the schedule (an `i` is
 /// quick, not free), so a run of thin glyphs never flashes by.
@@ -99,47 +103,6 @@ pub fn schedule(text: &str, width_of: impl Fn(char) -> f64) -> Vec<Glyph> {
         .collect()
 }
 
-/// The line's measured width: where the nib ends up.
-pub fn line_width(glyphs: &[Glyph]) -> f64 {
-    glyphs.iter().map(|glyph| glyph.width).sum()
-}
-
-/// How much of the line is inked `elapsed_ms` in, as a fraction of its
-/// measured width.
-///
-/// The line is laid out in full and only the ink is clipped, so this is both
-/// how much of the title has been written and where the nib sits — the nib is
-/// always exactly at the edge of the ink. The schedule gives each glyph time
-/// in proportion to the width it also occupies, so the edge sweeps the words
-/// and pauses over the gaps the pen lifts across.
-pub fn inked(glyphs: &[Glyph], elapsed_ms: u32) -> f32 {
-    let total_width = line_width(glyphs);
-    if total_width <= 0.0 {
-        return 1.0;
-    }
-    // The last glyph to have finished before `elapsed_ms`; `-1` means the nib
-    // has not started writing yet.
-    let mut done = 0_usize;
-    let mut spent = 0_u32;
-    for (index, glyph) in glyphs.iter().enumerate() {
-        if glyph.ends_ms > elapsed_ms {
-            break;
-        }
-        done = index + 1;
-        spent = glyph.ends_ms;
-    }
-    let written: f64 = glyphs[..done].iter().map(|glyph| glyph.width).sum();
-    let in_flight = glyphs[done..]
-        .first()
-        .map(|next| {
-            let stroke = next.ends_ms.saturating_sub(spent).max(1);
-            let partial = elapsed_ms.saturating_sub(spent) as f64 / f64::from(stroke);
-            glyphs[done].width * partial.clamp(0.0, 1.0)
-        })
-        .unwrap_or(0.0);
-    ((written + in_flight) / total_width) as f32
-}
-
 /// One line box of a title as the page lays it out, in viewport pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LineBox {
@@ -149,53 +112,82 @@ pub struct LineBox {
     pub height: f64,
 }
 
-/// Where the edge of the ink is once `drawn` pixels of the title's lines are
-/// written: which line, and how far along it. Lines fill in reading order, so the
-/// nib finishes one line before it starts the next.
-pub fn ink_edge(lines: &[LineBox], drawn: f64) -> (usize, f64) {
-    let last = lines.len().saturating_sub(1);
-    let mut left = drawn.max(0.0);
-    for (index, line) in lines.iter().enumerate() {
-        if left <= line.width || index == last {
-            return (index, left.min(line.width));
-        }
-        left -= line.width;
-    }
-    (0, 0.0)
+/// Where the pen is in the schedule: the glyph being stroked, and how far through its
+/// stroke it is, 0 to 1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Stroke {
+    pub index: usize,
+    pub progress: f64,
 }
 
-/// The `clip-path` that shows a title written up to `x` along line `line`: every
-/// line before it whole, that line up to the nib, nothing after. The title is one
-/// inline element whose clip is laid on the box around all its lines, so the
-/// polygon is measured from that box's top-left corner.
-pub fn ink_clip(lines: &[LineBox], line: usize, x: f64) -> String {
-    let Some(current) = lines.get(line) else {
-        return "none".into();
-    };
-    let left = lines.iter().map(|l| l.left).fold(f64::INFINITY, f64::min);
-    let top = lines.iter().map(|l| l.top).fold(f64::INFINITY, f64::min);
-    let right = lines
+/// The stroke `elapsed_ms` into the schedule. Past the end it is the last glyph,
+/// finished; an empty title has none.
+pub fn stroke_at(glyphs: &[Glyph], elapsed_ms: u32) -> Option<Stroke> {
+    let last = glyphs.len().checked_sub(1)?;
+    let index = glyphs
         .iter()
-        .map(|l| l.left + l.width)
-        .fold(f64::NEG_INFINITY, f64::max)
-        - left;
-    let bleed = INK_BLEED_PX;
-    // The lines above the nib's are whole; the nib's line is written up to `x`.
-    let above = match line {
-        0 => -bleed,
-        _ => current.top - top,
+        .position(|glyph| glyph.ends_ms > elapsed_ms)
+        .unwrap_or(last);
+    let start = index
+        .checked_sub(1)
+        .map_or(0, |before| glyphs[before].ends_ms);
+    let stroke = glyphs[index].ends_ms.saturating_sub(start).max(1);
+    let progress = f64::from(elapsed_ms.saturating_sub(start)) / f64::from(stroke);
+    Some(Stroke {
+        index,
+        progress: progress.clamp(0.0, 1.0),
+    })
+}
+
+/// How many glyphs show `elapsed_ms` in: a glyph's ink appears as the nib passes
+/// its middle, so the letter is never half there.
+pub fn inked_count(glyphs: &[Glyph], elapsed_ms: u32) -> usize {
+    stroke_at(glyphs, elapsed_ms).map_or(0, |at| at.index + usize::from(at.progress >= 0.5))
+}
+
+/// How his hand sits on the paper: the nib pressed down (positive) or lifted
+/// (negative), in px, and his lean turned from its writing angle, in degrees.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hand {
+    pub dip_px: f64,
+    pub tilt_deg: f64,
+}
+
+impl Hand {
+    pub const REST: Hand = Hand {
+        dip_px: 0.0,
+        tilt_deg: 0.0,
     };
-    let below = current.top + current.height - top + bleed;
-    let nib = current.left - left + x;
-    format!(
-        "polygon(0px {t:.1}px, {r:.1}px {t:.1}px, {r:.1}px {a:.1}px, {n:.1}px {a:.1}px, \
-         {n:.1}px {b:.1}px, 0px {b:.1}px)",
-        t = -bleed,
-        r = right + bleed,
-        a = above,
-        n = nib,
-        b = below,
-    )
+    /// The flick as the last letter closes: up off the paper and turned away.
+    pub const FLICK: Hand = Hand {
+        dip_px: -WRITE_FLICK_PX,
+        tilt_deg: WRITE_FLICK_DEG,
+    };
+}
+
+/// His hand on `stroke`, `gap` when its glyph is a space. The nib presses in at
+/// each glyph's first stroke and eases off; over a gap it lifts. The lean wobbles
+/// from glyph to glyph, keyed to the glyph's place, so a title always writes the
+/// same way and never like a plotter.
+pub fn hand(stroke: Stroke, gap: bool) -> Hand {
+    let dip_px = match gap {
+        true => -WRITE_LIFT_PX,
+        false => WRITE_DIP_PX * (1.0 - stroke.progress / WRITE_DIP_SHARE).max(0.0),
+    };
+    Hand {
+        dip_px,
+        tilt_deg: WRITE_WOBBLE_DEG * (stroke.index as f64 * 2.4).sin(),
+    }
+}
+
+/// His hand `ms` after landing on the line: the nib touches down and the dip
+/// settles out over [`WRITE_TOUCHDOWN_MS`].
+pub fn touch_down(ms: u32) -> Hand {
+    let left = 1.0 - f64::from(ms) / f64::from(WRITE_TOUCHDOWN_MS);
+    Hand {
+        dip_px: WRITE_TOUCHDOWN_PX * left.max(0.0),
+        tilt_deg: 0.0,
+    }
 }
 
 /// What the pen does with a half-written row on this frame.
@@ -318,13 +310,6 @@ mod tests {
     }
 
     #[test]
-    fn empty_text_writes_nothing() {
-        assert!(schedule("", |_| 5.0).is_empty());
-        assert_eq!(line_width(&[]), 0.0);
-        assert_eq!(inked(&[], 0), 1.0, "no line is a finished line");
-    }
-
-    #[test]
     fn wide_glyphs_take_longer_than_thin_ones() {
         let glyphs = schedule("mim", |c| if c == 'm' { 20.0 } else { 4.0 });
         let strokes: Vec<u32> = glyphs
@@ -372,41 +357,92 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_inked_before_the_first_stroke_and_all_of_it_after_the_last() {
+    fn empty_text_writes_nothing() {
+        assert!(schedule("", |_| 5.0).is_empty());
+        assert_eq!(stroke_at(&[], 10), None);
+        assert_eq!(inked_count(&[], 10), 0);
+    }
+
+    #[test]
+    fn the_nib_is_on_one_glyph_at_a_time() {
         let glyphs = even("Milk");
-        assert_eq!(inked(&glyphs, 0), 0.0);
-        assert_eq!(inked(&glyphs, 10_000), 1.0);
+        let first = glyphs[0].ends_ms;
+        assert_eq!(
+            stroke_at(&glyphs, 0),
+            Some(Stroke {
+                index: 0,
+                progress: 0.0
+            })
+        );
+        assert_eq!(stroke_at(&glyphs, first / 2).map(|at| at.index), Some(0));
+        assert_eq!(
+            stroke_at(&glyphs, first).map(|at| at.index),
+            Some(1),
+            "on to the i"
+        );
+        assert_eq!(
+            stroke_at(&glyphs, 10_000),
+            Some(Stroke {
+                index: 3,
+                progress: 1.0
+            }),
+            "past the end: the k, finished"
+        );
     }
 
     #[test]
-    fn the_ink_only_ever_advances() {
-        let glyphs = even("Buy oat milk");
+    fn a_glyph_s_ink_appears_as_the_nib_passes_its_middle() {
+        let glyphs = even("Milk");
+        let first = glyphs[0].ends_ms;
+        assert_eq!(
+            inked_count(&glyphs, 0),
+            0,
+            "nothing before the first stroke"
+        );
+        assert_eq!(inked_count(&glyphs, first / 2 - 1), 0, "no half letters");
+        assert_eq!(inked_count(&glyphs, first / 2 + 1), 1);
+        assert_eq!(inked_count(&glyphs, 10_000), 4, "all of it after the last");
         let total = glyphs.last().expect("a line").ends_ms;
-        let mut previous = 0.0_f32;
-        for elapsed in (0..=total).step_by(3) {
-            let drawn = inked(&glyphs, elapsed);
-            assert!(drawn >= previous, "ink went backwards at {elapsed}");
-            previous = drawn;
-        }
-        assert_eq!(previous, 1.0, "the line finishes written");
+        let counts: Vec<usize> = (0..=total).map(|ms| inked_count(&glyphs, ms)).collect();
+        assert!(
+            counts.windows(2).all(|w| w[1] >= w[0]),
+            "ink only ever advances"
+        );
     }
 
     #[test]
-    fn a_glyph_is_inked_before_the_nib_leaves_it() {
-        // The nib sits at the edge of the ink, so by the time a glyph's own
-        // stroke ends that glyph must be fully written: no letter may appear
-        // after the pen has moved off it.
-        let glyphs = even("Buy oat milk");
-        let total = line_width(&glyphs);
-        let mut written = 0.0_f64;
-        for (index, glyph) in glyphs.iter().enumerate() {
-            written += glyph.width;
-            let inked = f64::from(inked(&glyphs, glyph.ends_ms)) * total;
+    fn the_nib_presses_at_each_glyph_and_lifts_over_a_gap() {
+        let at = |index, progress| Stroke { index, progress };
+        assert_eq!(hand(at(3, 0.0), false).dip_px, WRITE_DIP_PX, "first stroke");
+        assert_eq!(hand(at(3, 0.9), false).dip_px, 0.0, "eased off by the end");
+        assert_eq!(
+            hand(at(3, 0.5), true).dip_px,
+            -WRITE_LIFT_PX,
+            "up over the gap"
+        );
+        // A wobble, not a sway: bounded, different between neighbours, and the
+        // same each time the glyph is written.
+        let tilts: Vec<f64> = (0..8).map(|i| hand(at(i, 0.5), false).tilt_deg).collect();
+        assert!(tilts.iter().all(|tilt| tilt.abs() <= WRITE_WOBBLE_DEG));
+        assert!(
+            tilts.windows(2).all(|w| (w[1] - w[0]).abs() > 0.1),
+            "{tilts:?}"
+        );
+        assert_eq!(hand(at(5, 0.5), false), hand(at(5, 0.5), false));
+    }
+
+    #[test]
+    fn he_touches_down_and_settles() {
+        assert_eq!(touch_down(0).dip_px, WRITE_TOUCHDOWN_PX);
+        assert!(touch_down(WRITE_TOUCHDOWN_MS / 2).dip_px < WRITE_TOUCHDOWN_PX);
+        assert_eq!(touch_down(WRITE_TOUCHDOWN_MS), Hand::REST);
+        assert_eq!(touch_down(10 * WRITE_TOUCHDOWN_MS), Hand::REST);
+        const {
             assert!(
-                inked >= written - total * 1e-5,
-                "glyph {index} of {glyphs:?} is unwritten ({inked:.3} of {written:.3}) when the nib leaves it"
-            );
-        }
+                Hand::FLICK.dip_px < 0.0 && Hand::FLICK.tilt_deg > 0.0,
+                "up and away"
+            )
+        };
     }
 
     #[test]
@@ -419,7 +455,8 @@ mod tests {
         let total = glyphs.last().expect("a line").ends_ms;
         let stroke = space.ends_ms - glyphs[1].ends_ms;
         assert!(
-            f64::from(stroke) / f64::from(total) > space.width / line_width(&glyphs),
+            f64::from(stroke) / f64::from(total)
+                > space.width / glyphs.iter().map(|glyph| glyph.width).sum::<f64>(),
             "the space took {stroke}ms of {total}ms to cross {:.1}px",
             space.width
         );
@@ -429,64 +466,6 @@ mod tests {
             stroke > tight[2].ends_ms - tight[1].ends_ms,
             "{glyphs:?} vs {tight:?}"
         );
-    }
-
-    #[test]
-    fn the_ink_follows_the_page_and_not_the_clock() {
-        // The pen lifts across a gap, so the space costs more time than it
-        // covers: when its stroke ends the ink is only the two letters before
-        // it. A line advanced by the clock alone would have got further.
-        let glyphs = schedule("ab cd", |c| if c.is_whitespace() { 6.0 } else { 10.0 });
-        let space = glyphs[2];
-        let written = f64::from(inked(&glyphs, space.ends_ms)) * line_width(&glyphs);
-        assert!(
-            (written - 26.0).abs() < 1e-2,
-            "the gap cost {written:.2}px of ink where the two letters are 20px and the space 6px"
-        );
-    }
-
-    /// A title wrapped onto two ruled lines: 100px, then 60px, 24px apart.
-    fn two_lines() -> [LineBox; 2] {
-        [
-            LineBox {
-                left: 40.0,
-                top: 200.0,
-                width: 100.0,
-                height: 20.0,
-            },
-            LineBox {
-                left: 40.0,
-                top: 224.0,
-                width: 60.0,
-                height: 20.0,
-            },
-        ]
-    }
-
-    #[test]
-    fn the_nib_finishes_a_line_before_it_starts_the_next() {
-        let lines = two_lines();
-        assert_eq!(ink_edge(&lines, 0.0), (0, 0.0));
-        assert_eq!(ink_edge(&lines, 60.0), (0, 60.0));
-        assert_eq!(ink_edge(&lines, 100.0), (0, 100.0), "the end of line one");
-        assert_eq!(ink_edge(&lines, 130.0), (1, 30.0));
-        assert_eq!(ink_edge(&lines, 999.0), (1, 60.0), "never past the end");
-        assert_eq!(ink_edge(&[], 10.0), (0, 0.0));
-    }
-
-    #[test]
-    fn the_clip_shows_finished_lines_whole_and_the_current_one_to_the_nib() {
-        let lines = two_lines();
-        // Halfway along line two: line one whole (0..24 down), line two to 30px.
-        let clip = ink_clip(&lines, 1, 30.0);
-        assert_eq!(
-            clip,
-            "polygon(0px -2.0px, 102.0px -2.0px, 102.0px 24.0px, 30.0px 24.0px, \
-             30.0px 46.0px, 0px 46.0px)"
-        );
-        // Nothing written yet: the polygon has no width at the nib's line.
-        assert!(ink_clip(&lines, 0, 0.0).contains("0.0px -2.0px, 0.0px 22.0px"));
-        assert_eq!(ink_clip(&[], 0, 0.0), "none");
     }
 
     #[test]

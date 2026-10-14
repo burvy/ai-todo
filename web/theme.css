@@ -984,10 +984,12 @@ li.task-row:focus-within .delete-mark {
    lean never moves it (pen::row_nib_center). */
 .rambo.is-writing:not(.is-caret) {
   transform-origin: 50% 100%;
+  /* His hand: the nib's press or lift and the lean's wobble, set each frame from
+     the stroke he is on (pen::hand). */
   transform: translate(
       calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50%)
-    ) rotate(34deg) scale(0.78);
+      calc(var(--pen-y) - 50% + var(--nib-dip, 0px))
+    ) rotate(calc(34deg + var(--nib-tilt, 0deg))) scale(0.78);
 }
 
 /* Writing at caret (same as writing, but marked for future differentiation) */
@@ -1719,13 +1721,11 @@ li.task-row:focus-within .delete-mark {
 
 }
 
-/* Pen writing row animation: the title is inked under the nib. The reveal is a
-   clip-path, not a shrinking box, so a long title wraps onto the next ruled line
-   both while Rambo is writing and after he is done. The view layer
-   (tasks/write.rs) moves the clip itself, one frame at a time and line after
-   line, so the nib sits exactly at the edge of the ink: no transition here, or
-   the ink would trail behind the pen. Only the ink appears; the row is paper and
-   is simply there. */
+/* Pen writing row animation: the title is inked under the nib. While Rambo
+   writes, tasks/write.rs spells the title out one span a glyph, laid out whole
+   from the start so nothing reflows under the pen, and each glyph's ink fades in
+   as the nib passes its middle. Ink is the one thing that fades; the row is paper
+   and is simply there. A row waiting for him shows no ink at all. */
 .pen-title {
   display: inline;
 }
@@ -1734,8 +1734,13 @@ li.task-row:focus-within .delete-mark {
   clip-path: inset(0 100% 0 0);
 }
 
-.pen-writing .pen-title {
-  clip-path: inset(0 0 0 0);
+.ink-glyph {
+  opacity: 0;
+  transition: opacity var(--ink-fade-ms, 90ms) ease-out;
+}
+
+.ink-glyph.inked {
+  opacity: 1;
 }
 
 /* Per-tool ink: the gear menu's `data-pen` names the tool Rambo is holding and

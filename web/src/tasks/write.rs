@@ -2,8 +2,8 @@
 //! helpers measure the real rendered text so the nib traces what the user
 //! actually sees. All wasm-only: no DOM on the test path.
 
-use crate::pen::{Beat, LineBox};
-use crate::tuning::{WRITE_FINISH_MS, WRITE_SETTLE_MS};
+use crate::pen::{Beat, Hand, LineBox, Stroke};
+use crate::tuning::{INK_FADE_MS, INK_TICK_MS, WRITE_FINISH_MS, WRITE_FLICK_MS, WRITE_SETTLE_MS};
 use crate::{mascot, pen, sound};
 use leptos::prelude::{GetUntracked, ReadSignal, RwSignal, Set, WriteSignal};
 use std::collections::HashMap;
@@ -185,12 +185,105 @@ async fn fly(
     set_state.set(mascot::transition(&state.get_untracked(), event));
 }
 
+/// The title spelled out one span a glyph while Rambo writes it, so each glyph's
+/// ink can appear on its own. The text the view rendered is set aside, not
+/// replaced, and is put back as it was when this is dropped: the view keeps
+/// owning it, and whatever ends the writing leaves the title plain text.
+struct Spelled {
+    title: web_sys::Element,
+    kept: Vec<web_sys::Node>,
+    glyphs: Vec<web_sys::Element>,
+}
+
+impl Spelled {
+    fn new(title: &web_sys::Element, text: &str) -> Option<Self> {
+        let doc = title.owner_document()?;
+        let mut kept = Vec::new();
+        while let Some(node) = title.first_child() {
+            title.remove_child(&node).ok()?;
+            kept.push(node);
+        }
+        let glyphs = text
+            .chars()
+            .filter_map(|c| {
+                let glyph = doc.create_element("span").ok()?;
+                glyph.set_class_name("ink-glyph");
+                glyph.set_text_content(Some(&c.to_string()));
+                title.append_child(&glyph).ok()?;
+                Some(glyph)
+            })
+            .collect();
+        Some(Spelled {
+            title: title.clone(),
+            kept,
+            glyphs,
+        })
+    }
+
+    /// Show the ink of the first `count` glyphs.
+    fn ink(&self, count: usize) {
+        for glyph in self.glyphs.iter().take(count) {
+            glyph.class_list().add_1("inked").ok();
+        }
+    }
+
+    /// Where glyph `index` sits on the page now.
+    fn glyph_box(&self, index: usize) -> Option<LineBox> {
+        let rect = self.glyphs.get(index)?.get_bounding_client_rect();
+        Some(LineBox {
+            left: rect.left(),
+            top: rect.top(),
+            width: rect.width(),
+            height: rect.height(),
+        })
+    }
+}
+
+impl Drop for Spelled {
+    fn drop(&mut self) {
+        for glyph in &self.glyphs {
+            glyph.remove();
+        }
+        for node in &self.kept {
+            self.title.append_child(node).ok();
+        }
+    }
+}
+
+/// Set his hand: `--nib-dip` and `--nib-tilt` on him, which only the writing rule
+/// reads.
+fn set_hand(rambo: Option<&web_sys::CssStyleDeclaration>, hand: Hand) {
+    if let Some(style) = rambo {
+        style
+            .set_property("--nib-dip", &format!("{:.2}px", hand.dip_px))
+            .ok();
+        style
+            .set_property("--nib-tilt", &format!("{:.2}deg", hand.tilt_deg))
+            .ok();
+    }
+}
+
+/// Land: the nib touches down and the dip settles, then he rests a beat before
+/// the first stroke.
+async fn touch_down(rambo: Option<&web_sys::CssStyleDeclaration>) {
+    let mut ms = 0;
+    while ms < WRITE_SETTLE_MS {
+        set_hand(rambo, pen::touch_down(ms));
+        gloo_timers::future::TimeoutFuture::new(INK_TICK_MS).await;
+        ms += INK_TICK_MS;
+    }
+    set_hand(rambo, Hand::REST);
+}
+
 /// Write `row`'s title under the nib.
 ///
-/// The whole title is laid out from the start and only the ink is clipped, so
-/// it never reflows under the pen. Each frame moves the clip and the nib
-/// together, line after line: the nib is always at the edge of the ink, on the
-/// baseline of the line it is writing, and the pen scratches while it moves.
+/// The title is laid out whole from the start, one span a glyph, and only the
+/// ink appears: a glyph's ink fades in as the nib passes its middle, so it never
+/// reflows under the pen and wrapped lines need nothing of their own. Each frame
+/// the nib moves through the glyph it is stroking, on that glyph's baseline, his
+/// hand pressing at each glyph and lifting over each gap, and the pen scratches
+/// while it moves. He touches down when he lands and flicks off as the last
+/// letter closes.
 ///
 /// Interrupted (picked up, called to the caret, the row scrolled away), the ink
 /// waits at the letter he reached; once he is home and can see the row he flies
@@ -229,28 +322,40 @@ pub async fn write_row_title(
     let ink = pen::ink_for_pen(held_tool().as_deref());
     row.class_list().add_1(ink).ok();
     row.class_list().add_1("pen-writing").ok();
-    // The title starts with no ink at all, so the finished title is never on
-    // screen before the pen begins writing it: the row leaves `pen-pending`'s
-    // full clip and gains an empty one of its own before the browser paints.
+    style
+        .set_property("--ink-fade-ms", &format!("{INK_FADE_MS}ms"))
+        .ok();
+    // Every glyph starts with no ink, so the finished title is never on screen
+    // before the pen begins writing it: the row leaves `pen-pending`'s clip only
+    // once its glyphs are in.
+    let Some(spelled) = Spelled::new(&title, &text) else {
+        unhide();
+        return;
+    };
+    row.class_list().remove_1("pen-pending").ok();
+    let chars: Vec<char> = text.chars().collect();
     let glyphs = pen::schedule(&text, |c| (writing.width_of)(c));
     let total_ms = glyphs.last().map(|glyph| glyph.ends_ms).unwrap_or(0);
-    // Ink the title up to `elapsed` into the schedule, and put the nib at the
-    // edge of that ink.
-    let ink_to = |lines: &[LineBox], elapsed: u32| {
-        let width: f64 = lines.iter().map(|line| line.width).sum();
-        let (line, x) = pen::ink_edge(lines, f64::from(pen::inked(&glyphs, elapsed)) * width);
-        style
-            .set_property("clip-path", &pen::ink_clip(lines, line, x))
-            .ok();
-        if let Some(at) = lines.get(line) {
-            place_nib(pen_pos, at.left + x, baseline(at, &writing));
+    let rambo = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|doc| doc.query_selector(".rambo").ok().flatten())
+        .and_then(|rambo| inline_style(&rambo));
+    let rambo = rambo.as_ref();
+    // The nib through the glyph it is stroking, on that glyph's baseline.
+    let nib_to = |at: Stroke| {
+        if let Some(glyph) = spelled.glyph_box(at.index) {
+            place_nib(
+                pen_pos,
+                glyph.left + glyph.width * at.progress,
+                baseline(&glyph, &writing),
+            );
         }
     };
-    ink_to(&lines_of(&title), 0);
-    row.class_list().remove_1("pen-pending").ok();
+    if let Some(start) = pen::stroke_at(&glyphs, 0) {
+        nib_to(start);
+    }
 
-    // The nib touches down and rests a beat before the first stroke.
-    gloo_timers::future::TimeoutFuture::new(WRITE_SETTLE_MS).await;
+    touch_down(rambo).await;
     let (mut elapsed, mut held) = (0, 0);
     let mut scratch: Option<sound::Loop> = None;
     loop {
@@ -258,28 +363,38 @@ pub async fn write_row_title(
         let on_page = row.is_connected() && !lines.is_empty();
         let on_screen = on_page && in_view(row);
         let beat = pen::beat(&state.get_untracked(), on_screen, on_page, held);
-        // He scratches only while the nib moves on the paper.
-        if beat != Beat::Write
-            && let Some(sound) = scratch.take()
-        {
-            sound.stop();
+        // He scratches, and his hand moves, only while the nib is on the paper.
+        if beat != Beat::Write {
+            set_hand(rambo, Hand::REST);
+            if let Some(sound) = scratch.take() {
+                sound.stop();
+            }
         }
         match beat {
             Beat::Write => {
                 held = 0;
                 scratch = scratch.or_else(|| sound::looping(sound::Cue::Write));
-                ink_to(&lines, elapsed);
+                spelled.ink(pen::inked_count(&glyphs, elapsed));
+                if let Some(at) = pen::stroke_at(&glyphs, elapsed) {
+                    nib_to(at);
+                    let gap = chars.get(at.index).is_some_and(|c| c.is_whitespace());
+                    set_hand(rambo, pen::hand(at, gap));
+                }
                 if elapsed >= total_ms {
                     if let Some(sound) = scratch.take() {
                         sound.stop();
                     }
-                    // The last letter closes; he holds a beat before leaving.
+                    // The last letter closes with a flick off the paper, then he
+                    // holds a beat before leaving.
+                    set_hand(rambo, Hand::FLICK);
+                    gloo_timers::future::TimeoutFuture::new(WRITE_FLICK_MS).await;
+                    set_hand(rambo, Hand::REST);
                     gloo_timers::future::TimeoutFuture::new(WRITE_FINISH_MS).await;
                     break;
                 }
-                elapsed += crate::tuning::INK_TICK_MS;
+                elapsed += INK_TICK_MS;
             }
-            Beat::Hold => held += crate::tuning::INK_TICK_MS,
+            Beat::Hold => held += INK_TICK_MS,
             Beat::FlyHome => {
                 held += crate::tuning::FLY_MS;
                 fly(state, set_state, mascot::Event::FlyHome).await;
@@ -291,23 +406,28 @@ pub async fn write_row_title(
                     mascot::Event::WriteRow,
                 ));
                 // He lands on the letter he stopped at.
-                ink_to(&lines, elapsed);
+                if let Some(at) = pen::stroke_at(&glyphs, elapsed) {
+                    nib_to(at);
+                }
                 gloo_timers::future::TimeoutFuture::new(crate::tuning::FLY_MS).await;
                 set_state.set(mascot::transition(
                     &state.get_untracked(),
                     mascot::Event::WriteRow,
                 ));
+                touch_down(rambo).await;
             }
             Beat::Finish => break,
         }
-        gloo_timers::future::TimeoutFuture::new(crate::tuning::INK_TICK_MS).await;
+        gloo_timers::future::TimeoutFuture::new(INK_TICK_MS).await;
     }
     if let Some(sound) = scratch {
         sound.stop();
     }
-    // The clip has done its job and the row is plain text again, so the
-    // title keeps the ink it was written in only while Rambo is writing.
-    style.remove_property("clip-path").ok();
+    set_hand(rambo, Hand::REST);
+    // The title goes back to the text the view rendered, and keeps the ink it
+    // was written in only while Rambo is writing.
+    drop(spelled);
+    style.remove_property("--ink-fade-ms").ok();
     row.class_list().remove_1(ink).ok();
     row.class_list().remove_1("pen-writing").ok();
 }
