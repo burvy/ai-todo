@@ -177,7 +177,13 @@ pub fn WeekGrid(
                     <For each=days key=|day| *day let:day>
                         <div class="day" data-day=day>
                             <h3 class="day-name" class:today=day == 0>
-                                {day_label(&planner_context(&snapshot.get().tz), i64::from(day))}
+                                {move || {
+                                    // A closure, so the header is redrawn every minute.
+                                    // Reading now_minutes is what makes it follow the
+                                    // date: at midnight day 0 becomes the new today.
+                                    let _ = now_minutes.get();
+                                    day_label(&planner_context(&snapshot.get().tz), i64::from(day))
+                                }}
                             </h3>
                             <div class="hours">
                                 <Show
@@ -238,11 +244,14 @@ pub fn WeekGrid(
                                         on:pointerleave=long_press_stop
                                         on:pointercancel=long_press_stop
                                     >
-                                        {(day == 0).then(|| view! {
-                                            <span>{clock::format_time(
-                                u16::from(hour) * 60,
-                                settings.get().clock,
-                            )}</span>
+{(day == 0).then(|| view! {
+                                            // A closure over the clock setting, so choosing
+                                            // 12- or 24-hour in the gear menu redraws these
+                                            // at once instead of at the next page load.
+                                            <span>{move || clock::format_time(
+                                                u16::from(hour) * 60,
+                                                settings.get().clock,
+                                            )}</span>
                                         })}
                                     </div>
                                 </For>
@@ -385,11 +394,18 @@ fn planner_open_minutes(now_minutes: u16, start_hour: u8, end_hour: u8) -> u16 {
 }
 
 /// The handwritten label on a day column: short weekday and date in the
-/// planner's zone, counted from today, so day 0 is "today".
-fn day_label(ctx: &LocalContext, day: i64) -> String {
-    (ctx.today() + chrono::Duration::days(day))
+/// planner's zone, counted from `today`, so day 0 is "today". The date is
+/// passed in rather than read from the clock, so the label is a pure function
+/// of it: the header that draws this re-reads the clock every minute, and once
+/// midnight passes day 0 names the new day.
+fn day_label_on(today: chrono::NaiveDate, day: i64) -> String {
+    (today + chrono::Duration::days(day))
         .format("%a %-d")
         .to_string()
+}
+
+fn day_label(ctx: &LocalContext, day: i64) -> String {
+    day_label_on(ctx.today(), day)
 }
 /// A slip shorter than a full hour writes its words a size smaller (see
 /// theme.css on `.placement.short`); every slip holds them inside its edges.
@@ -1105,6 +1121,39 @@ mod tests {
         // still Sunday the 18th in New York.
         let late = zone("America/New_York", at_utc(2026, 10, 18, 23, 30));
         assert_eq!(day_label(&late, 0), "Sun 18");
+    }
+
+    #[test]
+    fn the_same_day_offset_names_the_next_day_once_now_passes_midnight() {
+        // 03:30 UTC is still 23:30 on Monday the 12th in New York; an hour later
+        // the zone has crossed midnight, so day 0 is Tuesday the 13th.
+        let before = zone("America/New_York", at_utc(2026, 10, 13, 3, 30));
+        let after = zone("America/New_York", at_utc(2026, 10, 13, 4, 30));
+        assert_eq!(day_label_on(before.today(), 0), "Mon 12");
+        assert_eq!(day_label_on(after.today(), 0), "Tue 13");
+        // The days past today keep counting from whichever day is now today.
+        assert_eq!(day_label_on(after.today(), 1), "Wed 14");
+    }
+
+    /// The pure test above cannot see the view, so this pins the wiring that
+    /// made the labels stale: both must be closures that read a signal. Source
+    /// is compared with the whitespace squeezed out, so indentation cannot break it.
+    #[test]
+    fn the_day_and_hour_labels_are_drawn_by_closures_not_frozen_values() {
+        let source: String = include_str!("week.rs")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        assert!(
+            source.contains(
+                "let_=now_minutes.get();day_label(&planner_context(&snapshot.get().tz),i64::from(day))"
+            ),
+            "the day header must re-read now_minutes, so it follows the date at midnight"
+        );
+        assert!(
+            source.contains("{move||clock::format_time(u16::from(hour)*60,settings.get().clock,)"),
+            "the hour label must be a closure over the clock setting, not a frozen value"
+        );
     }
 
     #[test]
