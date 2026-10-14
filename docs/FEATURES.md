@@ -321,7 +321,7 @@ tap Rambo's offer of the next free time, the earliest quarter hour from now insi
 working hours where the task's length fits without overlapping another slip. **Leave
 it**, Esc or turning back to the list leaves the task where it was; the page stays
 on the planner. The note floats over the planner's foot (the grid never moves for it)
-and slides in and out rather than popping. One day of a
+and slides up into place and back down out of sight rather than popping; it never fades. One day of a
 repeating series moves as that day only, as a dragged slip does. Choices for a slip
 Rambo is dropped on in the planner (move, longer or shorter, take it off) are
 (planned).
