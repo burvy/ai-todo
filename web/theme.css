@@ -1026,6 +1026,11 @@ a {
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: var(--text-sm);
+  /* The whole slip is the grab area, and none of it may hand a touch to the
+     browser: panning the page under a slip is done by hand in week.rs while
+     the slip is not yet lifted, and a lifted slip never starts the page flip. */
+  touch-action: none;
+  cursor: grab;
 }
 
 /* Short slips (under an hour) have no room for their words: the words move
@@ -1080,6 +1085,14 @@ a {
    rides the pointer as the ghost, also drawn on paper. */
 .placement.dragging {
   opacity: 0.45;
+}
+
+/* The time the held slip would get, riding the ghost beside its title. */
+.ghost-time {
+  margin-left: var(--space-1);
+  font-family: var(--font-hand-neat);
+  font-size: var(--text-xs);
+  color: var(--ink-soft);
 }
 
 .drag-ghost {
