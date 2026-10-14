@@ -22,11 +22,12 @@ recording), faded at both ends, peak-normalized, mono 44.1 kHz MP3.
 | `crumple.mp3` | *Food wrapper crumpling.ogg* | stilgar | Public domain | <https://commons.wikimedia.org/wiki/File:Food_wrapper_crumpling.ogg> | 2.58 s + 0.72 s |
 | `pin.mp3` | *Tack tack tack.ogg* | stephan | Public domain | <https://commons.wikimedia.org/wiki/File:Tack_tack_tack.ogg> | 0.00 s + 0.12 s |
 | `scribble.mp3` | *Writing with feltpen.ogg* | stephan | Public domain | <https://commons.wikimedia.org/wiki/File:Writing_with_feltpen.ogg> | 7.22 s + 0.70 s |
+| `toss.mp3` | *cloth1.ogg* (RPG Audio pack) | Kenney | CC0 (Kenney) | <https://kenney.nl/assets/rpg-audio> | whole clip, 0.66 s |
 
 Processing: `ffmpeg` (`-ss`/`-t` cut, `volume` to target peak, `afade` 30–50 ms
 in/out, `libmp3lame -b:a 96k`). Target peaks: `write` −14 dB, `tick` −11 dB,
 `page` −10 dB, `send` −13 dB, `delete` −11 dB, `drop` −12 dB, `listen` −11 dB,
-`crumple` −12 dB, `pin` −10 dB, `scribble` −12 dB.
+`crumple` −12 dB, `pin` −10 dB, `scribble` −12 dB, `toss` −12 dB.
 
 ## Fonts (`web/assets/fonts/`)
 
