@@ -220,3 +220,15 @@ Three presets in the settings; the mute stays in the gear menu:
 ### The desktop capture box (interview 2, Q1)
 - **Pinned on desktop too**: it stays on screen while the page scrolls, as on a phone.
 - **It is a piece of ripped scratch paper** laid on the desk, and Rambo really writes on it: as you type, his nib follows the words on that scrap. On submit the scrap's words go to the list, and a fresh scrap is laid down (see the paper cut-out x above).
+
+### Rambo's ask bubble (interview 3)
+The bubble is the small speech bubble with choice buttons that shows when Rambo is dropped on a task.
+- **Edit:** the edit sheet opens for that task *and* Rambo listens, so you can say the change ("make it Friday at 3") and Jev applies it. He is eager to help.
+- **Move:** the page turns to the planner and you tap an hour, and Rambo also offers the next free time. Not by carrying him to the planner.
+- **Dropped on a task's slip in the planner:** time choices: move, make it longer or shorter, take it off the planner.
+- **Dropped on an empty hour in the planner:** he starts a new task at that time and listens. Tapping or clicking anywhere else cancels it.
+- **Which choices the bubble keeps** (today Edit, Move, Done, Never mind; whether to add Delete) is not yet confirmed.
+
+### Crossing out (interview 3)
+- **Swiping left on a list task crosses it out realistically:** the ink stroke follows the finger as it moves.
+- **Not yet settled:** this clashes with the Gestures rules above (swipe right on a task deletes, swipe left turns the page to the planner). Open: whether crossing out means done or delete, what swipe right does now, and how the page is turned instead.
