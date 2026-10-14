@@ -525,6 +525,7 @@ pub fn ScrapCorner(
             node_ref=pile
             style:--strip-h=move || format!("{}px", fit.get().0)
             style:--strip-gap=format!("{STRIP_GAP_PX}px")
+            style:--scrap-ms=format!("{SCRAP_SLIDE_MS}ms")
             style:--pin-room=format!("{PIN_ROOM_PX}px")
         >
             <For

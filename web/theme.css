@@ -1664,6 +1664,21 @@ li.task-row:focus-within .delete-mark {
   main > * > * {
     flex: none;
   }
+
+  /* The pin's column stays at the top of the visible page while the list scrolls under it
+     (the page scrolls now, so an absolute column would scroll away with the rows): a sticky
+     first item, as tall as the visible page above the foot note, with a negative bottom
+     margin the size of its height so it takes no room in the column. */
+  .tasks-pane > .scrap-pile {
+    --pin-h: calc(100dvh - var(--capture-clear) - var(--page-foot-h));
+    order: -1;
+    position: sticky;
+    top: 0;
+    bottom: auto;
+    align-self: flex-end;
+    height: var(--pin-h);
+    margin: calc(-1 * (var(--gutter) + env(safe-area-inset-top, 0px))) 0 calc(-1 * var(--pin-h)) 0;
+  }
 }
 
 /* The note stays at the foot of the screen whatever the list's length: the last thing in the
