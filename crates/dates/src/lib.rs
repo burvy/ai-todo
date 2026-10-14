@@ -359,6 +359,12 @@ mod tests {
             ("in 2 hours", at(16, 3)),
             ("in two hours", at(16, 3)),
             ("in 3hrs", at(17, 3)),
+            ("in twenty minutes", at(14, 23)),
+            ("in forty five minutes", at(14, 48)),
+            ("in forty-five minutes", at(14, 48)),
+            ("in fifteen minutes", at(14, 18)),
+            ("in sixty minutes", at(15, 3)),
+            ("in twenty five minutes", at(14, 28)),
         ] {
             assert_eq!(after_of(text, &ctx), Some(expected), "{text}");
         }
@@ -394,6 +400,40 @@ mod tests {
             );
         }
         assert_eq!(resolve("in 3 days at 5pm", &ctx).time, Some(time(17, 0)));
+    }
+
+    #[test]
+    fn in_a_month_is_the_same_day_next_month_or_the_last_day_of_a_shorter_one() {
+        for (from, text, expected) in [
+            (date(2026, 10, 14), "in a month", date(2026, 11, 14)),
+            (date(2026, 10, 14), "in 2 months", date(2026, 12, 14)),
+            (date(2026, 12, 20), "in a month", date(2027, 1, 20)),
+            (date(2026, 1, 31), "in a month", date(2026, 2, 28)),
+            (date(2028, 1, 31), "in one month", date(2028, 2, 29)),
+        ] {
+            let ctx = ny(utc(from.year(), from.month(), from.day(), 15, 0));
+            assert_eq!(
+                resolve(text, &ctx).day,
+                Some(expected),
+                "{text} from {from}"
+            );
+        }
+    }
+
+    #[test]
+    fn spelled_numbers_up_to_sixty_are_durations_too() {
+        let ctx = ny(utc(2026, 10, 14, 14, 0));
+        for (text, minutes) in [
+            ("a twenty minutes walk", 20),
+            ("a forty five minutes call", 45),
+            ("thirty minutes", 30),
+            ("sixty minutes", 60),
+        ] {
+            assert_eq!(resolve(text, &ctx).duration_min, Some(minutes), "{text}");
+        }
+        // Not numbers this code reads: three hundred, twenty-ten, thirty one-tens.
+        assert!(resolve("seventy minutes", &ctx).duration_min.is_none());
+        assert!(resolve("twenty-ten minutes", &ctx).duration_min.is_none());
     }
 
     #[test]

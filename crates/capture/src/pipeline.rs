@@ -57,10 +57,7 @@ fn question(clause: &str, found: &[Candidate], ctx: &LocalContext) -> ClauseQues
         clause: clause.to_owned(),
         titles: title_spans(clause, found),
         days: phrases(found, |value| matches!(value, Value::Day(_))),
-        // A relative time ("in 10 minutes") is a time Jev can choose like a clock one.
-        times: phrases(found, |value| {
-            matches!(value, Value::Time(_) | Value::After(_))
-        }),
+        times: phrases(found, |value| matches!(value, Value::Time(_))),
         durations: phrases(found, |value| matches!(value, Value::Duration(_))),
         local_now: ctx.local(ctx.now).format("%A %Y-%m-%d %H:%M").to_string(),
     }
@@ -218,8 +215,7 @@ fn draft(
         _ => None,
     });
     let times = values(found, |value| match value {
-        Value::Time(time) => Some(Chosen::Clock(*time)),
-        Value::After(minutes) => Some(Chosen::After(*minutes)),
+        Value::Time(time) => Some(*time),
         _ => None,
     });
     let durations = values(found, |value| match value {
@@ -229,11 +225,15 @@ fn draft(
 
     let day = answer.day.and_then(|index| days.get(index).copied());
     let time = answer.time.and_then(|index| times.get(index).copied());
-    // "In 10 minutes" is an instant of its own: it pins the task whatever day was said.
-    let when = match time {
-        Some(Chosen::After(minutes)) => When::At(dates::after(minutes, ctx)),
-        Some(Chosen::Clock(time)) => dates::when_from(day, Some(time), deadline, ctx),
-        None => dates::when_from(day, None, deadline, ctx),
+    // "In 10 minutes" is unambiguous, so Jev is not asked: it is an instant of its own that
+    // pins the task whatever day or time was also said.
+    let relative = values(found, |value| match value {
+        Value::After(minutes) => Some(*minutes),
+        _ => None,
+    });
+    let when = match relative.first() {
+        Some(minutes) => When::At(dates::after(*minutes, ctx)),
+        None => dates::when_from(day, time, deadline, ctx),
     };
     let duration = answer
         .duration
@@ -248,13 +248,6 @@ fn draft(
         priority: answer.priority,
         source,
     })
-}
-
-/// The time Jev chose: a time of day, or so many minutes from now.
-#[derive(Clone, Copy)]
-enum Chosen {
-    Clock(NaiveTime),
-    After(u32),
 }
 
 fn values<T>(found: &[Candidate], pick: impl Fn(&Value) -> Option<T>) -> Vec<T> {
@@ -466,9 +459,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn jev_not_choosing_the_relative_time_leaves_the_task_floating() {
-        let out = drafts("Wake up in 10 minutes", answer()).await;
-        assert_eq!(out[0].when, When::Anytime);
+    async fn an_explicit_relative_time_sets_the_time_whatever_jev_picks() {
+        // Jev picked no time at all, and a different day.
+        let mut nothing = answer();
+        nothing.day = Some(0);
+        for picked in [answer(), nothing] {
+            let out = drafts("Wake up in 10 minutes", picked).await;
+            assert_eq!(out[0].title, "Wake up");
+            let then = ctx().now + chrono::Duration::minutes(10);
+            assert_eq!(out[0].when, When::At(then));
+        }
+        // Jev still classifies the rest: not a task, no draft.
+        let mut chit = answer();
+        chit.is_task = 0.0;
+        assert!(drafts("Wake up in 10 minutes", chit).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn spelled_numbers_set_the_time_too() {
+        for (text, minutes) in [
+            ("Stretch in twenty minutes", 20),
+            ("Stretch in forty five minutes", 45),
+            ("Stretch in forty-five minutes", 45),
+            ("Stretch in sixty minutes", 60),
+            ("Stretch in two hours", 120),
+        ] {
+            let out = drafts(text, answer()).await;
+            assert_eq!(out[0].title, "Stretch", "{text}");
+            assert_eq!(
+                out[0].when,
+                When::At(ctx().now + chrono::Duration::minutes(minutes)),
+                "{text}"
+            );
+        }
     }
 
     #[tokio::test]
