@@ -563,6 +563,11 @@ li.task-row.row-lifted {
   transform: translateX(calc(-100% - var(--gutter))) rotate(-8deg);
 }
 
+/* Tapped, waiting for the server: it stays put until the task is back. */
+.scrap-undo.taping {
+  cursor: progress;
+}
+
 .scrap-undo:active {
   transform: rotate(-3deg) scale(0.97);
 }

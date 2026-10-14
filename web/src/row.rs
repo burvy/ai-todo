@@ -112,6 +112,13 @@ pub fn ink_drawn(dx: f64, width: f64) -> f64 {
     (dx / width).clamp(0.0, 1.0)
 }
 
+/// Whether the timer of the stroke `lifted`, lifting away after a short swipe, may
+/// take the ink now on its row (`on_row`): only its own. A new swipe that starts
+/// before the lift ends draws a stroke of its own, and keeps it.
+pub fn lift_clears(lifted: u32, on_row: Option<u32>) -> bool {
+    on_row == Some(lifted)
+}
+
 /// Where a row's words sit inside the row, in px from its top-left corner: the
 /// first line's height, and from where the words start to where they end.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -166,8 +173,8 @@ pub fn lands_above(y: f64, top: f64, bottom: f64) -> bool {
 /// `view!` names these in both builds. On the host they are never called.
 pub mod dom {
     use super::{
-        Gesture, HOLD_MS, Release, Slot, Words, advance, ink_drawn, lands_above, release,
-        scribble_path,
+        Gesture, HOLD_MS, Release, Slot, Words, advance, ink_drawn, lands_above, lift_clears,
+        release, scribble_path,
     };
     use crate::tuning::{SCRIBBLE_FINISH_MS, SCRIBBLE_LIFT_MS};
     use std::cell::RefCell;
@@ -243,15 +250,34 @@ pub mod dom {
     const INK_EASE: &str = "cubic-bezier(0.23, 1, 0.32, 1)";
 
     /// The scribble's path on `row`, laid across it the first time it is asked for.
+    /// The number of the stroke on `row`, if it has one.
+    fn stroke_on(row: &web_sys::Element) -> Option<u32> {
+        row.query_selector(".scribble-ink")
+            .ok()
+            .flatten()?
+            .get_attribute("data-stroke")?
+            .parse()
+            .ok()
+    }
+
     fn ink_path(row: &web_sys::Element, width: f64) -> Option<web_sys::Element> {
-        if let Some(path) = row.query_selector(".scribble-ink path").ok().flatten() {
+        static NEXT_STROKE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        if let Some(path) = row
+            .query_selector(".scribble-ink:not(.lifting) path")
+            .ok()
+            .flatten()
+        {
             return Some(path);
         }
+        // A stroke still lifting away from the last swipe gives way to the new one.
+        remove_ink(row);
         let doc = row.owner_document()?;
         let height = row.get_bounding_client_rect().height();
         let seed = row.get_attribute("data-id").unwrap_or_default();
         let svg = doc.create_element_ns(Some(SVG), "svg").ok()?;
         svg.set_attribute("class", "scribble-ink").ok()?;
+        let stroke = NEXT_STROKE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        svg.set_attribute("data-stroke", &stroke.to_string()).ok()?;
         svg.set_attribute("viewBox", &format!("0 0 {width:.1} {height:.1}"))
             .ok()?;
         svg.set_attribute("preserveAspectRatio", "none").ok()?;
@@ -321,9 +347,17 @@ pub mod dom {
             ),
         )
         .ok();
-        if !commit {
+        if !commit && let Some(lifted) = stroke_on(row) {
+            if let Some(svg) = row.query_selector(".scribble-ink").ok().flatten() {
+                svg.class_list().add_1("lifting").ok();
+            }
             let row = row.clone();
-            gloo_timers::callback::Timeout::new(ms, move || remove_ink(&row)).forget();
+            gloo_timers::callback::Timeout::new(ms, move || {
+                if lift_clears(lifted, stroke_on(&row)) {
+                    remove_ink(&row);
+                }
+            })
+            .forget();
         }
     }
 
@@ -663,6 +697,16 @@ mod tests {
             "inside the letters' height: {points:?}"
         );
         assert!(points.len() > 15, "loops, not a line: {}", points.len());
+    }
+
+    #[test]
+    fn a_lift_only_takes_its_own_stroke() {
+        assert!(lift_clears(3, Some(3)), "its own ink lifts away");
+        assert!(
+            !lift_clears(3, Some(4)),
+            "a new swipe began within the lift: its ink stays"
+        );
+        assert!(!lift_clears(3, None), "already gone");
     }
 
     #[test]

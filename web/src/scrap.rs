@@ -32,6 +32,9 @@ pub struct Scrap {
     pub undo: Undo,
     /// Sliding away: its time is up and it can no longer be tapped.
     pub leaving: bool,
+    /// Tapped, and waiting for the server to take the task back: its clock stops,
+    /// and it stays until the server says yes.
+    pub taping: bool,
     ticket: u32,
 }
 
@@ -54,12 +57,26 @@ fn owns(scrap: Option<&Scrap>, ticket: u32) -> bool {
     scrap.is_some_and(|scrap| scrap.ticket == ticket)
 }
 
-/// The undo time left after one more tick. It only runs while the page is in view:
-/// switch apps and come back, and the scrap is still lying where it was.
-fn after_tick(left_ms: u32, hidden: bool) -> u32 {
-    match hidden {
+/// The undo time left after one more tick. It only runs while the page is in view
+/// and no tape-back is waiting: switch apps and come back, and the scrap is still
+/// lying where it was.
+fn after_tick(left_ms: u32, paused: bool) -> u32 {
+    match paused {
         true => left_ms,
         false => left_ms.saturating_sub(SCRAP_TICK_MS),
+    }
+}
+
+/// What lies in the corner once the server answers the tape-back of scrap `ticket`:
+/// taken back, it is gone; refused, it is laid down again to try once more. A
+/// newer scrap is left as it is.
+fn after_tape(scrap: Option<Scrap>, ticket: u32, taken_back: bool) -> Option<Scrap> {
+    match scrap {
+        Some(scrap) if scrap.ticket == ticket => (!taken_back).then_some(Scrap {
+            taping: false,
+            ..scrap
+        }),
+        other => other,
     }
 }
 
@@ -77,6 +94,7 @@ pub fn lay(scraps: RwSignal<Option<Scrap>>, title: String, undo: Undo) {
         title,
         undo,
         leaving: false,
+        taping: false,
         ticket,
     }));
     let still_ours = move || scraps.with_untracked(|scrap| owns(scrap.as_ref(), ticket));
@@ -87,7 +105,8 @@ pub fn lay(scraps: RwSignal<Option<Scrap>>, title: String, undo: Undo) {
             if !still_ours() {
                 return;
             }
-            left_ms = after_tick(left_ms, page_hidden());
+            let taping = scraps.with_untracked(|scrap| scrap.as_ref().is_some_and(|s| s.taping));
+            left_ms = after_tick(left_ms, page_hidden() || taping);
         }
         scraps.update(|scrap| {
             if let Some(scrap) = scrap.as_mut() {
@@ -120,16 +139,20 @@ where
     result
 }
 
-/// Tape the scrap's task back, then show the list the server answers with.
+/// Tape the scrap's task back, then show the list the server answers with. The
+/// scrap stays until the server has the task again, so a refused tape-back keeps
+/// the undo.
 async fn tape_back(
-    undo: Undo,
+    scrap: Scrap,
+    scraps: RwSignal<Option<Scrap>>,
     set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
 ) {
-    let result = match undo {
+    let result = match scrap.undo {
         Undo::Task(task) => api::restore_task(&task).await,
         Undo::Day { series, date } => api::clear_occurrence(&series, &date.to_string()).await,
     };
+    scraps.update(|corner| *corner = after_tape(corner.take(), scrap.ticket, result.is_ok()));
     match result {
         Ok(snapshot) => set_snapshot.set(snapshot),
         Err(error) => set_error.set(Some(series_note(&error))),
@@ -145,20 +168,26 @@ pub fn ScrapCorner(
 ) -> impl IntoView {
     move || {
         scraps.get().map(|scrap| {
-            let undo = scrap.undo.clone();
+            let tapped = scrap.clone();
             let label = format!("Tape \"{}\" back", scrap.title);
             view! {
                 <button
                     type="button"
                     class="scrap-undo"
                     class:leaving=scrap.leaving
+                    class:taping=scrap.taping
                     style:--scrap-ms=format!("{SCRAP_SLIDE_MS}ms")
                     aria-label=label
-                    disabled=scrap.leaving
+                    aria-busy=scrap.taping.to_string()
+                    disabled=scrap.leaving || scrap.taping
                     on:click=move |_| {
-                        scraps.set(None);
-                        let undo = undo.clone();
-                        wasm_bindgen_futures::spawn_local(tape_back(undo, set_snapshot, set_error));
+                        scraps.update(|corner| {
+                            if let Some(corner) = corner.as_mut() {
+                                corner.taping = true;
+                            }
+                        });
+                        let tapped = tapped.clone();
+                        wasm_bindgen_futures::spawn_local(tape_back(tapped, scraps, set_snapshot, set_error));
                     }
                 >
                     <s>{scrap.title.clone()}</s>
@@ -218,6 +247,48 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_tape_back_keeps_the_scrap() {
+        let tapped = Scrap {
+            title: "Gym".into(),
+            undo: Undo::Day {
+                series: "s".into(),
+                date: NaiveDate::from_ymd_opt(2026, 10, 15).unwrap(),
+            },
+            leaving: false,
+            taping: true,
+            ticket: 3,
+        };
+        assert_eq!(
+            after_tape(Some(tapped.clone()), 3, true),
+            None,
+            "taken back"
+        );
+        assert_eq!(
+            after_tape(Some(tapped.clone()), 3, false),
+            Some(Scrap {
+                taping: false,
+                ..tapped.clone()
+            }),
+            "refused: laid down again to tap once more"
+        );
+        let newer = Scrap {
+            ticket: 4,
+            taping: false,
+            ..tapped
+        };
+        assert_eq!(
+            after_tape(Some(newer.clone()), 3, true),
+            Some(newer),
+            "a newer delete's scrap stays"
+        );
+        assert_eq!(
+            after_tick(SCRAP_UNDO_MS, true),
+            SCRAP_UNDO_MS,
+            "paused while taping"
+        );
+    }
+
+    #[test]
     fn a_timer_only_clears_its_own_scrap() {
         let scrap = |ticket| Scrap {
             title: "Gym".into(),
@@ -226,6 +297,7 @@ mod tests {
                 date: NaiveDate::from_ymd_opt(2026, 10, 15).unwrap(),
             },
             leaving: false,
+            taping: false,
             ticket,
         };
         assert!(owns(Some(&scrap(3)), 3));
