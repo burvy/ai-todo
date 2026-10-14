@@ -81,3 +81,9 @@ Read `git diff origin/main` top to bottom and check:
 ## Report
 
 Open one PR. In your done message give: the PR number and head commit, what changed (short), how you tested it, and anything a reviewer should look at. Say plainly if something failed or was skipped.
+
+## Team agents: status and context (if you work on the hive floor)
+
+- Read `Z:/Z---Misc/AITODO/hive/STATUS.md` at the start of every task and whenever you go idle. Work only on the job your row names; if your row is wrong, tell god.
+- End every message to god (and every done report) with a line `ctx: NN%`: how full your context window is. Estimate if your tool does not show it.
+- At 50% or more, put `[ctx NN%]` in the subject. Finish your current step, then wait: god asks the human to compact you. Never start a big task above 50%.
