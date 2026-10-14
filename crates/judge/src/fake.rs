@@ -121,6 +121,12 @@ fn is_instruction(lower: &str) -> bool {
     /// Ways to ask someone else to do it: "can you", "could someone".
     const ASKS: [&str; 4] = ["can", "could", "would", "will"];
     const ASKED: [&str; 4] = ["you", "someone", "somebody", "u"];
+    /// Verbs of thinking, feeling and perceiving. Skipping the asks helps only
+    /// when an action follows: "can you fix the sink" is a chore, but "can you
+    /// believe it" comments on the news, so a mind verb there is chit-chat.
+    const MENTAL_VERBS: &[&str] = &[
+        "believe", "imagine", "guess", "think", "see", "hear", "feel", "remember", "tell", "know",
+    ];
     /// Phrases that hand the task to the app: "remind me to", "don't forget to".
     const HANDOFFS: [&[&str]; 3] = [
         &["remind", "me", "to"],
@@ -240,7 +246,14 @@ fn is_instruction(lower: &str) -> bool {
     loop {
         rest = match rest {
             [first, tail @ ..] if LEAD.contains(first) => tail,
-            [ask, who, tail @ ..] if ASKS.contains(ask) && ASKED.contains(who) => tail,
+            [ask, who, tail @ ..]
+                if ASKS.contains(ask)
+                    && ASKED.contains(who)
+                    && verb_requested(&LEAD, tail)
+                        .is_none_or(|verb| !MENTAL_VERBS.contains(&verb)) =>
+            {
+                tail
+            }
             _ => match HANDOFFS.iter().find(|handoff| rest.starts_with(handoff)) {
                 Some(handoff) => &rest[handoff.len()..],
                 None => break,
@@ -252,6 +265,12 @@ fn is_instruction(lower: &str) -> bool {
         && rest.first().is_some_and(|first| {
             !NOT_A_VERB.contains(first) && !is_gerund(first) && !is_past_form(first)
         })
+}
+
+/// The verb a request acts on: the first word after "can you" that is not a
+/// lead-in, so "can you please fix the sink" still finds "fix".
+fn verb_requested<'a>(lead: &[&str], words: &'a [&str]) -> Option<&'a str> {
+    words.iter().find(|word| !lead.contains(word)).copied()
 }
 
 /// "watching", "studying", but not "bring" or "string": an -ing word is a gerund when
@@ -471,6 +490,36 @@ mod tests {
         ] {
             assert!(is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
         }
+    }
+
+    /// A request is a task only when it asks for an action. A mind verb after
+    /// the ask is the speaker reacting, not reordering their week.
+    #[test]
+    fn a_request_is_an_instruction_only_for_an_action_verb() {
+        for clause in [
+            "Can you believe it",
+            "could you imagine that",
+            "would you hear me out",
+            "can you think about it",
+        ] {
+            assert!(is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
+        }
+        for clause in ["can you call mom", "could you fix the sink"] {
+            assert!(!is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_request_is_a_task_only_for_an_action_verb() {
+        let questions = [
+            question("Can you believe it", &["Can you believe it"], &[]),
+            question("could you imagine that", &["could you imagine that"], &[]),
+            question("can you call mom", &["Can you call mom"], &[]),
+        ];
+        let answers = FakeJudge.judge(&questions).await.unwrap();
+        assert_eq!(answers[0].is_task, 0.0);
+        assert_eq!(answers[1].is_task, 0.0);
+        assert_eq!(answers[2].is_task, 1.0);
     }
 
     #[tokio::test]

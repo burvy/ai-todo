@@ -40,7 +40,9 @@ when it is an instruction. An instruction is a clause whose first real word, aft
 such as "please", "also" or "just" and asks such as "can you", is not a pronoun, article,
 preposition, auxiliary or conjunction, a gerund or a past form: so "walk the dog", "fix the
 sink" and "feed the cat" are tasks and "I think", "for biology" and "the design presentation is coming up"
-are not. "Remind me to" and "don't forget to" are skipped like fillers; what follows must still be an
+are not. The asks help only when an action verb follows: "can you call mom" is a task,
+while "can you believe it" with a mind verb like "believe" or "imagine" stays chit-chat.
+"Remind me to" and "don't forget to" are skipped like fillers; what follows must still be an
 instruction of two words or more ("Groceries" alone is too little).
 b. Not visible; covered by `crates/judge/src/fake.rs` and
 `crates/capture/tests/golden.rs`.
