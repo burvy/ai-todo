@@ -59,13 +59,24 @@ fn owns(pile: &[Scrap], ticket: u32) -> bool {
     pile.iter().any(|scrap| scrap.ticket == ticket)
 }
 
-/// The corner with `scrap` laid at the bottom. Past [`SCRAP_MAX`] the oldest goes:
-/// the corner never fills the page.
-fn laid(mut pile: Vec<Scrap>, scrap: Scrap) -> Vec<Scrap> {
+/// The corner with `scrap` laid at the bottom, and the tickets of the scraps it sent
+/// away. Only scraps still lying count against [`SCRAP_MAX`]: the oldest one over is
+/// marked leaving, so it slides off like any scrap whose time is up, and is removed
+/// later. One being taped back is never pushed out from under the finger.
+fn laid(mut pile: Vec<Scrap>, scrap: Scrap) -> (Vec<Scrap>, Vec<u32>) {
     pile.push(scrap);
-    let extra = pile.len().saturating_sub(SCRAP_MAX);
-    pile.drain(..extra);
-    pile
+    let mut pushed = Vec::new();
+    while pile.iter().filter(|scrap| !scrap.leaving).count() > SCRAP_MAX {
+        let Some(oldest) = pile
+            .iter_mut()
+            .find(|scrap| !scrap.leaving && !scrap.taping)
+        else {
+            break;
+        };
+        oldest.leaving = true;
+        pushed.push(oldest.ticket);
+    }
+    (pile, pushed)
 }
 
 /// Change the scrap laid with `ticket`, if it is still there.
@@ -114,7 +125,17 @@ pub fn lay(scraps: RwSignal<Vec<Scrap>>, title: String, undo: Undo) {
         taping: false,
         ticket,
     };
-    scraps.update(|pile| *pile = laid(std::mem::take(pile), scrap));
+    let mut pushed = Vec::new();
+    scraps.update(|pile| {
+        let (next, away) = laid(std::mem::take(pile), scrap);
+        (*pile, pushed) = (next, away);
+    });
+    for gone in pushed {
+        wasm_bindgen_futures::spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(SCRAP_SLIDE_MS).await;
+            scraps.update(|pile| pile.retain(|scrap| scrap.ticket != gone));
+        });
+    }
     let still_ours = move || scraps.with_untracked(|pile| owns(pile, ticket));
     wasm_bindgen_futures::spawn_local(async move {
         let mut left_ms = SCRAP_UNDO_MS;
@@ -293,18 +314,47 @@ mod tests {
 
     #[test]
     fn quick_deletes_keep_their_own_scraps_newest_at_the_bottom() {
-        let pile = laid(laid(Vec::new(), scrap(1)), scrap(2));
+        let pile = lay_all([1, 2]);
         assert_eq!(tickets(&pile), [1, 2], "both are there, each with its task");
         assert_ne!(pile[0].title, pile[1].title);
     }
 
+    fn lay_all(tickets: impl IntoIterator<Item = u32>) -> Vec<Scrap> {
+        tickets
+            .into_iter()
+            .fold(Vec::new(), |pile, n| laid(pile, scrap(n)).0)
+    }
+
+    fn lying(pile: &[Scrap]) -> Vec<u32> {
+        pile.iter()
+            .filter(|scrap| !scrap.leaving)
+            .map(|scrap| scrap.ticket)
+            .collect()
+    }
+
     #[test]
-    fn the_corner_never_holds_more_than_the_most_it_may() {
+    fn a_scrap_over_the_most_slides_away_instead_of_popping() {
         let most = SCRAP_MAX as u32;
-        let pile = (0..most + 2).fold(Vec::new(), |pile, n| laid(pile, scrap(n)));
-        assert_eq!(pile.len(), SCRAP_MAX);
-        assert_eq!(pile.last().map(|s| s.ticket), Some(most + 1));
-        assert_eq!(pile[0].ticket, 2, "the oldest went first");
+        let pile = lay_all(0..most);
+        let (pile, pushed) = laid(pile, scrap(most));
+        assert_eq!(pushed, [0], "the oldest is sent away");
+        assert_eq!(pile.len(), SCRAP_MAX + 1, "still there to slide off");
+        assert!(pile[0].leaving, "marked leaving, not removed");
+        assert_eq!(lying(&pile).len(), SCRAP_MAX, "only the lying ones count");
+        // A leaving scrap does not count: the next one pushes out the next oldest.
+        let (pile, pushed) = laid(pile, scrap(most + 1));
+        assert_eq!(pushed, [1]);
+        assert_eq!(lying(&pile), (2..most + 2).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_scrap_being_taped_back_is_not_pushed_out() {
+        let most = SCRAP_MAX as u32;
+        let mut pile = lay_all(0..most);
+        pile[0].taping = true;
+        let (pile, pushed) = laid(pile, scrap(most));
+        assert_eq!(pushed, [1], "the oldest that is not mid tape-back goes");
+        assert!(!pile[0].leaving, "the one being taped stays put");
     }
 
     #[test]
