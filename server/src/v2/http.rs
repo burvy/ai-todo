@@ -243,16 +243,22 @@ fn zone_from_env(default_tz: Option<String>, tz_name: Option<String>) -> Tz {
         .unwrap_or(chrono_tz::America::New_York)
 }
 
-/// The Google client id from `GOOGLE_CLIENT_ID`. `None`, which is local mode, when the
-/// variable is unset or blank: `rambl.env` turns sign-in off by leaving the value empty.
-fn google_client_id_from_env() -> Option<String> {
+/// The Google client id from `GOOGLE_CLIENT_ID`; `None`, local mode, when it is unset.
+///
+/// Set but blank is an `Err` for `main` to stop on. Local mode gives every visitor one
+/// shared task list, so a public server whose id was blanked must not slide into it.
+pub fn google_client_id_from_env() -> Result<Option<String>, String> {
     client_id_setting(std::env::var("GOOGLE_CLIENT_ID").ok().as_deref())
 }
 
-fn client_id_setting(raw: Option<&str>) -> Option<String> {
-    raw.map(str::trim)
-        .filter(|id| !id.is_empty())
-        .map(str::to_owned)
+fn client_id_setting(raw: Option<&str>) -> Result<Option<String>, String> {
+    match raw.map(str::trim) {
+        None => Ok(None),
+        Some("") => Err(
+            "GOOGLE_CLIENT_ID is set but empty: unset it for local mode or give a client id".into(),
+        ),
+        Some(id) => Ok(Some(id.to_owned())),
+    }
 }
 
 /// The emails from `RAMBL_ADMIN_EMAILS` (a comma-separated list), lower-cased.
@@ -269,11 +275,12 @@ fn admin_emails_from_env() -> Option<Vec<String>> {
 
 pub fn router(app: App<Box<dyn Store>>, judge: AnyJudge) -> Router {
     let client_id = google_client_id_from_env();
-    let local = client_id.is_none();
+    // `main` has already refused a blank id; failing closed here means a blank id still
+    // keeps visitors apart, with a verifier that refuses everyone.
+    let local = matches!(client_id, Ok(None));
     let verifier: Box<dyn TokenVerifier> = match client_id {
-        Some(id) => Box::new(auth::GoogleVerifier::new(id)),
-        // Never reached: in local mode every request is the local user.
-        None => Box::new(auth::FakeVerifier {
+        Ok(Some(id)) => Box::new(auth::GoogleVerifier::new(id)),
+        _ => Box::new(auth::FakeVerifier {
             answer: Err("sign-in is disabled".into()),
         }),
     };
@@ -406,7 +413,7 @@ fn build_router_with(
         verifier,
         local,
         caps,
-        google_client_id: google_client_id_from_env(),
+        google_client_id: google_client_id_from_env().ok().flatten(),
         admin_emails,
         trusted_proxies,
         local_login,
@@ -3326,13 +3333,16 @@ mod tests {
         (status, body)
     }
 
-    /// A blank `GOOGLE_CLIENT_ID` is the same as none: local mode, and `/config` null.
+    /// Unset is local mode; set but blank stops startup rather than quietly giving every
+    /// visitor one shared task list.
     #[test]
-    fn a_blank_client_id_means_local_mode() {
-        for off in [None, Some(""), Some("  ")] {
-            assert_eq!(client_id_setting(off), None, "{off:?}");
+    fn a_blank_client_id_is_refused_and_unset_is_local_mode() {
+        assert_eq!(client_id_setting(None), Ok(None));
+        for blank in ["", "  "] {
+            let refused = client_id_setting(Some(blank)).expect_err(blank);
+            assert!(refused.contains("set but empty"), "{refused}");
         }
-        assert_eq!(client_id_setting(Some(" abc ")).as_deref(), Some("abc"));
+        assert_eq!(client_id_setting(Some(" abc ")), Ok(Some("abc".into())));
     }
 
     /// Startup refuses the bypass next to a configured proxy, and ignores anything but `1`.
