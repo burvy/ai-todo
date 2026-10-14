@@ -158,19 +158,21 @@ impl Spring {
         while left > 0.0 {
             let h = left.min(SUBSTEP);
             left -= h;
+            // The push lifts only a leaf that is not yet at its reach: one falling from
+            // beyond it is not held up, it falls onto whatever pushes.
+            let push = push.filter(|push| self.x <= push.reach);
             let accel = -pull.omega * pull.omega * (self.x - target)
                 - 2.0 * pull.zeta * pull.omega * self.v
                 + push.map_or(0.0, |push| push.accel);
-            let before = self.x;
             self.v += accel * h;
             self.x += self.v * h;
             if !(0.0..=1.0).contains(&self.x) {
                 self.x = self.x.clamp(0.0, 1.0);
                 self.v *= -FLIP_WALL_BOUNCE;
             }
-            // A leaf already past the reach is not pulled down to it: the push just adds nothing.
+            // Lifted to the reach, it stops there: a push cannot complete a turn.
             if let Some(push) = push.filter(|push| self.x > push.reach) {
-                self.x = self.x.min(before.max(push.reach));
+                self.x = push.reach;
                 self.v = self.v.min(0.0);
             }
         }
@@ -263,6 +265,30 @@ mod tests {
             leaf.step(0.0, pull, 1.0 / 60.0);
         }
         assert!(leaf.at_rest(0.0), "released, it settles flat again");
+    }
+
+    #[test]
+    fn a_leaf_falling_from_past_the_reach_falls_onto_what_pushes_it() {
+        let pull = Pull {
+            omega: crate::tuning::FLIP_FALL_OMEGA,
+            zeta: crate::tuning::FLIP_FALL_DAMPING,
+        };
+        let mut leaf = Spring::new(0.8, -1.0);
+        let push = Push {
+            accel: 400.0,
+            reach: 0.3,
+        };
+        let mut lowest = leaf.x;
+        for _ in 0..60 {
+            let before = leaf.x;
+            leaf.step_with_push(0.0, pull, Some(push), 1.0 / 60.0);
+            assert!(before - leaf.x < 0.5, "no jump in one frame");
+            lowest = lowest.min(leaf.x);
+        }
+        assert!(
+            lowest <= push.reach,
+            "it fell to the reach within a second: {lowest}"
+        );
     }
 
     #[test]
