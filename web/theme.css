@@ -1781,6 +1781,8 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 .placement {
   position: absolute;
   z-index: var(--layer-page);
+  /* Longer or shorter from Rambo's bubble, the slip stretches rather than jumps. */
+  transition: height var(--dur) var(--arrive-ease);
   left: 0;
   right: 0;
   padding: var(--space-1);

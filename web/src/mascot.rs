@@ -278,18 +278,40 @@ pub enum Choice {
     Edit,
     Move,
     Done,
+    /// A quarter hour more (a slip in the planner).
+    Longer,
+    /// A quarter hour less (a slip in the planner).
+    Shorter,
 }
 
 impl Choice {
-    /// The bubble's buttons, in order.
-    pub const ALL: [Choice; 3] = [Choice::Edit, Choice::Move, Choice::Done];
-
     pub fn label(self) -> &'static str {
         match self {
             Choice::Edit => "Edit",
             Choice::Move => "Move",
             Choice::Done => "Done",
+            Choice::Longer => "Longer",
+            Choice::Shorter => "Shorter",
         }
+    }
+}
+
+/// What he was dropped on, which decides what he offers (Interview 3, items 2 and 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asked {
+    /// A row of the list: the task itself.
+    Row,
+    /// A slip in the planner: its time. One day of a repeating series has its length
+    /// from the series, so it can only be moved.
+    Slip { repeats: bool },
+}
+
+/// The bubble's buttons for what he was dropped on, in order.
+pub fn offered(on: Asked) -> &'static [Choice] {
+    match on {
+        Asked::Row => &[Choice::Edit, Choice::Move, Choice::Done],
+        Asked::Slip { repeats: false } => &[Choice::Move, Choice::Longer, Choice::Shorter],
+        Asked::Slip { repeats: true } => &[Choice::Move],
     }
 }
 
@@ -1586,8 +1608,26 @@ mod tests {
 
     #[test]
     fn he_offers_edit_move_and_done_and_nothing_else() {
-        let labels: Vec<&str> = Choice::ALL.iter().map(|c| c.label()).collect();
-        assert_eq!(labels, ["Edit", "Move", "Done"]);
+        let labels = |on| offered(on).iter().map(|c| c.label()).collect::<Vec<_>>();
+        assert_eq!(labels(Asked::Row), ["Edit", "Move", "Done"]);
+    }
+
+    #[test]
+    fn on_a_slip_he_offers_its_time_and_a_repeat_only_moves() {
+        let slip = offered(Asked::Slip { repeats: false });
+        assert_eq!(slip, [Choice::Move, Choice::Longer, Choice::Shorter]);
+        assert_eq!(offered(Asked::Slip { repeats: true }), [Choice::Move]);
+        // Editing or ticking the task is the list's business, never a slip's.
+        for on in [
+            Asked::Slip { repeats: false },
+            Asked::Slip { repeats: true },
+        ] {
+            assert!(
+                !offered(on)
+                    .iter()
+                    .any(|c| matches!(c, Choice::Edit | Choice::Done))
+            );
+        }
     }
 
     #[test]

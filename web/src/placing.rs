@@ -8,6 +8,7 @@ use todo_core::{LocalContext, Placement, Snapshot, TaskId};
 use crate::clock;
 use crate::settings::Settings;
 use crate::week::{Slot, drop_start, planner_context};
+use todo_core::tuning::TASK_MAX_DURATION_MIN;
 
 /// The step a free time is looked for in, and the shortest stretch it makes room for.
 const QUARTER: u16 = 15;
@@ -40,6 +41,26 @@ pub(crate) fn next_free(
                 .map(move |minutes| Slot { day, minutes })
         })
         .find(|slot| drop_start(ctx, slot.day, slot.minutes).is_some_and(free))
+}
+
+/// Which way a slip's length goes: a quarter hour more or less.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stretch {
+    Longer,
+    Shorter,
+}
+
+/// A task's length after a stretch: a quarter hour more, up to the longest a task may
+/// be, or a quarter hour less, never under a quarter hour (a task already shorter than
+/// that keeps its length).
+pub(crate) fn stretched(minutes: u16, stretch: Stretch) -> u16 {
+    match stretch {
+        Stretch::Longer => minutes
+            .saturating_add(QUARTER)
+            .min(TASK_MAX_DURATION_MIN)
+            .max(minutes),
+        Stretch::Shorter => minutes.saturating_sub(QUARTER).max(QUARTER.min(minutes)),
+    }
 }
 
 /// The note at the planner's top while a task waits to be placed: what to do, Rambo's
@@ -203,6 +224,31 @@ mod tests {
                 .find(|slot| fits(*slot));
             let offer = next_free(&placements, &moving, minutes, &ctx, hours, days);
             assert_eq!(offer, earliest, "{placements:?} {hours:?} {minutes}");
+        }
+    }
+
+    #[test]
+    fn a_stretch_moves_a_quarter_hour_the_way_asked_and_stays_a_task_length() {
+        for minutes in 0..=TASK_MAX_DURATION_MIN + 20 {
+            let longer = stretched(minutes, Stretch::Longer);
+            let shorter = stretched(minutes, Stretch::Shorter);
+            assert!(
+                longer >= minutes && longer - minutes <= QUARTER,
+                "{minutes}"
+            );
+            assert!(
+                shorter <= minutes && minutes - shorter <= QUARTER,
+                "{minutes}"
+            );
+            assert!(longer <= TASK_MAX_DURATION_MIN.max(minutes), "{minutes}");
+            assert!(shorter >= QUARTER.min(minutes), "{minutes}");
+            // Inside the limits it is a whole quarter hour.
+            if minutes + QUARTER <= TASK_MAX_DURATION_MIN {
+                assert_eq!(longer, minutes + QUARTER);
+            }
+            if minutes >= 2 * QUARTER {
+                assert_eq!(shorter, minutes - QUARTER);
+            }
         }
     }
 
