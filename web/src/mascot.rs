@@ -202,6 +202,40 @@ pub fn wants(state: &State, gesture: &crate::gesture::Gesture) -> bool {
     )
 }
 
+/// What he offers to do with a task he was dropped on (Interview 4, item 8). No
+/// Delete: deleting is the scribble-out. No "Never mind" either: tapping anywhere
+/// off the bubble, him included, is never mind ([`asking_dismissed_by`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Choice {
+    Edit,
+    Move,
+    Done,
+}
+
+impl Choice {
+    /// The bubble's buttons, in order.
+    pub const ALL: [Choice; 3] = [Choice::Edit, Choice::Move, Choice::Done];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Choice::Edit => "Edit",
+            Choice::Move => "Move",
+            Choice::Done => "Done",
+        }
+    }
+}
+
+/// Whether `gesture` while he asks means never mind: a tap anywhere but on his
+/// bubble (`on_bubble`), on him as much as on the page. A drag or a hold is the
+/// page's business, and a tap on the bubble is a choice.
+pub fn asking_dismissed_by(
+    state: &State,
+    gesture: &crate::gesture::Gesture,
+    on_bubble: bool,
+) -> bool {
+    matches!(state, State::Asking { .. }) && *gesture == crate::gesture::Gesture::Tap && !on_bubble
+}
+
 /// Whether going from `before` to `after` is the user putting a dazed Rambo
 /// back in his nest, which he forgives them a little for.
 pub fn put_back(before: &State, after: &State) -> bool {
@@ -1226,24 +1260,19 @@ mod tests {
     }
 
     #[test]
-    fn edit_in_the_bubble_listens_for_the_change() {
-        let source = include_str!("rambo.rs");
-        let (before, _) = source
-            .split_once(">\"Edit\"</button>")
-            .expect("the bubble has an Edit button");
-        let handler = &before[before.rfind("<button").expect("Edit is a button")..];
-        assert!(handler.contains("listen_for_edit("), "{handler}");
-    }
-
-    #[test]
     fn edit_in_the_ask_bubble_opens_the_edit_sheet() {
         // QA on 39eb0d9: "Edit" closed the bubble and bumped the task's priority
         // instead of opening the sheet. The button must ask the list for its sheet.
+        // It also listens for the change. The bubble's buttons are `Choice`s, and
+        // what Edit does is its arm in rambo.rs's `choose`.
         let source = include_str!("rambo.rs");
-        let (before, _) = source
-            .split_once(">\"Edit\"</button>")
-            .expect("the bubble has an Edit button");
-        let handler = &before[before.rfind("<button").expect("Edit is a button")..];
+        let (_, arm) = source
+            .split_once("mascot::Choice::Edit =>")
+            .expect("the bubble has an Edit choice");
+        let handler = arm
+            .split_once("mascot::Choice::Move")
+            .map_or(arm, |(edit, _)| edit);
+        assert!(handler.contains("listen_for_edit("), "{handler}");
         assert!(
             handler.contains("edit_request.set("),
             "Edit must open the edit sheet: {handler}"
@@ -1381,5 +1410,43 @@ mod tests {
         for (state, gesture, his) in table {
             assert_eq!(wants(&state, gesture), his, "{state:?} {gesture:?}");
         }
+    }
+
+    #[test]
+    fn he_offers_edit_move_and_done_and_nothing_else() {
+        let labels: Vec<&str> = Choice::ALL.iter().map(|c| c.label()).collect();
+        assert_eq!(labels, ["Edit", "Move", "Done"]);
+    }
+
+    #[test]
+    fn a_tap_off_his_bubble_is_never_mind() {
+        use crate::gesture::Gesture;
+        let asking = State::Asking {
+            task_id: "t1".into(),
+            title: "Lab report".into(),
+        };
+        let drag = Gesture::Drag {
+            pos: (0.0, 0.0),
+            vel: (0.0, 0.0),
+        };
+        // (state, gesture, on his bubble, never mind)
+        let table = [
+            (&asking, &Gesture::Tap, false, true),
+            (&asking, &Gesture::Tap, true, false),
+            (&asking, &Gesture::Hold, false, false),
+            (&asking, &drag, false, false),
+            (&asking, &Gesture::Drop { pos: (0.0, 0.0) }, false, false),
+            (&State::Home, &Gesture::Tap, false, false),
+            (&State::Dazed, &Gesture::Tap, false, false),
+        ];
+        for (state, gesture, on_bubble, dismissed) in table {
+            assert_eq!(
+                asking_dismissed_by(state, gesture, on_bubble),
+                dismissed,
+                "{state:?} {gesture:?} on bubble: {on_bubble}"
+            );
+        }
+        // Never mind sends him home.
+        assert_eq!(transition(&asking, Event::Return), State::Home);
     }
 }

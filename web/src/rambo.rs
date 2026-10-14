@@ -6,9 +6,9 @@ use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
 
 use crate::edits::{
-    EditSink, heard_edit_applies, revisable, revise_and_show, revise_body, series_note, sheet_left,
+    EditSink, heard_edit_applies, revisable, revise_and_show, revise_body, sheet_left,
 };
-use crate::tasks::{apply_tick, delete_with_scribble, tick_action};
+use crate::tasks::{apply_tick, tick_action};
 use crate::{gesture, hop, ink, mascot, settings, speech, tuning, voice};
 
 /// The single Rambo element: independent fixed layer above everything.
@@ -41,8 +41,6 @@ pub(crate) fn Rambo(
     open_sheet: RwSignal<Option<TaskId>>,
     /// The nest button: Rambo measures its bounding box to know where home is
     nest_ref: NodeRef<leptos::html::Button>,
-    /// The corner a deleted row's scrap lies in: his × lays one like any delete
-    scraps: RwSignal<Vec<crate::scrap::Scrap>>,
     /// The tool he holds: it decides which drawing of each pose he wears
     pen: Signal<settings::Pen>,
     /// True while you are typing, so he peeks over at the box
@@ -78,22 +76,74 @@ pub(crate) fn Rambo(
     #[cfg(target_arch = "wasm32")]
     on_page_moved(follow_nest);
 
-    // Near an edge of the screen his ask bubble slides in rather than run off it.
+    // Near an edge of the screen his ask bubble slides in rather than run off it,
+    // and near the top it opens below him (dropped on the first row).
     let bubble_ref = NodeRef::<leptos::html::Span>::new();
     let bubble_shift = RwSignal::new(0.0_f64);
+    let bubble_below = RwSignal::new(false);
+    // What the bubble asks about. It outlives the ask by `ASK_FOLD_MS`, the time
+    // it takes to fold back into him (`folding`), so it never vanishes in a frame.
+    let asked = RwSignal::new(None::<String>);
+    let folding = RwSignal::new(false);
+    // Opening, it starts tucked into him until it is measured and placed (above or
+    // below him), then grows out to that place.
+    let tucked = RwSignal::new(false);
+    let fold_ticket = std::rc::Rc::new(std::cell::Cell::new(0_u32));
+    Effect::new(move |_| match state.get() {
+        mascot::State::Asking { title, .. } => {
+            fold_ticket.set(fold_ticket.get().wrapping_add(1));
+            folding.set(false);
+            if asked.with_untracked(Option::is_none) {
+                tucked.set(true);
+                // One frame to lay it out and place it, one to draw it tucked there.
+                crate::engine::next_frame(move || {
+                    crate::engine::next_frame(move || tucked.set(false));
+                });
+            }
+            asked.set(Some(title));
+        }
+        _ if asked.with_untracked(Option::is_some) && !folding.get_untracked() => {
+            folding.set(true);
+            let ticket = fold_ticket.get().wrapping_add(1);
+            fold_ticket.set(ticket);
+            let fold_ticket = fold_ticket.clone();
+            crate::engine::every(f64::from(tuning::ASK_FOLD_MS), move || {
+                if fold_ticket.get() == ticket {
+                    asked.set(None);
+                    folding.set(false);
+                }
+                crate::engine::Flow::Stop
+            });
+        }
+        _ => {}
+    });
     Effect::new(move |_| {
-        let asking = matches!(state.get(), mascot::State::Asking { .. });
-        let shift = bubble_ref
+        // Measured while it shows; folding, it keeps the place it opened in.
+        if folding.get() {
+            return;
+        }
+        let shown_bubble = asked.with(Option::is_some);
+        let (shift, below) = bubble_ref
             .get()
-            .filter(|_| asking)
+            .filter(|_| shown_bubble)
             .zip(screen_width())
-            .map_or(0.0, |(bubble, screen)| {
+            .map_or((0.0, false), |(bubble, screen)| {
                 // From values that do not animate: the bubble is centred on him, and its
                 // drawn box is still riding his settle after the drop when this runs.
                 let width = f64::from(bubble.offset_width());
-                bubble_offset(shown.get().0, width, screen, tuning::BUBBLE_EDGE_PX)
+                let his_h = rambo_height();
+                let his_top = shown.get().1 - his_h / 2.0;
+                (
+                    bubble_offset(shown.get().0, width, screen, tuning::BUBBLE_EDGE_PX),
+                    opens_below(
+                        his_top,
+                        f64::from(bubble.offset_height()),
+                        tuning::BUBBLE_EDGE_PX,
+                    ),
+                )
             });
         bubble_shift.set(shift);
+        bubble_below.set(below);
     });
 
     // Where he is drawn. Everything that moves him sets his spot (`pen_pos`); he
@@ -423,6 +473,148 @@ pub(crate) fn Rambo(
         mascot::held_at(pointer, box_h, ev.pointer_type() == "touch")
     };
 
+    // What each of the bubble's buttons does with the task he was dropped on.
+    let choose = move |choice: mascot::Choice| {
+        let mascot::State::Asking { task_id, .. } = state.get_untracked() else {
+            return;
+        };
+        let chosen = move || {
+            set_state.set(mascot::transition(
+                &state.get_untracked(),
+                mascot::Event::Choose,
+            ))
+        };
+        match choice {
+            mascot::Choice::Edit => {
+                let id = TaskId(task_id);
+                edit_request.set(Some(id.clone()));
+                listen_for_edit(id);
+                chosen();
+            }
+            // A stub until moving a task lands: he goes home.
+            mascot::Choice::Move => chosen(),
+            mascot::Choice::Done => {
+                // The list's tick, so a repeat's day is marked on its own date.
+                let action = snapshot.with_untracked(|s| tick_action(s, &task_id));
+                crate::scrap::note_departure(&task_id);
+                let sink = EditSink {
+                    set_snapshot,
+                    set_error,
+                };
+                // He has his answer before the tick is saved, so a second tap on
+                // Done finds him no longer asking and cannot tick it back.
+                chosen();
+                wasm_bindgen_futures::spawn_local(async move {
+                    if let Some(action) = action {
+                        apply_tick(&TaskId(task_id.clone()), action, sink).await;
+                    }
+                    crate::scrap::forget_departure(&task_id);
+                });
+            }
+        }
+    };
+
+    // While he asks, a tap anywhere off his bubble, on him too, or Esc is never mind
+    // (`mascot::asking_dismissed_by`). The listeners live only as long as the ask,
+    // and start after the drop that opened it, so that drop is never a tap.
+    let ask_listeners =
+        std::rc::Rc::new(std::cell::RefCell::new(Vec::<WindowListenerHandle>::new()));
+    Effect::new(move |_| {
+        let asking = matches!(state.get(), mascot::State::Asking { .. });
+        ask_listeners
+            .borrow_mut()
+            .drain(..)
+            .for_each(WindowListenerHandle::remove);
+        if !asking {
+            return;
+        }
+        let finger = std::rc::Rc::new(std::cell::RefCell::new(gesture::Recognizer::new()));
+        let on_bubble = std::rc::Rc::new(std::cell::Cell::new(false));
+        let never_mind = move || {
+            set_state.set(mascot::transition(
+                &state.get_untracked(),
+                mascot::Event::Return,
+            ));
+        };
+        let sample = |ev: &leptos::ev::PointerEvent, pointer| gesture::Sample {
+            pointer,
+            at: (f64::from(ev.client_x()), f64::from(ev.client_y())),
+            t: ev.time_stamp(),
+            id: ev.pointer_id(),
+        };
+        let within = |ev: &leptos::ev::PointerEvent, selector: &str| {
+            ev.target()
+                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                .and_then(|el| el.closest(selector).ok().flatten())
+                .is_some()
+        };
+        let mut listeners = ask_listeners.borrow_mut();
+        listeners.push(window_event_listener(leptos::ev::pointerdown, {
+            let (finger, on_bubble) = (finger.clone(), on_bubble.clone());
+            move |ev| {
+                // Only the first finger's place counts: the recogniser ignores the rest.
+                if finger.borrow().finger().is_none() {
+                    on_bubble.set(within(&ev, ".ask"));
+                }
+                let target = match within(&ev, ".rambo") {
+                    true => gesture::Target::Rambo,
+                    false => gesture::Target::Page(gesture::Leaf::List),
+                };
+                finger
+                    .borrow_mut()
+                    .advance(sample(&ev, gesture::Pointer::Down(target)));
+            }
+        }));
+        listeners.push(window_event_listener(leptos::ev::pointermove, {
+            let finger = finger.clone();
+            move |ev| {
+                finger
+                    .borrow_mut()
+                    .advance(sample(&ev, gesture::Pointer::Move));
+            }
+        }));
+        listeners.push(window_event_listener(leptos::ev::pointerup, {
+            let finger = finger.clone();
+            move |ev| {
+                let gesture = finger
+                    .borrow_mut()
+                    .advance(sample(&ev, gesture::Pointer::Up));
+                if gesture.is_some_and(|g| {
+                    mascot::asking_dismissed_by(&state.get_untracked(), &g, on_bubble.get())
+                }) {
+                    never_mind();
+                }
+            }
+        }));
+        listeners.push(window_event_listener(
+            leptos::ev::pointercancel,
+            move |ev| {
+                finger
+                    .borrow_mut()
+                    .advance(sample(&ev, gesture::Pointer::Cancel));
+            },
+        ));
+        // Esc anywhere on the page is never mind: nothing else is open while he asks.
+        listeners.push(window_event_listener(leptos::ev::keydown, move |ev| {
+            if ev.key() == "Escape" {
+                never_mind();
+                if let Some(rambo) = rambo_ref.get_untracked() {
+                    let _ = rambo.focus();
+                }
+            }
+        }));
+        // The first choice takes the focus, so the keyboard can answer him at once.
+        crate::engine::next_frame(move || {
+            if let Some(button) = bubble_ref
+                .get_untracked()
+                .and_then(|bubble| bubble.query_selector("button").ok().flatten())
+                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+            {
+                let _ = button.focus();
+            }
+        });
+    });
+
     // Clone closures for multiple event handlers
     let still_move = still.clone();
     let hold_up = hold.clone();
@@ -702,62 +894,29 @@ pub(crate) fn Rambo(
             // Speech bubble: inside the button so it follows Rambo everywhere
             <span class="mascot-status" aria-live="polite">
                 {move || brain_speech.get().map(|line| view! { <span class="brain-line">{line}</span> })}
-                {move || match state.get() {
-                    mascot::State::Asking { ref title, .. } => view! {
+                {move || match asked.get() {
+                    Some(title) => view! {
                         <span
                             class="ask"
+                            class:below=move || bubble_below.get()
+                            class:folding=move || folding.get()
+                            class:tucked=move || tucked.get()
+                            style:--ask-fold-ms=format!("{}ms", tuning::ASK_FOLD_MS)
+                            style:--ask-below-by=move || format!("{:.1}px", rambo_height())
                             node_ref=bubble_ref
                             style:margin-left=move || format!("{:.1}px", bubble_shift.get())
                         >
-                            <span>{format!("Hey! What do you want with \"{title}\"?")}</span>
-                            <button type="button" on:click=move |_| {
-                                if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
-                                    let id = TaskId(task_id.clone());
-                                    edit_request.set(Some(id.clone()));
-                                    listen_for_edit(id);
-                                }
-                                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
-                            }>"Edit"</button>
-                            <button type="button" on:click=move |_| {
-                                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
-                            }>"Move"</button>
-                            <button type="button" on:click=move |_| {
-                                if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
-                                    let task_id = task_id.clone();
-                                    // The list's tick, so a repeat's day is marked on its own date.
-                                    let action = snapshot.with_untracked(|s| tick_action(s, &task_id));
-                                    crate::scrap::note_departure(&task_id);
-                                    let sink = EditSink { set_snapshot, set_error };
-                                    let set_state_clone = set_state;
-                                    wasm_bindgen_futures::spawn_local(async move {
-                                        if let Some(action) = action {
-                                            apply_tick(&TaskId(task_id.clone()), action, sink).await;
-                                        }
-                                        crate::scrap::forget_departure(&task_id);
-                                        set_state_clone.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
-                                    });
-                                }
-                            }>"Done"</button>
-                            <button type="button" on:click=move |_| {
-                                if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
-                                    let task_id = task_id.clone();
-                                    let set_snapshot_clone = set_snapshot;
-                                    let set_state_clone = set_state;
-                                    wasm_bindgen_futures::spawn_local(async move {
-                                        // A delete like any other: crossed out first, and a
-                                        // repeat's row skips just its own date.
-                                        match delete_with_scribble(&TaskId(task_id), snapshot, scraps).await {
-                                            Ok(new_snap) => set_snapshot_clone.set(new_snap),
-                                            Err(e) => set_error.set(Some(series_note(&e))),
-                                        }
-                                        set_state_clone.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
-                                    });
-                                }
-                            }>"×"</button>
-                            <button type="button" on:click=move |_| set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Return))>"Never mind"</button>
+                            <span class="ask-question">"What about "<q>{title.clone()}</q>"?"</span>
+                            <span class="ask-choices">
+                                {mascot::Choice::ALL.map(|choice| view! {
+                                    <button type="button" class="ask-choice" on:click=move |_| choose(choice)>
+                                        {choice.label()}
+                                    </button>
+                                })}
+                            </span>
                         </span>
                     }.into_any(),
-                    _ => view! { <span></span> }.into_any(),
+                    None => view! { <span></span> }.into_any(),
                 }}
                 {move || talking.get().then(|| view! {
                     <span class="talking">"I'm listening."</span>
@@ -874,6 +1033,22 @@ fn row_under(x: f64, y: f64) -> Option<web_sys::Element> {
         .find_map(|el| el.closest("li[data-id]").ok().flatten())
 }
 
+/// His height as laid out, before any transform.
+fn rambo_height() -> f64 {
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|doc| doc.query_selector(".rambo").ok().flatten())
+        .and_then(|rambo| rambo.dyn_into::<web_sys::HtmlElement>().ok())
+        .map_or(0.0, |rambo| f64::from(rambo.offset_height()))
+}
+
+/// Whether a bubble `height` tall would run off the top of the screen above a
+/// Rambo whose top is at `his_top`, keeping `edge` pixels clear: then it opens
+/// below him instead.
+fn opens_below(his_top: f64, height: f64, edge: f64) -> bool {
+    his_top - height < edge
+}
+
 /// The page's width without its scrollbar, which the bubble must stay inside.
 fn screen_width() -> Option<f64> {
     let root = web_sys::window()?.document()?.document_element()?;
@@ -895,7 +1070,16 @@ fn bubble_offset(centre_x: f64, width: f64, screen: f64, edge: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::bubble_offset;
+    use super::{bubble_offset, opens_below};
+
+    #[test]
+    fn a_bubble_without_room_above_him_opens_below() {
+        // A 120px bubble, 8px from the top: room from his top at 128px down.
+        assert!(!opens_below(400.0, 120.0, 8.0));
+        assert!(!opens_below(128.0, 120.0, 8.0));
+        assert!(opens_below(127.0, 120.0, 8.0));
+        assert!(opens_below(-20.0, 120.0, 8.0));
+    }
 
     // Rambo at x, a 200px bubble, a 1000px screen, 16px from each edge.
 
