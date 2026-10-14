@@ -171,6 +171,7 @@ pub fn App() -> impl IntoView {
                 set_snapshot=set_snapshot
                 set_error=set_error
                 capture_text
+                mascot_state
                 turn_back=std::rc::Rc::new({
                     let turner = turner.clone();
                     move || turner.turn_to(0)

@@ -297,16 +297,18 @@ a. A drag carries him without listening (a still hold listens), riding just abov
 your finger or cursor so it never covers him. Every move he makes from one spot to
 another is a few brisk hops, never a glide, and never instant: first he notices, his face reacts, then he goes. Dropped on the page (not on a task or his nest), Rambo
 is dazed: he stays where he landed, tipped over, and does not listen. Dragging a
-dazed Rambo writes on the page in his tool's ink. He hops home on his own
+dazed Rambo writes on the page in his tool's ink, and so does holding a finger
+anywhere on the page while he is dazed: he comes to the finger and writes where it
+goes. He hops home on his own
 after 3 seconds untouched, or comes home at once when dropped on his nest, and
 forgives you a little for putting him back (a small lift in the brain's cheer).
 His writing dries and fades on its own; home again, he listens again. Let go of him
 mid-flick and he splats before he is dazed.
-b. Drag the pen to empty space and release it; drag it again to write; drop it on
-the nest, or leave it 3 seconds.
+b. Drag the pen to empty space and release it; drag it again to write, or hold
+anywhere and drag; drop it on the nest, or leave it 3 seconds.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/engine/world.rs:World, behaviour`;
 `web/src/mascot.rs:transition, listens_on_grab,
-put_back, over_nest, DAZED_MS, hops_there, held_at, wants`; `web/src/hop.rs:Hop`;
+put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `web/src/hop.rs:Hop`;
 `web/src/gesture.rs:Recognizer, release_velocity, flung`;
 `web/src/inklayer.rs:InkLayer`; `web/src/ink.rs`;
 `crates/rambl-brain/src/lib.rs:Event::PutBack`.
