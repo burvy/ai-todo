@@ -131,7 +131,10 @@ fn parse_local_input(value: &str) -> Option<DateTime<Utc>> {
         if millis.is_nan() {
             return None;
         }
-        return DateTime::from_timestamp_millis(millis as i64);
+        // The browser quietly moves a wall clock that falls in a spring-forward gap
+        // (02:30 becomes 03:30); read the instant back and refuse it if it moved.
+        return DateTime::from_timestamp_millis(millis as i64)
+            .filter(|instant| wall_clock_kept(value, &local_input_value(*instant)));
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
@@ -139,6 +142,12 @@ fn parse_local_input(value: &str) -> Option<DateTime<Utc>> {
             .ok()
             .map(|time| DateTime::<Utc>::from_naive_utc_and_offset(time, Utc))
     }
+}
+
+/// Whether the instant a browser built from `asked` still reads as `asked` on the wall:
+/// false when the browser moved it out of a clock-change gap.
+fn wall_clock_kept(asked: &str, read_back: &str) -> bool {
+    asked == read_back
 }
 
 /// A deadline's clock time as it reads in its own zone, for the edit dialog. Unlike
@@ -324,6 +333,14 @@ mod tests {
         );
         // "Anytime" ignores the field entirely.
         assert_eq!(typed_when(EditWhen::Anytime, "", None), Ok(When::Anytime));
+    }
+
+    /// The browser turns 02:30 in a spring-forward gap into 03:30; the save path must
+    /// notice the wall clock moved, so the sheet shows the clocks-change message.
+    #[test]
+    fn a_gap_time_the_browser_moved_is_not_the_time_asked_for() {
+        assert!(!wall_clock_kept("2027-03-14T02:30", "2027-03-14T03:30"));
+        assert!(wall_clock_kept("2027-03-14T09:30", "2027-03-14T09:30"));
     }
 
     /// The paper pickers write a lone day or a lone time when only one is picked;
