@@ -352,8 +352,7 @@ mod imp {
                 Grip::Finger(at) => at,
                 Grip::Button => Pt::new(0.0, 0.0),
             };
-            let low = matches!(grip, Grip::Button)
-                || finger.y - rect.top() > (top + bottom) / 2.0;
+            let low = matches!(grip, Grip::Button) || finger.y - rect.top() > (top + bottom) / 2.0;
             let corner = Pt::new(
                 if turn == Turn::Forward { w } else { 0.0 },
                 if low { bottom.min(h) } else { top },
