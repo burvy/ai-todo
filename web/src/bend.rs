@@ -52,14 +52,14 @@ pub(crate) enum Turn {
 
 impl Turn {
     /// The pane that turns, 0 for the list and 1 for the planner.
-    pub(crate) fn from_pane(self) -> u8 {
+    pub(crate) fn turning_pane(self) -> u8 {
         match self {
             Turn::Forward => 0,
             Turn::Back => 1,
         }
     }
-    pub(crate) fn to_pane(self) -> u8 {
-        1 - self.from_pane()
+    pub(crate) fn revealed_pane(self) -> u8 {
+        1 - self.turning_pane()
     }
     /// +1 when a finger moving right helps the turn, -1 when moving left does.
     pub(crate) fn inward(self) -> f64 {
@@ -352,6 +352,29 @@ mod tests {
         assert!(
             eased(from, to, 0.5).x > 50.0,
             "eased out: more than half done at half time"
+        );
+    }
+
+    #[test]
+    fn each_turn_names_the_pane_that_turns_and_the_one_it_shows() {
+        assert_eq!(
+            (Turn::Forward.turning_pane(), Turn::Forward.revealed_pane()),
+            (0, 1)
+        );
+        assert_eq!(
+            (Turn::Back.turning_pane(), Turn::Back.revealed_pane()),
+            (1, 0)
+        );
+        assert_eq!((Turn::Forward.inward(), Turn::Back.inward()), (-1.0, 1.0));
+    }
+
+    #[test]
+    fn the_fold_line_runs_through_the_midpoint_across_the_drag() {
+        let b = bend(W, H, Pt::new(W, 0.0), Pt::new(W - 100.0, 0.0)).expect("a fold");
+        assert_eq!(b.fold, Pt::new(W - 50.0, 0.0));
+        assert!(
+            (b.angle.abs() - std::f64::consts::PI).abs() < 1e-9,
+            "the drag points left"
         );
     }
 

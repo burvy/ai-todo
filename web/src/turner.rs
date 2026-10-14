@@ -310,8 +310,8 @@ mod imp {
             let main = self.0.main.get()?;
             let fx = self.0.fx.get()?;
             let panes = main.children();
-            let front = panes.item(u32::from(turn.from_pane()))?;
-            let under = panes.item(u32::from(turn.to_pane()))?;
+            let front = panes.item(u32::from(turn.turning_pane()))?;
+            let under = panes.item(u32::from(turn.revealed_pane()))?;
             // The visible part of the page: a long list runs below the screen, and the
             // corner has to be one the finger can see.
             let rect = main.get_bounding_client_rect();
@@ -356,7 +356,7 @@ mod imp {
             let (Some(main), Some(fx)) = (self.0.main.get(), self.0.fx.get()) else {
                 return;
             };
-            let Some(front) = main.children().item(u32::from(stage.turn.from_pane())) else {
+            let Some(front) = main.children().item(u32::from(stage.turn.turning_pane())) else {
                 return;
             };
             if stage.slide {
@@ -438,8 +438,8 @@ mod imp {
                 el_style(&fx, "visibility", "hidden");
             }
             let shown = match outcome {
-                Settle::Complete => stage.turn.to_pane(),
-                Settle::SpringBack => stage.turn.from_pane(),
+                Settle::Complete => stage.turn.revealed_pane(),
+                Settle::SpringBack => stage.turn.turning_pane(),
             };
             show_pane(self.0.main, shown, self.0.set_pane);
             *self.0.phase.borrow_mut() = Phase::Idle;

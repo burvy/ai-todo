@@ -20,6 +20,7 @@ pub mod tuning;
 pub mod voice;
 pub mod week;
 
+#[cfg(any(target_arch = "wasm32", test))]
 mod bend;
 mod capture;
 mod edits;

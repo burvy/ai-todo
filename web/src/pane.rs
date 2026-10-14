@@ -1,5 +1,6 @@
 //! The two pages on a phone, the list and the planner, and turning between them.
 
+#[cfg(target_arch = "wasm32")]
 use leptos::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsCast;
@@ -24,11 +25,6 @@ pub(crate) fn show_pane(main: NodeRef<leptos::html::Main>, index: u8, set_pane: 
             element.set_scroll_left(left);
         }
     }
-    set_pane.set(index);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn show_pane(_main: NodeRef<leptos::html::Main>, index: u8, set_pane: WriteSignal<u8>) {
     set_pane.set(index);
 }
 

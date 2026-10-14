@@ -100,6 +100,9 @@
   --layer-menu-backdrop: 80;
   --layer-menu: 81; /* the gear menu */
   --layer-sheet: 90; /* the edit sheet and the pickers inside it */
+  --layer-turn-under: 0; /* inside main while a page turns: the page beneath, */
+  --layer-turn-front: 1; /* the page turning, */
+  --layer-turn-fx: 2; /* and the flap and shadows between them */
   --layer-lifted: 99; /* a strip being carried, above its pile inside the tack board */
 
   /* The page turn (docs/FRONTEND-PLAN.md; web/src/bend.rs). Looks only: the numbers
@@ -327,21 +330,21 @@ main.bending > :not(.bend-fx) {
    own on the page) stay under the page that is turning over them. */
 main.bending > .bend-under {
   position: relative;
-  z-index: 0;
+  z-index: var(--layer-turn-under);
   isolation: isolate;
   pointer-events: none;
 }
 
 main.bending > .bend-front {
   position: relative;
-  z-index: 1;
+  z-index: var(--layer-turn-front);
 }
 
 .bend-fx {
   display: none;
   visibility: hidden;
   position: relative;
-  z-index: 2;
+  z-index: var(--layer-turn-fx);
   align-self: stretch;
   pointer-events: none;
   overflow: hidden;
