@@ -197,6 +197,25 @@ The owner's answers to the questions in `docs/FRONTEND-PLAN.md` (interview 1, re
 - **Writing takes a bit longer and gets more thought.** v1's writing was "miles better" (UI-BUGS #11, v1 commit `297dd44`): the pen glided along the line in one smooth motion with the ink revealed under it, and wrote along with the caret while you typed.
 - **Interruptions:** anything the user does interrupts him (a second capture, a tap, a drag, a page turn). **Writing pauses and resumes** when he is let go, or when the page is turned back. The task is already saved, so a reload shows the title in full at once. Users can wait, and can edit the title meanwhile.
 
+### The physical principle (interview 2)
+- **You should know why something happens because it would make sense in real life.** Things come and go like real objects: they slide, lift, fold, are laid down or taken away. Nothing fades or cuts in and out.
+- **The one exception is ink.** Ink fades in as it is written.
+- **The dark-mode switch is physical too.** For example, the page is swapped for a night page, never a colour cross-fade.
+- **A page turn is a real page turn:** the paper bends and curls as it turns. Not a sideways swipe, and no gradient that pops in and out.
+
+### From the owner's phone test (interview 2, on b005174)
+- **Dazed for 3 seconds**, then he recovers and skitters home shortly after.
+- **Paper:** a brown-ish texture that is clearly writing or journal paper, not craft paper.
+- **Tap Rambo while there is text in the capture box: it submits**, as Enter does.
+- **Clearing the capture box:** with text in the box, a small paper cut-out × slides out beside it. Tapping it makes Rambo scribble the text out, and a fresh piece of paper is laid down.
+- **Writing must be convincing:** today it is a big scribble that blocks the screen. Port v1's writing (UI-BUGS #11, v1 commit `297dd44`).
+- **Planner:** it must scroll forward to every day it shows. Scrolling back in time is not needed yet. A full calendar view comes later.
+
+### Sound (interview 2)
+Three presets in the settings; the mute stays in the gear menu:
+- **A. Quiet desk.** Sound only where paper or ink really makes a noise: the nib's scratch, the page turn, the crumple, the pin, the smack and the flatten.
+- **B. Every touch answers.** Every motion has its own soft sound.
+- **C. The most immersive.** Every sound, plus calm classical background music that fits the parchment, and Rambo dances to it. Recordings must be CC0 or public domain.
+
 ### Still open
 - On a computer, whether the capture box stays visible at the bottom while you scroll, as on a phone (being re-asked).
-- Which sounds go with which motions, and which motions are must-haves (options in `docs/FRONTEND-PLAN.md` §4).
