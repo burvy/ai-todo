@@ -16,6 +16,27 @@ pub const BUBBLE_EDGE_PX: f64 = 8.0;
 
 const _: () = assert!(60 % MINUTE_STEP == 0);
 
+// ---- What a finger means (web/src/gesture.rs, VISION-AUDIT item 3): one slop and
+// one hold time for every surface. Times in ms, speeds in px per ms.
+
+/// Travel that turns a press into a drag. Safe range 4 to 16: a resting finger on
+/// a phone shakes a few pixels, and past 16 a short drag feels ignored.
+pub const GESTURE_SLOP_PX: f64 = 8.0;
+/// How long a still finger stays down before the press is a hold. Safe range 200
+/// to 600: shorter and a slow tap holds, longer and a hold feels like a wait.
+pub const GESTURE_HOLD_MS: f64 = 280.0;
+/// How far back the release speed is read from the finger's last moves. Safe range
+/// 40 to 120: shorter and one jittery move decides it, longer and a flick that
+/// slowed at the end still throws.
+pub const GESTURE_RELEASE_SAMPLE_MS: f64 = 80.0;
+/// The fastest throw, however wild the flick. Safe range 2 to 6.
+pub const GESTURE_RELEASE_MAX_SPEED: f64 = 4.0;
+/// The least release speed that throws; slower, what was carried is put down.
+/// Safe range 0.3 to 1.0: lower and a careful drop drifts off.
+pub const GESTURE_FLING_MIN_SPEED: f64 = 0.6;
+
+const _: () = assert!(GESTURE_FLING_MIN_SPEED < GESTURE_RELEASE_MAX_SPEED);
+
 // ---- Rambo's ink (web/src/ink.rs, inklayer.rs, interview 4 item 2). Speeds in px
 // per ms, times in ms.
 

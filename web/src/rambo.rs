@@ -9,7 +9,7 @@ use crate::edits::{
     EditSink, heard_edit_applies, revisable, revise_and_show, revise_body, series_note, sheet_left,
 };
 use crate::tasks::{apply_tick, delete_with_scribble, tick_action};
-use crate::{hop, ink, mascot, settings, speech, tuning, voice};
+use crate::{gesture, hop, ink, mascot, settings, speech, tuning, voice};
 
 /// The single Rambo element: independent fixed layer above everything.
 ///
@@ -233,13 +233,16 @@ pub(crate) fn Rambo(
     let moved_move = moved.clone();
     let moved_for_up = moved.clone();
 
-    // Grab state: track pointer position, pen offset, and timestamp at grab so we
-    // can compute drop velocity for hard-drop detection.
-    // (gx, gy, ox, oy, timestamp_ms)
-    let grab_state = std::rc::Rc::new(std::cell::RefCell::new(None::<(f64, f64, f64, f64, u64)>));
+    // Where the pointer picked him up, to tell a still hold from a drag.
+    let grab_state = std::rc::Rc::new(std::cell::RefCell::new(None::<(f64, f64)>));
     let grab_state_down = grab_state.clone();
     let grab_state_move = grab_state.clone();
     let grab_state_up = grab_state.clone();
+    // The finger that holds him, read by the page's one gesture recogniser: letting
+    // go mid-flick is a hard drop.
+    let finger = std::rc::Rc::new(std::cell::RefCell::new(gesture::Recognizer::new()));
+    let (finger_down, finger_move, finger_up, finger_cancel) =
+        (finger.clone(), finger.clone(), finger.clone(), finger);
     // A long press listens: each grab takes a ticket, and the hold's timer starts
     // listening only if its grab is still the current one and he was held still.
     let hold = std::rc::Rc::new(std::cell::Cell::new(0_u32));
@@ -429,8 +432,14 @@ pub(crate) fn Rambo(
                     let gx = ev.client_x() as f64;
                     let gy = ev.client_y() as f64;
                     let (ox, oy) = shown.get_untracked();
-                    let t = js_sys::Date::now() as u64;
-                    *grab_state_down.borrow_mut() = Some((gx, gy, ox, oy, t));
+                    *grab_state_down.borrow_mut() = Some((gx, gy));
+                    // A fresh finger: a press that never moved left the last one down.
+                    *finger_down.borrow_mut() = gesture::Recognizer::new();
+                    finger_down.borrow_mut().advance(gesture::Sample {
+                        pointer: gesture::Pointer::Down(gesture::Target::Rambo),
+                        at: (gx, gy),
+                        t: ev.time_stamp(),
+                    });
                     // In hand he never skitters off on his own.
                     daze.set(daze.get().wrapping_add(1));
                     set_state.set(after.clone());
@@ -478,7 +487,12 @@ pub(crate) fn Rambo(
                     }
                     *moved_move.borrow_mut() = true;
                     let (x, y) = (ev.client_x() as f64, ev.client_y() as f64);
-                    if let Some((gx, gy, ..)) = *grab_state_move.borrow()
+                    finger_move.borrow_mut().advance(gesture::Sample {
+                        pointer: gesture::Pointer::Move,
+                        at: (x, y),
+                        t: ev.time_stamp(),
+                    });
+                    if let Some((gx, gy)) = *grab_state_move.borrow()
                         && !mascot::held_still((gx, gy), (x, y))
                     {
                         still_move.set(false);
@@ -524,32 +538,23 @@ pub(crate) fn Rambo(
                         set_state.set(mascot::transition(&before, mascot::Event::Release));
                         return;
                     }
-                    // Update pen position one last time to the pointer position; also compute
-                    // drop velocity to detect hard drops (fast release → splat).
-                    let hard_drop = if let Some((gx, gy, _ox, _oy, grab_time)) = *grab_state_up.borrow() {
-                        let px = ev.client_x() as f64;
-                        let py = ev.client_y() as f64;
-                        // He lands where you saw him, above the finger.
-                        pen_pos.set(match before {
-                            mascot::State::Inking => (px, py),
-                            _ => held_spot(&ev, (px, py)),
-                        });
-                        let elapsed = (js_sys::Date::now() as u64).saturating_sub(grab_time) as f64;
-                        if elapsed > 0.0 {
-                            let dx = px - gx;
-                            let dy = py - gy;
-                            let distance = (dx * dx + dy * dy).sqrt();
-                            let velocity = distance / elapsed;
-                            velocity >= mascot::HARD_DROP_VELOCITY
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
                     *grab_state_up.borrow_mut() = None;
                     let client_x = ev.client_x() as f64;
                     let client_y = ev.client_y() as f64;
+                    // He lands where you saw him, above the finger.
+                    pen_pos.set(match before {
+                        mascot::State::Inking => (client_x, client_y),
+                        _ => held_spot(&ev, (client_x, client_y)),
+                    });
+                    // Let go mid-flick: a hard drop, and he splats.
+                    let hard_drop = matches!(
+                        finger_up.borrow_mut().advance(gesture::Sample {
+                            pointer: gesture::Pointer::Up,
+                            at: (client_x, client_y),
+                            t: ev.time_stamp(),
+                        }),
+                        Some(gesture::Gesture::Fling { .. })
+                    );
 
                     // Put back in his nest: home at once, and forgiven a little
                     // if he was dazed.
@@ -586,22 +591,29 @@ pub(crate) fn Rambo(
             on:pointercancel={
                 let arm_daze = arm_daze.clone();
                 let land_dazed = land_dazed.clone();
-                move |_| match state.get_untracked() {
-                    mascot::State::Dragging => {
-                        hold_cancel.set(hold_cancel.get().wrapping_add(1));
-                        stop_speech_cancel();
-                        land_dazed(false);
+                move |ev: leptos::ev::PointerEvent| {
+                    finger_cancel.borrow_mut().advance(gesture::Sample {
+                        pointer: gesture::Pointer::Cancel,
+                        at: (ev.client_x() as f64, ev.client_y() as f64),
+                        t: ev.time_stamp(),
+                    });
+                    match state.get_untracked() {
+                        mascot::State::Dragging => {
+                            hold_cancel.set(hold_cancel.get().wrapping_add(1));
+                            stop_speech_cancel();
+                            land_dazed(false);
+                        }
+                        mascot::State::Inking => {
+                            // The browser took the gesture over: he lands where he
+                            // is, like a drop on the page.
+                            set_state.set(mascot::transition(
+                                &state.get_untracked(),
+                                mascot::Event::DropEmpty,
+                            ));
+                            arm_daze();
+                        }
+                        _ => {}
                     }
-                    mascot::State::Inking => {
-                        // The browser took the gesture over: he lands where he
-                        // is, like a drop on the page.
-                        set_state.set(mascot::transition(
-                            &state.get_untracked(),
-                            mascot::Event::DropEmpty,
-                        ));
-                        arm_daze();
-                    }
-                    _ => {}
                 }
             }
             on:keydown=move |ev| {
