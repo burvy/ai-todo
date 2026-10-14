@@ -1166,6 +1166,27 @@ li.task-row:focus-within .delete-mark {
     ) rotate(var(--write-lean)) scale(0.78);
 }
 
+/* Covered: the page turned over him; he stands where he was, upright, pushing at the
+   leaf (the page's own spring lifts its corner). He is not dazed. */
+.rambo.is-covered {
+  transform: translate(
+    calc(var(--pen-x) - 50%),
+    calc(var(--pen-y) - 50%)
+  );
+  /* Beneath the leaf, above the page under it: the turn's layers are 0 (the page beneath)
+     and 1 (the page turning), and he comes after them in the tree. */
+  z-index: var(--layer-turn-under);
+}
+
+/* The list page lies over him while he is caught, at rest as well as while it turns, and
+   is paper all the way: he is only seen where his push lifts its corner. */
+main:has(~ .rambo.is-covered) > .tasks-pane {
+  position: relative;
+  z-index: var(--layer-turn-front);
+  background-color: var(--paper);
+  background-image: var(--texture-paper);
+}
+
 /* Asking: positioned at the task */
 .rambo.is-asking {
   transform: translate(

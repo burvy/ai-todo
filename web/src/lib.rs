@@ -24,7 +24,6 @@ pub mod week;
 mod capture;
 mod edits;
 mod engine;
-#[cfg(any(target_arch = "wasm32", test))]
 mod flip;
 mod flip_turner;
 #[cfg(any(target_arch = "wasm32", test))]

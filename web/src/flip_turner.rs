@@ -367,6 +367,21 @@ mod imp {
             Some(stage)
         }
 
+        /// Tells Rambo where the leaf is: he is caught by a leaf that closes over him, which
+        /// only the turn back does (the forward turn lifts the leaf away from the page).
+        fn show_leaf(&self, stage: &Stage, main: &web_sys::Element, open: f64) {
+            let rect = main.get_bounding_client_rect();
+            let closing = stage.turn == Turn::Back
+                && crate::engine::leaf().is_none_or(|before| open < before.open);
+            crate::engine::show(crate::engine::Leaf {
+                open,
+                closing,
+                origin: (rect.left(), rect.top()),
+                size: (stage.w, f64::from(main.client_height())),
+                distance: FLIP_PERSPECTIVE * stage.w,
+            });
+        }
+
         /// Draws the leaf swung `open` (0 flat to 1 edge-on).
         fn draw(&self, stage: &Stage, open: f64) {
             let (Some(main), Some(fx)) = (self.0.main.get(), self.0.fx.get()) else {
@@ -384,6 +399,7 @@ mod imp {
                 return;
             }
             let distance = FLIP_PERSPECTIVE * stage.w;
+            self.show_leaf(stage, &main, open);
             let swing = flip::angle(open);
             let transform = format!("perspective({distance:.0}px) rotateY({:.3}rad)", -swing);
             el_style(&front, "transform", &transform);
@@ -427,7 +443,13 @@ mod imp {
                     // Stepped by the engine's fixed step, so the leaf falls the same at
                     // any frame rate.
                     for _ in 0..tick.steps {
-                        spring.step(*target, *pull, crate::engine::ENGINE_DT_S);
+                        // Rambo caught under the leaf pushes its corner up a little.
+                        spring.step_with_push(
+                            *target,
+                            *pull,
+                            crate::engine::push(),
+                            crate::engine::ENGINE_DT_S,
+                        );
                     }
                     self.draw(&flight.stage, spring.x);
                     spring.at_rest(*target)
@@ -458,6 +480,18 @@ mod imp {
             }
             if let Some(fx) = self.0.fx.get() {
                 el_style(&fx, "visibility", "hidden");
+            }
+            // The leaf now lies where it landed, not moving: flat over the page it fell on
+            // (a Rambo still under it stays under it), or turned away.
+            if let Some(main) = self.0.main.get() {
+                let rect = main.get_bounding_client_rect();
+                crate::engine::show(crate::engine::Leaf {
+                    open: stage.turn.open_after(outcome),
+                    closing: false,
+                    origin: (rect.left(), rect.top()),
+                    size: (stage.w, f64::from(main.client_height())),
+                    distance: FLIP_PERSPECTIVE * stage.w,
+                });
             }
             *self.0.phase.borrow_mut() = Phase::Idle;
         }
