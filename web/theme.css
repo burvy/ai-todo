@@ -913,6 +913,7 @@ li.task-row:focus-within .delete-mark {
    on the page grid. */
 .week {
   --planner-gutter: 3.25rem;
+  --day-min-w: 8rem;
   display: grid;
   gap: var(--space-1);
   /* Clip, never auto: `auto` would make .week a scroll container of its own,
@@ -921,7 +922,13 @@ li.task-row:focus-within .delete-mark {
      screen lives on .week-scroll, which scrolls on both axes. */
   overflow-x: clip;
   padding-left: var(--planner-gutter);
-  grid-template-columns: repeat(var(--days, 7), minmax(8rem, 1fr));
+  grid-template-columns: repeat(var(--days, 7), minmax(var(--day-min-w), 1fr));
+  /* As wide as its columns need: the gutter, every column at its least, and the gaps.
+     Without it .week is only as wide as the screen, `clip` cuts the later days off at
+     its edge, and .week-scroll has nothing to scroll to (BUG-9: Friday unreachable). */
+  min-width: calc(
+    var(--planner-gutter) + var(--days, 7) * var(--day-min-w) + (var(--days, 7) - 1) * var(--space-1)
+  );
 }
 
 .week-scroll {
@@ -933,10 +940,11 @@ li.task-row:focus-within .delete-mark {
      edge, the week columns slide sideways under it on a narrow screen. */
   overflow-x: auto;
   overscroll-behavior: contain;
-  /* Sideways it must chain. The planner's own column scroll runs out long
-     before a day does, and when it does a right swipe on empty paper has to
-     reach main's snap scroll and turn back to the list. */
-  overscroll-behavior-x: auto;
+  /* Sideways it must not chain (GESTURES FINAL): a swipe right inside the grid
+     scrolls the days back and stops at the first day; only a swipe that starts
+     outside the grid (the heading, the margins) reaches main's snap scroll and
+     turns back to the list. */
+  overscroll-behavior-x: contain;
 }
 
 .day {
@@ -1478,6 +1486,7 @@ li.task-row:focus-within .delete-mark {
   .week {
     /* On a wide screen the task list and the planner share the desk, so the
        week must always fit the pane: every column flexes, none clips. */
+    min-width: 0;
     grid-template-columns: repeat(var(--days, 7), minmax(0, 1fr));
   }
 
