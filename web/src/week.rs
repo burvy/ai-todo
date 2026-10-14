@@ -1,5 +1,4 @@
 use chrono::{DateTime, Timelike, Utc};
-use gloo_timers::callback::Interval;
 use leptos::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use todo_core::When;
@@ -71,7 +70,10 @@ pub fn WeekGrid(
 ) -> impl IntoView {
     let grid_ref = NodeRef::<leptos::html::Div>::new();
     let (now_minutes, set_now_minutes) = signal(current_minutes());
-    set_interval(move || set_now_minutes.set(current_minutes()), 60_000).forget();
+    crate::engine::every(60_000.0, move || {
+        set_now_minutes.set(current_minutes());
+        crate::engine::Flow::Go
+    });
     // The planner opens on the working morning, not in the middle of the
     // night: about 08:00, or now if it is already later. Once, not on every
     // settings change: a pen swap must not jump the paper back up.
@@ -134,15 +136,25 @@ pub fn WeekGrid(
     }
     // While a slip is held near an edge, the paper keeps sliding along under
     // the finger, so a slot beyond the edge can be reached without letting go.
-    set_interval(
-        move || {
+    // The slide runs only while a slip is held, so the loop sleeps otherwise.
+    let edge_sliding = std::rc::Rc::new(std::cell::Cell::new(false));
+    Effect::new(move |_| {
+        if drag.with(Option::is_none) || edge_sliding.replace(true) {
+            return;
+        }
+        let edge_sliding = edge_sliding.clone();
+        crate::engine::every(50.0, move || {
+            if drag.with_untracked(Option::is_none) {
+                edge_sliding.set(false);
+                return crate::engine::Flow::Stop;
+            }
             #[cfg(target_arch = "wasm32")]
             {
                 let Some(d) = drag.get_untracked() else {
-                    return;
+                    return crate::engine::Flow::Go;
                 };
                 let Some(scroller) = grid_ref.get() else {
-                    return;
+                    return crate::engine::Flow::Go;
                 };
                 let rect = scroller.get_bounding_client_rect();
                 let down = edge_nudge(rect.bottom() as f32 - d.y as f32);
@@ -151,7 +163,7 @@ pub fn WeekGrid(
                 let left = edge_nudge(d.x as f32 - rect.left() as f32);
                 let (dx, dy) = (right - left, down - up);
                 if dx == 0.0 && dy == 0.0 {
-                    return;
+                    return crate::engine::Flow::Go;
                 }
                 // scroll_left/top clamp inside the bounds themselves.
                 if dy != 0.0 {
@@ -163,10 +175,9 @@ pub fn WeekGrid(
                 // The paper under the finger has moved: re-find its slot.
                 landing.set(landing_at(d.x, d.y, &settings.get_untracked()));
             }
-        },
-        50,
-    )
-    .forget();
+            crate::engine::Flow::Go
+        });
+    });
     #[cfg(not(target_arch = "wasm32"))]
     let _ = capture_text;
     // On the earliest day a right swipe has no days left to scroll, so the page takes it
@@ -183,13 +194,12 @@ pub fn WeekGrid(
     let days = move || (0..settings.get().days).collect::<Vec<_>>();
     let hours = move || (settings.get().start_hour..settings.get().end_hour).collect::<Vec<_>>();
     view! {
-        <section class="planner-page" aria-labelledby="week-heading">
+        <section class="planner-page" aria-label="Planner">
             // The settings gear and the account link live on this page only, at its top right.
             <div class="planner-corner">
                 <crate::account::HeaderLink />
                 <crate::settings::GearMenu settings set_settings set_snapshot set_error />
             </div>
-            <h2 id="week-heading">"Planner"</h2>
             <crate::PageFoot page=1 turn=turn_back />
             <div
                 class="week-scroll"
@@ -582,10 +592,6 @@ fn current_minutes() -> u16 {
 #[cfg(not(target_arch = "wasm32"))]
 fn current_minutes() -> u16 {
     0
-}
-
-fn set_interval(callback: impl FnMut() + 'static, millis: u32) -> Interval {
-    Interval::new(millis, callback)
 }
 
 /// A touch that has gone down on a slip but the slip has not lifted yet: the

@@ -106,7 +106,7 @@ pub(crate) fn Rambo(
             .unwrap_or_else(|| pen_pos.get_untracked()),
         _ => pen_pos.get_untracked(),
     };
-    let run = std::rc::Rc::new(std::cell::RefCell::new(None::<IntervalHandle>));
+    let run = std::rc::Rc::new(std::cell::RefCell::new(None::<crate::engine::Handle>));
     // Whether he has come to rest at home, so the nest moving is the page
     // scrolling, not a way to hop. True at load: he starts on the nest.
     let settled_home = std::rc::Rc::new(std::cell::Cell::new(true));
@@ -115,7 +115,7 @@ pub(crate) fn Rambo(
         let (run, settled_home) = (run.clone(), settled_home.clone());
         move |at: (f64, f64)| {
             if let Some(handle) = run.borrow_mut().take() {
-                handle.clear();
+                handle.stop();
             }
             shown.set(at);
             squash.set(0.0);
@@ -160,33 +160,31 @@ pub(crate) fn Rambo(
             };
             settled_home.set(false);
             // He never moves instantly: setting off, he first notices and reacts
-            // where he stands, then hops.
+            // where he stands, then hops. The beat is timed by the engine's tick.
             let face = owed.take();
             let beat = face.map_or(0, |_| tuning::NOTICE_BEAT_MS);
             noticing.set(face);
-            let begun = js_sys::Date::now();
+            let begun = crate::engine::now();
             let arrive = arrive.clone();
-            let handle = set_interval_with_handle(
-                move || {
-                    let since = (js_sys::Date::now() - begun) as u32;
-                    if since < beat {
-                        squash.set(mascot::notice_squash(since));
-                        return;
-                    }
-                    noticing.set(None);
-                    let elapsed = since - beat;
-                    let to = spot(&state.get_untracked());
-                    if elapsed >= hop.ms() {
-                        arrive(to);
-                    } else {
-                        let frame = hop.at(to, elapsed);
-                        shown.set((frame.pos.0, frame.pos.1 - frame.lift));
-                        squash.set(frame.squash);
-                    }
-                },
-                std::time::Duration::from_millis(u64::from(tuning::INK_TICK_MS)),
-            );
-            *run.borrow_mut() = handle.ok();
+            let handle = crate::engine::on_tick(move |tick| {
+                let since = (tick.now - begun).max(0.0) as u32;
+                if since < beat {
+                    squash.set(mascot::notice_squash(since));
+                    return crate::engine::Flow::Go;
+                }
+                noticing.set(None);
+                let elapsed = since - beat;
+                let to = spot(&state.get_untracked());
+                if elapsed >= hop.ms() {
+                    arrive(to);
+                    return crate::engine::Flow::Stop;
+                }
+                let frame = hop.at(to, elapsed);
+                shown.set((frame.pos.0, frame.pos.1 - frame.lift));
+                squash.set(frame.squash);
+                crate::engine::Flow::Go
+            });
+            *run.borrow_mut() = Some(handle);
         }
     });
 
@@ -507,10 +505,15 @@ pub(crate) fn Rambo(
                         // Dazed: this drag writes, starting where the nib is now.
                         let below = rambo.get_bounding_client_rect().height() * mascot::NIB_BELOW;
                         nib_below.set(below);
+                        let (x, y) = (ox, oy + below);
+                        let page = list_page();
+                        let on = ink::surface_at(x, y, page);
+                        let (x, y) = ink::on_surface(on, x, y, page);
                         strokes.update(|strokes| {
                             strokes.push(ink::Stroke::new(
                                 pen.get_untracked(),
-                                ink::Sample { x: ox, y: oy + below, t: ev.time_stamp() },
+                                on,
+                                ink::Sample { x, y, t: ev.time_stamp() },
                             ))
                         });
                     }
@@ -549,9 +552,11 @@ pub(crate) fn Rambo(
                     });
                     if held == mascot::State::Inking {
                         let below = nib_below.get();
+                        let page = list_page();
                         strokes.update(|strokes| {
                             if let Some(stroke) = strokes.last_mut() {
-                                stroke.samples.push(ink::Sample { x, y: y + below, t: ev.time_stamp() });
+                                let (x, y) = ink::on_surface(stroke.on, x, y + below, page);
+                                stroke.samples.push(ink::Sample { x, y, t: ev.time_stamp() });
                             }
                         });
                     }
@@ -806,6 +811,29 @@ fn send_heard_edit(
 pub(crate) fn nest_box(nest_ref: NodeRef<leptos::html::Button>) -> Option<(f64, f64, f64, f64)> {
     let rect = nest_ref.get()?.get_bounding_client_rect();
     Some((rect.left(), rect.top(), rect.width(), rect.height()))
+}
+
+/// The list page's box in the window while it lies open at rest: ink laid on it goes
+/// with the paper. None while a turn runs or the planner is the page showing.
+fn list_page() -> Option<ink::PageBox> {
+    let main = document().query_selector("main").ok().flatten()?;
+    if main.class_list().contains("bending")
+        || main.get_attribute("data-pane").as_deref() != Some("0")
+    {
+        return None;
+    }
+    let page = main.query_selector(".tasks-pane").ok().flatten()?;
+    let rect = page.get_bounding_client_rect();
+    // From inside the page's border, where its ink layer starts, and counting the rows
+    // scrolled past inside it.
+    Some(ink::PageBox {
+        left: rect.left() + f64::from(page.client_left()),
+        top: rect.top() + f64::from(page.client_top()),
+        width: rect.width(),
+        height: rect.height(),
+        scroll_left: f64::from(page.scroll_left()),
+        scroll_top: f64::from(page.scroll_top()),
+    })
 }
 
 /// Calls `moved` whenever the page may have shifted under a fixed layer: any

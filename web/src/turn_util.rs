@@ -20,10 +20,6 @@ pub(crate) fn phone() -> bool {
         .is_some_and(|query| query.matches())
 }
 
-pub(crate) fn now() -> f64 {
-    js_sys::Date::now()
-}
-
 pub(crate) fn el_style(el: &Element, property: &str, value: &str) {
     if let Some(html) = el.dyn_ref::<HtmlElement>() {
         let _ = html.style().set_property(property, value);

@@ -129,18 +129,25 @@ pub const SCRAP_MAX: usize = 3;
 /// How long the rows below a removed row take to slide up and close the gap, in ms. Safe
 /// range 120 to 400.
 pub const ROW_CLOSE_MS: u32 = 220;
-/// The most done tasks that can hang at the pin, newest first; the older ones stay done
-/// (and in the planner's history) but are not drawn. How many show is the most that fit the
-/// page's height, up to this. Safe range 3 to 12.
-pub const PIN_SHOWN: usize = 8;
-/// The tallest a strip at the pin grows on a phone, in px, so six fit a short screen.
-/// Safe range 80 to 140.
+/// The done tasks hang at the pin as a stack: the newest on top, the rest under it. This many
+/// edges of the older ones show below the top strip, a few px each, to say how deep the stack
+/// is; the rest sit behind the last edge. Safe range 1 to 5.
+pub const PIN_EDGES: usize = 3;
+/// How tall a strip at the pin grows, in px. Safe range 80 to 140.
 pub const STRIP_H_PX: f64 = 110.0;
-/// The tallest a strip grows on a wide screen, where titles have room, in px.
-/// Safe range 120 to 240.
-pub const STRIP_H_WIDE_PX: f64 = 190.0;
 /// The gap between hanging strips, in px. Safe range 2 to 12.
 pub const STRIP_GAP_PX: f64 = 4.0;
+/// How far, in px, each strip of the pin's stack sits below the one above it. Safe range 2 to 8.
+pub const PIN_EDGE_PX: f64 = 4.0;
+/// How far, in px, a strip must be dragged before it counts as a drag and not a tap.
+/// Safe range 4 to 12.
+pub const STRIP_DRAG_PX: f64 = 6.0;
+/// The bottom-left corner that deletes a dragged strip, as a share of the screen's width
+/// and of its height. Safe range 0.2 to 0.4.
+pub const BIN_CORNER_FRACTION: f64 = 0.3;
+/// How long a strip crumples in the bin corner before the task is deleted, in ms.
+/// Safe range 200 to 600.
+pub const BIN_CRUMPLE_MS: u64 = 360;
 /// What lies above the first strip in the pin's column (the pin itself), in px.
 /// Safe range 20 to 40.
 pub const PIN_ROOM_PX: f64 = 28.0;
