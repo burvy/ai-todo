@@ -92,7 +92,7 @@
   --layer-page: 2; /* ink, curl, placements, a lifted row, the desktop tack board */
   --layer-sticky: 4; /* day names, the phone tack board and its tab */
   --layer-capture: 6; /* the capture bar, the landing: above the sticky things that scroll or sit beside it */
-  --layer-note: 40; /* the page note */
+  --layer-note: 40; /* the page note, a deleted row's scrap */
   --layer-rambo: 50;
   --layer-rambo-bubble: 51; /* his ask bubble */
   --layer-drag: 60; /* the drag ghost, the tack pin */
@@ -510,8 +510,86 @@ li.task-row.row-lifted {
   touch-action: none;
 }
 
-li.task-row.row-swiping {
-  transition: transform 0.18s ease-out;
+/* The scribble-out a swipe draws across a row: the ink follows the finger, then
+   finishes or lifts away. row.rs draws it and sets its times from tuning.rs. */
+.scribble-ink {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.scribble-ink path {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The deleted row's scrap: torn paper laid in the corner above the capture line,
+   tapped to tape the task back. It slides in from the edge and away again; paper
+   slides, only ink fades (DESIGN-DIRECTION §9). */
+.scrap-undo {
+  position: fixed;
+  left: var(--gutter);
+  bottom: calc(56px + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
+  z-index: var(--layer-note);
+  display: grid;
+  gap: 0.1em;
+  max-width: min(18em, 70vw);
+  padding: 0.55em 1em 0.6em;
+  border: 0;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  background: var(--wheat);
+  box-shadow: 0 6px 14px -8px rgba(0, 0, 0, 0.45);
+  clip-path: polygon(0 6%, 9% 0, 22% 5%, 37% 0, 52% 4%, 68% 0, 83% 5%, 100% 1%, 98% 30%, 100% 62%, 97% 100%, 80% 95%, 63% 100%, 47% 96%, 30% 100%, 14% 95%, 0 100%, 2% 55%);
+  transform: rotate(-3deg);
+  transition: transform var(--scrap-ms) cubic-bezier(0.23, 1, 0.32, 1);
+  cursor: pointer;
+}
+
+@starting-style {
+  .scrap-undo {
+    transform: translateX(calc(-100% - var(--gutter))) rotate(-8deg);
+  }
+}
+
+.scrap-undo.leaving {
+  transform: translateX(calc(-100% - var(--gutter))) rotate(-8deg);
+}
+
+/* Tapped, waiting for the server: it stays put until the task is back. */
+.scrap-undo.taping {
+  cursor: progress;
+}
+
+.scrap-undo:active {
+  transform: rotate(-3deg) scale(0.97);
+}
+
+.scrap-undo s {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-decoration-color: var(--ink);
+}
+
+.scrap-undo small {
+  opacity: 0.75;
+}
+
+/* No motion: the scrap simply appears, and is simply gone. */
+@media (prefers-reduced-motion: reduce) {
+  .scrap-undo,
+  .scrap-undo.leaving {
+    transform: rotate(-3deg);
+    transition: none;
+  }
 }
 
 .delete-mark {

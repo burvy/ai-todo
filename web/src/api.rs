@@ -410,6 +410,20 @@ struct OccurrencePatchBody {
     when: Option<When>,
 }
 
+/// POST /api/v1/tasks/restore - tape a just-deleted task back as it was
+pub async fn restore_task(task: &todo_core::Task) -> Result<Snapshot, ApiError> {
+    Request::post("/api/v1/tasks/restore")
+        .identity()
+        .header("Content-Type", "application/json")
+        .json(task)
+        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
+        .json::<Snapshot>()
+        .await
+        .map_err(|e| ApiError::Decode(e.to_string()))
+}
+
 /// PUT /api/v1/tasks/order - reorder all tasks
 pub async fn reorder_tasks(ids: Vec<TaskId>) -> Result<Snapshot, ApiError> {
     let body = ReorderBody { ids };

@@ -58,6 +58,25 @@ fn due_zone(when: When, tz: Tz) -> Option<String> {
     }
 }
 
+/// A restored task's place: where it was, kept within one step of the list as it is
+/// now. Its relative place survives, and a hostile `i64::MIN` cannot make the next
+/// capture's `min_order - n` overflow.
+fn restored_order(order: i64, tasks: &[Task]) -> i64 {
+    let orders = || tasks.iter().map(|task| task.order);
+    let low = orders().min().unwrap_or(0).saturating_sub(1);
+    let high = orders().max().unwrap_or(0).saturating_add(1);
+    order.clamp(low, high)
+}
+
+/// A restored deadline keeps the zone it was set in when that names a real zone;
+/// anything else is re-anchored where the user is now, as an edit would.
+fn restored_zone(task: &Task, tz: Tz) -> Option<String> {
+    match (task.when, task.due_tz.as_deref().map(str::parse::<Tz>)) {
+        (When::DueBy(_), Some(Ok(zone))) => Some(zone.name().to_owned()),
+        (when, _) => due_zone(when, tz),
+    }
+}
+
 /// Moves a task to a new `when`, re-anchoring a deadline's `due_tz` only when the
 /// instant actually changes (docs/ARCHITECTURE.md 4.1). Every edit path goes through
 /// here, so a save that restates the instant the task already has — the edit dialog
@@ -721,6 +740,46 @@ impl<S: Store> App<S> {
         &self.store
     }
 
+    /// Put back a task the user has just deleted (the scrap undo): its title, length,
+    /// time, done state, place in the list, label, priority and creation time come back
+    /// as they were. The id is a fresh one, because ids are unique across every user and
+    /// one sent by a client cannot be trusted not to name someone else's. A repeat's day
+    /// is not a stored task; its undo clears the skip on the series instead.
+    ///
+    /// Everything else the client sends is checked the way the server would have
+    /// written it: the place is kept within one step of the current list, a deadline's
+    /// zone must be a real zone, the creation time cannot be in the future, and the
+    /// import link is dropped, so a restored task can never shadow another for a
+    /// re-import. Sending the same restore twice stores two tasks (the task cap bounds it).
+    pub fn restore(&mut self, task: Task, user: &str, tz: Tz) -> Result<Snapshot, ApiError> {
+        check_title(&task.title)?;
+        check_duration(task.duration_min)?;
+        if task.source == Source::Series {
+            return Err(ApiError {
+                code: ErrorCode::BadRequest,
+                message: "a repeat's day is put back on its series, not restored".into(),
+            });
+        }
+        let ctx = self.ctx(tz);
+        let mut tasks = self.load(user)?;
+        check_room(tasks.len(), 1)?;
+        let task = Task {
+            id: Self::fresh_id(),
+            title: task.title.trim().to_owned(),
+            order: restored_order(task.order, &tasks),
+            due_tz: restored_zone(&task, tz),
+            created: task.created.min(ctx.now),
+            updated_at: ctx.now,
+            external_uid: None,
+            ..task
+        };
+        self.store
+            .put(user, task.clone())
+            .map_err(Self::storage_error)?;
+        tasks.push(task);
+        self.snapshot_now(user, tasks, &ctx, tz)
+    }
+
     pub fn delete(&mut self, id: &str, user: &str, tz: Tz) -> Result<Snapshot, ApiError> {
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
@@ -1354,6 +1413,120 @@ mod tests {
             priority: Priority::Low,
             source: Source::Text,
         }
+    }
+
+    #[test]
+    fn a_restored_task_comes_back_as_it_was_under_a_fresh_id() {
+        let (mut app, _) = app();
+        let snapshot = app
+            .create(draft("Water the plants"), "u1", Tz::UTC)
+            .unwrap();
+        let mut gone = snapshot.tasks[0].clone();
+        gone.done = true;
+        gone.priority = Priority::High;
+        app.delete(&gone.id.0, "u1", Tz::UTC).unwrap();
+
+        let back = app.restore(gone.clone(), "u1", Tz::UTC).unwrap();
+        let task = &back.tasks[0];
+        assert_ne!(task.id, gone.id, "a client's id is never stored");
+        assert_eq!(
+            (
+                task.title.as_str(),
+                task.done,
+                task.order,
+                task.priority,
+                task.created
+            ),
+            (
+                "Water the plants",
+                true,
+                gone.order,
+                Priority::High,
+                gone.created
+            )
+        );
+        assert_eq!(task.when, gone.when);
+    }
+
+    #[test]
+    fn a_restored_task_keeps_its_place_in_the_list() {
+        let (mut app, _) = app();
+        for title in ["Feed the cat", "Water the plants", "Post the letter"] {
+            app.create(draft(title), "u1", Tz::UTC).unwrap();
+        }
+        let titles = |snapshot: &Snapshot| {
+            let mut tasks = snapshot.tasks.clone();
+            tasks.sort_by_key(|task| task.order);
+            tasks.into_iter().map(|task| task.title).collect::<Vec<_>>()
+        };
+        let before = app.snapshot("u1", Tz::UTC).unwrap();
+        for gone in before.tasks.clone() {
+            app.delete(&gone.id.0, "u1", Tz::UTC).unwrap();
+            let back = app.restore(gone, "u1", Tz::UTC).unwrap();
+            assert_eq!(titles(&back), titles(&before));
+        }
+    }
+
+    #[test]
+    fn hostile_restore_fields_are_tamed() {
+        let (mut app, _) = app();
+        let snapshot = app.create(draft("Pay rent"), "u1", Tz::UTC).unwrap();
+        let mut hostile = snapshot.tasks[0].clone();
+        hostile.order = i64::MIN;
+        hostile.when = When::DueBy(hostile.created);
+        hostile.due_tz = Some("Not/AZone".repeat(1000));
+        hostile.external_uid = Some(format!("{}@import", "x".repeat(10_000)));
+        hostile.created = DateTime::<Utc>::MAX_UTC;
+        let back = app.restore(hostile, "u1", Tz::UTC).unwrap();
+        let task = back
+            .tasks
+            .iter()
+            .min_by_key(|task| task.order)
+            .expect("restored");
+        assert_eq!(
+            task.order,
+            snapshot.tasks[0].order - 1,
+            "first, not i64::MIN"
+        );
+        assert_eq!(
+            task.due_tz.as_deref(),
+            Some("UTC"),
+            "re-anchored where the user is"
+        );
+        assert_eq!(task.external_uid, None);
+        assert!(
+            task.created <= task.updated_at,
+            "never created in the future"
+        );
+        // The next capture places itself above without overflowing.
+        app.create(draft("Call the bank"), "u1", Tz::UTC).unwrap();
+
+        let mut zoned = snapshot.tasks[0].clone();
+        zoned.when = When::DueBy(zoned.created);
+        zoned.due_tz = Some("Europe/Paris".into());
+        let back = app.restore(zoned, "u1", Tz::UTC).unwrap();
+        assert!(
+            back.tasks
+                .iter()
+                .any(|task| task.due_tz.as_deref() == Some("Europe/Paris")),
+            "a real zone is kept"
+        );
+    }
+
+    #[test]
+    fn a_repeat_s_day_is_not_restored_as_a_task() {
+        let (mut app, _) = app();
+        let snapshot = app.create(draft("Gym"), "u1", Tz::UTC).unwrap();
+        let mut day = snapshot.tasks[0].clone();
+        day.source = Source::Series;
+        let error = app.restore(day, "u1", Tz::UTC).unwrap_err();
+        assert_eq!(error.code, ErrorCode::BadRequest);
+        let mut blank = snapshot.tasks[0].clone();
+        blank.title = "  ".into();
+        assert!(
+            app.restore(blank, "u1", Tz::UTC).is_err(),
+            "the create checks apply"
+        );
     }
 
     /// Creating one task reads the store once. It used to read it twice: once to find

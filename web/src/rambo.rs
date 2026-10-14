@@ -41,6 +41,8 @@ pub(crate) fn Rambo(
     open_sheet: RwSignal<Option<TaskId>>,
     /// The nest button: Rambo measures its bounding box to know where home is
     nest_ref: NodeRef<leptos::html::Button>,
+    /// The corner a deleted row's scrap lies in: his × lays one like any delete
+    scraps: RwSignal<Option<crate::scrap::Scrap>>,
     /// The tool he holds: it decides which drawing of each pose he wears
     pen: Signal<settings::Pen>,
     /// True while you are typing, so he peeks over at the box
@@ -612,7 +614,7 @@ pub(crate) fn Rambo(
                                     wasm_bindgen_futures::spawn_local(async move {
                                         // A delete like any other: crossed out first, and a
                                         // repeat's row skips just its own date.
-                                        match delete_with_scribble(&TaskId(task_id)).await {
+                                        match delete_with_scribble(&TaskId(task_id), snapshot, scraps).await {
                                             Ok(new_snap) => set_snapshot_clone.set(new_snap),
                                             Err(e) => set_error.set(Some(series_note(&e))),
                                         }
