@@ -344,7 +344,10 @@ mod imp {
                 (view_h - rect.top()).min(rect.height()),
             );
             let _ = main.class_list().add_1("bending");
+            // `main` scrolls smoothly; the jump back to the first page must be instant.
+            el_style(&main, "scroll-behavior", "auto");
             main.set_scroll_left(0);
+            el_style(&main, "scroll-behavior", "");
             let _ = front.class_list().add_1("bend-front");
             let _ = under.class_list().add_1("bend-under");
             let (w, h) = (f64::from(fx.client_width()), f64::from(fx.client_height()));
@@ -469,7 +472,13 @@ mod imp {
                 Settle::Complete => stage.turn.revealed_pane(),
                 Settle::SpringBack => stage.turn.turning_pane(),
             };
-            show_pane(self.0.main, shown, self.0.set_pane);
+            // The panes were just un-stacked; scrolling smoothly to the shown one would
+            // flash the list first.
+            if let Some(main) = self.0.main.get() {
+                el_style(&main, "scroll-behavior", "auto");
+                show_pane(self.0.main, shown, self.0.set_pane);
+                el_style(&main, "scroll-behavior", "");
+            }
             *self.0.phase.borrow_mut() = Phase::Idle;
         }
     }
