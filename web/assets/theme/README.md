@@ -8,10 +8,6 @@ All files in this directory are AI-generated placeholder graphics. Replace them 
 |---|---|---|---|---|
 | paper.svg | Tileable light parchment grain | 512x512 | SVG (tileable) | Page background |
 | paper-dark.svg | Tileable dark-mode parchment grain | 512x512 | SVG (tileable) | Dark page background |
-| icon-mic.svg | Microphone icon | 24x24 | SVG (currentColor) | Speech / voice actions |
-| icon-settings.svg | Settings gear icon | 24x24 | SVG (currentColor) | Settings / preferences |
-| icon-list.svg | List icon | 24x24 | SVG (currentColor) | List / task list views |
-| icon-calendar.svg | Calendar icon | 24x24 | SVG (currentColor) | Calendar / scheduling |
 
 ## Replacement steps
 

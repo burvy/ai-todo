@@ -10,7 +10,7 @@ pub enum RamblMode {
     Lobotomized,
 }
 
-/// The pen Rambo writes with (DESIGN-DECISIONS). The choice is per device.
+/// The pen Rambo writes with (DESIGN-DIRECTION). The choice is per device.
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Pen {
     #[default]
@@ -69,7 +69,7 @@ fn sounds_on() -> bool {
 }
 
 const DEFAULTS: Settings = Settings {
-    // The working day the paper is for: eight until six (DESIGN-DECISIONS,
+    // The working day the paper is for: eight until six (DESIGN-DIRECTION,
     // "Planner"). Opening on 08:00, not midnight, is what QA asked for.
     start_hour: 8,
     end_hour: 18,
@@ -95,7 +95,7 @@ pub struct Settings {
     pub pen: Pen,
     #[serde(default)]
     pub theme: Theme,
-    /// Sounds are on by default (DESIGN-DECISIONS); the gear menu mutes.
+    /// Sounds are on by default (DESIGN-DIRECTION); the gear menu mutes.
     #[serde(default = "sounds_on")]
     pub sounds: bool,
     /// Times are written as `9 am` by default; `24:00` style is a gear choice.

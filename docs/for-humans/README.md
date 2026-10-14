@@ -6,8 +6,8 @@ to do and the exact path or link. Paths were checked against origin/main
 
 ## Art
 
-- [ ] Redraw Rambo's poses by hand following `art/GUIDE.md`, replacing the placeholder SVGs in `art/illustrations/` and `web/assets/`.
-- [ ] Add a "lobotomized" pose alongside the others in `art/illustrations/` (planned — no such file yet).
+- [ ] Redraw Rambo's poses by hand following `art/GUIDE.md`, replacing the placeholder SVGs in `web/assets/rambo/`.
+- [ ] Add a "lobotomized" pose alongside the others in `web/assets/rambo/`.
 - [ ] Later, build the Rive animation file from the redrawn poses (planned — no `.rive` file exists yet).
 
 ## Rambo's voice

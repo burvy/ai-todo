@@ -1,7 +1,7 @@
 # Fonts
 
 **Status: placeholder (stock OFL fonts, self-hosted).** Per
-`docs/DESIGN-DECISIONS.md` every word is handwritten: about three self-hosted
+`docs/DESIGN-DIRECTION.md` every word is handwritten: about three self-hosted
 OFL handwriting fonts live in `web/assets/fonts/` — no CDN, no interface font.
 `@font-face` rules to paste into the theme: `web/assets/fonts/README.md`.
 

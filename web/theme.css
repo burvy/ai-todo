@@ -6,7 +6,7 @@
 :root {
   color-scheme: light;
 
-  /* Palette, light (docs/REDESIGN.md). Chamoisee is for lines only, never text:
+  /* Palette, light (docs/DESIGN-DIRECTION.md). Chamoisee is for lines only, never text:
      on parchment it manages just 2.8:1. Muted text uses the coffee mixes below. */
   --parchment: #f2e8cf;    /* the page */
   --wheat: #ecd7af;        /* a sheet laid on the page: dialogs, the capture bar */
@@ -42,7 +42,7 @@
   --paper-raised: var(--wheat);
   --paper-sunken: var(--ecru);
 
-  /* Type: every word is handwritten (docs/DESIGN-DECISIONS.md). The three
+  /* Type: every word is handwritten (docs/DESIGN-DIRECTION.md). The three
      self-hosted OFL faces live in web/assets/fonts/ (Ping's set, woff2):
      Patrick Hand is the neat, very legible hand for the UI; Caveat (variable
      400-700) is the expressive hand for task titles; Kalam 300/400/700 is

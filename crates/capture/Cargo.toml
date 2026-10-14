@@ -9,7 +9,6 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 dates = { path = "../dates" }
 judge = { path = "../judge" }
 pdf-extract = "0.12"
-serde = { version = "1", features = ["derive"] }
 todo-core = { path = "../core" }
 
 [dev-dependencies]

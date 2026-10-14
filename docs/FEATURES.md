@@ -8,7 +8,7 @@ current code.
 
 ### 1. Ramble to tasks
 a. Type a sentence and Rambl creates a task with a title, duration, date, label and priority.
-b. Type text in the box labelled "Ramble" and press **Add**.
+b. Type text in the box labelled "Ramble" and tap the nest (Rambo's dish) at its right end, or press Enter.
 c. While the box is empty, Rambo whispers a short prompt in it ("Ramble on…", "What's on
 today?", …); the line rotates every ~6 s with a soft fade, and with reduced motion it stays
 on one line with no fade.
@@ -16,8 +16,8 @@ d. Code: `web/src/lib.rs:CaptureBox, WHISPER_PROMPTS, schedule_whisper`; `web/sr
 `crates/capture/src/pipeline.rs:capture_text, clean_title`.
 
 ### 2. Capture from speech
-a. The capture box exposes a microphone control when the browser supports speech recognition.
-b. Click **Mic** beside the capture box and speak; the transcription appears in the capture box
+a. Picking Rambo up starts speech recognition when the browser supports it; there is no mic button.
+b. Grab Rambo ("Grab Rambo to listen") and speak; the transcription appears in the capture box
 and can be submitted as a task.
 c. Code: `web/src/lib.rs:CaptureBox`; `web/src/speech.rs:Session, supported`;
 `web/src/api.rs:capture_text`.
@@ -143,7 +143,7 @@ c. Code: `web/theme.css` (`:root` and `:root[data-theme="dark"]`);
 ### 6. Parchment theme
 a. The page is aged paper: warm palette, serif headings, a tiled paper texture that switches to a dark variant in dark mode.
 b. Look at the page background and the masthead in light and dark mode; with `web/assets/theme/*.svg` deleted it still reads as parchment.
-c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics: `web/assets/theme/` *(planned, drawn separately)*.
+c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics: `web/assets/theme/paper.svg`, `paper-dark.svg` (placeholders).
 
 ## IV. RAMBL, THE MASCOT
 
@@ -160,7 +160,7 @@ c. Code: `web/src/lib.rs:Rambo`; `web/src/mascot.rs:transition`;
 
 ### 3. Drop actions
 a. Dropping Rambo on a task opens a prompt with Edit, Move, Done, Delete and
-Never mind actions. The edit dialog is *(planned)*.
+Never mind actions. Edit opens the task dialog (`<dialog class="task-dialog">` in `web/src/lib.rs`).
 b. Drag the pen onto a task row and choose an action.
 c. Code: `web/src/lib.rs:Rambo`; `web/src/api.rs:patch_task, delete_task`.
 
