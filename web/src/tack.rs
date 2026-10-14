@@ -309,6 +309,41 @@ pub fn reconcile(strips: Vec<Strip>, done: &[(String, String)], listed: &HashSet
     }
 }
 
+/// What the board remembers between passes over the server's snapshot: the ids
+/// the *previous* pass showed as to-do.
+///
+/// [`reconcile`] needs those, not the ones in the snapshot it is handed, because
+/// one snapshot cannot list a task as both to-do and done. The pass that first
+/// sees a task done can only recognise the cut-out-and-tack ceremony by looking
+/// back at what the page was showing before it was ticked. Keeping that memory
+/// here puts the rule in one testable place and leaves the effect to do nothing
+/// but hand over a snapshot.
+#[derive(Default)]
+pub struct Watch {
+    listed: HashSet<String>,
+}
+
+impl Watch {
+    /// One pass over `snapshot`: reconcile the board, then remember what this
+    /// snapshot shows as to-do, ready for the next one.
+    pub fn pass(&mut self, strips: Vec<Strip>, snapshot: &Snapshot) -> Pass {
+        let done: Vec<(String, String)> = snapshot
+            .tasks
+            .iter()
+            .filter(|task| task.done)
+            .map(|task| (task.id.0.clone(), task.title.clone()))
+            .collect();
+        let pass = reconcile(strips, &done, &self.listed);
+        self.listed = snapshot
+            .tasks
+            .iter()
+            .filter(|task| !task.done)
+            .map(|task| task.id.0.clone())
+            .collect();
+        pass
+    }
+}
+
 // ---- persistence, per device, presentation only ----
 
 const STORAGE_KEY: &str = "rambl-tackboard-v1";
@@ -413,6 +448,10 @@ pub fn TackBoard(
     // Strips whose ceremony is counting down, so a snapshot landing mid-pause
     // does not queue a second one.
     let pending = Rc::new(RefCell::new(HashSet::<String>::new()));
+    // What the previous pass over the server's snapshot showed as to-do, which
+    // is the only place the board can tell a task ticked in front of you from
+    // one that was already done.
+    let watch = Rc::new(RefCell::new(Watch::default()));
 
     let reduced = crate::mascot::prefers_reduced_motion();
 
@@ -647,27 +686,17 @@ pub fn TackBoard(
     let on_toggle = relayout.clone();
 
     // Follow the server: strips live exactly as long as their task is done, and
-    // a task the board watched get ticked is cut out and tacked after the
-    // pause instead of appearing out of nowhere.
+    // a task the board watched go from listed to done is cut out and tacked
+    // after the pause instead of appearing out of nowhere. `Watch` holds the
+    // to-do ids of the previous pass, which is what makes that difference, so
+    // this effect only hands over the snapshot.
     Effect::new(move |_| {
         let snap = snapshot.get();
-        let done: Vec<(String, String)> = snap
-            .tasks
-            .iter()
-            .filter(|t| t.done)
-            .map(|t| (t.id.0.clone(), t.title.clone()))
-            .collect();
-        let listed: HashSet<String> = snap
-            .tasks
-            .iter()
-            .filter(|t| !t.done)
-            .map(|t| t.id.0.clone())
-            .collect();
         let Pass {
             mut kept,
             fresh,
             just_done,
-        } = reconcile(strips.get_untracked(), &done, &listed);
+        } = watch.borrow_mut().pass(strips.get_untracked(), &snap);
         renumber(&mut kept);
         strips.set(kept);
 
@@ -1131,6 +1160,8 @@ fn after_render(f: impl FnOnce() + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{TimeZone, Utc};
+    use todo_core::{Label, Plan, Priority, Source, When};
 
     #[test]
     fn a_swing_settles_and_never_gains_energy() {
@@ -1422,5 +1453,62 @@ mod tests {
         assert_eq!(parsed.strips.len(), 2);
         assert!(parsed.open);
         assert!(parsed.strips[1].stacked);
+    }
+
+    // ---- BUG-1: which done task the board watched go from listed to done ----
+
+    /// A snapshot holding exactly these tasks, each with the given done flag.
+    fn snapshot_of(rows: &[(&str, bool)]) -> Snapshot {
+        Snapshot {
+            tasks: rows.iter().map(|(id, done)| task(id, *done)).collect(),
+            plan: Plan::default(),
+            tz: "UTC".into(),
+            generated: Utc::now(),
+            series: Vec::new(),
+        }
+    }
+
+    fn task(id: &str, done: bool) -> todo_core::Task {
+        let at = Utc.with_ymd_and_hms(2026, 10, 14, 9, 0, 0).unwrap();
+        todo_core::Task {
+            id: TaskId(id.into()),
+            title: id.into(),
+            duration_min: 30,
+            when: When::Anytime,
+            done,
+            order: 0,
+            label: Label::Work,
+            priority: Priority::Medium,
+            source: Source::Text,
+            created: at,
+            updated_at: at,
+            due_tz: None,
+            external_uid: None,
+        }
+    }
+
+    #[test]
+    fn a_task_ticked_between_two_passes_gets_cut_out_and_tacked() {
+        let mut watch = Watch::default();
+        // The page is open with "a" showing as to-do.
+        let pass = watch.pass(Vec::new(), &snapshot_of(&[("a", false)]));
+        assert!(pass.just_done.is_empty());
+        assert!(pass.fresh.is_empty());
+
+        // The user ticks it: this snapshot lists it as done, and only the
+        // previous pass can say it was open a moment ago.
+        let pass = watch.pass(Vec::new(), &snapshot_of(&[("a", true)]));
+        assert_eq!(pass.just_done, vec!["a".to_owned()]);
+    }
+
+    #[test]
+    fn a_task_already_done_when_the_board_opened_goes_straight_up() {
+        let mut watch = Watch::default();
+        let pass = watch.pass(Vec::new(), &snapshot_of(&[("b", true)]));
+        assert!(
+            pass.just_done.is_empty(),
+            "nothing was watched going from listed to done"
+        );
+        assert_eq!(pass.fresh, vec![("b".to_owned(), "b".to_owned())]);
     }
 }
