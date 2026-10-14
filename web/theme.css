@@ -100,7 +100,18 @@
   --layer-menu-backdrop: 80;
   --layer-menu: 81; /* the gear menu */
   --layer-sheet: 90; /* the edit sheet and the pickers inside it */
+  --layer-turn-under: 0; /* inside main while a page turns: the page beneath, */
+  --layer-turn-front: 1; /* the page turning, */
+  --layer-turn-fx: 2; /* and the flap and shadows between them */
   --layer-lifted: 99; /* a strip being carried, above its pile inside the tack board */
+
+  /* The page turn (docs/FRONTEND-PLAN.md; web/src/bend.rs). Looks only: the numbers
+     that decide a turn are in web/src/tuning.rs. */
+  --bend-shade: color-mix(in srgb, var(--ink) 26%, transparent);
+  --bend-underside: color-mix(in srgb, var(--paper) 88%, var(--ink));
+  --bend-shadow: 3.5rem; /* how far the page's shadow reaches onto the next page */
+  --bend-crease: 2.25rem; /* how much of the flap curves away from the fold */
+  --bend-lift: 0.6rem; /* how soft the flap's shadow on the page below is */
 
   /* Motion. */
   --dur-fast: 120ms;
@@ -283,63 +294,111 @@ main > * {
   min-width: 0;
 }
 
-/* A deliberate swipe (turning-forward = list → planner) shades the page
-   edge like a corner curling over — no 3D folds, just paper shading. The ink
-   is mixed from --ink rather than a coffee rgba, so the curl is visible on dark
-   paper as well; the sweep drops with prefers-reduced-motion by the global rule
-   above. */
-@keyframes page-curl-forward {
-  from {
-    background: linear-gradient(
-      90deg,
-      transparent 30%,
-      color-mix(in srgb, var(--ink) 28%, transparent) 100%
-    );
-  }
-  to {
-    background: linear-gradient(
-      90deg,
-      transparent 100%,
-      color-mix(in srgb, var(--ink) 28%, transparent) 100%
-    );
-  }
+/* The page turn (web/src/bend.rs, turner.rs). A swipe turns the page by bending it
+   from the finger's corner: for the length of a turn the two panes are stacked in one
+   cell, the turning one clipped to what stays flat of it, the next one beneath, and
+   .bend-fx draws between them the shadow the lifted page casts and the flap itself,
+   paper underside up. The pointer decides everything sideways, so the row does not
+   pan sideways on its own; up and down still scrolls. */
+main {
+  touch-action: pan-y;
 }
 
-@keyframes page-curl-back {
-  from {
-    background: linear-gradient(
-      270deg,
-      transparent 30%,
-      color-mix(in srgb, var(--ink) 28%, transparent) 100%
-    );
-  }
-  to {
-    background: linear-gradient(
-      270deg,
-      transparent 100%,
-      color-mix(in srgb, var(--ink) 28%, transparent) 100%
-    );
-  }
+main.bending {
+  display: grid;
+  grid-template-columns: 100%;
+  grid-auto-flow: row;
+  grid-auto-columns: auto;
+  overflow: hidden;
+  scroll-snap-type: none;
+  user-select: none;
 }
 
-/* The curl sits over the viewport edge, not over the panes: main is the scroll
-   container, so an absolutely positioned pseudo-element would travel with the
-   content instead of shading the page edge. */
-main.turning-forward::after,
-main.turning-back::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: var(--layer-page);
+main.bending > * {
+  grid-area: 1 / 1;
+  scroll-snap-align: none;
+}
+
+/* Each pane is a whole page while it turns: paper all the way down the cell, so what
+   is clipped away leaves paper and not a hole. */
+main.bending > :not(.bend-fx) {
+  align-self: stretch;
+  background-color: var(--paper);
+}
+
+/* A stacking context of its own, so the planner's sticky day names (a layer of their
+   own on the page) stay under the page that is turning over them. */
+main.bending > .bend-under {
+  position: relative;
+  z-index: var(--layer-turn-under);
+  isolation: isolate;
   pointer-events: none;
 }
 
-main.turning-forward::after {
-  animation: page-curl-forward 420ms ease-out;
+main.bending > .bend-front {
+  position: relative;
+  z-index: var(--layer-turn-front);
 }
 
-main.turning-back::after {
-  animation: page-curl-back 420ms ease-out;
+.bend-fx {
+  display: none;
+  visibility: hidden;
+  position: relative;
+  z-index: var(--layer-turn-fx);
+  align-self: stretch;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+main.bending > .bend-fx {
+  display: block;
+  grid-area: 1 / 1;
+}
+
+.bend-away,
+.bend-flapbox,
+.bend-flap {
+  position: absolute;
+  inset: 0;
+}
+
+/* What the fold line puts on the page it uncovers and on the paper's own underside is
+   drawn as a strip lying along the fold: its local x runs across the fold. */
+.bend-strip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 400vmax;
+  transform-origin: 0 0;
+  transform: translate(var(--bend-x, 0px), var(--bend-y, 0px)) rotate(var(--bend-angle, 0rad))
+    translateY(-200vmax);
+}
+
+/* The shadow the turning page casts on the one beneath, darkest at the fold. */
+.bend-cast {
+  width: var(--bend-shadow);
+  margin-left: calc(-1 * var(--bend-shadow));
+  background: linear-gradient(to right, transparent, var(--bend-shade));
+}
+
+/* The lifted flap: the paper's back, a little darker than its face, shaded where it
+   curves away from the fold and throwing its own soft shadow on the page below. */
+.bend-flapbox {
+  filter: drop-shadow(0 0 var(--bend-lift) var(--bend-shade));
+}
+
+.bend-flap {
+  background-color: var(--bend-underside);
+}
+
+.bend-crease {
+  width: var(--bend-crease);
+  background: linear-gradient(
+    to right,
+    var(--bend-shade),
+    color-mix(in srgb, var(--paper) 40%, transparent) 55%,
+    transparent
+  );
 }
 
 .tasks-pane {
@@ -1530,6 +1589,7 @@ li.task-row:focus-within .delete-mark {
   }
 
   main {
+    touch-action: auto;
     grid-auto-flow: row;
     grid-auto-columns: none;
     grid-template-columns: minmax(16rem, 1fr) minmax(24rem, 2fr);

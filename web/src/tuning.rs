@@ -53,3 +53,40 @@ pub const SCRAP_SLIDE_MS: u32 = 240;
 pub const SCRAP_TICK_MS: u32 = 100;
 
 const _: () = assert!(SCRIBBLE_BAND.0 < SCRIBBLE_BAND.1);
+
+// ---- the page turn (web/src/bend.rs)
+
+/// The phone layout's media query, the one `web/theme.css` switches the two panes into
+/// a row on: the page bends only where the panes are pages. Keep it equal to the CSS.
+pub const PHONE_MEDIA: &str = "(max-width: 700px)";
+/// How far a press must travel before it is a swipe and not a tap, in px. Safe range 6
+/// to 16: the same slop a task row uses (`row::SLOP_PX`), a little wider.
+pub const BEND_SLOP_PX: f64 = 10.0;
+/// Share of the page's width the finger must carry the corner for letting go to turn the
+/// page; short of it the page springs back. Safe range 0.2 to 0.5.
+pub const BEND_COMMIT_SHARE: f64 = 0.35;
+/// A flick at least this fast, in px per ms, turns the page from `BEND_FLICK_MIN_PX` of
+/// travel on. Safe range 0.2 to 0.6.
+pub const BEND_FLICK_PX_PER_MS: f64 = 0.3;
+/// The least travel, in px, that a flick can turn the page from. Safe range 16 to 48.
+pub const BEND_FLICK_MIN_PX: f64 = 24.0;
+/// How far the corner can be dragged, in page widths: just over two, the drag that
+/// carries the fold clean across the page. Safe range 2.0 to 2.5.
+pub const BEND_FULL_TURN: f64 = 2.05;
+/// How long a released bend takes to turn the page the rest of the way, in ms. Safe range
+/// 250 to 500: the system finishing what the finger started, so quick.
+pub const BEND_COMPLETE_MS: u32 = 360;
+/// How long a released bend takes to spring back flat, in ms. Safe range 200 to 400.
+pub const BEND_SPRING_MS: u32 = 300;
+/// How long a button's page turn takes, in ms: nobody is holding the page, so it is
+/// unhurried. Safe range 400 to 700.
+pub const BEND_BUTTON_MS: u32 = 520;
+/// How high a button's turn lifts the corner on its way, as a share of the page's
+/// height, so the fold crosses the page on a slant. Safe range 0 to 0.3.
+pub const BEND_BUTTON_ARC: f64 = 0.12;
+/// With reduced motion the page does not bend: it slides, and this is how long the slide
+/// takes to finish, in ms. Safe range 100 to 200.
+pub const BEND_SLIDE_MS: u32 = 150;
+
+const _: () =
+    assert!(BEND_FLICK_MIN_PX < 100.0 && BEND_COMMIT_SHARE < 1.0 && BEND_FULL_TURN >= 2.0);
