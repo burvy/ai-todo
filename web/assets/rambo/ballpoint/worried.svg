@@ -1,7 +1,7 @@
 <!-- PLACEHOLDER: replace me, see art/GUIDE.md -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 112" role="img" aria-label="Rambo (ballpoint), worried">
   <style>
-    /* An <img> never sees the page's CSS, so the theme.css tokens are restated here. */
+    /* An img element never sees the page's CSS, so the theme.css tokens are restated here. */
     svg{--rambo:#146272;--rambo-deep:#004552;--rambo-tint:#4a939f;--accent:#9f682e}
     @media (prefers-color-scheme:dark){svg{--rambo:#64bbc4;--rambo-deep:#358e9b;--rambo-tint:#a3dde0;--accent:#d9a45c}}
     svg{--rambo-barrel:var(--rambo);--rambo-cap:var(--accent);--rambo-nib:var(--accent);--rambo-lead:var(--rambo-deep);--rambo-ink:var(--rambo-deep);--rambo-eye:#FCFAF4;--rambo-pupil:var(--rambo-deep);--rambo-blush:#D08770;--rambo-fx:var(--rambo-tint);--rambo-brow:var(--rambo-deep)}

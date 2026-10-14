@@ -559,6 +559,16 @@ mod tests {
             for pose in REACHABLE_POSES {
                 let path = pose.art(pen);
                 let svg = std::fs::read_to_string(art_file(&path)).expect("art exists");
+                // A `<` inside the style block (even in a CSS comment) is a tag
+                // to the XML parser, and the browser then shows no Rambo at all.
+                let style = svg
+                    .split_once("<style>")
+                    .and_then(|(_, rest)| rest.split_once("</style>"))
+                    .map_or("", |(css, _)| css);
+                assert!(
+                    !style.contains('<'),
+                    "{path}: '<' inside <style> breaks the SVG"
+                );
                 for used in svg.split("var(--").skip(1) {
                     let name = &used[..used.find([')', ',']).expect("var() closes")];
                     assert!(
