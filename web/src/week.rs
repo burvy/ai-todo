@@ -548,16 +548,15 @@ pub(crate) fn hour_prefill_text(ctx: &LocalContext, day: i64, minutes: u16) -> S
     )
 }
 
+#[cfg(target_arch = "wasm32")]
 fn current_minutes() -> u16 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let now = js_sys::Date::new_0();
-        return now.get_hours() as u16 * 60 + now.get_minutes() as u16;
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        0
-    }
+    let now = js_sys::Date::new_0();
+    now.get_hours() as u16 * 60 + now.get_minutes() as u16
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn current_minutes() -> u16 {
+    0
 }
 
 fn set_interval(callback: impl FnMut() + 'static, millis: u32) -> Interval {

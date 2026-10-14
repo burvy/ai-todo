@@ -220,28 +220,27 @@ fn label_name(label: Label) -> &'static str {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 fn load_label_filter() -> Option<Label> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let value = leptos::prelude::window()
-            .local_storage()
-            .ok()
-            .flatten()
-            .and_then(|storage| storage.get_item("rambl-task-label-filter").ok().flatten());
-        return value.and_then(|value| match value.as_str() {
-            "School" => Some(Label::School),
-            "Work" => Some(Label::Work),
-            "Errands" => Some(Label::Errands),
-            "Health" => Some(Label::Health),
-            "Personal" => Some(Label::Personal),
-            "Other" => Some(Label::Other),
-            _ => None,
-        });
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        None
-    }
+    let value = leptos::prelude::window()
+        .local_storage()
+        .ok()
+        .flatten()
+        .and_then(|storage| storage.get_item("rambl-task-label-filter").ok().flatten());
+    value.and_then(|value| match value.as_str() {
+        "School" => Some(Label::School),
+        "Work" => Some(Label::Work),
+        "Errands" => Some(Label::Errands),
+        "Health" => Some(Label::Health),
+        "Personal" => Some(Label::Personal),
+        "Other" => Some(Label::Other),
+        _ => None,
+    })
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_label_filter() -> Option<Label> {
+    None
 }
 
 fn save_label_filter(label: Option<Label>) {
@@ -261,17 +260,16 @@ fn is_overdue_at(task: &todo_core::Task, now: DateTime<Utc>) -> bool {
     !task.done && matches!(task.when, When::DueBy(deadline) if deadline < now)
 }
 
+#[cfg(target_arch = "wasm32")]
 fn is_overdue(task: &todo_core::Task) -> bool {
-    #[cfg(target_arch = "wasm32")]
-    {
-        return DateTime::from_timestamp_millis(js_sys::Date::now() as i64)
-            .is_some_and(|now| is_overdue_at(task, now));
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let _ = is_overdue_at(task, task.created);
-        false
-    }
+    DateTime::from_timestamp_millis(js_sys::Date::now() as i64)
+        .is_some_and(|now| is_overdue_at(task, now))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_overdue(task: &todo_core::Task) -> bool {
+    let _ = is_overdue_at(task, task.created);
+    false
 }
 
 /// Hook exposed for Rambo's scribble-out animation before removal. Named

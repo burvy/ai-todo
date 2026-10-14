@@ -104,44 +104,42 @@ pub(crate) enum EditWhen {
     At,
 }
 
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn local_input_value(time: DateTime<Utc>) -> String {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let date = js_sys::Date::new(&(time.timestamp_millis() as f64).into());
-        return format!(
-            "{:04}-{:02}-{:02}T{:02}:{:02}",
-            date.get_full_year(),
-            date.get_month() + 1,
-            date.get_date(),
-            date.get_hours(),
-            date.get_minutes()
-        );
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        time.format("%Y-%m-%dT%H:%M").to_string()
-    }
+    let date = js_sys::Date::new(&(time.timestamp_millis() as f64).into());
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}",
+        date.get_full_year(),
+        date.get_month() + 1,
+        date.get_date(),
+        date.get_hours(),
+        date.get_minutes()
+    )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn local_input_value(time: DateTime<Utc>) -> String {
+    time.format("%Y-%m-%dT%H:%M").to_string()
+}
+
+#[cfg(target_arch = "wasm32")]
 fn parse_local_input(value: &str) -> Option<DateTime<Utc>> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        // An empty or bad field parses to NaN, and `NaN as i64` is 0: 1 January 1970.
-        let millis = js_sys::Date::parse(&format!("{value}:00"));
-        if millis.is_nan() {
-            return None;
-        }
-        // The browser quietly moves a wall clock that falls in a spring-forward gap
-        // (02:30 becomes 03:30); read the instant back and refuse it if it moved.
-        return DateTime::from_timestamp_millis(millis as i64)
-            .filter(|instant| wall_clock_kept(value, &local_input_value(*instant)));
+    // An empty or bad field parses to NaN, and `NaN as i64` is 0: 1 January 1970.
+    let millis = js_sys::Date::parse(&format!("{value}:00"));
+    if millis.is_nan() {
+        return None;
     }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M")
-            .ok()
-            .map(|time| DateTime::<Utc>::from_naive_utc_and_offset(time, Utc))
-    }
+    // The browser quietly moves a wall clock that falls in a spring-forward gap
+    // (02:30 becomes 03:30); read the instant back and refuse it if it moved.
+    DateTime::from_timestamp_millis(millis as i64)
+        .filter(|instant| wall_clock_kept(value, &local_input_value(*instant)))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn parse_local_input(value: &str) -> Option<DateTime<Utc>> {
+    chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M")
+        .ok()
+        .map(|time| DateTime::<Utc>::from_naive_utc_and_offset(time, Utc))
 }
 
 /// Whether the instant a browser built from `asked` still reads as `asked` on the wall:
