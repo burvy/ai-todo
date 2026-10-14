@@ -303,10 +303,12 @@ goes. He hops home on his own
 after 3 seconds untouched, or comes home at once when dropped on his nest, and
 forgives you a little for putting him back (a small lift in the brain's cheer).
 His writing dries and fades on its own; home again, he listens again. Let go of him
-mid-flick and he splats before he is dazed.
+mid-flick and he splats before he is dazed. He leans into where he hops, and
+eases from one pose into the next, never snapping.
 b. Drag the pen to empty space and release it; drag it again to write, or hold
 anywhere and drag; drop it on the nest, or leave it 3 seconds.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/engine/world.rs:World, behaviour`;
+`web/src/engine/look.rs:pose, blended, Look`;
 `web/src/mascot.rs:transition, listens_on_grab,
 put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `web/src/hop.rs:Hop`;
 `web/src/gesture.rs:Recognizer, release_velocity, flung`;

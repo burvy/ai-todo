@@ -3,11 +3,13 @@
 //! every so often in its time (`every`); the loop sleeps when none is waiting.
 
 mod link;
+mod look;
 mod run;
 mod sched;
 mod world;
 
 pub(crate) use link::{leaf, on_leaf, set_push};
+pub(crate) use look::Look;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use link::{push, show};
 pub(crate) use run::{every, next_frame, now, on_tick};

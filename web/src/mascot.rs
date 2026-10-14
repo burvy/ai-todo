@@ -1338,19 +1338,20 @@ mod tests {
     }
 
     #[test]
-    fn every_state_of_the_button_keeps_him_where_he_is() {
-        // He is a fixed layer placed by --pen-x/--pen-y alone: a transform
-        // without them sends him to the top-left corner of the window.
-        let found = rambo_rules(include_str!("../theme.css"), "transform");
-        assert!(
-            found.len() > 5,
-            "the parser found the Rambo rules: {found:?}"
-        );
-        let lost: Vec<_> = found
-            .iter()
-            .filter(|(_, value)| !value.contains("--pen-x"))
+    fn no_style_rule_moves_his_button() {
+        // The engine owns his transform (engine/look.rs): a rule's transform or
+        // animation on the button would fight it, or place him by itself and send him
+        // to the window's top-left corner.
+        let css = include_str!("../theme.css");
+        let moved: Vec<_> = ["transform", "animation", "translate", "rotate", "scale"]
+            .into_iter()
+            .flat_map(|property| rambo_rules(css, property))
             .collect();
-        assert!(lost.is_empty(), "moved off his place: {lost:?}");
+        assert!(moved.is_empty(), "a rule moves him: {moved:?}");
+        assert!(
+            !rambo_rules(css, "cursor").is_empty(),
+            "the parser finds the Rambo rules"
+        );
     }
 
     #[test]

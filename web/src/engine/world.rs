@@ -6,6 +6,7 @@
 //! element. The brain is [`mascot::transition`], unchanged; this decides only how his
 //! body follows it, so behaviours end on state, never on a guessed CSS duration.
 
+use super::look::{self, Look};
 use super::sched::ENGINE_DT_S;
 use crate::hop::Hop;
 use crate::mascot::{self, Event, Pose, State};
@@ -169,6 +170,9 @@ pub(crate) struct Rambo {
     /// scrolling under him and not a reason to hop.
     settled_home: bool,
     draw: Draw,
+    /// His pose when his state last changed, which he eases out of.
+    look_from: Look,
+    look: Look,
 }
 
 /// Everything the engine moves. Today that is Rambo; the nest, ink and the turn join it
@@ -188,12 +192,15 @@ impl World {
                 brain: State::Home,
                 pos: home,
                 vel: (0.0, 0.0),
-                since: 0.0,
+                // Long settled in his pose.
+                since: -crate::tuning::POSE_BLEND_MS,
                 run: None,
                 owed: None,
                 settling: false,
                 settled_home: true,
                 draw: Draw::at(home),
+                look_from: Look::PLAIN,
+                look: Look::PLAIN,
             },
             now: 0.0,
         }
@@ -202,6 +209,11 @@ impl World {
     /// How he is drawn now.
     pub(crate) fn draw(&self) -> Draw {
         self.rambo.draw
+    }
+
+    /// How he is posed now (`engine::look`).
+    pub(crate) fn look(&self) -> Look {
+        self.rambo.look
     }
 
     /// An event for his brain from outside the world (a gesture, the capture box).
@@ -219,6 +231,7 @@ impl World {
             return;
         }
         rambo.owed = mascot::notice(&rambo.brain, &next);
+        rambo.look_from = rambo.look;
         rambo.settling = rambo.brain == State::Flying && next == State::WritingRow;
         rambo.brain = next;
         rambo.since = self.now;
@@ -237,6 +250,7 @@ impl World {
             State::Splatting | State::Dazed | State::Covered
         );
         !timed
+            && look::still(&rambo.brain, self.now - rambo.since)
             && rambo.brain != State::Dragging
             && !mascot::hops_there(&rambo.brain, rambo.settled_home)
             && !rambo.settling
@@ -260,6 +274,15 @@ impl World {
         if let Some(event) = self.timer_due() {
             self.tell(event);
         }
+        self.move_body(anchors);
+        let rambo = &mut self.rambo;
+        let ms = self.now - rambo.since;
+        let to = look::pose(&rambo.brain, rambo.vel, ms, anchors.reduced_motion);
+        rambo.look = look::blended(&rambo.look_from, &to, ms, anchors.reduced_motion);
+    }
+
+    /// His body follows what his state asks.
+    fn move_body(&mut self, anchors: &Anchors) {
         let drive = behaviour(
             &self.rambo.brain,
             self.rambo.settled_home,
@@ -510,7 +533,14 @@ mod tests {
         let spot = (200.0, 500.0);
         world.adopt(asking());
         world.advance(1, &anchors(spot));
-        assert!(world.at_rest(), "on his spot at once, the run gone");
+        assert_eq!(
+            world.draw(),
+            Draw::at(spot),
+            "on his spot at once, the run gone"
+        );
+        assert!(!world.at_rest(), "still easing into the asking pose");
+        world.advance(steps(crate::tuning::POSE_BLEND_MS), &anchors(spot));
+        assert!(world.at_rest());
         world.advance(steps(10_000.0), &anchors(spot));
         assert!(world.at_rest());
         assert_eq!(world.rambo.brain, asking(), "nothing in the world undid it");
