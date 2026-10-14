@@ -38,6 +38,22 @@ fn overdue_changes(
     (newly, forget)
 }
 
+/// Pure: whether a task arrived between two snapshots. `previous` is `None`
+/// until the server has answered once, because nothing can have been added to
+/// nothing. Ids and not counts, so one task gone and one new still counts, and
+/// a repeat-day occurrence (`{series}:{date}`, and a date holds no colon) is a
+/// row of a task already there, never a new task.
+fn task_added(current: &Snapshot, previous: Option<&Snapshot>) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    let known: HashSet<&str> = previous.tasks.iter().map(|t| t.id.0.as_str()).collect();
+    current
+        .tasks
+        .iter()
+        .any(|t| !t.id.0.contains(':') && !known.contains(t.id.0.as_str()))
+}
+
 fn step(
     brain: &Rc<RefCell<Brain>>,
     rng: &Rc<RefCell<Seeded>>,
@@ -106,7 +122,15 @@ pub fn Controller(
 ) -> impl IntoView {
     let brain = Rc::new(RefCell::new(Brain::new(brain_mode(mode.get_untracked()))));
     let rng = Rc::new(RefCell::new(Seeded::new(js_sys::Date::now() as u64)));
-    let previous = Rc::new(RefCell::new(snapshot.get_untracked()));
+    // The page hands every brain the snapshot it shows before the server
+    // answers: empty, with no task of the user's in it. That one is not a load,
+    // and treating it as one is what made him greet every page load with a new
+    // task.
+    let placeholder = snapshot.get_untracked();
+    let previous = Rc::new(RefCell::new(placeholder.clone()));
+    // The last snapshot the server answered, and so what an addition is
+    // measured against. `None` until then.
+    let loaded = Rc::new(RefCell::new(None::<Snapshot>));
     let teased = Rc::new(RefCell::new(HashSet::new()));
 
     Effect::new({
@@ -131,10 +155,16 @@ pub fn Controller(
         let brain = brain.clone();
         let rng = rng.clone();
         let previous = previous.clone();
+        let loaded = loaded.clone();
         let teased = teased.clone();
         move |_| {
             let current = snapshot.get();
             let old = previous.replace(current.clone());
+            let added = if current == placeholder {
+                false
+            } else {
+                task_added(&current, loaded.replace(Some(current.clone())).as_ref())
+            };
             let now = Utc
                 .timestamp_millis_opt(js_sys::Date::now() as i64)
                 .single()
@@ -149,7 +179,7 @@ pub fn Controller(
                     t.insert(id.clone());
                 }
             }
-            let event = if current.tasks.len() > old.tasks.len() {
+            let event = if added {
                 Some(Event::TaskAdded)
             } else if current.tasks.iter().any(|task| task.done)
                 && current.tasks.iter().filter(|task| task.done).count()
@@ -291,5 +321,72 @@ mod overdue_tests {
         let (newly, forget) = overdue_changes(&current, &teased, now);
         assert!(newly.is_empty());
         assert_eq!(forget, vec!["gone".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod added_tests {
+    use super::*;
+    use todo_core::{Plan, Task, TaskId};
+
+    fn task(id: &str) -> Task {
+        let now = Utc::now();
+        Task {
+            id: TaskId(id.into()),
+            title: id.into(),
+            duration_min: 30,
+            when: When::Anytime,
+            done: false,
+            order: 0,
+            label: todo_core::Label::Work,
+            priority: todo_core::Priority::Medium,
+            source: todo_core::Source::Text,
+            created: now,
+            updated_at: now,
+            due_tz: None,
+            external_uid: None,
+        }
+    }
+
+    fn snapshot_of(ids: &[&str]) -> Snapshot {
+        Snapshot {
+            tasks: ids.iter().map(|id| task(id)).collect(),
+            plan: Plan::default(),
+            tz: "UTC".into(),
+            generated: Utc::now(),
+            series: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_first_load_adds_nothing() {
+        assert!(!task_added(&snapshot_of(&["a", "b"]), None));
+    }
+
+    #[test]
+    fn a_new_task_is_an_addition() {
+        let before = snapshot_of(&["a"]);
+        assert!(task_added(&snapshot_of(&["a", "b"]), Some(&before)));
+    }
+
+    #[test]
+    fn a_new_repeat_day_row_is_not_a_new_task() {
+        let before = snapshot_of(&["a"]);
+        let after = snapshot_of(&["a", "standup:2026-10-14"]);
+        assert!(!task_added(&after, Some(&before)));
+    }
+
+    #[test]
+    fn one_gone_and_one_new_is_still_an_addition() {
+        let before = snapshot_of(&["a", "b"]);
+        let after = snapshot_of(&["b", "c"]);
+        assert_eq!(before.tasks.len(), after.tasks.len());
+        assert!(task_added(&after, Some(&before)));
+    }
+
+    #[test]
+    fn an_unchanged_snapshot_is_not_an_addition() {
+        let snapshot = snapshot_of(&["a", "b"]);
+        assert!(!task_added(&snapshot, Some(&snapshot)));
     }
 }
