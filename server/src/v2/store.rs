@@ -3874,7 +3874,7 @@ mod tests {
             plan: Plan::Free,
         };
         store
-            .upsert_user_and_session(&dana, "tok-dana", at(23))
+            .upsert_user_and_session(&dana, "tok-dana", at(0), at(23))
             .unwrap();
         let mine = todo_core::DaySettings {
             deadline: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
