@@ -69,12 +69,30 @@ c. Code: `web/src/lib.rs:CaptureBox, TaskList`;
 
 ### 3. Reorder tasks
 a. Dragging task rows changes their saved order.
-b. Drag a task row above or below another row.
-c. Rows for series occurrences are not reorderable: a drag that starts or lands
+b. Drag a task row above or below another row: which half of the row it was
+dropped on decides which.
+c. The whole row is the grab area. Pressing and holding it for ~280 ms picks it
+up; there is no separate grip to find.
+d. A row answers three gestures from one finger, and which one it is depends on
+travel and time, not on where you touched:
+- a **tap** — released early, without moving — is the old behaviour: the box
+ticks, the title opens the dialog, the x deletes;
+- a **press-and-hold** picks the row up to move it, on mouse and on touch
+alike;
+- a **swipe right** far enough (~64 px, mostly horizontal) crosses the row out
+and deletes it. Backed out before that, it snaps home.
+e. A finger that slides before the hold is a **scroll**, and the row keeps its
+hands off it. That is also what keeps the gestures apart from the page flip: a
+swipe left is never this row's to delete, so it reaches the panes and turns the
+page (DESIGN-DECISIONS 3).
+f. Rows for series occurrences are not reorderable: a drag that starts or lands
 on one does nothing (occurrences share the series' row, not a slot of their own —
-ARCHITECTURE.md 7.1 lists reordering them as out of scope).
-d. Code: `web/src/lib.rs:reorder_ids`; `web/src/api.rs:reorder_tasks`;
-`server/src/v2/http.rs:reorder`; `server/src/v2/app.rs:reorder`.
+ARCHITECTURE.md 7.1 lists reordering them as out of scope). A slip dropped where
+no row is goes to the end.
+g. Code: `web/src/row.rs` (the gesture rules, unit-tested) and its `dom` module
+(pointer events); `web/src/lib.rs:reorder_ids`, the row's handlers;
+`web/src/api.rs:reorder_tasks`; `server/src/v2/http.rs:reorder`;
+`server/src/v2/app.rs:reorder`.
 
 ### 4. Edit through Rambo
 a. Dropping Rambo on a task offers actions; the built actions can change priority,
