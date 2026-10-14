@@ -18,8 +18,9 @@ use crate::api;
 use crate::edits::series_note;
 use crate::tasks::occurrence_parts;
 use crate::tuning::{
-    BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGES, PIN_ROOM_PX, ROW_CLOSE_MS, SCRAP_MAX,
-    SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX, STRIP_GAP_PX, STRIP_H_PX,
+    BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGE_PX, PIN_EDGES, PIN_ROOM_PX, ROW_CLOSE_MS,
+    SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX, STRIP_GAP_PX,
+    STRIP_H_PX,
 };
 
 /// What taping a scrap back does.
@@ -510,6 +511,8 @@ pub fn ScrapCorner(
             style:--strip-gap=format!("{STRIP_GAP_PX}px")
             style:--scrap-ms=format!("{SCRAP_SLIDE_MS}ms")
             style:--pin-room=format!("{PIN_ROOM_PX}px")
+            style:--edge-px=format!("{PIN_EDGE_PX}px")
+            style:--stack-h=format!("{}px", STRIP_H_PX + PIN_EDGE_PX * PIN_EDGES as f64)
         >
             <For
                 each=move || snapshot.with(hung_at_the_pin)

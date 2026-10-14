@@ -137,6 +137,8 @@ pub const PIN_EDGES: usize = 3;
 pub const STRIP_H_PX: f64 = 110.0;
 /// The gap between hanging strips, in px. Safe range 2 to 12.
 pub const STRIP_GAP_PX: f64 = 4.0;
+/// How far, in px, each strip of the pin's stack sits below the one above it. Safe range 2 to 8.
+pub const PIN_EDGE_PX: f64 = 4.0;
 /// How far, in px, a strip must be dragged before it counts as a drag and not a tap.
 /// Safe range 4 to 12.
 pub const STRIP_DRAG_PX: f64 = 6.0;
