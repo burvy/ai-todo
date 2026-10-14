@@ -14,6 +14,7 @@ pub mod mascot;
 pub mod pen;
 pub mod settings;
 pub mod speech;
+pub mod tack;
 pub mod week;
 
 /// Load snapshot from API and return it, falling back to fixture on error
@@ -336,6 +337,17 @@ pub fn App() -> impl IntoView {
     let (brain_speech, set_brain_speech) = signal::<Option<String>>(None);
     let (brain_pose, set_brain_pose) = signal("home".to_owned());
     let (brain_event, set_brain_event) = signal::<Option<rambl_brain::Event>>(None);
+    // The tack board reports what just happened on it — a task cut out and
+    // tacked, a tidy-up, a crumple. Rambo's poses for those land with Funny's
+    // mood work (docs/DESIGN-DECISIONS.md, "Rambo styles"), so for now the
+    // signal is one the board writes and this effect clears: a subscriber
+    // mounted between the two gets the cue exactly once.
+    let (tack_cue, set_tack_cue) = signal::<Option<tack::Cue>>(None);
+    Effect::new(move |_| {
+        if tack_cue.get().is_some() {
+            set_tack_cue.set(None);
+        }
+    });
 
     // Load snapshot from API on mount
     Effect::new(move |_| {
@@ -460,6 +472,7 @@ pub fn App() -> impl IntoView {
             >
             <div class="tasks-pane">
                 <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
+                <tack::TackBoard snapshot set_snapshot set_error view_settings set_cue=set_tack_cue />
             </div>
             <week::WeekGrid
                 snapshot=snapshot
