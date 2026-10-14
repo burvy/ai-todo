@@ -78,9 +78,10 @@ The builders are GLM agents, from a spec written by us and reviewed by a Claude 
 
 Where we are heading. The shape is stable; the exact names are guidance, and each step may adjust them with a reason.
 
-- **Rambo's place.** `mascot::State` carries what each state needs (`WritingRow { task, progress }`, `Dazed { at }`), and a pure `anchor(&State)` gives `Nest`, `Caret`, `Row { task, progress }`, `Held { x, y }` or `Dropped { x, y }`. One resolver in `rambo.rs` measures the anchor live and is the only code that sets `--pen-x/--pen-y`. It re-resolves on page moves (#267's `on_page_moved`) and on `visualViewport` changes (the phone keyboard), and decides once what to do when the anchor is off screen. `pen_pos` goes away. Every state change goes through `mascot::transition`.
+- **Rambo's place.** `mascot::State` carries what each state needs (`WritingRow { task, progress }`, `Dazed { at }`, `Smacked { side }`, `Flattened { at }`), and a pure `anchor(&State)` gives `Nest`, `Caret`, `Row { task, progress }`, `Held { x, y }` or `Dropped { x, y }`. One resolver in `rambo.rs` measures the anchor live and is the only code that sets `--pen-x/--pen-y`. It re-resolves on page moves (#267's `on_page_moved`) and on `visualViewport` changes (the phone keyboard), and decides once what to do when the anchor is off screen. `pen_pos` goes away. Every state change goes through `mascot::transition`.
+- **Interruptions are events.** A second capture, a tap, a drag, a scroll or a page turn is a `mascot::Event`. Writing is a queue of rows with progress, so it pauses and resumes from where it stopped; a reload shows stored titles in full. Scroll or page turn while he is out of the nest is the event that smacks or flattens him (DESIGN-DIRECTION §9).
 - **Rambo's element.** Two elements: an outer button that is only placed, an inner one that is only posed (rotate, scale, splat, art). His rim at rest is a clip on the inner one.
-- **His art follows the page theme**, not the OS: the drawings use the page's `--rambo-*` tokens. The real dish replaces the `nest.svg` placeholder; that is art for Ping, owner named by god.
+- **His art follows the page theme**, not the OS: the drawings use the page's `--rambo-*` tokens. The real dish replaces the `nest.svg` placeholder; Ping redraws all the art (DESIGN-DIRECTION §9).
 - **Tuning.** `web/src/tuning.rs` holds every motion and gesture constant with its reason, grouped by DESIGN-DIRECTION §4's beats. The CSS gets the times as `--t-*` custom properties written onto `:root` from that list, and uses no raw times.
 - **CSS.** Cascade layers declared once (`@layer tokens, layout, rows, planner, tack, dialogs, rambo, overrides;`), every rule inside a layer. z-index as named tokens with gaps, ink always under the capture line and dialogs. One phone breakpoint. Splitting into files is optional once layers hold the order.
 - **One animation clock and one gesture module.** A rAF ticker that every motion registers with (with a fixed-step mode for the tack physics, and `reduced_motion()`); non-animation timers (the 60s now-line, the 5s brain poll) stay. A gesture module with pure tests for slop, claim and release by pan direction, `pointercancel` (real touch ends with it once the browser takes a pan, as #210 proved), Esc and velocity; it sets `touch-action` per surface.
@@ -113,7 +114,8 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
   - release: no jump
   - dazed drag writes
   - put back in the nest
-  - skitter home after 8s
+  - dazed for about 3s, then home
+  - scroll or turn the page while he is out: smacked or flattened, then he recovers (once that step lands)
   - page turn, resize, scroll: he stays on the nest
   - phone: the on-screen keyboard opens and closes
   - capture, then he writes the row
@@ -137,7 +139,8 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
   - Pixel diff with the OS in light mode: page Light and page Dark both identical to main.
   - Screenshots with the OS in dark mode and the page on Light: Rambo and the dish are the light drawing.
 - Do not touch: the drawings' shapes, and any colour that has no `--rambo-*` token (ask instead).
-- Note: `nest.svg` is a placeholder ("PLACEHOLDER: replace me") in the old brown palette, not the dish in DESIGN-DIRECTION §2. The real dish is art for Ping. God names the owner; until it lands, no ticket styles the placeholder.
+- Ping is redrawing all the art (DESIGN-DIRECTION §9). This ticket sets the contract the new drawings follow: colours only through `--rambo-*` tokens, the root group `id="art"`, no media queries. Converting today's files now fixes the bug until the new art lands.
+- Note: `nest.svg` is a placeholder ("PLACEHOLDER: replace me") in the old brown palette, not the dish in DESIGN-DIRECTION §2. Ping draws the real dish; until it lands, no ticket styles the placeholder.
 
 **FE-3: CSS tidy: one breakpoint, folded rules** · CSS · small
 - Files: `web/theme.css`.
@@ -151,44 +154,47 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
   - Every rule's selector still appears exactly once per media block, and the file ends with its last section, not with loose rules.
 - Do not touch: values. This is a move, not a redesign.
 
+**FE-4: every Rambo state change through `transition`** · Rust · small
+- Why: the owner's answers add interruptions, pause and resume, and the smack and flatten. All of them are new events, so every state change must already go through the state machine.
+- Files: `web/src/mascot.rs`, `web/src/rambo.rs`, `web/src/tasks/mod.rs`.
+- Do: `grep -rn "\.set(mascot::State::\|\.set(State::" web/src` finds nine places that set a `State` directly (seven in `rambo.rs`, two in `tasks/mod.rs`). Replace each with `set_state.set(mascot::transition(&before, mascot::Event::X))`. Where no event fits, add one to `mascot::Event` with a doc comment and its arms in `transition`. Behaviour must not change.
+- Accept:
+  - A guard test in `mascot.rs` reads `rambo.rs`, `tasks/mod.rs`, `tasks/write.rs` and `capture.rs` with `include_str!` and fails on any direct `.set(…State::…)`. Checked to fail before the change.
+  - Each new event or arm has a test in `mascot.rs` (input state and event, then the expected state).
+  - FE-1's check list passes for drag, drop, put-back, going home and capture-then-write.
+- Do not touch: CSS, `pen_pos`, timers, the daze time.
+
 ### 2.4 Later steps: intent only
 
-Each becomes a ticket when the steps before it have landed, written with what they taught us. The order is a guess, and so is the split into steps. Fable's review of #268 is the main guidance for each.
+Each becomes a ticket when the steps before it have landed, written with what they taught us. The order is a guess, and so is the split into steps. Fable's review of #268 and the owner's answers (DESIGN-DIRECTION §9) are the guidance.
 
-- **Every state change through `transition`.** Nine places set a `State` directly; route them through `mascot::transition`, with a guard test that finds none. (Small; could be the next ticket.)
-- **z-index tokens.** Name today's stacking, ink under the capture line, a guard test that every `z-index` is a token; note in THEME.md that a `showModal()` dialog would sit above every token. Reordering Rambo against menus, dialogs, pin and bin waits for question 4.
-- **Tuning.** Constants into `web/src/tuning.rs`, then the CSS times as `--t-*`, each with a guard test. Where CSS and Rust disagree today (`FLY_MS = 450` against the CSS flight), Rust wins.
+- **Tuning.** Constants into `web/src/tuning.rs`, following `docs/TUNING.md` (#270, one `tuning.rs` per crate), then the CSS times as `--t-*`, each with a guard test. The daze becomes about 3s here. Where CSS and Rust disagree today (`FLY_MS = 450` against the CSS flight), Rust wins.
+- **z-index tokens.** Name the stacking, a guard test that every `z-index` is a token, and put Rambo under dialogs (answered). Note in THEME.md that a `showModal()` dialog sits above every token.
 - **Cascade layers.** Wrap every rule in its layer, keeping today's order where rules compete; pixel diff identical.
-- **Desktop widths.** A minimum width for the list, tack board shrinks first; checked at 905, 1024, 1100 and 1366px. Waits for question 5.
-- **Two-element Rambo.** Paired review with Emilio. Size and rim from questions 11 and DESIGN-DIRECTION §2.
-- **His state says where he is, then one resolver.** Probably two PRs: the pure `anchor` first, then the resolver that deletes `pen_pos`. Paired review. Off-screen behaviour from question 3, keyboard from question 8.
+- **Two-element Rambo** at 1.4x, with the rim clip. Paired review with Emilio.
+- **His state says where he is, then one resolver**, including the keyboard ride-up (`visualViewport`). Probably two PRs. Paired review.
+- **Interruptions:** writing as a pausable queue, every user action an event, the smack and the flatten (with the hole in the paper). Needs the resolver.
+- **Writing feel:** slower and more considered, in v1's feel (UI-BUGS #11, v1 `297dd44`). Times come from tuning, set with the human watching.
+- **Listening:** the pose, riding above the finger, the page dimmed.
+- **Phone:** list page first, capture bar on the planner page, a + button.
+- **The notebook look** (with Ping's art): one notebook page per page, the gear in the paper's corner, handwriting-style wrapping, tiny symbolic tags. These replace the "desktop widths" step: wrapping fixes the squeezed column.
 - **One animation clock, then one gesture module.**
 - **Split the big files**, move-only, last.
 
-The design backlog (UI-BUGS #8–#11) stays with the human and fits after the layers step, when each look lives in its own layer.
+Not front end, already with others: stripping lead-ins such as "Add a task to…" from titles (Dario, capture and Jev).
 
 ## 3. Not checked
 
 - Phone width and touch were not reproduced in a browser (the window would not shrink below 905px here); the off-pane flight is read from code and layout. QA should confirm FE-0 on a phone.
 - That content shown through `<use>` picks up the page's `--rambo-*` tokens (FE-2) is how browsers specify it; the ticket's screenshots are the check.
 
-## 4. Open spec questions for the human
+## 4. Spec questions: answered
 
-God settles these with the human. The first steps (2.3) do not depend on them; the later ones do, and are re-planned with the answers.
+The owner answered the twelve questions on 2026-10-14. The answers are in DESIGN-DIRECTION §9 and win over this plan. Two are open.
 
-1. **Desktop capture line.** On desktop the capture line and nest sit in the masthead and scroll away with the page, and Rambo goes with them. Should they stay pinned on screen as they do on a phone, so he is always within reach?
-2. **Dazed.** Dropped on the page he stays dazed for 8 seconds, then runs home. Is 8 seconds right? Should scrolling or turning the page send him home early?
-3. **Writing a row that is off screen.** After a capture made on the planner page (phone), or while scrolled down, the new row is off screen. Today he skips the flight and the row just appears. Should the page turn or scroll to the row so he can write it?
-4. **Layers.** Should Rambo sit under the gear menu and dialogs, or stay above everything? Should the tack pin and bin go under him?
-5. **Desktop widths.** Between 905 and 1366px, which gives way first: the tack board, the planner or the list? What is the narrowest the list may get?
-6. **Breakpoint.** The phone layout ends at 700px, so a tablet held upright (768px) gets the desktop layout. Is that right?
-7. **Phone pages.** Which page opens first? Should the capture bar show on the planner page too?
-8. **Phone keyboard.** When the on-screen keyboard is up, the capture bar rises above it. Does Rambo ride up with the dish, or stay where he was?
-9. **What interrupts him.** What happens on a second capture while he is still writing (DESIGN-DIRECTION §4 says finish the row at once and go)? A tap on the dish while he is dazed? A page turn while he flies?
-10. **Motion and sound.** Which motions are must-haves for speed and feel: flight to the row, letter-by-letter writing, splat, skitter home, idle breathing, page curl? Which can go if they cost time? Which sound goes with which motion (the scratch follows the nib)?
-11. **Size.** DESIGN-DIRECTION §2 says 1.4 times today's size: 64px on a phone, 80px on desktop. Is that the size to build to? The two-element step (2.4) fixes his box.
-12. **Listening feedback.** While he is held and listening, what should show: a pose, a bubble, live transcript text? What should a browser without speech recognition show?
-
-Settled, so not asked: the theme never follows the OS (DESIGN-DIRECTION §7; Rambo's art breaking that is FE-2, a bug fix). Rambo hiding behind the rim is built with a clip on his inner element (2.4, two-element Rambo), no new layer.
-
-For god, not the human: who draws the real dish to replace the `nest.svg` placeholder (Ping?).
+1. **Re-asked in plain words:** "On a computer, should the box you type tasks into stay visible at the bottom while you scroll, like on a phone?"
+2. **Motion and sound.** Three options for the owner. All keep every motion; reduced motion still makes them instant. Sound stays on by default with a mute in the gear menu (§8).
+   - **A. Quiet desk.** Sound only where paper or ink really makes a noise: the scratch while the nib moves, the page turn, the crumple, the pin, the smack and the flatten. Flights, hops, idle breathing and the daze are silent. Calm, and never tiring after a hundred tasks.
+   - **B. Every touch answers.** Each motion has its own soft sound: pick-up, the flight's whoosh, the landing tap, the scratch, the flick at the end, the splat, the smack, the page turn, the pin, the crumple. The most alive, and the most to tune and to tire of.
+   - **C. Writing only, plus the hits.** The scratch while writing, the page turn, and the smack and flatten, because those are the moments that need a sound to read. Everything else is silent. The smallest set to build and keep in sync.
+   - Recommended: **A**, which matches "near-physical": what would make a sound on a real desk does, nothing else.
