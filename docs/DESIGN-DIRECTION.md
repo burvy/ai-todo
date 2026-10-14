@@ -26,7 +26,7 @@ Contrast of the body as a shape: 5.7:1 on parchment and 4.1:1 on the ecru dish i
 
 ## 2. The nest is furniture, Rambo is a layer
 
-The nest is a fixed object on the page: a shallow paper dish (`nest.svg` as drawn, in `--ecru` with a `--chamoisee` rim), not a button, with no hover state. Phone: the right end of the capture bar at the bottom, 56px, its rim 6px above the bar's rule. Desktop: the right end of the capture line in the masthead, 64px. Tapping the dish submits the text, as today; the dish dips 1px under the finger and comes back, like pressing a saucer.
+The nest is a fixed object on the page: a woven paper nest, not a button, with no hover state, in two layers (`web/assets/nest/`) so Rambo sits in it, the front rim over his tip (Interview 4). Phone: the right end of the capture bar at the bottom, its drawing 200 × 118px filling the bottom-right corner and running off the edges; the tap target is 56px. Desktop: the right end of the capture line, its drawing 180 × 106px; the tap target is 64px. Tapping the dish submits the text, as today; the dish dips 1px under the finger and comes back, like pressing a saucer.
 
 Rambo is a separate fixed layer above the page, never a child of the nest or of any row. At rest he overlaps the dish, nib down, body leaning 12° to the right, his lower third hidden behind the rim. He is 1.4x today's size (phone 64px tall, desktop 80px). Picking him up lifts him 4px with a soft shadow under him; dragging moves only him, exactly under the finger; the dish never moves. His idle is a slow 4s breathe (1px rise, 1° tilt), so he is alive before you touch him.
 

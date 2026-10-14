@@ -53,9 +53,12 @@ pub(crate) fn Rambo(
     // At home he sits on the nest wherever the page has carried it. He is a
     // fixed layer and the nest is not, so every time the page moves he
     // measures it again.
+    let nest_at = RwSignal::new(None::<(f64, f64)>);
     let follow_nest = move || {
+        let nest = nest_centre(nest_ref);
+        nest_at.set(nest);
         if state.get_untracked() == mascot::State::Home
-            && let Some(home) = nest_centre(nest_ref)
+            && let Some(home) = nest
         {
             pen_pos.set(home);
         }
@@ -630,6 +633,15 @@ pub(crate) fn Rambo(
                 })}
             </span>
         </button>
+        // The nest's front rim, over his tip: a layer of its own above him, on the
+        // nest wherever the page has carried it. Its back is drawn on the nest.
+        <span
+            class="nest-rim"
+            aria-hidden="true"
+            style:display=move || nest_at.get().is_none().then_some("none")
+            style:--nest-x=move || format!("{:.1}px", nest_at.get().unwrap_or_default().0)
+            style:--nest-y=move || format!("{:.1}px", nest_at.get().unwrap_or_default().1)
+        ></span>
     }
 }
 

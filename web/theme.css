@@ -84,6 +84,13 @@
      with the same number, so change both together. */
   --hour-h: 64px;
   --nest-size: 56px; /* the nest, and so the capture bar's height on a phone (`.nest`) */
+  /* The nest's drawing, two layers in one frame (web/assets/nest/ABOUT.md): its size,
+     and the point of the frame that sits on the nest's centre. */
+  --nest-art-w: 200px;
+  --nest-art-h: 118px;
+  --nest-anchor-x: 50%;
+  --nest-anchor-y: 40%;
+  --nest-sink: 4px; /* how far below the nest's centre he rests: down in the bowl */
   /* What a phone's fixed capture bar covers at the bottom: the nest, the bar's padding and rule, and the home-indicator inset. */
   --capture-clear: calc(var(--nest-size) + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
   --page-foot-h: 2rem; /* the note at a phone page's foot */
@@ -99,7 +106,8 @@
   --layer-capture: 6; /* the capture bar, the landing: above the sticky things that scroll or sit beside it */
   --layer-note: 40; /* the page note, a deleted row's scrap */
   --layer-rambo: 50;
-  --layer-rambo-bubble: 51; /* his ask bubble */
+  --layer-nest-rim: 51; /* the nest's front rim, over his tip (its back is the capture bar's) */
+  --layer-rambo-bubble: 52; /* his ask bubble */
   --layer-drag: 60; /* the drag ghost, the tack pin */
   --layer-bin: 70; /* the tack bin, a drop target during a drag */
   --layer-menu-backdrop: 80;
@@ -743,9 +751,10 @@ li.task-row:focus-within .delete-mark {
 
 /* ── Rambo: one mascot, one element, rests in the capture nest ── */
 
-/* The nest: a shallow paper dish, fixed size. Phone 56px, desktop 64px.
-   Clicking it submits the form. Rambo sits over it when at home.
-   Spec: docs/DESIGN-DIRECTION.md §2 */
+/* The nest: the tap target is --nest-size (phone 56px, desktop 64px); clicking it
+   submits the form. Its drawing is bigger and in two layers, so Rambo sits in it:
+   the back (.nest::before) behind him, the front rim (.nest-rim) in front of his
+   tip. Spec: docs/DESIGN-DIRECTION.md §2, web/assets/nest/ABOUT.md */
 .nest {
   display: inline-flex;
   align-items: center;
@@ -760,9 +769,38 @@ li.task-row:focus-within .delete-mark {
   cursor: pointer;
   position: relative;
   flex-shrink: 0;
-  /* The dish is drawn here, on the furniture, so it stays put when Rambo is
-     carried off: he is only the pen. */
-  background: url("assets/rambo/nest.svg") center bottom / contain no-repeat;
+}
+
+/* Both layers share one frame, anchored on the nest's centre with `translate`, so
+   `transform` stays free to sag and rock them about their base. They are drawn on
+   the furniture, so they stay put when Rambo is carried off: he is only the pen. */
+.nest::before,
+.nest-rim {
+  width: var(--nest-art-w);
+  height: var(--nest-art-h);
+  translate: calc(-1 * var(--nest-anchor-x)) calc(-1 * var(--nest-anchor-y));
+  transform-origin: 50% 100%;
+  background: center / 100% 100% no-repeat;
+  pointer-events: none;
+}
+
+/* Behind the capture line's text, so what you type is never hidden. */
+.nest::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: var(--layer-behind);
+  background-image: url("assets/nest/back.svg");
+}
+
+/* A fixed layer like Rambo, placed on the nest's centre as he measures it. */
+.nest-rim {
+  position: fixed;
+  left: var(--nest-x);
+  top: var(--nest-y);
+  z-index: var(--layer-nest-rim);
+  background-image: url("assets/nest/rim.svg");
 }
 
 /* The single Rambo button: independent fixed layer above everything.
@@ -858,6 +896,14 @@ li.task-row:focus-within .delete-mark {
     opacity: 1;
     transform: translateY(-30%) scale(1.05);
   }
+}
+
+/* Home: down in the nest, his tip behind its rim. */
+.rambo.is-home {
+  transform: translate(
+    calc(var(--pen-x) - 50%),
+    calc(var(--pen-y) - 50% + var(--nest-sink))
+  );
 }
 
 /* Dragging: held/listening pose — tilted like a pen in hand, subtle pulse
@@ -1759,6 +1805,11 @@ li.task-row:focus-within .delete-mark {
   }
 
   /* Nest and Rambo are larger on desktop. Spec: docs/DESIGN-DIRECTION.md §2 */
+  :root {
+    --nest-art-w: 180px;
+    --nest-art-h: 106px;
+  }
+
   .nest {
     width: 64px;
     height: 64px;
