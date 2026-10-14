@@ -1551,3 +1551,36 @@ li.task-row:hover .delete-mark { opacity: 1; pointer-events: auto; }
     transition: none;
   }
 }
+
+/* Paper, not a web page: no blue tap flash, no text-selection highlight or
+   callout menu when pressing and holding things you can pick up. Text you
+   type into stays selectable. Keyboard focus keeps an ink ring. */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+::selection {
+  background: color-mix(in srgb, var(--ink, #5D4732) 18%, transparent);
+}
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px dashed color-mix(in srgb, var(--ink, #5D4732) 55%, transparent);
+  outline-offset: 2px;
+}
+img,
+svg {
+  -webkit-user-drag: none;
+}
