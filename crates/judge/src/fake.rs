@@ -87,11 +87,6 @@ fn is_chit_chat(lower: &str) -> bool {
 /// "Watching videos", "The design presentation is coming up") name neither, and v1
 /// would have rejected every one of them.
 fn has_obligation(lower: &str) -> bool {
-    const ACTIONS: [&str; 21] = [
-        "buy", "call", "clean", "email", "finish", "find", "make", "read", "review", "schedule",
-        "book", "pay", "send", "share", "start", "submit", "upload", "write", "return", "remind",
-        "bring",
-    ];
     // "I need groceries", "I have a quiz", "I promised to call": the obligation can
     // sit on a verb of owing rather than on a verb of doing.
     const OBLIGATIONS: [&str; 10] = [
@@ -106,132 +101,169 @@ fn has_obligation(lower: &str) -> bool {
         "going to",
         "promised ",
     ];
-    let has = |words: &[&str]| {
-        words
-            .iter()
-            .any(|word| contains_word(lower, word.trim_end()))
-    };
-    has(&ACTIONS) || has(&OBLIGATIONS) || is_instruction(lower)
+    OBLIGATIONS
+        .iter()
+        .any(|word| contains_word(lower, word.trim_end()))
+        || is_instruction(lower)
 }
 
-/// "Walk the dog", "fix the sink", "water plants": two or more words that open with a verb
-/// nobody listed. The word list above cannot hold every verb, so a clause that opens
-/// with a word that is not a pronoun, article, preposition, conjunction, question word or
-/// "-ing" or "-ed" form is taken for an instruction. The fragments a sentence splits into
-/// ("I think", "For biology", "Watching videos") all open with one of those.
+/// Whether the clause is shaped like an instruction: "walk the dog", "water plants",
+/// "can you fix the sink". No list of verbs can name every chore, but the words a
+/// statement or a fragment opens with are a small closed set (pronouns, articles,
+/// prepositions, auxiliaries, conjunctions), so a clause whose first real word is none
+/// of those, nor a gerund or a past form, opens with the thing to do.
 fn is_instruction(lower: &str) -> bool {
+    /// Fillers and connectives a spoken task starts with before its verb.
+    const LEAD: [&str; 16] = [
+        "oh", "and", "also", "then", "so", "um", "uh", "okay", "ok", "right", "well", "please",
+        "now", "plus", "just", "pls",
+    ];
+    /// Ways to ask someone else to do it: "can you", "could someone".
+    const ASKS: [&str; 4] = ["can", "could", "would", "will"];
+    const ASKED: [&str; 4] = ["you", "someone", "somebody", "u"];
+    /// Phrases that hand the task to the app: "remind me to", "don't forget to".
+    const HANDOFFS: [&[&str]; 3] = [
+        &["remind", "me", "to"],
+        &["don't", "forget", "to"],
+        &["dont", "forget", "to"],
+    ];
+    /// Words that open a statement, a question or a fragment, never an instruction.
     const NOT_A_VERB: &[&str] = &[
+        // pronouns
         "i",
+        "i'm",
+        "i've",
+        "i'll",
+        "i'd",
+        "im",
         "you",
+        "you're",
         "he",
         "she",
         "it",
+        "it's",
         "we",
         "they",
         "me",
-        "my",
-        "your",
-        "his",
+        "him",
         "her",
-        "our",
-        "their",
+        "us",
+        "them",
+        "someone",
+        "somebody",
+        "something",
+        "everyone",
+        "everything",
+        "nothing",
+        "there",
+        "there's",
+        "here",
+        "that's",
+        // articles and determiners
+        "the",
+        "a",
+        "an",
         "this",
         "that",
         "these",
         "those",
-        "the",
-        "a",
-        "an",
+        "my",
+        "your",
+        "his",
+        "its",
+        "our",
+        "their",
         "some",
         "any",
         "no",
-        "not",
-        "and",
-        "but",
-        "or",
-        "so",
-        "if",
-        "although",
-        "though",
-        "because",
-        "since",
-        "while",
-        "when",
-        "then",
-        "also",
-        "just",
+        "every",
+        "each",
+        "all",
+        "both",
+        // prepositions
         "for",
         "of",
         "in",
         "on",
         "at",
-        "to",
-        "with",
-        "from",
         "by",
+        "with",
         "about",
-        "as",
+        "from",
+        "to",
+        "into",
+        "after",
+        "before",
+        "during",
+        "since",
+        "until",
+        // conjunctions and question words
+        "although",
+        "though",
+        "because",
+        "if",
+        "when",
+        "while",
+        "or",
+        "but",
         "which",
         "who",
         "what",
         "where",
         "why",
         "how",
-        "there",
-        "here",
+        // auxiliaries and copulas
         "is",
         "are",
-        // Talk before the point: "Right, the design presentation is coming up".
-        "right",
-        "okay",
-        "ok",
-        "oh",
-        "well",
-        "yeah",
-        "yes",
-        "anyway",
-        "um",
-        "uh",
-        "hmm",
-        "like",
-        "still",
-        "really",
+        "was",
+        "were",
+        "am",
+        "be",
+        "been",
+        "do",
+        "does",
+        "did",
+        "can",
+        "could",
+        "would",
+        "will",
+        // negation and hedges
+        "not",
         "maybe",
-        "probably",
-        "honestly",
-        "actually",
-        "basically",
-        // Talk before the point: "Right, the design presentation is coming up".
-        "right",
-        "okay",
-        "ok",
-        "oh",
-        "well",
-        "yeah",
-        "yes",
-        "anyway",
-        "um",
-        "uh",
-        "hmm",
-        "like",
-        "still",
-        "really",
-        "maybe",
-        "probably",
-        "honestly",
-        "actually",
-        "basically",
     ];
-    let mut words = lower.split_whitespace();
-    let (Some(first), Some(_)) = (words.next(), words.next()) else {
-        return false;
-    };
-    let first = first.trim_matches(|c: char| !c.is_alphabetic());
-    first.len() > 2
-        && first.chars().all(char::is_alphabetic)
-        && !NOT_A_VERB.contains(&first)
-        && !first.ends_with("ing")
-        && !first.ends_with("ed")
+    let words: Vec<&str> = lower
+        .split_whitespace()
+        .map(|word| word.trim_matches(|c: char| !c.is_alphanumeric() && c != '\''))
+        .filter(|word| !word.is_empty())
+        .collect();
+    let mut rest = words.as_slice();
+    loop {
+        rest = match rest {
+            [first, tail @ ..] if LEAD.contains(first) => tail,
+            [ask, who, tail @ ..] if ASKS.contains(ask) && ASKED.contains(who) => tail,
+            _ => match HANDOFFS.iter().find(|handoff| rest.starts_with(handoff)) {
+                Some(handoff) => &rest[handoff.len()..],
+                None => break,
+            },
+        };
+    }
+    // One word alone ("Thanks", "Groceries") is too little to call an instruction.
+    rest.len() >= 2
+        && rest.first().is_some_and(|first| {
+            !NOT_A_VERB.contains(first) && !is_gerund(first) && !is_past_form(first)
+        })
+}
+
+/// "watching", "studying", but not "bring" or "string": an -ing word is a gerund when
+/// what comes before the -ing has a vowel of its own.
+fn is_gerund(word: &str) -> bool {
+    word.strip_suffix("ing")
+        .is_some_and(|stem| stem.chars().any(|c| "aeiouy".contains(c)))
+}
+
+/// "studied", "watched", but not "feed" or "need".
+fn is_past_form(word: &str) -> bool {
+    word.ends_with("ed") && !word.ends_with("eed") && word.len() > 3
 }
 
 /// Match a word on its own boundaries, so "pay" does not fire on "repayment" and
@@ -398,6 +430,46 @@ mod tests {
             "Pick up the parcel",
         ] {
             assert!(!is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
+        }
+    }
+
+    #[test]
+    fn a_chore_is_a_task_whatever_its_verb() {
+        // Owner's phone test on 236ba7a: "walk the dog", "fix the sink" and "water
+        // plants" were refused while "buy bread" was taken, because only a fixed list
+        // of verbs counted as something to do.
+        for clause in [
+            "walk the dog",
+            "fix the sink",
+            "water plants",
+            "mow the lawn",
+            "clean the bathroom",
+            "feed the cat",
+            "buy bread",
+            "call mom",
+            "pay rent",
+            "email Sam",
+            "Oh, and walk the dog",
+            "can you fix the sink",
+            "please water plants tomorrow",
+            "remind me to feed the cat",
+            "bring snacks",
+        ] {
+            assert!(!is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
+        }
+    }
+
+    #[test]
+    fn a_fragment_or_a_statement_is_still_not_a_task() {
+        for clause in [
+            "I think",
+            "For biology",
+            "Watching videos",
+            "Studied all night",
+            "The dog is asleep",
+            "Which is boring",
+        ] {
+            assert!(is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
         }
     }
 
