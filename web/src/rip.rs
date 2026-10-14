@@ -157,15 +157,67 @@ pub fn sheet_path(tear: &Tear, width: f64, height: f64, scroll: f64) -> String {
     )
 }
 
-/// How far left the planner slides to lie under the list while a tear lasts: on a desk
-/// the pages are side by side, so it moves by the gap between their left edges; on a phone
-/// it is under the list already, and it stays put, as it does when nothing is torn.
-pub fn slide_px(torn: bool, phone: bool, planner_left: f64, list_left: f64) -> f64 {
-    if torn && !phone {
-        (planner_left - list_left).max(0.0)
-    } else {
-        0.0
+/// A day column of the planner, `left` and `width` measured from the planner page's own
+/// left edge, and whether it holds a slip.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Column {
+    pub left: f64,
+    pub width: f64,
+    pub has_slips: bool,
+    /// What the hole lines up on, as heights from the planner page's top: the column's hour
+    /// lines.
+    pub marks: Vec<f64>,
+}
+
+/// The column the hole should show: the first holding a slip, or the first.
+fn pick(columns: &[Column]) -> Option<&Column> {
+    columns
+        .iter()
+        .find(|column| column.has_slips)
+        .or(columns.first())
+}
+
+/// How far left the planner slides to lie under the list while a tear lasts. On a phone it
+/// is under the list already, and it stays put, as it does when nothing is torn. On a desk
+/// the pages are side by side, and what the hole must show is a day column with its hour
+/// lines (the planner's left edge is only the hour labels): the first column holding a slip,
+/// or the first column, is brought under where the tear starts, `tear_x` (all in the page's
+/// coordinates, `planner_left` being the planner's own left now). With no column to show it
+/// slides under the list's left edge, `list_left`. It never slides the planner right.
+pub fn slide_px(
+    torn: bool,
+    phone: bool,
+    planner_left: f64,
+    list_left: f64,
+    tear_x: f64,
+    columns: &[Column],
+) -> f64 {
+    if !torn || phone {
+        return 0.0;
     }
+    let slid_left = pick(columns).map_or(list_left, |column| {
+        tear_x - (column.left + column.width / 2.0)
+    });
+    (planner_left - slid_left).max(0.0)
+}
+
+/// How far down the planner moves, so that an hour line of the column the hole shows lies
+/// across the tear's level `tear_y` instead of between two lines: the nearest mark is
+/// brought to the tear. Negative is up; `planner_top` is the planner page's
+/// top in the page's coordinates. It is no more than half the gap between marks.
+pub fn lift_px(torn: bool, phone: bool, planner_top: f64, tear_y: f64, columns: &[Column]) -> f64 {
+    if !torn || phone {
+        return 0.0;
+    }
+    pick(columns)
+        .and_then(|column| {
+            column
+                .marks
+                .iter()
+                .map(|mark| tear_y - (planner_top + mark))
+                .min_by(|a, b| a.abs().total_cmp(&b.abs()))
+        })
+        .unwrap_or(0.0)
 }
 
 /// When the page is whole again, in ms after the finger let go.
@@ -315,27 +367,94 @@ mod tests {
     }
 
     #[test]
-    fn on_a_desk_the_planner_slides_under_the_list_only_while_a_page_is_torn() {
+    fn on_a_desk_a_day_column_slides_under_where_the_tear_starts() {
+        let day = |left, has_slips| Column {
+            left,
+            width: 90.0,
+            has_slips,
+            marks: Vec::new(),
+        };
+        let columns = [day(60.0, false), day(150.0, true), day(240.0, true)];
+        // The spread: planner at 420, list at 20, the tear starting at 150.
+        let slid = slide_px(true, false, 420.0, 20.0, 150.0, &columns);
+        // The first column with a slip (centre 195 into the planner) lands under x 150.
+        assert_eq!(420.0 - slid + 195.0, 150.0);
+        // Where the tear is decides it, not a fixed offset.
+        let further = slide_px(true, false, 420.0, 20.0, 250.0, &columns);
+        assert_eq!(further, slid - 100.0);
+        // No slips anywhere: the first column.
+        let empty = [day(60.0, false), day(150.0, false)];
         assert_eq!(
-            slide_px(true, false, 420.0, 20.0),
-            400.0,
-            "side by side: under the list"
+            420.0 - slide_px(true, false, 420.0, 20.0, 150.0, &empty) + 105.0,
+            150.0
         );
+    }
+
+    #[test]
+    fn the_planner_only_slides_on_a_desk_while_torn_and_never_to_the_right() {
+        let columns = [Column {
+            left: 60.0,
+            width: 90.0,
+            has_slips: false,
+            marks: vec![30.0],
+        }];
         assert_eq!(
-            slide_px(false, false, 420.0, 20.0),
+            slide_px(false, false, 420.0, 20.0, 150.0, &columns),
             0.0,
-            "whole page: it stays in the spread"
+            "whole page"
         );
         assert_eq!(
-            slide_px(true, true, 0.0, 0.0),
+            slide_px(true, true, 0.0, 0.0, 150.0, &columns),
             0.0,
-            "a phone has it beneath already"
+            "a phone"
+        );
+        // A tear far to the left of where the planner stands would push it right: no.
+        assert_eq!(slide_px(true, false, 100.0, 20.0, 400.0, &columns), 0.0);
+        // No columns measured: under the list's left edge.
+        assert_eq!(slide_px(true, false, 420.0, 20.0, 150.0, &[]), 400.0);
+    }
+
+    #[test]
+    fn the_hole_lies_across_an_hour_line_not_between_them() {
+        let column = |has_slips, marks: &[f64]| {
+            [Column {
+                left: 0.0,
+                width: 90.0,
+                has_slips,
+                marks: marks.to_vec(),
+            }]
+        };
+        // Hour lines every 64 px from 40, the planner's top at 100, the tear at 450: the
+        // lines lie at 140, 204, ..., 460, and the nearest is 460, 10 px below the tear.
+        let lines: Vec<f64> = (0..8).map(|i| 40.0 + 64.0 * f64::from(i)).collect();
+        let lift = lift_px(true, false, 100.0, 450.0, &column(false, &lines));
+        assert_eq!(lift, -10.0);
+        // A slip is chosen over the lines.
+        assert_eq!(
+            lift_px(true, false, 100.0, 450.0, &column(true, &[300.0])),
+            50.0
+        );
+        // Never more than half the gap.
+        for tear_y in 300..400 {
+            let lift = lift_px(
+                true,
+                false,
+                100.0,
+                f64::from(tear_y),
+                &column(false, &lines),
+            );
+            assert!(lift.abs() <= 32.0, "tear {tear_y}: {lift}");
+        }
+        // Whole page, phone, or nothing to show: it does not move.
+        assert_eq!(
+            lift_px(false, false, 100.0, 450.0, &column(false, &lines)),
+            0.0
         );
         assert_eq!(
-            slide_px(true, false, 10.0, 20.0),
-            0.0,
-            "never slides away from the list"
+            lift_px(true, true, 100.0, 450.0, &column(false, &lines)),
+            0.0
         );
+        assert_eq!(lift_px(true, false, 100.0, 450.0, &[]), 0.0);
     }
 
     #[test]

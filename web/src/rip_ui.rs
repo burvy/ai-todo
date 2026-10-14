@@ -187,16 +187,32 @@ mod imp {
                     // list: for the length of a tear it slides under it, so the hole shows
                     // the live planner there too. On a phone it is under it already.
                     if let (Some(pane), Some(planner)) = (pane.get(), planner_in(&main)) {
+                        let (tear_x, tear_y) = torn.as_ref().map_or((0.0, 0.0), |tear| {
+                            (
+                                f64::from(pane.offset_left()) + tear.from.0,
+                                f64::from(pane.offset_top()) + tear.from.1,
+                            )
+                        });
+                        let columns = columns_of(&planner);
                         let slide = rip::slide_px(
                             torn.is_some(),
                             phone(),
                             f64::from(planner.offset_left()),
                             f64::from(pane.offset_left()),
+                            tear_x,
+                            &columns,
+                        );
+                        let lift = rip::lift_px(
+                            torn.is_some(),
+                            phone(),
+                            f64::from(planner.offset_top()),
+                            tear_y,
+                            &columns,
                         );
                         el_style(
                             &planner,
                             "transform",
-                            &format!("translateX({:.1}px)", -slide),
+                            &format!("translate({:.1}px, {lift:.1}px)", -slide),
                         );
                     }
                 }
@@ -374,6 +390,37 @@ mod imp {
             .ok()
             .flatten()
             .and_then(|planner| planner.dyn_into().ok())
+    }
+
+    /// The planner's day columns, measured from the planner page's left edge.
+    fn columns_of(planner: &Element) -> Vec<rip::Column> {
+        let page = planner.get_bounding_client_rect();
+        let tops = |parts: web_sys::HtmlCollection| -> Vec<f64> {
+            (0..parts.length())
+                .filter_map(|i| parts.item(i))
+                .map(|part| {
+                    let rect = part.get_bounding_client_rect();
+                    rect.top() - page.top()
+                })
+                .collect()
+        };
+        let days = planner.get_elements_by_class_name("day");
+        (0..days.length())
+            .filter_map(|i| days.item(i))
+            .map(|day| {
+                let rect = day.get_bounding_client_rect();
+                let has_slips = day.get_elements_by_class_name("placement").length() > 0;
+                // Its hour lines are what the hole lines up on: a slip may lie far from
+                // the tear, and the planner should not be dragged across the screen for it.
+                let marks = tops(day.get_elements_by_class_name("hour"));
+                rip::Column {
+                    left: rect.left() - page.left(),
+                    width: rect.width(),
+                    has_slips,
+                    marks,
+                }
+            })
+            .collect()
     }
 
     fn torn_now(tear: &RwSignal<Option<Tear>>) -> bool {
