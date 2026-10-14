@@ -545,6 +545,32 @@ mod tests {
     }
 
     #[test]
+    fn every_drawing_defines_every_colour_it_uses() {
+        // The art is shown through <img>, which never sees the page's CSS: a
+        // colour the file uses but does not define itself paints Rambo black.
+        let pens = [
+            Pen::FountainPen,
+            Pen::Pencil,
+            Pen::Ballpoint,
+            Pen::Quill,
+            Pen::Marker,
+        ];
+        for pen in pens {
+            for pose in REACHABLE_POSES {
+                let path = pose.art(pen);
+                let svg = std::fs::read_to_string(art_file(&path)).expect("art exists");
+                for used in svg.split("var(--").skip(1) {
+                    let name = &used[..used.find([')', ',']).expect("var() closes")];
+                    assert!(
+                        svg.contains(&format!("--{name}:")),
+                        "{path} uses --{name} but never defines it"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn every_tool_draws_from_its_own_folder() {
         assert_eq!(
             Pose::Idle.art(Pen::FountainPen),

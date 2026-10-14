@@ -1,8 +1,10 @@
 <!-- PLACEHOLDER: replace me, see art/GUIDE.md -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 112" role="img" aria-label="Rambo (ballpoint), idle">
   <style>
-    svg{--rambo-barrel:#5D4732;--rambo-cap:#9F682E;--rambo-nib:#E1C38C;--rambo-lead:#3E2F1F;--rambo-ink:#5D4732;--rambo-eye:#FCFAF4;--rambo-pupil:#3E2F1F;--rambo-blush:#D08770;--rambo-fx:#A7865D;--rambo-brow:#3E2F1F}
-    @media (prefers-color-scheme:dark){svg{--rambo-barrel:#C9AE85;--rambo-cap:#C89B62;--rambo-nib:#E8D9B0;--rambo-ink:#8F6134;--rambo-fx:#B5976D;--rambo-brow:#4A331D}}
+    /* An <img> never sees the page's CSS, so the theme.css tokens are restated here. */
+    svg{--rambo:#146272;--rambo-deep:#004552;--rambo-tint:#4a939f;--accent:#9f682e}
+    @media (prefers-color-scheme:dark){svg{--rambo:#64bbc4;--rambo-deep:#358e9b;--rambo-tint:#a3dde0;--accent:#d9a45c}}
+    svg{--rambo-barrel:var(--rambo);--rambo-cap:var(--accent);--rambo-nib:var(--accent);--rambo-lead:var(--rambo-deep);--rambo-ink:var(--rambo-deep);--rambo-eye:#FCFAF4;--rambo-pupil:var(--rambo-deep);--rambo-blush:#D08770;--rambo-fx:var(--rambo-tint);--rambo-brow:var(--rambo-deep)}
     .pen-barrel{fill:var(--rambo-barrel)}
     .pen-cap{fill:var(--rambo-cap)}
     .pen-nib{fill:var(--rambo-nib)}
