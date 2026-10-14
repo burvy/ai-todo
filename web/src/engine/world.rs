@@ -6,6 +6,7 @@
 //! element. The brain is [`mascot::transition`], unchanged; this decides only how his
 //! body follows it, so behaviours end on state, never on a guessed CSS duration.
 
+use super::fling::{self, Body, Walls};
 use super::look::{self, Look};
 use super::sched::ENGINE_DT_S;
 use crate::hop::Hop;
@@ -74,6 +75,18 @@ pub(crate) struct Anchors {
     /// The page's leaf as the turner last showed it: none before any turn, and after one
     /// the leaf lying where it landed (flat, not closing, or turned away).
     pub(crate) leaf: Option<Leaf>,
+    /// The box his middle stays in when thrown: the screen less half his size.
+    pub(crate) walls: Walls,
+}
+
+/// Ink his own movement lays, for the page to put on the paper: a splat thrown off
+/// the edge he smacked into, and a dot where each hop home after a daze lands.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Splash {
+    /// Strokes fanned out from where he hit, each a few points.
+    Splat(Vec<Vec<Vec2>>),
+    /// Where his middle came down.
+    Dot(Vec2),
 }
 
 /// How his body follows his brain.
@@ -88,6 +101,8 @@ pub(crate) enum Drive {
     /// Hops there (`crate::hop`), the far end read every step so a moving nest is
     /// still where he lands.
     HopTo(Vec2),
+    /// Slides on the throw's speed (`engine::fling`) until he stops or splats.
+    Throw,
 }
 
 /// How his body follows `state`, given what the page measured: he hops between spots
@@ -109,6 +124,7 @@ pub(crate) fn behaviour(state: &State, settled_home: bool, here: Vec2, anchors: 
                 .leaf
                 .map_or(here, |leaf| (leaf.free_edge_x(), here.1)),
         ),
+        State::Thrown => Drive::Throw,
         _ => Drive::Follow(target),
     }
 }
@@ -121,6 +137,8 @@ struct Run {
     hop: Hop,
     began: f64,
     beat: Option<Pose>,
+    /// The hops of the run that have landed so far.
+    landed: u32,
 }
 
 impl Run {
@@ -175,6 +193,9 @@ pub(crate) struct Rambo {
     /// His lean into his move, eased after his speed every step (`look::eased_sway`).
     sway: f64,
     look: Look,
+    /// Where a throw left him, which his splat and daze stay on: his spot is still
+    /// where the finger let go.
+    fell: Option<Vec2>,
 }
 
 /// Everything the engine moves. Today that is Rambo; the nest, ink and the turn join it
@@ -184,6 +205,8 @@ pub(crate) struct World {
     pub(crate) rambo: Rambo,
     /// World time in ms: the sum of the fixed steps taken.
     now: f64,
+    /// Ink laid since the page last took it.
+    ink: Vec<Splash>,
 }
 
 impl World {
@@ -195,7 +218,7 @@ impl World {
                 pos: home,
                 vel: (0.0, 0.0),
                 // Long settled in his pose.
-                since: -crate::tuning::POSE_BLEND_MS,
+                since: -crate::tuning::WRITE_BLEND_MS,
                 run: None,
                 owed: None,
                 settling: false,
@@ -204,8 +227,10 @@ impl World {
                 look_from: look::pose(&State::Home, 0.0, false),
                 look: look::pose(&State::Home, 0.0, false),
                 sway: 0.0,
+                fell: None,
             },
             now: 0.0,
+            ink: Vec::new(),
         }
     }
 
@@ -220,6 +245,17 @@ impl World {
             lean_deg: self.rambo.look.lean_deg + self.rambo.sway,
             ..self.rambo.look
         }
+    }
+
+    /// Let go mid-flick at `vel`, in px per ms: the throw he slides on once his brain
+    /// is [`State::Thrown`].
+    pub(crate) fn throw(&mut self, vel: Vec2) {
+        self.rambo.vel = (vel.0 * 1000.0, vel.1 * 1000.0);
+    }
+
+    /// The ink laid since the last call, for the page to put down.
+    pub(crate) fn take_ink(&mut self) -> Vec<Splash> {
+        std::mem::take(&mut self.ink)
     }
 
     /// An event for his brain from outside the world (a gesture, the capture box).
@@ -238,6 +274,9 @@ impl World {
         }
         rambo.owed = mascot::notice(&rambo.brain, &next);
         rambo.look_from = rambo.look;
+        if !matches!(next, State::Splatting | State::Dazed) {
+            rambo.fell = None;
+        }
         rambo.settling = rambo.brain == State::Flying && next == State::WritingRow;
         rambo.brain = next;
         rambo.since = self.now;
@@ -253,7 +292,7 @@ impl World {
         let rambo = &self.rambo;
         let timed = matches!(
             rambo.brain,
-            State::Splatting | State::Dazed | State::Covered
+            State::Thrown | State::Splatting | State::Dazed | State::Covered
         );
         !timed
             && look::still(&rambo.brain, self.now - rambo.since)
@@ -292,6 +331,10 @@ impl World {
 
     /// His body follows what his state asks.
     fn move_body(&mut self, anchors: &Anchors) {
+        let anchors = &Anchors {
+            spot: self.rambo.fell.unwrap_or(anchors.spot),
+            ..*anchors
+        };
         let drive = behaviour(
             &self.rambo.brain,
             self.rambo.settled_home,
@@ -305,6 +348,7 @@ impl World {
         let (pos, vel) = match drive {
             Drive::HopTo(to) if anchors.reduced_motion => return self.land(to),
             Drive::HopTo(to) => return self.hop_towards(to),
+            Drive::Throw => return self.slide(&anchors.walls),
             Drive::Follow(at)
                 if rambo.settling
                     && !anchors.reduced_motion
@@ -376,6 +420,7 @@ impl World {
                     hop,
                     began: now,
                     beat: rambo.owed.take(),
+                    landed: 0,
                 }),
                 // Close enough that he simply steps there.
                 None => return self.land(to),
@@ -396,6 +441,20 @@ impl World {
         if elapsed >= run.hop.ms() {
             return self.land(to);
         }
+        // Running home from a daze, each hop that comes down on the page leaves a dot.
+        let landed = elapsed / crate::tuning::HOP_MS;
+        if landed > run.landed {
+            if rambo.brain == State::Skittering {
+                let dots = (run.landed + 1..=landed)
+                    .map(|hop| Splash::Dot(run.hop.at(to, hop * crate::tuning::HOP_MS).pos));
+                self.ink.extend(dots);
+            }
+            let rambo = &mut self.rambo;
+            if let Some(run) = rambo.run.as_mut() {
+                run.landed = landed;
+            }
+        }
+        let rambo = &mut self.rambo;
         let frame = run.hop.at(to, elapsed);
         rambo.vel = velocity(rambo.pos, frame.pos);
         rambo.pos = frame.pos;
@@ -404,6 +463,39 @@ impl World {
             squash: frame.squash,
             notice: None,
         };
+    }
+
+    /// One step of a throw: he slides and bounces off the edges. A smack splats him
+    /// where he hit and throws ink off the edge; a throw that just stops sends him home.
+    fn slide(&mut self, walls: &Walls) {
+        let rambo = &mut self.rambo;
+        let per_ms = (rambo.vel.0 / 1000.0, rambo.vel.1 / 1000.0);
+        let (body, hit) = fling::step(
+            Body {
+                pos: rambo.pos,
+                vel: per_ms,
+            },
+            walls,
+            STEP_MS,
+        );
+        rambo.pos = body.pos;
+        rambo.vel = (body.vel.0 * 1000.0, body.vel.1 * 1000.0);
+        rambo.draw = Draw::at(body.pos);
+        match hit {
+            Some(hit) if hit.splats() => {
+                rambo.vel = (0.0, 0.0);
+                rambo.fell = Some(body.pos);
+                let seed = format!("{}", self.now);
+                self.ink
+                    .push(Splash::Splat(fling::splat_strokes(&hit, &seed)));
+                self.tell(Event::Smack);
+            }
+            _ if fling::at_rest(&body) => {
+                rambo.vel = (0.0, 0.0);
+                self.tell(Event::Return);
+            }
+            _ => {}
+        }
     }
 
     /// He has arrived at `at`: still, unsquashed, and home if he was on his way home.
@@ -452,12 +544,21 @@ mod tests {
 
     const NEST: Vec2 = (340.0, 780.0);
 
+    /// A phone screen less half of him.
+    const WALLS: Walls = Walls {
+        left: 32.0,
+        top: 32.0,
+        right: 358.0,
+        bottom: 812.0,
+    };
+
     fn anchors(spot: Vec2) -> Anchors {
         Anchors {
             nest: NEST,
             spot,
             reduced_motion: false,
             leaf: None,
+            walls: WALLS,
         }
     }
 
@@ -469,13 +570,125 @@ mod tests {
         (ms / STEP_MS).ceil() as u32
     }
 
+    /// Dazed at `spot`, as a smack or a writing drag that ends there leaves him.
     fn dropped_at(spot: Vec2) -> World {
         let mut world = World::new(NEST);
         world.tell(Event::Grab);
         world.advance(steps(500.0), &anchors(spot));
-        world.tell(Event::DropEmpty);
+        world.adopt(State::Dazed);
         world.advance(1, &anchors(spot));
         world
+    }
+
+    /// Carried to `from` and let go mid-flick at `vel` px per ms.
+    fn thrown_from(from: Vec2, vel: Vec2) -> World {
+        let mut world = World::new(NEST);
+        world.tell(Event::Grab);
+        world.advance(steps(500.0), &anchors(from));
+        world.throw(vel);
+        world.tell(Event::DropHard);
+        world
+    }
+
+    #[test]
+    fn a_gentle_drop_on_the_page_sends_him_hopping_home_with_no_ink() {
+        let mut world = World::new(NEST);
+        world.tell(Event::Grab);
+        world.advance(steps(500.0), &anchors((120.0, 300.0)));
+        world.tell(Event::DropEmpty);
+        assert_eq!(world.rambo.brain, State::Home);
+        world.advance(
+            steps(f64::from(crate::tuning::FLY_MS) + 200.0),
+            &anchors((120.0, 300.0)),
+        );
+        assert_eq!(world.draw().pos, NEST);
+        assert!(world.at_rest());
+        assert_eq!(world.take_ink(), Vec::new());
+    }
+
+    #[test]
+    fn a_soft_throw_slides_on_stops_and_he_hops_home_undazed_with_no_ink() {
+        let from = (150.0, 400.0);
+        let mut world = thrown_from(from, (0.8, 0.0));
+        let mut was = from;
+        for _ in 0..steps(3000.0) {
+            world.advance(1, &anchors(from));
+            if world.rambo.brain != State::Thrown {
+                break;
+            }
+            assert!(
+                world.rambo.pos.0 >= was.0,
+                "he slides on the way he was thrown"
+            );
+            was = world.rambo.pos;
+        }
+        assert!(was.0 > from.0 + 40.0, "he kept the throw's speed: {was:?}");
+        assert_eq!(world.rambo.brain, State::Home, "stopped without a smack");
+        assert_eq!(world.take_ink(), Vec::new(), "no smack, no ink");
+    }
+
+    #[test]
+    fn smacked_into_an_edge_he_splats_ink_and_is_dazed_where_he_hit_then_skitters_home_dotting() {
+        let from = (200.0, 300.0);
+        let mut world = thrown_from(from, (3.0, 0.0));
+        for _ in 0..steps(500.0) {
+            world.advance(1, &anchors(from));
+            if world.rambo.brain != State::Thrown {
+                break;
+            }
+        }
+        assert_eq!(world.rambo.brain, State::Splatting);
+        let hit = world.rambo.pos;
+        assert!(
+            hit.0 > WALLS.right - 20.0,
+            "against the right edge: {hit:?}"
+        );
+        let ink = world.take_ink();
+        assert!(
+            matches!(ink.as_slice(), [Splash::Splat(strokes)] if !strokes.is_empty()),
+            "{ink:?}"
+        );
+        // His spot is still where the finger let go; he stays where he hit.
+        let dazed_for = f64::from(mascot::SPLAT_MS + mascot::DAZED_MS);
+        world.advance(steps(dazed_for) - 2, &anchors(from));
+        assert_eq!(world.rambo.brain, State::Dazed);
+        assert_eq!(world.draw().pos, hit);
+        world.advance(2, &anchors(from));
+        assert_eq!(world.rambo.brain, State::Skittering);
+        world.advance(
+            steps(f64::from(crate::tuning::FLY_MS) + 200.0),
+            &anchors(from),
+        );
+        assert_eq!(world.rambo.brain, State::Home);
+        assert_eq!(world.draw().pos, NEST);
+        let dots: Vec<Vec2> = world
+            .take_ink()
+            .into_iter()
+            .map(|splash| match splash {
+                Splash::Dot(at) => at,
+                other => panic!("only dots on the way home: {other:?}"),
+            })
+            .collect();
+        assert!(!dots.is_empty(), "each hop on the page leaves a dot");
+        for dot in &dots {
+            assert!(
+                distance(*dot, NEST) > 1.0 && distance(*dot, NEST) < distance(hit, NEST),
+                "{dot:?} lies between where he hit and the nest"
+            );
+        }
+    }
+
+    #[test]
+    fn caught_mid_slide_he_is_held_again() {
+        let from = (150.0, 400.0);
+        let mut world = thrown_from(from, (1.0, 0.0));
+        world.advance(steps(100.0), &anchors(from));
+        assert_eq!(world.rambo.brain, State::Thrown);
+        world.tell(Event::Grab);
+        assert_eq!(world.rambo.brain, State::Dragging);
+        world.advance(steps(500.0), &anchors(from));
+        assert!(distance(world.rambo.pos, from) < 1.0);
+        assert!(!world.at_rest(), "held, never asleep");
     }
 
     #[test]
@@ -552,7 +765,7 @@ mod tests {
             "on his spot at once, the run gone"
         );
         assert!(!world.at_rest(), "still easing into the asking pose");
-        world.advance(steps(crate::tuning::POSE_BLEND_MS), &anchors(spot));
+        world.advance(steps(crate::tuning::WRITE_BLEND_MS), &anchors(spot));
         world.advance(steps(SWAY_DIES_MS), &anchors(spot));
         assert!(world.at_rest());
         world.advance(steps(10_000.0), &anchors(spot));
@@ -707,9 +920,7 @@ mod tests {
     #[test]
     fn a_splat_settles_into_a_daze_where_he_fell() {
         let mut world = World::new(NEST);
-        world.tell(Event::Grab);
-        world.tell(Event::DropHard);
-        assert_eq!(world.rambo.brain, State::Splatting);
+        world.adopt(State::Splatting);
         world.advance(steps(f64::from(mascot::SPLAT_MS)), &anchors((50.0, 60.0)));
         assert_eq!(world.rambo.brain, State::Dazed);
         assert_eq!(world.draw().pos, (50.0, 60.0));
@@ -859,13 +1070,14 @@ mod tests {
 
     #[test]
     fn a_leaf_closing_over_him_where_he_stands_on_the_page_catches_him() {
-        for brain_to_covered in [Event::DropEmpty, Event::DropHard] {
+        // Out on the page: dazed after a smack, splatting, inking, or asking about a task.
+        for on_the_page in [State::Dazed, State::Splatting, State::Inking, asking()] {
             let mut world = World::new(NEST);
             world.tell(Event::Grab);
             world.advance(steps(500.0), &anchors(FELL));
-            world.tell(brain_to_covered);
+            world.adopt(on_the_page.clone());
             world.advance(1, &under(FELL, Some(leaf(0.7, true))));
-            assert_eq!(world.rambo.brain, State::Covered);
+            assert_eq!(world.rambo.brain, State::Covered, "from {on_the_page:?}");
         }
     }
 

@@ -165,6 +165,7 @@ pub(crate) fn Rambo(
     // (`engine::look`). With `shown`, his button's only transform.
     let look = RwSignal::new(world.borrow().look());
     let ticking = std::rc::Rc::new(std::cell::Cell::new(false));
+    let thrower = world.clone();
     let wake = move || {
         if ticking.replace(true) {
             return;
@@ -178,8 +179,9 @@ pub(crate) fn Rambo(
                 spot: pen_pos.get_untracked(),
                 reduced_motion: mascot::prefers_reduced_motion(),
                 leaf: crate::engine::leaf(),
+                walls: screen_walls(),
             };
-            let (brain, draw, posed, at_rest) = {
+            let (brain, draw, posed, at_rest, laid) = {
                 let mut world = world.borrow_mut();
                 world.adopt(state.get_untracked());
                 world.advance(tick.steps, &anchors);
@@ -189,8 +191,18 @@ pub(crate) fn Rambo(
                     world.draw(),
                     world.look(),
                     world.at_rest(),
+                    world.take_ink(),
                 )
             };
+            if !laid.is_empty() {
+                let pen = pen.get_untracked();
+                strokes.update(|strokes| {
+                    strokes.extend(
+                        laid.into_iter()
+                            .flat_map(|splash| ink_of(splash, pen, tick.now)),
+                    );
+                });
+            }
             if brain != state.get_untracked() {
                 set_state.set(brain);
             }
@@ -228,15 +240,18 @@ pub(crate) fn Rambo(
         wake();
     });
 
-    // Let go on the page: dazed where he lands, after a splat if he was flung. The
-    // world times the splat and the daze.
-    let land_dazed = move |hard_drop: bool| {
-        let event = if hard_drop && !mascot::prefers_reduced_motion() {
-            mascot::Event::DropHard
-        } else {
-            mascot::Event::DropEmpty
+    // Let go on the page: let go mid-flick he is thrown at the flick's speed (the
+    // world slides him, and only a smack into an edge dazes him); gently, he hops home.
+    let release_on_page = move |flick: Option<(f64, f64)>| {
+        let before = state.get_untracked();
+        let event = match flick {
+            Some(vel) if before == mascot::State::Dragging && !mascot::prefers_reduced_motion() => {
+                thrower.borrow_mut().throw(vel);
+                mascot::Event::DropHard
+            }
+            _ => mascot::Event::DropEmpty,
         };
-        set_state.set(mascot::transition(&state.get_untracked(), event));
+        set_state.set(mascot::transition(&before, event));
     };
     // How far below his middle the nib is, measured when he is picked up.
     let nib_below = std::rc::Rc::new(std::cell::Cell::new(0.0_f64));
@@ -896,21 +911,22 @@ pub(crate) fn Rambo(
             }
             on:pointerup={
                 let other_finger = other_finger.clone();
+                let release_on_page = release_on_page.clone();
                 move |ev: leptos::ev::PointerEvent| {
                     if other_finger(&ev) {
                         return;
                     }
                     let (client_x, client_y) = (ev.client_x() as f64, ev.client_y() as f64);
-                    // Let go mid-flick: a hard drop, and he splats.
-                    let hard_drop = matches!(
-                        finger_up.borrow_mut().advance(gesture::Sample {
-                            pointer: gesture::Pointer::Up,
-                            at: (client_x, client_y),
-                            t: ev.time_stamp(),
-                            id: ev.pointer_id(),
-                        }),
-                        Some(gesture::Gesture::Fling { .. })
-                    );
+                    // Let go mid-flick: thrown at the flick's speed.
+                    let flick = match finger_up.borrow_mut().advance(gesture::Sample {
+                        pointer: gesture::Pointer::Up,
+                        at: (client_x, client_y),
+                        t: ev.time_stamp(),
+                        id: ev.pointer_id(),
+                    }) {
+                        Some(gesture::Gesture::Fling { vel }) => Some(vel),
+                        _ => None,
+                    };
                     let before = state.get_untracked();
                     // Let go before the hold ended: he never starts listening.
                     hold_up.set(hold_up.get().wrapping_add(1));
@@ -968,10 +984,11 @@ pub(crate) fn Rambo(
                         ));
                         return;
                     }
-                    land_dazed(hard_drop);
+                    release_on_page(flick);
                 }
             }
             on:pointercancel={
+                let release_on_page = release_on_page.clone();
                 move |ev: leptos::ev::PointerEvent| {
                     if other_finger(&ev) {
                         return;
@@ -986,7 +1003,7 @@ pub(crate) fn Rambo(
                         mascot::State::Dragging => {
                             hold_cancel.set(hold_cancel.get().wrapping_add(1));
                             stop_speech_cancel();
-                            land_dazed(false);
+                            release_on_page(None);
                         }
                         mascot::State::Inking => {
                             // The browser took the gesture over: he lands where he
@@ -1218,6 +1235,64 @@ fn rambo_height() -> f64 {
 fn opens_below(sits_on: f64, height: f64, edge: f64) -> bool {
     sits_on - height < edge
 }
+
+/// The box his middle stays in when thrown: the screen, without its scrollbar, less
+/// half his size on every side.
+fn screen_walls() -> crate::engine::Walls {
+    let half = rambo_height() / 2.0;
+    let (width, height) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|doc| doc.document_element())
+        .map_or((0.0, 0.0), |root| {
+            (
+                f64::from(root.client_width()),
+                f64::from(root.client_height()),
+            )
+        });
+    crate::engine::Walls {
+        left: half,
+        top: half,
+        right: (width - half).max(half),
+        bottom: (height - half).max(half),
+    }
+}
+
+/// The strokes a [`crate::engine::Splash`] lays in `pen` at `now`, on whatever lies
+/// under it. A dot comes from his nib, below his middle.
+fn ink_of(splash: crate::engine::Splash, pen: settings::Pen, now: f64) -> Vec<ink::Stroke> {
+    let paths = match splash {
+        crate::engine::Splash::Splat(strokes) => strokes,
+        crate::engine::Splash::Dot((x, y)) => {
+            let nib = y + rambo_height() * mascot::NIB_BELOW;
+            vec![vec![(x, nib), (x + DOT_PX, nib)]]
+        }
+    };
+    let page = list_page();
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let &(x0, y0) = path.first()?;
+            let on = ink::surface_at(x0, y0, page);
+            let last = path.len() - 1;
+            let samples = path
+                .into_iter()
+                .enumerate()
+                .map(|(i, (x, y))| {
+                    let (x, y) = ink::on_surface(on, x, y, page);
+                    // Laid over a few ms, so it has the speed of a quick flick of ink.
+                    let t = now - (last - i) as f64 * SPLASH_SAMPLE_MS;
+                    ink::Sample { x, y, t }
+                })
+                .collect();
+            Some(ink::Stroke { samples, pen, on })
+        })
+        .collect()
+}
+
+/// How far a skitter dot's nib travels: just enough to lay one dab.
+const DOT_PX: f64 = 1.5;
+/// The time between the points of a splash's stroke, in ms.
+const SPLASH_SAMPLE_MS: f64 = 8.0;
 
 /// The page's width without its scrollbar, which the bubble must stay inside.
 fn screen_width() -> Option<f64> {

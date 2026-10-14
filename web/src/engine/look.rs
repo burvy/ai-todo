@@ -7,7 +7,7 @@
 
 use super::world::Vec2;
 use crate::mascot::State;
-use crate::tuning::{LEAN_EASE_MS, LEAN_MAX_DEG, LEAN_PER_PX_S, POSE_BLEND_MS};
+use crate::tuning::{LEAN_EASE_MS, LEAN_MAX_DEG, LEAN_PER_PX_S, POSE_BLEND_MS, WRITE_BLEND_MS};
 
 /// Held, he tilts like a pen in a hand.
 const HELD_LEAN_DEG: f64 = -15.0;
@@ -133,6 +133,7 @@ pub(crate) fn pose(state: &State, ms: f64, reduced_motion: bool) -> Look {
         State::Flying
         | State::Skittering
         | State::Covered
+        | State::Thrown
         | State::Inking
         | State::Asking { .. } => plain,
     }
@@ -143,7 +144,7 @@ pub(crate) fn pose(state: &State, ms: f64, reduced_motion: bool) -> Look {
 /// carried; upright otherwise, and always with reduced motion.
 pub(crate) fn sway_toward(state: &State, vel: Vec2, reduced_motion: bool) -> f64 {
     match state {
-        State::Flying | State::Skittering | State::Dragging if !reduced_motion => {
+        State::Flying | State::Skittering | State::Dragging | State::Thrown if !reduced_motion => {
             (vel.0 * LEAN_PER_PX_S).clamp(-LEAN_MAX_DEG, LEAN_MAX_DEG)
         }
         _ => 0.0,
@@ -178,14 +179,25 @@ fn splat(ms: f64) -> Look {
         })
 }
 
+/// How long the change from `from` to `to` eases over: into or out of the writing
+/// pose he turns by the theme's whole `--write-lean`, so that takes `WRITE_BLEND_MS`.
+fn blend_ms(from: &Look, to: &Look) -> f64 {
+    if from.write == to.write {
+        POSE_BLEND_MS
+    } else {
+        WRITE_BLEND_MS
+    }
+}
+
 /// His pose `ms` after a change of state that found him posed `from`: he eases into
-/// the new pose over `POSE_BLEND_MS`, at once with reduced motion.
+/// the new pose (`blend_ms`), at once with reduced motion.
 pub(crate) fn blended(from: &Look, to: &Look, ms: f64, reduced_motion: bool) -> Look {
-    if reduced_motion || ms >= POSE_BLEND_MS {
+    let over = blend_ms(from, to);
+    if reduced_motion || ms >= over {
         return *to;
     }
     // Ease in and out: no frame of the change is a jump, at its start or its end.
-    let x = ms / POSE_BLEND_MS;
+    let x = ms / over;
     let t = x * x * (3.0 - 2.0 * x);
     from.toward(to, t)
 }
@@ -193,7 +205,7 @@ pub(crate) fn blended(from: &Look, to: &Look, ms: f64, reduced_motion: bool) -> 
 /// Whether his pose stays the same from `ms` into `state` on, standing still: the
 /// loop may sleep. The held pulse and the splat move on their own.
 pub(crate) fn still(state: &State, ms: f64) -> bool {
-    ms >= POSE_BLEND_MS && !matches!(state, State::Dragging | State::Splatting)
+    ms >= WRITE_BLEND_MS && !matches!(state, State::Dragging | State::Splatting)
 }
 
 #[cfg(test)]
@@ -305,7 +317,7 @@ mod tests {
         let to = settled(&State::WritingRow);
         let mut last = blended(&from, &to, 0.0, false);
         assert_eq!(last, from, "the first frame is where he was");
-        for i in 1..=(POSE_BLEND_MS as usize) {
+        for i in 1..=(WRITE_BLEND_MS as usize) {
             let now = blended(&from, &to, i as f64, false);
             assert!((now.scale - last.scale).abs() < 0.02, "{last:?} -> {now:?}");
             assert!((now.pivot - last.pivot).abs() < 0.05, "{last:?} -> {now:?}");
@@ -320,6 +332,23 @@ mod tests {
     }
 
     #[test]
+    fn leaving_the_writing_pose_turns_him_a_little_each_frame() {
+        // The theme's `--write-lean`, and a 60 Hz frame.
+        let write_lean_deg = 34.0;
+        let frame = 1000.0 / 60.0;
+        let from = settled(&State::WritingCaret);
+        let to = settled(&State::Flying);
+        let mut last = blended(&from, &to, 0.0, false);
+        for i in 1..=((WRITE_BLEND_MS / frame) as usize + 1) {
+            let now = blended(&from, &to, i as f64 * frame, false);
+            let turn = (now.write - last.write).abs() * write_lean_deg;
+            assert!(turn < 3.0, "{turn} deg in one frame");
+            last = now;
+        }
+        assert_eq!(last, to);
+    }
+
+    #[test]
     fn only_the_held_pulse_and_the_splat_keep_his_pose_moving() {
         assert!(!still(
             &State::Asking {
@@ -329,7 +358,7 @@ mod tests {
             0.0
         ));
         for state in [State::Home, State::Dazed, State::Inking, State::WritingRow] {
-            assert!(still(&state, POSE_BLEND_MS), "{state:?}");
+            assert!(still(&state, WRITE_BLEND_MS), "{state:?}");
         }
         assert!(!still(&State::Dragging, 1e6));
         assert!(!still(&State::Splatting, 1e6));
