@@ -8,7 +8,9 @@ current code.
 
 ### 1. Ramble to tasks
 a. Type a sentence and Rambl creates a task with a title, duration, date, label and priority.
-b. Type text in the box labelled "Ramble" and tap the nest (Rambo's dish) at its right end, or press Enter.
+b. Type text in the box labelled "Ramble" and tap the nest (Rambo's dish, in the bottom-right
+corner of the screen) or press Enter. The box is a form with a submit button, so only a real key
+press submits; a script's synthetic Enter event does not.
 c. While the box is empty, Rambo whispers a short prompt in it ("Ramble on…", "What's on
 today?", …); the line rotates every ~6 s with a soft fade, and with reduced motion it stays
 on one line with no fade.
@@ -32,7 +34,14 @@ c. Code: `web/src/api.rs:timezone`; `crates/core/src/lib.rs:LocalContext`;
 `crates/dates/src/lib.rs:candidates, resolve, pinned_start, due_by, when`.
 
 ### 4. Non-tasks are filtered
-a. Chit-chat, observations and wishes do not become tasks.
+a. Chit-chat, observations and wishes do not become tasks. With no Jev key the offline
+judge decides by the clause's shape: it is a task when it needs, owes or must something, or
+when it is an instruction. An instruction is a clause whose first real word, after fillers
+such as "please", "also" or "just" and asks such as "can you", is not a pronoun, article,
+preposition, auxiliary or conjunction, a gerund or a past form: so "walk the dog", "fix the
+sink" and "feed the cat" are tasks and "I think", "for biology" and "the design presentation is coming up"
+are not. "Remind me to" and "don't forget to" are skipped like fillers; what follows must still be an
+instruction of two words or more ("Groceries" alone is too little).
 b. Not visible; covered by `crates/judge/src/fake.rs` and
 `crates/capture/tests/golden.rs`.
 c. Code: `crates/capture/src/segment.rs:split_clauses`;
@@ -49,23 +58,39 @@ c. Code: `crates/capture/src/pdf.rs:pdf_to_text`;
 `crates/capture/src/email.rs:parse_email, Sent`; `server/src/v2/http.rs:file_text`.
 
 ### 6. Offline capture fallback
-a. Capture still works without a Jev key by using deterministic rules.
-b. Not visible; unset `TYPESAFE_API_KEY` and capture text.
-c. Code: `crates/judge/src/fake.rs:FakeJudge`;
+a. Capture still works without a Jev key by using deterministic rules (see 4 for what counts
+as a task; 7 for the lead-in cut; VIII.2 for times).
+b. Not visible; unset `TYPESAFE_API_KEY` and capture "Walk the dog tomorrow": one task.
+c. Code: `crates/judge/src/fake.rs:FakeJudge, is_instruction`;
 `crates/capture/tests/golden.rs:rambles_match_the_golden_output`.
+
+### 7. Lead-ins are cut from the title
+a. "Add a task to buy milk", "please schedule a reminder to call mom" and "can you add a task:
+water the plants" become the tasks "Buy milk", "Call mom" and "Water the plants". The cut
+needs a make verb, a task noun and a link word ("to", "called", "about", ...) or a colon, so
+"add milk to the list" and "a task force meeting" keep their words. Speech to text often
+writes "add a task" as "attittask", "attit task", "add it task" or "at a task": "attittask",
+"attitask", "attit task" and "add it task" are unmistakable and cut even without a link word; "at a task" and the rest only count
+before a link word or colon. Jev is shown the grammar's cut and each candidate start word and
+picks; the offline judge takes the grammar's.
+b. Say or type `attittask buy milk`: the task is "Buy milk".
+c. Code: `crates/capture/src/leadin.rs:strip, options, heard_right`;
+`crates/capture/src/pipeline.rs:title_spans`; fixtures `crates/capture/tests/fixtures/leadins.txt`.
 
 ## II. TASK LIST
 
 ### 1. Shared task list
 a. The page lists every task with its status, label, priority, duration and planned time.
-b. Open the **Tasks** panel.
+b. Open the app: the task list is the first page, with no header, tabs or heading above it
+(see 8).
 c. Code: `web/src/tasks/mod.rs:TaskList`; `web/src/lib.rs:App`; `web/src/api.rs:fetch_snapshot`.
 
 ### 2. Add, complete and delete
 a. Tasks can be added from the capture box, marked done, and deleted; each change
 refreshes the complete snapshot. An edit made from a stale copy of a task (it changed on another
 device since this page loaded it) is refused with `409 stale_update`; the page keeps what the server has.
-b. Type a task and press **Add**; use the task row's controls to finish or delete it.
+b. Type a task and tap the nest or press Enter (there is no Add button); swipe a row right to
+finish it, or use the row's x to delete it.
 c. Code: `web/src/capture.rs:CaptureBox`; `web/src/tasks/mod.rs:TaskList`;
 `web/src/api.rs:capture_text, patch_task, delete_task`;
 `server/src/v2/http.rs:capture, update, remove`.
@@ -110,16 +135,17 @@ e. A finger that slides before the hold is a **scroll**, and the row keeps its
 hands off it. That is also what keeps the gestures apart from the page flip: a
 swipe left is never this row's to delete, so it reaches the panes and turns the
 page (DESIGN-DECISIONS 3).
-g. On a phone the whole page turns **like a book's, hinged on its left edge** (the default
+f. On a phone the whole page turns **like a book's, hinged on its left edge** (the default
 Page turn; `Fast` is the corner bend below): swipe left
 on the list, or swipe right on the planner (outside its grid, or on empty paper while the
-grid is at its earliest day), or press a pane button. The list is the leaf: forward, its
+grid is at its earliest day), or tap the note at the page's foot ("planner on the next page", "task list on the previous
+page"). The list is the leaf: forward, its
 right edge lifts toward you and swings over the spine, and the planner shows beneath;
 back is the same leaf coming back: it swings in from the spine and lies down again over the
 planner, the forward turn played in reverse (the same poses, in the opposite order). The edge keeps pace with the
 finger, the leaf darkens as it turns away, and it throws a shadow on the page under it
 (black in light and dark). Letting go past a share of the width or in a flick finishes
-the turn; short of that the leaf falls back and rebounds a little. A button's turn runs on a fixed time, slow, quick, slow, the same both ways. While a turn runs the pane tabs do not move. With reduced motion it
+the turn; short of that the leaf falls back and rebounds a little. The note's turn runs on a fixed time, slow, quick, slow, the same both ways. With reduced motion it
 slides. Geometry, the leaf's spring and decisions: `web/src/flip.rs` (tested); browser
 side: `web/src/flip_turner.rs`; numbers in `web/src/tuning.rs` (`FLIP_*`), looks in
 `web/theme.css` `--flip-*` and `.flip-*`. The leaf moves on a spring with a speed of its own,
@@ -133,11 +159,11 @@ The pages fill the screen edge to edge on a phone (safe areas are page padding).
 earliest day the grid takes `touch-action: pan-y pan-right` and `overscroll-behavior-x:
 none`, so a swipe to the right is the page's (never the grid stretching) and a swipe to
 the left still scrolls the days.
-f. Rows for series occurrences are not reorderable: a drag that starts or lands
+g. Rows for series occurrences are not reorderable: a drag that starts or lands
 on one does nothing (occurrences share the series' row, not a slot of their own —
 ARCHITECTURE.md 7.1 lists reordering them as out of scope). A slip dropped where
 no row is goes to the end.
-g. Code: `web/src/row.rs` (the gesture rules, unit-tested) and its `dom` module
+h. Code: `web/src/row.rs` (the gesture rules, unit-tested) and its `dom` module
 (pointer events); `web/src/tasks/mod.rs:reorder_ids`, the row's handlers;
 `web/src/api.rs:reorder_tasks`; `server/src/v2/http.rs:reorder`;
 `server/src/v2/app.rs:reorder`.
@@ -174,6 +200,34 @@ b. Open a task whose due date was set in another zone: the edit box still shows 
 c. Code: `crates/core/src/lib.rs:Task::due_tz, When::DueBy`;
 `server/src/v2/app.rs:due_zone, set_when, patch, apply_revision`;
 `web/src/tasks/fields.rs:due_display, parse_edited_due, parse_due_input, typed_when`.
+
+### 8. The page: no chrome, always-visible capture box, nothing pops
+a. There is no app header, no To do / Planner switcher, no "To do" or "Planner" heading and no
+All / School / Personal / Other filter tabs: the content explains itself. The task list's
+page holds the list and the pin (top right); the planner's page holds the grid and the gear
+(top right). On a phone each page fills the screen edge to edge (safe areas are padding) and
+ends in the note that names the other page; on a desk (wider than 700 px) both pages sit side
+by side and the notes are hidden. Labels and priorities stay on the task data.
+b. On a phone the capture box is a bar fixed at the bottom, and each page is exactly the
+screen above it (`100dvh` less the bar), so a long list scrolls inside its page and the box
+is always in view; the document itself never scrolls. On a desk the box sits at the foot of
+the page in the page's flow.
+c. The nest is one box in the bottom-right corner of the capture bar, square-ish and fully
+on screen (`--nest-w` by `--nest-h`). Rambo sits in it, his tip behind the nest's front rim,
+which is a second layer drawn over him (`.nest::before` is the back, `.nest-rim` the front).
+Tapping the nest submits the box.
+d. Nothing pops in or out. The only thing on main that fades is ink (it appears over `INK_FADE_MS`
+and fades out over `INK_FADE_OUT_MS`); the one other thing allowed to fade,
+Rambo's tape patch on a page tear, is *(planned)*. Everything else moves: a done or
+deleted row flies to the pin, a taped-back task flies back from it, the rows below slide up
+to close a gap (`ROW_CLOSE_MS`), a crumpled strip drops away, and Rambo's ask bubble grows
+out of him and folds back into him over `ASK_FOLD_MS` before it leaves the page, at full
+opacity throughout.
+e. Try it: open the app on a phone and see no heading; add enough tasks to overflow and see
+the box stay put; swipe a row right and watch it travel to the pin.
+f. Code: `web/src/lib.rs:App, PageFoot`; `web/src/week.rs:WeekGrid` (the planner page, the
+gear); `web/src/scrap.rs` (the pin); `web/theme.css` (`.capture`, `.nest`, `.nest-rim`, the
+phone block with `100dvh`); numbers in `web/src/tuning.rs`.
 
 ## III. WEEK PLANNER
 
@@ -233,8 +287,8 @@ c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics: `web/assets/theme/pap
 ## IV. RAMBL, THE MASCOT
 
 ### 1. Talk button
-a. The pen beside the capture box is Rambo's send and talk control.
-b. Click the pen to send, or press and hold it still to talk. Only a Rambo resting in
+a. Rambo, in his nest in the bottom-right corner, is the send and talk control.
+b. Tap the nest to send, or press and hold Rambo still to talk. Only a Rambo resting in
 his nest listens: picked up while dazed (below), he writes instead.
 c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:State, Event, transition`.
 
@@ -432,10 +486,21 @@ c. Code: `crates/core/src/lib.rs:LocalContext`; `crates/core/src/clock.rs:System
 ### 2. Date, time and duration phrases
 a. The date parser recognises relative days, weekdays, month dates, clock times
 and durations.
-b. Not visible; covered by tests in `crates/dates/src/lib.rs` and
-`crates/dates/src/phrases.rs`.
-c. Code: `crates/dates/src/lib.rs:candidates, resolve`;
-`crates/dates/src/phrases.rs:day, time, duration`.
+Relative times count from now, in the user's zone: "in 10 minutes", "in an hour", "in half an
+hour", "in 90 minutes", "in 2 hours", "in 45min" make a task at that instant (rounded down to
+the minute, so the seconds you spoke at are not kept), whatever day or time Jev also picked,
+and Jev is not asked about them. Numbers may be spelled out up to sixty ("in twenty minutes",
+"in forty-five minutes", "in forty five minutes"), also as a task's length ("a forty five
+minutes call"). "In 2 days", "in a week" and "in 3 weeks" are dates (up to a year), kept on the
+local calendar across daylight-saving changes; "in a month" and "in 2 months" (up to 12) are
+the same day of the month, or the last day of a shorter month. "In a minute" means
+soon, not sixty seconds, so it stays in the title. Zero, past a year and "in a
+while" are left to the title.
+b. Capture "wake up in 10 minutes": the task is "Wake up" at now plus 10 minutes. Covered by
+tests in `crates/dates/src/lib.rs`, `crates/dates/src/phrases.rs` and
+`crates/capture/src/pipeline.rs`.
+c. Code: `crates/dates/src/lib.rs:candidates, resolve, after, Value::After`;
+`crates/dates/src/phrases.rs:day, time, duration, minutes_from_now`.
 
 ### 3. Daylight-saving changes
 a. Local clock times remain on the clock face the user named across daylight-saving
