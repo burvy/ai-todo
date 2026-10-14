@@ -275,12 +275,12 @@ refresh().then(() => status("")).catch((e) => status(e.message, true));
 #[cfg(test)]
 mod tests {
     use super::super::auth::Me;
-    use super::super::store::MemoryStore;
+    use super::super::store::{MemoryStore, SqliteStore};
     use super::*;
     use chrono::{TimeZone, Utc};
     use todo_core::{Clock, SystemClock};
 
-    fn signed_in(store: &MemoryStore, id: &str, email: &str, plan: Plan) {
+    fn signed_in(store: &dyn Store, id: &str, email: &str, plan: Plan) {
         store
             .upsert_user_and_session(
                 &Me {
@@ -290,7 +290,7 @@ mod tests {
                     picture: None,
                     plan,
                 },
-                "token",
+                &format!("token-{id}"),
                 SystemClock.now() + chrono::Duration::days(1),
             )
             .unwrap();
@@ -310,13 +310,13 @@ mod tests {
         assert!(PAGE.contains("replaceChildren"));
     }
 
-    #[test]
-    fn usage_lists_users_and_plans_and_totals_captures_per_plan() {
-        let store = MemoryStore::default();
+    /// `anon_1234` has no account row, like a visitor who captured and then signed in
+    /// or expired the same day: it counts as anonymous instead of failing the page.
+    fn usage_lists_users_and_plans_and_totals_captures_per_plan(store: &dyn Store) {
         let now = Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap();
         let day = now.date_naive();
-        signed_in(&store, "google-1", "a@example.com", Plan::Free);
-        signed_in(&store, "google-2", "b@example.com", Plan::Paid);
+        signed_in(store, "google-1", "a@example.com", Plan::Free);
+        signed_in(store, "google-2", "b@example.com", Plan::Paid);
         store
             .record_capture("google-1", "203.0.113.1", day)
             .unwrap();
@@ -330,7 +330,7 @@ mod tests {
             .record_capture("anon_1234", "203.0.113.9", day)
             .unwrap();
 
-        let out = usage(&store, day).unwrap();
+        let out = usage(store, day).unwrap();
         assert_eq!(out.day, "2026-10-12");
         assert_eq!(out.users.len(), 3);
         let free = out.users.iter().find(|u| u.id == "google-1").unwrap();
@@ -352,6 +352,14 @@ mod tests {
                     captures: 1
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn both_stores_list_usage_by_plan() {
+        usage_lists_users_and_plans_and_totals_captures_per_plan(&MemoryStore::new());
+        usage_lists_users_and_plans_and_totals_captures_per_plan(
+            &SqliteStore::open_in_memory().unwrap(),
         );
     }
 
