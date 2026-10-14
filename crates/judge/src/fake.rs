@@ -107,6 +107,118 @@ fn has_obligation(lower: &str) -> bool {
         || is_instruction(lower)
 }
 
+/// Verbs of thinking, feeling and perceiving. "Can you believe it" comments on the
+/// news, so a request may only step past an ask on one of these when the verb then
+/// hands the errand on — see `is_action_handed_on`.
+const MENTAL_VERBS: &[&str] = &[
+    "believe", "imagine", "guess", "think", "see", "hear", "feel", "remember", "tell", "know",
+];
+
+/// Words that open a statement, a question or a fragment, never an instruction.
+const NOT_A_VERB: &[&str] = &[
+    // pronouns
+    "i",
+    "i'm",
+    "i've",
+    "i'll",
+    "i'd",
+    "im",
+    "you",
+    "you're",
+    "he",
+    "she",
+    "it",
+    "it's",
+    "we",
+    "they",
+    "me",
+    "him",
+    "her",
+    "us",
+    "them",
+    "someone",
+    "somebody",
+    "something",
+    "everyone",
+    "everything",
+    "nothing",
+    "there",
+    "there's",
+    "here",
+    "that's",
+    // articles and determiners
+    "the",
+    "a",
+    "an",
+    "this",
+    "that",
+    "these",
+    "those",
+    "my",
+    "your",
+    "his",
+    "its",
+    "our",
+    "their",
+    "some",
+    "any",
+    "no",
+    "every",
+    "each",
+    "all",
+    "both",
+    // prepositions
+    "for",
+    "of",
+    "in",
+    "on",
+    "at",
+    "by",
+    "with",
+    "about",
+    "from",
+    "to",
+    "into",
+    "after",
+    "before",
+    "during",
+    "since",
+    "until",
+    // conjunctions and question words
+    "although",
+    "though",
+    "because",
+    "if",
+    "when",
+    "while",
+    "or",
+    "but",
+    "which",
+    "who",
+    "what",
+    "where",
+    "why",
+    "how",
+    // auxiliaries and copulas
+    "is",
+    "are",
+    "was",
+    "were",
+    "am",
+    "be",
+    "been",
+    "do",
+    "does",
+    "did",
+    "can",
+    "could",
+    "would",
+    "will",
+    // negation and hedges
+    "not",
+    "maybe",
+];
+
 /// Whether the clause is shaped like an instruction: "walk the dog", "water plants",
 /// "can you fix the sink". No list of verbs can name every chore, but the words a
 /// statement or a fragment opens with are a small closed set (pronouns, articles,
@@ -121,121 +233,11 @@ fn is_instruction(lower: &str) -> bool {
     /// Ways to ask someone else to do it: "can you", "could someone".
     const ASKS: [&str; 4] = ["can", "could", "would", "will"];
     const ASKED: [&str; 4] = ["you", "someone", "somebody", "u"];
-    /// Verbs of thinking, feeling and perceiving. Skipping the asks helps only
-    /// when an action follows: "can you fix the sink" is a chore, but "can you
-    /// believe it" comments on the news, so a mind verb there is chit-chat.
-    const MENTAL_VERBS: &[&str] = &[
-        "believe", "imagine", "guess", "think", "see", "hear", "feel", "remember", "tell", "know",
-    ];
     /// Phrases that hand the task to the app: "remind me to", "don't forget to".
     const HANDOFFS: [&[&str]; 3] = [
         &["remind", "me", "to"],
         &["don't", "forget", "to"],
         &["dont", "forget", "to"],
-    ];
-    /// Words that open a statement, a question or a fragment, never an instruction.
-    const NOT_A_VERB: &[&str] = &[
-        // pronouns
-        "i",
-        "i'm",
-        "i've",
-        "i'll",
-        "i'd",
-        "im",
-        "you",
-        "you're",
-        "he",
-        "she",
-        "it",
-        "it's",
-        "we",
-        "they",
-        "me",
-        "him",
-        "her",
-        "us",
-        "them",
-        "someone",
-        "somebody",
-        "something",
-        "everyone",
-        "everything",
-        "nothing",
-        "there",
-        "there's",
-        "here",
-        "that's",
-        // articles and determiners
-        "the",
-        "a",
-        "an",
-        "this",
-        "that",
-        "these",
-        "those",
-        "my",
-        "your",
-        "his",
-        "its",
-        "our",
-        "their",
-        "some",
-        "any",
-        "no",
-        "every",
-        "each",
-        "all",
-        "both",
-        // prepositions
-        "for",
-        "of",
-        "in",
-        "on",
-        "at",
-        "by",
-        "with",
-        "about",
-        "from",
-        "to",
-        "into",
-        "after",
-        "before",
-        "during",
-        "since",
-        "until",
-        // conjunctions and question words
-        "although",
-        "though",
-        "because",
-        "if",
-        "when",
-        "while",
-        "or",
-        "but",
-        "which",
-        "who",
-        "what",
-        "where",
-        "why",
-        "how",
-        // auxiliaries and copulas
-        "is",
-        "are",
-        "was",
-        "were",
-        "am",
-        "be",
-        "been",
-        "do",
-        "does",
-        "did",
-        "can",
-        "could",
-        "would",
-        "will",
-        // negation and hedges
-        "not",
-        "maybe",
     ];
     let words: Vec<&str> = lower
         .split_whitespace()
@@ -249,8 +251,12 @@ fn is_instruction(lower: &str) -> bool {
             [ask, who, tail @ ..]
                 if ASKS.contains(ask)
                     && ASKED.contains(who)
-                    && verb_requested(&LEAD, tail)
-                        .is_none_or(|verb| !MENTAL_VERBS.contains(&verb)) =>
+                    && verb_and_rest(&LEAD, tail).is_none_or(|words| match words {
+                        [verb, rest @ ..] if MENTAL_VERBS.contains(verb) => {
+                            is_action_handed_on(rest)
+                        }
+                        _ => true,
+                    }) =>
             {
                 tail
             }
@@ -267,10 +273,28 @@ fn is_instruction(lower: &str) -> bool {
         })
 }
 
-/// The verb a request acts on: the first word after "can you" that is not a
-/// lead-in, so "can you please fix the sink" still finds "fix".
-fn verb_requested<'a>(lead: &[&str], words: &'a [&str]) -> Option<&'a str> {
-    words.iter().find(|word| !lead.contains(word)).copied()
+/// The words starting at the verb a request acts on: the first word after "can you"
+/// that is not a lead-in, so "can you please fix the sink" still finds "fix".
+fn verb_and_rest<'a>(lead: &[&str], words: &'a [&str]) -> Option<&'a [&'a str]> {
+    let index = words.iter().position(|word| !lead.contains(word))?;
+    Some(&words[index..])
+}
+
+/// Whether the mind verb in a request still hands on the errand: "remember to call
+/// mom" and "tell mom to call" do, while what follows otherwise ("when we moved",
+/// "that we are late", a bare "it") is a remark on the moment, not an errand.
+fn is_action_handed_on(words: &[&str]) -> bool {
+    /// The person the errand is passed to: a name ("mom") or an object pronoun
+    /// ("tell her to call").
+    const SOMEONE: &[&str] = &["me", "her", "him", "us", "them"];
+    let is_action = |verb: &str| !NOT_A_VERB.contains(&verb) && !MENTAL_VERBS.contains(&verb);
+    match words {
+        ["to", verb, ..] => is_action(verb),
+        [someone, "to", verb, ..] if SOMEONE.contains(someone) || !NOT_A_VERB.contains(someone) => {
+            is_action(verb)
+        }
+        _ => false,
+    }
 }
 
 /// "watching", "studying", but not "bring" or "string": an -ing word is a gerund when
@@ -493,7 +517,9 @@ mod tests {
     }
 
     /// A request is a task only when it asks for an action. A mind verb after
-    /// the ask is the speaker reacting, not reordering their week.
+    /// the ask is the speaker reacting, unless it hands the action on: "remember
+    /// to call mom" and "tell mom to call" are errands, "remember when" and
+    /// "tell her that" are remarks.
     #[test]
     fn a_request_is_an_instruction_only_for_an_action_verb() {
         for clause in [
@@ -501,10 +527,18 @@ mod tests {
             "could you imagine that",
             "would you hear me out",
             "can you think about it",
+            "can you remember when we moved",
+            "can you tell her that we are late",
         ] {
             assert!(is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
         }
-        for clause in ["can you call mom", "could you fix the sink"] {
+        for clause in [
+            "can you call mom",
+            "could you fix the sink",
+            "can you remember to call mom",
+            "can you tell mom to call",
+            "will you tell her to call",
+        ] {
             assert!(!is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
         }
     }
@@ -514,12 +548,28 @@ mod tests {
         let questions = [
             question("Can you believe it", &["Can you believe it"], &[]),
             question("could you imagine that", &["could you imagine that"], &[]),
-            question("can you call mom", &["Can you call mom"], &[]),
+            question(
+                "can you remember when we moved",
+                &["can you remember when we moved"],
+                &[],
+            ),
+            question(
+                "can you remember to call mom",
+                &["Can you remember to call mom"],
+                &[],
+            ),
+            question(
+                "can you tell mom to call",
+                &["Can you tell mom to call"],
+                &[],
+            ),
         ];
         let answers = FakeJudge.judge(&questions).await.unwrap();
         assert_eq!(answers[0].is_task, 0.0);
         assert_eq!(answers[1].is_task, 0.0);
-        assert_eq!(answers[2].is_task, 1.0);
+        assert_eq!(answers[2].is_task, 0.0);
+        assert_eq!(answers[3].is_task, 1.0);
+        assert_eq!(answers[4].is_task, 1.0);
     }
 
     #[tokio::test]

@@ -42,6 +42,8 @@ preposition, auxiliary or conjunction, a gerund or a past form: so "walk the dog
 sink" and "feed the cat" are tasks and "I think", "for biology" and "the design presentation is coming up"
 are not. The asks help only when an action verb follows: "can you call mom" is a task,
 while "can you believe it" with a mind verb like "believe" or "imagine" stays chit-chat.
+A mind verb still starts an errand when it hands the action on: "can you remember to call mom"
+and "can you tell mom to call" are tasks, while "can you remember when we moved" stays chit-chat.
 "Remind me to" and "don't forget to" are skipped like fillers; what follows must still be an
 instruction of two words or more ("Groceries" alone is too little).
 b. Not visible; covered by `crates/judge/src/fake.rs` and
