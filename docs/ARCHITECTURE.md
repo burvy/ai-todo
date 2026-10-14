@@ -71,7 +71,7 @@ An unfinished task past its `DueBy` remains in the list marked **Overdue**. The 
 3. **Judge** (one Jev request per capture, all questions in parallel): per clause `is_task` (Noul), `title` (Choice of spans), `day` (Choice of date candidates + none), `time` (Choice of time candidates + none), `duration` (Choice), `label` (Choice), `priority` (Score). Jev gets the local time as text for context only.
 4. **Resolve** (code): build `TaskDraft`. Day + time -> `When::At`; day only -> `DueBy(day at the user's deadline setting, 23:59 by default, local)`; neither -> `Anytime`.
 
-Without a Jev key, `FakeJudge`'s deterministic rules pick the first candidate. Tests use it, so the pipeline is tested end to end without the network.
+Without a Jev key, `FakeJudge`'s deterministic rules pick the first candidate. It takes a clause as a task when it names an obligation ("need", "have to", ...) or is shaped like an instruction: past fillers ("oh, and", "please", "can you", "remind me to"), its first word is not a pronoun, article, preposition, conjunction, auxiliary or negation, nor a gerund or past form ("walk the dog" is a task, "watching videos" is not); then v1's chit-chat rules drop observations, wishes, feelings and past events. Tests use it, so the pipeline is tested end to end without the network.
 
 ## 6. HTTP API v1
 
