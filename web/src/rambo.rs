@@ -9,7 +9,7 @@ use crate::edits::{
     EditSink, heard_edit_applies, revisable, revise_and_show, revise_body, series_note, sheet_left,
 };
 use crate::tasks::{apply_tick, delete_with_scribble, tick_action};
-use crate::{ink, mascot, settings, speech, voice};
+use crate::{ink, mascot, settings, speech, tuning, voice};
 
 /// The single Rambo element: independent fixed layer above everything.
 ///
@@ -64,6 +64,24 @@ pub(crate) fn Rambo(
     });
     #[cfg(target_arch = "wasm32")]
     on_page_moved(follow_nest);
+
+    // Near an edge of the screen his ask bubble slides in rather than run off it.
+    let bubble_ref = NodeRef::<leptos::html::Span>::new();
+    let bubble_shift = RwSignal::new(0.0_f64);
+    Effect::new(move |_| {
+        let asking = matches!(state.get(), mascot::State::Asking { .. });
+        let shift = bubble_ref
+            .get()
+            .filter(|_| asking)
+            .zip(screen_width())
+            .map_or(0.0, |(bubble, screen)| {
+                // From values that do not animate: the bubble is centred on him, and its
+                // drawn box is still riding his settle after the drop when this runs.
+                let width = f64::from(bubble.offset_width());
+                bubble_offset(pen_pos.get().0, width, screen, tuning::BUBBLE_EDGE_PX)
+            });
+        bubble_shift.set(shift);
+    });
 
     // Home again, the page he wrote on is tidied away with him.
     Effect::new(move |_| {
@@ -554,7 +572,11 @@ pub(crate) fn Rambo(
                 {move || brain_speech.get().map(|line| view! { <span class="brain-line">{line}</span> })}
                 {move || match state.get() {
                     mascot::State::Asking { ref title, .. } => view! {
-                        <span class="ask">
+                        <span
+                            class="ask"
+                            node_ref=bubble_ref
+                            style:margin-left=move || format!("{:.1}px", bubble_shift.get())
+                        >
                             <span>{format!("Hey! What do you want with \"{title}\"?")}</span>
                             <button type="button" on:click=move |_| {
                                 if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
@@ -684,4 +706,56 @@ fn row_under(x: f64, y: f64) -> Option<web_sys::Element> {
         .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
         .filter(|el| el.closest(".rambo").ok().flatten().is_none())
         .find_map(|el| el.closest("li[data-id]").ok().flatten())
+}
+
+/// The page's width without its scrollbar, which the bubble must stay inside.
+fn screen_width() -> Option<f64> {
+    let root = web_sys::window()?.document()?.document_element()?;
+    Some(f64::from(root.client_width()))
+}
+
+/// How far to slide a bubble of `width`, centred on `centre_x`, so it keeps `edge`
+/// pixels from both sides of a `screen` that wide. A bubble too wide for the screen
+/// starts at the left edge, where its question begins.
+fn bubble_offset(centre_x: f64, width: f64, screen: f64, edge: f64) -> f64 {
+    let left = centre_x - width / 2.0;
+    let fitted = if width > screen - 2.0 * edge {
+        edge
+    } else {
+        left.clamp(edge, screen - edge - width)
+    };
+    fitted - left
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bubble_offset;
+
+    // Rambo at x, a 200px bubble, a 1000px screen, 16px from each edge.
+
+    #[test]
+    fn a_bubble_that_fits_stays_centred() {
+        assert_eq!(bubble_offset(500.0, 200.0, 1000.0, 16.0), 0.0);
+    }
+
+    #[test]
+    fn near_the_left_edge_it_slides_right() {
+        // It spans -70 to 130, so it moves 86 to start at 16.
+        assert_eq!(bubble_offset(30.0, 200.0, 1000.0, 16.0), 86.0);
+        assert_eq!(bubble_offset(10.0, 200.0, 1000.0, 16.0), 106.0);
+    }
+
+    #[test]
+    fn near_the_right_edge_it_slides_left() {
+        // It spans 870 to 1070, so it moves 86 to end at 984.
+        assert_eq!(bubble_offset(970.0, 200.0, 1000.0, 16.0), -86.0);
+    }
+
+    #[test]
+    fn a_bubble_wider_than_the_screen_starts_at_the_left_edge() {
+        // It spans -100 to 1100; it starts at 16 and runs off the right instead.
+        assert_eq!(bubble_offset(500.0, 1200.0, 1000.0, 16.0), 116.0);
+        // Exactly as wide as the room between the edges: it fits.
+        assert_eq!(bubble_offset(500.0, 968.0, 1000.0, 16.0), 0.0);
+    }
 }
