@@ -253,7 +253,7 @@ fn number_word(word: &str) -> Option<u32> {
 
 /// "forty" and "five" together: a multiple of ten from twenty to fifty, and one to nine.
 fn spelled_pair(tens: u32, ones: u32) -> Option<u32> {
-    ((20..=50).contains(&tens) && tens % 10 == 0 && (1..=9).contains(&ones)).then(|| tens + ones)
+    ((20..=50).contains(&tens) && tens.is_multiple_of(10) && (1..=9).contains(&ones)).then(|| tens + ones)
 }
 
 /// The count in front of a unit, one or two words: "10", "forty-five", "forty five".
