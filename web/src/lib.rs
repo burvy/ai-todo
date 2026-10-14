@@ -57,6 +57,10 @@ pub fn App() -> impl IntoView {
     // signal is one the board writes and this effect clears: a subscriber
     // mounted between the two gets the cue exactly once.
     let (tack_cue, set_tack_cue) = signal::<Option<tack::Cue>>(None);
+    // Whether the server has answered. The tack board needs to know: it opens
+    // against the empty `empty_snapshot()` above, and a board that reconciled
+    // or saved against that would lose every strip the user left on it.
+    let (loaded, set_loaded) = signal(false);
     Effect::new(move |_| {
         if tack_cue.get().is_some() {
             set_tack_cue.set(None);
@@ -68,7 +72,10 @@ pub fn App() -> impl IntoView {
         wasm_bindgen_futures::spawn_local(async move {
             let days = view_settings.get_untracked().days;
             match api::fetch_snapshot(&api::today_date(), days).await {
-                Ok(loaded) => set_snapshot.set(loaded),
+                Ok(first) => {
+                    set_snapshot.set(first);
+                    set_loaded.set(true);
+                }
                 Err(error) => set_error.set(Some(format!("Could not load your tasks: {error}"))),
             }
         });
@@ -189,7 +196,7 @@ pub fn App() -> impl IntoView {
             >
             <div class="tasks-pane">
                 <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
-                <tack::TackBoard snapshot set_snapshot set_error view_settings set_cue=set_tack_cue />
+                <tack::TackBoard snapshot loaded set_snapshot set_error view_settings set_cue=set_tack_cue />
             </div>
             <week::WeekGrid
                 snapshot=snapshot

@@ -326,7 +326,19 @@ pub struct Watch {
 impl Watch {
     /// One pass over `snapshot`: reconcile the board, then remember what this
     /// snapshot shows as to-do, ready for the next one.
-    pub fn pass(&mut self, strips: Vec<Strip>, snapshot: &Snapshot) -> Pass {
+    ///
+    /// `loaded` false means the server has not answered yet and `snapshot` is
+    /// the empty placeholder the page opens with. There is nothing to reconcile
+    /// against and nothing worth writing down, so the board is handed back
+    /// exactly as it came in.
+    pub fn pass(&mut self, strips: Vec<Strip>, snapshot: &Snapshot, loaded: bool) -> Pass {
+        if !loaded {
+            return Pass {
+                kept: strips,
+                fresh: Vec::new(),
+                just_done: Vec::new(),
+            };
+        }
         let done: Vec<(String, String)> = snapshot
             .tasks
             .iter()
@@ -363,6 +375,16 @@ struct StoredStrip {
     rest: f64,
     tacked: bool,
     stacked: bool,
+}
+
+/// Whether the board may write itself to storage yet.
+///
+/// Not before the server's first snapshot: the page opens on an empty
+/// placeholder board, and saving that would throw away where the user left
+/// their strips. Where the strips sit is presentation only, but it is the one
+/// thing the board has no way of getting back from the server.
+fn may_save(loaded: bool) -> bool {
+    loaded
 }
 
 fn load_stored() -> Option<Stored> {
@@ -404,6 +426,10 @@ fn save_stored(open: bool, strips: &[Strip]) {
 #[component]
 pub fn TackBoard(
     snapshot: ReadSignal<Snapshot>,
+    /// Whether the server has answered yet. The page opens on an empty
+    /// placeholder snapshot; the board waits for the real one before it
+    /// reconciles or saves, or a reload would lose every strip.
+    loaded: ReadSignal<bool>,
     set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
     view_settings: ReadSignal<settings::Settings>,
@@ -696,7 +722,9 @@ pub fn TackBoard(
             mut kept,
             fresh,
             just_done,
-        } = watch.borrow_mut().pass(strips.get_untracked(), &snap);
+        } = watch
+            .borrow_mut()
+            .pass(strips.get_untracked(), &snap, loaded.get());
         renumber(&mut kept);
         strips.set(kept);
 
@@ -734,9 +762,14 @@ pub fn TackBoard(
         relayout();
     });
 
-    // Persist presentation state whenever it changes.
+    // Persist presentation state whenever it changes, but only once the server
+    // has answered: saving the placeholder board the page opens with would wipe
+    // the strips the user left on the tack.
     Effect::new(move |_| {
-        save_stored(open.get(), &strips.get());
+        let list = strips.get();
+        if may_save(loaded.get()) {
+            save_stored(open.get(), &list);
+        }
     });
 
     // ---- what the user can do ----
@@ -1455,7 +1488,7 @@ mod tests {
         assert!(parsed.strips[1].stacked);
     }
 
-    // ---- BUG-1: which done task the board watched go from listed to done ----
+    // ---- BUG-1 and BUG-2: what a pass over a snapshot does to the board ----
 
     /// A snapshot holding exactly these tasks, each with the given done flag.
     fn snapshot_of(rows: &[(&str, bool)]) -> Snapshot {
@@ -1491,24 +1524,52 @@ mod tests {
     fn a_task_ticked_between_two_passes_gets_cut_out_and_tacked() {
         let mut watch = Watch::default();
         // The page is open with "a" showing as to-do.
-        let pass = watch.pass(Vec::new(), &snapshot_of(&[("a", false)]));
+        let pass = watch.pass(Vec::new(), &snapshot_of(&[("a", false)]), true);
         assert!(pass.just_done.is_empty());
         assert!(pass.fresh.is_empty());
 
-        // The user ticks it: this snapshot lists it as done, and only the
-        // previous pass can say it was open a moment ago.
-        let pass = watch.pass(Vec::new(), &snapshot_of(&[("a", true)]));
+        // The user ticks it: the next snapshot lists it as done, and it is the
+        // previous pass that says it was open a moment ago.
+        let pass = watch.pass(Vec::new(), &snapshot_of(&[("a", true)]), true);
         assert_eq!(pass.just_done, vec!["a".to_owned()]);
     }
 
     #[test]
     fn a_task_already_done_when_the_board_opened_goes_straight_up() {
         let mut watch = Watch::default();
-        let pass = watch.pass(Vec::new(), &snapshot_of(&[("b", true)]));
+        let pass = watch.pass(Vec::new(), &snapshot_of(&[("b", true)]), true);
         assert!(
             pass.just_done.is_empty(),
             "nothing was watched going from listed to done"
         );
         assert_eq!(pass.fresh, vec![("b".to_owned(), "b".to_owned())]);
+    }
+
+    #[test]
+    fn the_stored_board_survives_the_empty_first_snapshot() {
+        // What the bug did: reconciled against the placeholder snapshot on its
+        // own, every stored strip is a task that is no longer done, so the board
+        // came back empty — and the save effect wrote that empty board out.
+        let stored = vec![strip("a", 1, false)];
+        assert!(
+            reconcile(stored.clone(), &[], &HashSet::new()).kept.is_empty(),
+            "the placeholder pass really does drop every strip"
+        );
+
+        let mut watch = Watch::default();
+        let empty = Snapshot {
+            tasks: Vec::new(),
+            ..snapshot_of(&[])
+        };
+        let pass = watch.pass(stored.clone(), &empty, false);
+        assert_eq!(pass.kept, stored, "the board is handed back untouched");
+        assert!(pass.fresh.is_empty() && pass.just_done.is_empty());
+        assert!(!may_save(false), "nothing is written before the first load");
+
+        // Once the server has answered, the same strips are still there, and
+        // from then on the board is saved.
+        let pass = watch.pass(stored, &snapshot_of(&[("a", true)]), true);
+        assert_eq!(pass.kept.len(), 1);
+        assert!(may_save(true));
     }
 }
