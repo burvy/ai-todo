@@ -18,8 +18,9 @@ use crate::api;
 use crate::edits::series_note;
 use crate::tasks::occurrence_parts;
 use crate::tuning::{
-    PIN_ROOM_PX, PIN_SHOWN, ROW_CLOSE_MS, SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS,
-    STRIP_GAP_PX, STRIP_H_PX, STRIP_H_WIDE_PX,
+    BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGE_PX, PIN_EDGES, PIN_ROOM_PX, ROW_CLOSE_MS,
+    SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX, STRIP_GAP_PX,
+    STRIP_H_PX,
 };
 
 /// What taping a scrap back does.
@@ -91,23 +92,25 @@ fn forget_return(id: &str) {
     RETURNS.with(|noted| noted.borrow_mut().remove(id));
 }
 
-/// The strips that fit a pile `height` px tall, below the pin's room, each at most
-/// `strip` tall with `gap` between: whole strips only, at least one, at most [`PIN_SHOWN`].
-fn strips_that_fit(height: f64, strip: f64, gap: f64) -> usize {
-    let room = (height - PIN_ROOM_PX + gap).max(0.0);
-    ((room / (strip + gap)) as usize).clamp(1, PIN_SHOWN)
+/// Whether a point (`x`, `y`) in a `width` x `height` window is in the bin corner: the
+/// bottom-left, where dragging a strip deletes its task for good.
+fn in_bin_corner(x: f64, y: f64, width: f64, height: f64) -> bool {
+    x <= width * BIN_CORNER_FRACTION && y >= height * (1.0 - BIN_CORNER_FRACTION)
 }
 
-/// How tall a strip may grow and how many fit the pile `pile` now.
-fn measure(pile: &web_sys::HtmlElement) -> (f64, usize) {
-    let wide = web_sys::window()
-        .and_then(|window| window.inner_width().ok()?.as_f64())
-        .is_some_and(|width| width > 700.0);
-    let strip = if wide { STRIP_H_WIDE_PX } else { STRIP_H_PX };
-    (
-        strip,
-        strips_that_fit(f64::from(pile.client_height()), strip, STRIP_GAP_PX),
-    )
+/// The window's width and height in px, or nothing when there is no window.
+fn viewport() -> Option<(f64, f64)> {
+    let window = web_sys::window()?;
+    Some((
+        window.inner_width().ok()?.as_f64()?,
+        window.inner_height().ok()?.as_f64()?,
+    ))
+}
+
+/// How far below the top strip the strip at `rank` shows: each rank one edge deeper, up to
+/// [`PIN_EDGES`]. Deeper ones sit behind the last edge, so none appears all at once.
+fn edge_depth(rank: usize) -> usize {
+    rank.min(PIN_EDGES)
 }
 
 /// A done task hanging at the pin: plain data, drawn as a strip. Its look and flight
@@ -118,19 +121,19 @@ struct Hung {
     title: String,
 }
 
-/// The done tasks in the order they hang: newest nearest the pin.
+/// The done tasks in the order they hang: newest first, the top of the stack.
 fn done_newest_first(snapshot: &Snapshot) -> Vec<&Task> {
     let mut done: Vec<&Task> = snapshot.tasks.iter().filter(|task| task.done).collect();
     done.sort_by_key(|task| std::cmp::Reverse(task.updated_at));
     done
 }
 
-/// The strips to keep mounted when `shown` fit: those, plus one more that is sliding off
-/// the bottom as a newer one arrives.
-fn hung_at_the_pin(snapshot: &Snapshot, shown: usize) -> Vec<Hung> {
+/// The done tasks mounted at the pin, newest first: the stack's edges, and two more so a
+/// strip that moves up is already there. Older ones stay done and unmounted.
+fn hung_at_the_pin(snapshot: &Snapshot) -> Vec<Hung> {
     done_newest_first(snapshot)
         .into_iter()
-        .take(shown + 1)
+        .take(PIN_EDGES + 2)
         .map(|task| Hung {
             id: task.id.clone(),
             title: task.title.clone(),
@@ -138,12 +141,27 @@ fn hung_at_the_pin(snapshot: &Snapshot, shown: usize) -> Vec<Hung> {
         .collect()
 }
 
-/// Whether the strip of task `id` has been pushed past the `shown` that fit.
-fn pushed_off(snapshot: &Snapshot, id: &TaskId, shown: usize) -> bool {
+/// Where task `id` sits in the stack: 0 is the top. `None` when it is not done.
+fn stack_rank(snapshot: &Snapshot, id: &TaskId) -> Option<usize> {
     done_newest_first(snapshot)
         .iter()
         .position(|task| task.id == *id)
-        .is_some_and(|rank| rank >= shown)
+}
+
+/// Gives the keyboard to the top strip of the pin, if there is one.
+fn focus_top_strip() {
+    let top = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| {
+            document
+                .query_selector(".scrap-undo.done:not([disabled])")
+                .ok()
+                .flatten()
+        })
+        .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok());
+    if let Some(top) = top {
+        let _ = top.focus();
+    }
 }
 
 /// The scraps lying in the corner, oldest first. A newer delete lays a new scrap
@@ -504,32 +522,18 @@ pub fn ScrapCorner(
     set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
 ) -> impl IntoView {
-    // How tall a strip may grow and how many fit: read from the pile once the page has
-    // laid out, and again when the window changes size or the list changes.
-    let pile = NodeRef::<leptos::html::Div>::new();
-    let fit = RwSignal::new((STRIP_H_PX, PIN_SHOWN));
-    let remeasure = move || {
-        if let Some(pile) = pile.get_untracked() {
-            fit.set(measure(&pile));
-        }
-    };
-    Effect::new(move |_| {
-        snapshot.track();
-        request_animation_frame(remeasure);
-    });
-    let _ = window_event_listener(leptos::ev::resize, move |_| remeasure());
-    let shown = move || fit.get().1;
     view! {
         <div
             class="scrap-pile"
-            node_ref=pile
-            style:--strip-h=move || format!("{}px", fit.get().0)
+            style:--strip-h=format!("{STRIP_H_PX}px")
             style:--strip-gap=format!("{STRIP_GAP_PX}px")
             style:--scrap-ms=format!("{SCRAP_SLIDE_MS}ms")
             style:--pin-room=format!("{PIN_ROOM_PX}px")
+            style:--edge-px=format!("{PIN_EDGE_PX}px")
+            style:--stack-h=format!("{}px", STRIP_H_PX + PIN_EDGE_PX * PIN_EDGES as f64)
         >
             <For
-                each=move || snapshot.with(|held| hung_at_the_pin(held, shown()))
+                each=move || snapshot.with(hung_at_the_pin)
                 key=|hung| hung.id.clone()
                 children=move |hung| {
                     let hung_ref = NodeRef::<leptos::html::Button>::new();
@@ -544,20 +548,107 @@ pub fn ScrapCorner(
                         });
                         ready.is_some()
                     });
-                    let leaving_id = hung.id.clone();
+                    // Dragging the top strip: it follows the finger; in the bin corner it
+                    // leans, and on release there it crumples and its task is deleted.
+                    let grip = StoredValue::new(None::<(f64, f64)>);
+                    let offset = RwSignal::new((0.0_f64, 0.0_f64));
+                    let dragging = RwSignal::new(false);
+                    let binned = RwSignal::new(false);
+                    let just_dragged = StoredValue::new(false);
+                    let task_id = StoredValue::new(hung.id.clone());
+                    let deletable = occurrence_parts(&hung.id.0).is_none();
+                    let rank_id = hung.id.clone();
+                    let rank = Memo::new(move |_| snapshot.with(|held| stack_rank(held, &rank_id)));
+                    let top = Memo::new(move |_| rank.get() == Some(0));
                     let label = format!("Tape \"{}\" back: not done after all", hung.title);
+                    // Only the top strip carries its title; the edges under it are plain paper.
+                    let title = hung.title.clone();
                     let style = format!("{}deg", sway_deg(hash_ticket(&hung.id.0)));
                     view! {
                         <button
                             type="button"
                             class="scrap-undo done"
-                            class:leaving=move || snapshot.with(|held| pushed_off(held, &leaving_id, shown()))
                             node_ref=hung_ref
                             style:--hang=style
+                            style:--drag-x=move || format!("{}px", offset.get().0)
+                            style:--drag-y=move || format!("{}px", offset.get().1)
+                            class:dragging=move || dragging.get()
+                            class:over-bin=move || binned.get() && dragging.get()
+                            class:binned=move || binned.get() && !dragging.get()
+                            style:--depth=move || edge_depth(rank.get().unwrap_or(PIN_EDGES)).to_string()
+                            style:z-index=move || (PIN_EDGES + 1 - edge_depth(rank.get().unwrap_or(PIN_EDGES))).to_string()
+                            class:on-top=move || top.get()
                             aria-label=label
+                            aria-hidden=move || (!top.get()).to_string()
+                            disabled=move || !top.get()
                             title="Tap to tape it back"
+                            on:pointerdown=move |event: leptos::ev::PointerEvent| {
+                                if top.get_untracked() {
+                                    grip.set_value(Some((f64::from(event.client_x()), f64::from(event.client_y()))));
+                                    just_dragged.set_value(false);
+                                    // Moves go to the strip even once the finger has left it.
+                                    if let Some(button) = hung_ref.get_untracked() {
+                                        let _ = button.set_pointer_capture(event.pointer_id());
+                                    }
+                                }
+                            }
+                            on:pointermove=move |event: leptos::ev::PointerEvent| {
+                                let Some((x0, y0)) = grip.get_value() else { return };
+                                let (x, y) = (f64::from(event.client_x()), f64::from(event.client_y()));
+                                let (dx, dy) = (x - x0, y - y0);
+                                if !dragging.get_untracked() {
+                                    if dx.hypot(dy) < STRIP_DRAG_PX {
+                                        return;
+                                    }
+                                    dragging.set(true);
+                                }
+                                offset.set((dx, dy));
+                                let over = viewport().is_some_and(|(w, h)| in_bin_corner(x, y, w, h));
+                                binned.set(over && deletable);
+                            }
+                            on:pointerup=move |_| {
+                                if grip.get_value().is_none() {
+                                    return;
+                                }
+                                grip.set_value(None);
+                                if !dragging.get_untracked() {
+                                    return;
+                                }
+                                dragging.set(false);
+                                just_dragged.set_value(true);
+                                if binned.get_untracked() {
+                                    let id = task_id.get_value();
+                                    set_timeout(
+                                        move || {
+                                            wasm_bindgen_futures::spawn_local(async move {
+                                                match api::delete_task(&id).await {
+                                                    Ok(snapshot) => set_snapshot.set(snapshot),
+                                                    Err(e) => {
+                                                        binned.set(false);
+                                                        offset.set((0.0, 0.0));
+                                                        set_error.set(Some(series_note(&e)));
+                                                    }
+                                                }
+                                            });
+                                        },
+                                        std::time::Duration::from_millis(BIN_CRUMPLE_MS),
+                                    );
+                                } else {
+                                    offset.set((0.0, 0.0));
+                                }
+                            }
+                            on:pointercancel=move |_| {
+                                grip.set_value(None);
+                                dragging.set(false);
+                                binned.set(false);
+                                offset.set((0.0, 0.0));
+                            }
                             on:click=move |_| {
-                                let id = hung.id.clone();
+                                if just_dragged.get_value() {
+                                    just_dragged.set_value(false);
+                                    return;
+                                }
+                                let id = task_id.get_value();
                                 let Some(action) = snapshot.with_untracked(|s| crate::tasks::tick_action(s, &id.0)) else {
                                     return;
                                 };
@@ -575,10 +666,12 @@ pub fn ScrapCorner(
                                 wasm_bindgen_futures::spawn_local(async move {
                                     crate::tasks::apply_tick(&id, action, sink).await;
                                     forget_return(&id.0);
+                                    // The strip is gone: keep the keyboard on the new top strip.
+                                    request_animation_frame(focus_top_strip);
                                 });
                             }
                         >
-                            <s>{hung.title.clone()}</s>
+                            <s>{title.clone()}</s>
                         </button>
                     }
                 }
@@ -819,37 +912,44 @@ mod tests {
     }
 
     #[test]
-    fn the_pin_keeps_what_fits_plus_one_sliding_off_newest_first() {
+    fn the_pin_stacks_every_done_task_newest_on_top() {
+        let snapshot = done_snapshot(3);
+        let ids: Vec<_> = hung_at_the_pin(&snapshot)
+            .iter()
+            .map(|h| h.id.0.clone())
+            .collect();
+        assert_eq!(ids, ["t2", "t1", "t0"]);
+        assert_eq!(stack_rank(&snapshot, &TaskId("t2".into())), Some(0));
+        assert_eq!(stack_rank(&snapshot, &TaskId("t0".into())), Some(2));
+        assert_eq!(stack_rank(&snapshot, &TaskId("gone".into())), None);
+    }
+
+    #[test]
+    fn only_a_few_edges_show_under_the_top_however_deep_the_stack() {
+        assert_eq!(edge_depth(0), 0, "the top sits flat");
+        assert_eq!(edge_depth(1), 1);
+        assert_eq!(edge_depth(PIN_EDGES), PIN_EDGES);
+        assert_eq!(edge_depth(40), PIN_EDGES, "deeper ones share the last edge");
+    }
+
+    #[test]
+    fn the_pin_mounts_the_edges_and_two_more_and_no_further() {
         let snapshot = done_snapshot(10);
-        let hung = hung_at_the_pin(&snapshot, 4);
-        let ids: Vec<_> = hung.iter().map(|h| h.id.0.as_str()).collect();
-        assert_eq!(
-            ids,
-            ["t9", "t8", "t7", "t6", "t5"],
-            "four fit, the fifth leaves"
-        );
-        assert!(!pushed_off(&snapshot, &TaskId("t6".into()), 4));
-        assert!(pushed_off(&snapshot, &TaskId("t5".into()), 4));
+        assert_eq!(hung_at_the_pin(&snapshot).len(), PIN_EDGES + 2);
+    }
+
+    #[test]
+    fn a_strip_that_is_not_in_the_stack_has_no_rank() {
+        let snapshot = done_snapshot(3);
+        assert_eq!(stack_rank(&snapshot, &TaskId("gone".into())), None);
     }
 
     #[test]
     fn only_done_tasks_hang() {
         let mut snapshot = done_snapshot(3);
         snapshot.tasks[1].done = false;
-        let hung = hung_at_the_pin(&snapshot, 6);
+        let hung = hung_at_the_pin(&snapshot);
         assert!(hung.iter().all(|h| h.id.0 != "t1"));
-    }
-
-    #[test]
-    fn whole_strips_fit_the_page_and_at_least_one_shows() {
-        // A 390x844 phone's page under the foot note is about 786 px: six strips of 110 px.
-        assert_eq!(strips_that_fit(786.0, 110.0, 4.0), 6);
-        assert_eq!(strips_that_fit(20.0, 120.0, 4.0), 1, "never none");
-        assert_eq!(
-            strips_that_fit(5000.0, 120.0, 4.0),
-            PIN_SHOWN,
-            "never past the cap"
-        );
     }
 
     #[test]
@@ -869,6 +969,15 @@ mod tests {
         let before = [row("a", 0), row("b", 50)];
         let after = [row("b", 0), row("a", 50)];
         assert!(rows_to_slide(&before, &after).is_empty());
+    }
+
+    #[test]
+    fn the_bin_is_the_bottom_left_corner_and_nothing_else() {
+        // A 390x844 phone: the corner is the left 30% of the width, the bottom 30% of the height.
+        assert!(in_bin_corner(10.0, 800.0, 390.0, 844.0), "bottom left");
+        assert!(!in_bin_corner(300.0, 800.0, 390.0, 844.0), "bottom right");
+        assert!(!in_bin_corner(10.0, 100.0, 390.0, 844.0), "top left");
+        assert!(in_bin_corner(0.0, 844.0, 390.0, 844.0), "the very corner");
     }
 
     #[test]

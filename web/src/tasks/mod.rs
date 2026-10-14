@@ -8,7 +8,7 @@ pub(crate) mod write;
 
 use chrono::{DateTime, NaiveDate, Utc, Weekday};
 use leptos::prelude::*;
-use todo_core::{Label, Snapshot, Source, TaskId, When};
+use todo_core::{Snapshot, Source, TaskId, When};
 
 use crate::clock::Clock;
 use crate::edits::{EditSink, confirmed, held, patch_and_show, series_note, toggle_done_body};
@@ -209,53 +209,6 @@ pub(crate) async fn apply_tick(id: &TaskId, action: TickAction, sink: EditSink) 
     }
 }
 
-fn label_name(label: Label) -> &'static str {
-    match label {
-        Label::School => "School",
-        Label::Work => "Work",
-        Label::Errands => "Errands",
-        Label::Health => "Health",
-        Label::Personal => "Personal",
-        Label::Other => "Other",
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn load_label_filter() -> Option<Label> {
-    let value = leptos::prelude::window()
-        .local_storage()
-        .ok()
-        .flatten()
-        .and_then(|storage| storage.get_item("rambl-task-label-filter").ok().flatten());
-    value.and_then(|value| match value.as_str() {
-        "School" => Some(Label::School),
-        "Work" => Some(Label::Work),
-        "Errands" => Some(Label::Errands),
-        "Health" => Some(Label::Health),
-        "Personal" => Some(Label::Personal),
-        "Other" => Some(Label::Other),
-        _ => None,
-    })
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn load_label_filter() -> Option<Label> {
-    None
-}
-
-fn save_label_filter(label: Option<Label>) {
-    #[cfg(target_arch = "wasm32")]
-    if let Ok(Some(storage)) = leptos::prelude::window().local_storage() {
-        let value = label.map(label_name);
-        let _ = match value {
-            Some(value) => storage.set_item("rambl-task-label-filter", value),
-            None => storage.remove_item("rambl-task-label-filter"),
-        };
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = label;
-}
-
 fn is_overdue_at(task: &todo_core::Task, now: DateTime<Utc>) -> bool {
     !task.done && matches!(task.when, When::DueBy(deadline) if deadline < now)
 }
@@ -338,7 +291,6 @@ pub(crate) fn TaskList(
 ) -> impl IntoView {
     #[cfg(not(target_arch = "wasm32"))]
     let _ = pen_pos;
-    let (selected_label, set_selected_label) = signal(load_label_filter());
     let (editing_task, set_editing_task) = (open_sheet.read_only(), open_sheet.write_only());
     let (edit_title, set_edit_title) = signal(String::new());
     let (edit_duration, set_edit_duration) = signal(String::new());
@@ -413,20 +365,6 @@ pub(crate) fn TaskList(
             open_editor(&id);
         }
     });
-    let labels = move || {
-        let tasks = snapshot.get().tasks;
-        [
-            Label::School,
-            Label::Work,
-            Label::Errands,
-            Label::Health,
-            Label::Personal,
-            Label::Other,
-        ]
-        .into_iter()
-        .filter(|label| tasks.iter().any(|task| task.label == *label))
-        .collect::<Vec<_>>()
-    };
     let visible_tasks = move || {
         snapshot
             .get()
@@ -434,7 +372,6 @@ pub(crate) fn TaskList(
             .into_iter()
             // A done task has torn off the list and hangs at the pin.
             .filter(|task| !task.done)
-            .filter(|task| selected_label.get().is_none_or(|label| task.label == label))
             .collect::<Vec<_>>()
     };
 
@@ -444,7 +381,6 @@ pub(crate) fn TaskList(
     let rested = StoredValue::new(Vec::<(String, i32)>::new());
     Effect::new(move |_| {
         snapshot.track();
-        selected_label.track();
         request_animation_frame(move || {
             let now = scrap::row_tops();
             let slide = rested.with_value(|before| scrap::rows_to_slide(before, &now));
@@ -556,28 +492,7 @@ pub(crate) fn TaskList(
     let _ = (pen_queue, mascot_state, set_mascot_state, view_settings);
 
     view! {
-        <section aria-labelledby="tasks-heading">
-            <h2 id="tasks-heading">"To do"</h2>
-            <div class="label-filters" aria-label="Filter tasks by label">
-                <button
-                    type="button"
-                    class:active=move || selected_label.get().is_none()
-                    on:click=move |_| {
-                        set_selected_label.set(None);
-                        save_label_filter(None);
-                    }
-                >"All"</button>
-                <For each=labels key=|label| label_name(*label) let:label>
-                    <button
-                        type="button"
-                        class:active=move || selected_label.get() == Some(label)
-                        on:click=move |_| {
-                            set_selected_label.set(Some(label));
-                            save_label_filter(Some(label));
-                        }
-                    >{label_name(label)}</button>
-                </For>
-            </div>
+        <section aria-label="Tasks">
             <ul class="task-list">
                 <For each=visible_tasks key=|task| RowKey(task.clone()) let:task>
                     {
