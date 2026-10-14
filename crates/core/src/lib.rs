@@ -81,8 +81,8 @@ mod hh_mm {
 impl Default for DaySettings {
     fn default() -> Self {
         Self {
-            deadline: NaiveTime::from_hms_opt(23, 59, 0).expect("23:59 is a valid time"),
-            placement: NaiveTime::from_hms_opt(12, 0, 0).expect("12:00 is a valid time"),
+            deadline: tuning::DEFAULT_DAY_DEADLINE,
+            placement: tuning::DEFAULT_DAY_PLACEMENT,
         }
     }
 }

@@ -11,7 +11,7 @@ convention, and the index of where each kind of value lives.
 | Used by one crate | that crate's `src/tuning.rs` | `server/src/v2/tuning.rs`: `SESSION_LENGTH` |
 | Shared by two or more crates | `todo_core::tuning` (`crates/core/src/tuning.rs`), the crate every other depends on | `TASK_MAX_DURATION_MIN` |
 | Set per deployment | an environment variable; its default is a `DEFAULT_*` constant in `tuning.rs` | `RAMBL_JEV_DAILY_CAP` → `DEFAULT_JEV_DAILY_CAP` |
-| Chosen by each user | a stored user setting; its default is a constant in `tuning.rs` | the day-only deadline (PR #266) |
+| Chosen by each user | a stored user setting; its default is a constant in `tuning.rs` | `DEFAULT_DAY_DEADLINE`, the default for each user's day-only deadline |
 | Content and personality a non-programmer edits | a TOML file in the crate's `content/` folder, compiled in | `crates/rambl-brain/content/personality.toml` |
 | Web behaviour (timings, thresholds) | `web/src/tuning.rs` (planned, front-end restructure) | |
 | Web look (colours, spacing, radii, animation lengths) | CSS custom properties on `:root` in `web/theme.css`; colours are there today, the rest is planned with the front-end restructure | `--ink`, `--accent` |
@@ -87,7 +87,10 @@ obvious:
 
 | Module | What it covers |
 |---|---|
-| `crates/core/src/tuning.rs` | Task length: shortest, longest, default |
+| `crates/core/src/tuning.rs` | Task length (shortest, longest, default); the working day the planner fills; the defaults for the day-only settings (deadline 23:59, placement 12:00) |
 | `server/src/v2/tuning.rs` | Port, sessions, anonymous expiry, daily caps, request size limits, snapshot window, calendar import limits, database and backup timing, admin rows |
-| `crates/capture`, `crates/dates`, `crates/scheduler`, `crates/judge`, `crates/rambl-brain` | (planned) the next sweep: working hours, the day-only defaults, capture's thresholds, the mascot's weights |
+| `crates/capture/src/tuning.rs` | How sure Jev must be that a clause is a task; how short a time fragment is; how an email's quoted header is told from a signature |
+| `crates/dates/src/tuning.rs` | When "Friday", said on a Friday, stops meaning today |
+| `crates/scheduler` | No values of its own: it plans with the working day and task lengths from `todo_core::tuning` |
+| `crates/judge`, `crates/rambl-brain` | (planned) the next sweep: Jev's answer scales, the mascot's mood weights |
 | `web/src/tuning.rs`, `web/theme.css` `:root` | (planned) front-end restructure |

@@ -27,8 +27,8 @@ fn working_hours(tz: Tz, settings: &DaySettings) -> WorkingHours {
         day_only_time: settings.placement,
         ..WorkingHours::every_day(
             tz,
-            NaiveTime::from_hms_opt(8, 0, 0).expect("08:00 is valid"),
-            NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59 is valid"),
+            todo_core::tuning::WORKDAY_START,
+            todo_core::tuning::WORKDAY_END,
         )
     }
 }

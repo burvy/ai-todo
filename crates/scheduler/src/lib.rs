@@ -6,12 +6,11 @@ use chrono::{
 use chrono_tz::Tz;
 use std::collections::HashMap;
 use std::str::FromStr;
+use todo_core::tuning::{TASK_MIN_DURATION_MIN, WORKDAY_END, WORKDAY_START};
 use todo_core::{Occurrence, OccurrenceStatus, When};
 
-const MIN_BLOCK_MIN: u16 = 5;
-
 fn effective_minutes(task: &todo_core::Task) -> i64 {
-    i64::from(task.duration_min.max(MIN_BLOCK_MIN))
+    i64::from(task.duration_min.max(TASK_MIN_DURATION_MIN))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -44,11 +43,7 @@ impl WorkingHours {
 
 impl Default for WorkingHours {
     fn default() -> Self {
-        Self::every_day(
-            chrono_tz::UTC,
-            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
-            NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
-        )
+        Self::every_day(chrono_tz::UTC, WORKDAY_START, WORKDAY_END)
     }
 }
 
