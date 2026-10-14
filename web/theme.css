@@ -1119,6 +1119,12 @@ main.torn > .planner-page {
   overflow: visible;
 }
 
+/* What lies under the paper is in shade, so a hole reads as a hole even where the planner is
+   empty paper: a darker, cooler tone over whatever the planner shows there. */
+.tear-shade {
+  fill: color-mix(in srgb, var(--ink) 14%, transparent);
+}
+
 .tear-edge {
   fill: none;
   stroke: var(--ink);
@@ -1139,6 +1145,7 @@ main.torn > .planner-page {
   animation: tear-heal var(--tear-fade) linear calc(var(--tape-at) + var(--tape-lay) + var(--tear-hold)) forwards;
 }
 
+.tear-layer.released .tear-shade,
 .tear-layer.released .tear-edge {
   animation: tear-fade var(--tear-fade) linear calc(var(--tape-at) + var(--tape-lay) + var(--tear-hold)) forwards;
 }

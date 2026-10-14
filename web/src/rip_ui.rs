@@ -79,6 +79,7 @@ pub(crate) fn TearLayer(ripper: Ripper) -> impl IntoView {
                     view! {
                         <div class="tear-sheet" style:transform=shift>
                             <svg class="tear-heal" width="1" height="1">
+                                <path class="tear-shade" d=heal.clone() />
                                 <path class="tear-edge" d=heal.clone() />
                                 <path class="tear-fill" d=heal />
                             </svg>

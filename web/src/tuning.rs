@@ -476,7 +476,7 @@ pub const RIP_MIN_PX: f64 = 24.0;
 pub const RIP_MAX_SLOPE: f64 = 0.5;
 /// How wide the hole opens in the middle of the tear, in px. Safe range 8 to 28: it
 /// has to be wide enough to see the planner through.
-pub const RIP_GAP_PX: f64 = 16.0;
+pub const RIP_GAP_PX: f64 = 22.0;
 /// How far the ragged edge of each lip wanders, in px, and how far apart its corners
 /// are. Safe ranges 0 to 6 and 6 to 16.
 pub const RIP_JAG_PX: f64 = 3.5;

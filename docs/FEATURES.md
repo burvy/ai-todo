@@ -235,7 +235,8 @@ phone block with `100dvh`); numbers in `web/src/tuning.rs`.
 g. **The page rips.** A swipe to the right on bare paper of the list page (a finger on a phone, a
 mouse drag on a desk; not on a task, and mostly level: `RIP_MIN_PX`, `RIP_MAX_SLOPE`) tears the
 page along the swipe. The tear is a real hole, a ragged slit up to `RIP_GAP_PX` wide: the
-planner page shows through it live (its own slips and lines, not a picture). On a phone the
+planner page shows through it live (its own slips and lines, not a picture), in shade, so the
+hole reads as a hole even where the planner is empty paper. On a phone the
 planner already lies under the list; on a desk, where the two pages are a spread side by side,
 it slides left under the list for as long as the tear lasts (`TEAR_SLIDE_MS`) and slides back.
 The tear follows the finger, never goes back, stops short of the pin's column, and never
