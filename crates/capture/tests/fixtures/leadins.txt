@@ -48,7 +48,17 @@ Pay rent => Pay rent
 Email the TA about the quiz => Email the TA about the quiz
 Review chapters six and seven => Review chapters six and seven
 Submit the financial aid form => Submit the financial aid form
+# -- speech to text mishears "add a task"
+Attittask buy milk => Buy milk
+attittask call mom => Call mom
+Attit task email the TA => Email the TA
+Add it task pay rent => Pay rent
+Add it task to renew my passport => Renew my passport
+Please attittask water the plants => Water the plants
+At a task to book the flights => Book the flights
+At a task: renew the library card => Renew the library card
 # -- tricky: looks like a lead-in but is the task
+At a task force meeting we agreed to hire => At a task force meeting we agreed to hire
 Add milk to the list => Add milk to the list
 Add the new numbers to the spreadsheet => Add the new numbers to the spreadsheet
 Add sugar to the shopping list => Add sugar to the shopping list

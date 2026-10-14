@@ -88,6 +88,16 @@ pub fn day(words: &[&str], ctx: &LocalContext) -> Option<NaiveDate> {
     match words {
         ["today"] => Some(today),
         ["tomorrow"] => Some(today + Duration::days(1)),
+        ["in", amount, unit] if is_day_unit(unit) || is_week_unit(unit) => {
+            let count = count_of(amount)?;
+            let days = if is_week_unit(unit) {
+                count.checked_mul(7)?
+            } else {
+                count
+            };
+            // A year out is a typo or a joke, not a plan: leave it to the title.
+            (days <= MAX_RELATIVE_DAYS).then(|| today + Duration::days(i64::from(days)))
+        }
         ["next", "week"] => {
             Some(today + Duration::days(8 - today.weekday().number_from_monday() as i64))
         }
@@ -210,6 +220,25 @@ fn number_word(word: &str) -> Option<u32> {
         .map(|(_, number)| *number)
 }
 
+/// The most days ahead "in N days" and "in N weeks" reach.
+const MAX_RELATIVE_DAYS: u32 = 366;
+
+/// "a", "an" and "one" count one; a digit or a number word counts itself.
+fn count_of(word: &str) -> Option<u32> {
+    match word {
+        "a" | "an" => Some(1),
+        other => number_word(other),
+    }
+}
+
+fn is_day_unit(word: &str) -> bool {
+    matches!(word, "day" | "days")
+}
+
+fn is_week_unit(word: &str) -> bool {
+    matches!(word, "week" | "weeks")
+}
+
 fn is_minute_unit(word: &str) -> bool {
     matches!(word, "min" | "mins" | "minute" | "minutes")
 }
@@ -238,6 +267,31 @@ pub fn duration(words: &[&str]) -> Option<u16> {
         _ => return None,
     };
     u16::try_from(minutes).ok()
+}
+
+/// How many minutes from now a relative time phrase is: "in 10 minutes", "in an hour",
+/// "in half an hour", "in 90 minutes", "in 2 hours", "in 45min". Days and weeks ("in 2
+/// days", "in a week") are dates, not minutes: see [`day`].
+pub fn minutes_from_now(words: &[&str]) -> Option<u32> {
+    let minutes = match words {
+        ["in", "half", "an", "hour"] | ["in", "half", "hour"] => 30,
+        ["in", amount, unit] if is_minute_unit(unit) => count_of(amount)?,
+        ["in", amount, unit] if is_hour_unit(unit) => count_of(amount)?.checked_mul(60)?,
+        ["in", compact] => {
+            let (number, unit) = split_compact_unit(compact)?;
+            let number = number.parse::<u32>().ok()?;
+            if is_minute_unit(unit) {
+                number
+            } else if is_hour_unit(unit) {
+                number.checked_mul(60)?
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    };
+    // Past a week it is a typo, not a wait: leave it to the title.
+    (minutes > 0 && minutes <= MAX_RELATIVE_DAYS * 24 * 60).then_some(minutes)
 }
 
 /// "45min" -> ("45", "min"); "2hrs" -> ("2", "hrs").

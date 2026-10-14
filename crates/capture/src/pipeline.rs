@@ -6,7 +6,7 @@ use chrono::NaiveTime;
 use dates::{Candidate, Value, candidates};
 use judge::{ClauseAnswer, ClauseQuestion, Judge};
 use todo_core::tuning::{TASK_DEFAULT_DURATION_MIN, TASK_MAX_DURATION_MIN, TASK_MIN_DURATION_MIN};
-use todo_core::{LocalContext, Source, TaskDraft};
+use todo_core::{LocalContext, Source, TaskDraft, When};
 
 use crate::leadin;
 use crate::segment::split_clauses;
@@ -57,7 +57,10 @@ fn question(clause: &str, found: &[Candidate], ctx: &LocalContext) -> ClauseQues
         clause: clause.to_owned(),
         titles: title_spans(clause, found),
         days: phrases(found, |value| matches!(value, Value::Day(_))),
-        times: phrases(found, |value| matches!(value, Value::Time(_))),
+        // A relative time ("in 10 minutes") is a time Jev can choose like a clock one.
+        times: phrases(found, |value| {
+            matches!(value, Value::Time(_) | Value::After(_))
+        }),
         durations: phrases(found, |value| matches!(value, Value::Duration(_))),
         local_now: ctx.local(ctx.now).format("%A %Y-%m-%d %H:%M").to_string(),
     }
@@ -215,7 +218,8 @@ fn draft(
         _ => None,
     });
     let times = values(found, |value| match value {
-        Value::Time(time) => Some(*time),
+        Value::Time(time) => Some(Chosen::Clock(*time)),
+        Value::After(minutes) => Some(Chosen::After(*minutes)),
         _ => None,
     });
     let durations = values(found, |value| match value {
@@ -225,6 +229,12 @@ fn draft(
 
     let day = answer.day.and_then(|index| days.get(index).copied());
     let time = answer.time.and_then(|index| times.get(index).copied());
+    // "In 10 minutes" is an instant of its own: it pins the task whatever day was said.
+    let when = match time {
+        Some(Chosen::After(minutes)) => When::At(dates::after(minutes, ctx)),
+        Some(Chosen::Clock(time)) => dates::when_from(day, Some(time), deadline, ctx),
+        None => dates::when_from(day, None, deadline, ctx),
+    };
     let duration = answer
         .duration
         .and_then(|index| durations.get(index).copied())
@@ -233,11 +243,18 @@ fn draft(
     Some(TaskDraft {
         title,
         duration_min: duration.clamp(TASK_MIN_DURATION_MIN, TASK_MAX_DURATION_MIN),
-        when: dates::when_from(day, time, deadline, ctx),
+        when,
         label: answer.label,
         priority: answer.priority,
         source,
     })
+}
+
+/// The time Jev chose: a time of day, or so many minutes from now.
+#[derive(Clone, Copy)]
+enum Chosen {
+    Clock(NaiveTime),
+    After(u32),
 }
 
 fn values<T>(found: &[Candidate], pick: impl Fn(&Value) -> Option<T>) -> Vec<T> {
@@ -396,6 +413,117 @@ mod tests {
         let out = drafts_due("Pay rent tomorrow", picked, five).await;
         let due = Utc.with_ymd_and_hms(2026, 10, 12, 21, 0, 0).unwrap();
         assert_eq!(out[0].when, When::DueBy(due));
+    }
+
+    async fn drafts_at(
+        text: &str,
+        answer: ClauseAnswer,
+        now: chrono::DateTime<Utc>,
+    ) -> Vec<TaskDraft> {
+        let ctx = LocalContext {
+            now,
+            tz: chrono_tz::America::New_York,
+        };
+        capture_text(&Scripted(answer), text, Source::Text, deadline(), &ctx)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_relative_time_pins_the_task_that_long_after_now() {
+        let mut picked = answer();
+        picked.time = Some(0);
+        // 21:00 New York on Sunday the 11th is 01:00Z on the 12th.
+        for (text, minutes) in [
+            ("Wake up in 10 minutes", 10),
+            ("Wake up in an hour", 60),
+            ("Wake up in half an hour", 30),
+            ("Wake up in 90 minutes", 90),
+            ("in 10 min wake up", 10),
+        ] {
+            let out = drafts(text, picked.clone()).await;
+            assert_eq!(out.len(), 1, "{text}");
+            assert_eq!(out[0].title, "Wake up", "{text}");
+            let then = ctx().now + chrono::Duration::minutes(minutes);
+            assert_eq!(out[0].when, When::At(then), "{text}");
+            assert_eq!(
+                out[0].duration_min, 30,
+                "the length stays the default: {text}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_relative_time_is_to_the_minute_and_ignores_a_day_that_was_also_said() {
+        let mut picked = answer();
+        picked.time = Some(0);
+        picked.day = Some(0);
+        let now = Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 27).unwrap();
+        let out = drafts_at("Wake up tomorrow in 10 minutes", picked, now).await;
+        let then = Utc.with_ymd_and_hms(2026, 10, 12, 1, 10, 0).unwrap();
+        assert_eq!(out[0].when, When::At(then));
+        assert_eq!(out[0].title, "Wake up");
+    }
+
+    #[tokio::test]
+    async fn jev_not_choosing_the_relative_time_leaves_the_task_floating() {
+        let out = drafts("Wake up in 10 minutes", answer()).await;
+        assert_eq!(out[0].when, When::Anytime);
+    }
+
+    #[tokio::test]
+    async fn near_midnight_a_relative_time_lands_on_the_next_local_day() {
+        let mut picked = answer();
+        picked.time = Some(0);
+        // 23:55 New York on the 14th.
+        let now = Utc.with_ymd_and_hms(2026, 10, 15, 3, 55, 0).unwrap();
+        let out = drafts_at("Take the pill in 10 minutes", picked, now).await;
+        let When::At(at) = out[0].when else {
+            panic!("pinned: {:?}", out[0].when);
+        };
+        let local = ctx().tz.from_utc_datetime(&at.naive_utc());
+        assert_eq!(
+            local.format("%Y-%m-%d %H:%M").to_string(),
+            "2026-10-15 00:05"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_relative_time_across_the_fall_back_is_that_many_real_minutes() {
+        let mut picked = answer();
+        picked.time = Some(0);
+        // 00:30 EDT on 1 Nov 2026: in 2 hours is 01:30 EST, three wall-clock hours on.
+        let now = Utc.with_ymd_and_hms(2026, 11, 1, 4, 30, 0).unwrap();
+        let out = drafts_at("Check the oven in 2 hours", picked, now).await;
+        assert_eq!(
+            out[0].when,
+            When::At(Utc.with_ymd_and_hms(2026, 11, 1, 6, 30, 0).unwrap())
+        );
+    }
+
+    #[tokio::test]
+    async fn in_two_days_is_a_day_so_it_is_due_by_the_deadline_and_takes_a_time() {
+        let mut picked = answer();
+        picked.day = Some(0);
+        let out = drafts("Send the form in 2 days", picked.clone()).await;
+        assert_eq!(out[0].title, "Send the form");
+        // Sunday the 11th plus two days: 23:59 New York on Tuesday the 13th.
+        let due = Utc.with_ymd_and_hms(2026, 10, 14, 3, 59, 0).unwrap();
+        assert_eq!(out[0].when, When::DueBy(due));
+
+        picked.time = Some(0);
+        let out = drafts("Send the form in 2 days at 5pm", picked).await;
+        let five = Utc.with_ymd_and_hms(2026, 10, 13, 21, 0, 0).unwrap();
+        assert_eq!(out[0].when, When::At(five));
+    }
+
+    #[tokio::test]
+    async fn a_mishearing_of_add_a_task_is_cut_and_the_time_still_found() {
+        let mut picked = answer();
+        picked.time = Some(0);
+        let out = drafts("Attittask wake up in 10 minutes", picked).await;
+        assert_eq!(out[0].title, "Wake up");
+        assert!(matches!(out[0].when, When::At(_)));
     }
 
     #[tokio::test]
