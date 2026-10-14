@@ -1,6 +1,6 @@
 # Design direction
 
-The one design document for the front end: what Rambl looks like, how it moves, and the settled behaviour. It merges the owner's redesign brief (2026-10-13), the owner's design decisions (2026-10-13) and Fable's direction (2026-10-14). Where parts differ, later wins; on look and motion sections 0 to 6 win, on settled behaviour (gestures, tack board, order of work) sections 7 and 8 win. Token names here replace the ones in `docs/THEME.md` where they differ.
+The one design document for the front end: what Rambl looks like, how it moves, and the settled behaviour. It merges the owner's redesign brief (2026-10-13), the owner's design decisions (2026-10-13) and Fable's direction (2026-10-14). Where parts differ, later wins; on look and motion sections 0 to 6 win, on settled behaviour (gestures, tack board, order of work) sections 7 and 8 win. Section 9, the owner's answers of 2026-10-14, wins over everything before it. Token names here replace the ones in `docs/THEME.md` where they differ.
 
 ## 0. The principle: a near-physical list you can handle
 
@@ -32,7 +32,7 @@ Rambo is a separate fixed layer above the page, never a child of the nest or of 
 
 ## 3. Rambo speaks
 
-He has a voice (text to speech) and a bubble, and they are one thing. A line he says appears in **one paper speech bubble rising from the dish** (wheat paper, a `--rambo-tint` rim, a torn tail pointing at him), written in the neat hand, one line, at the moment the voice starts, and it stays until the voice ends plus 800ms. Muted, the bubble alone shows for 1.5s. He never says anything that is printed elsewhere on the page, and his lines are never loose text in a corner. While speaking he tilts 3° toward the capture line and his eyes narrow; listening (held) is the existing pose.
+He has a voice (text to speech) and a bubble, and they are one thing. A line he says appears in **one paper speech bubble rising from the dish** (wheat paper, a `--rambo-tint` rim, a torn tail pointing at him), written in the neat hand, one line, at the moment the voice starts, and it stays until the voice ends plus 800ms. Muted, the bubble alone shows for 1.5s. He never says anything that is printed elsewhere on the page, and his lines are never loose text in a corner. While speaking he tilts 3° toward the capture line and his eyes narrow. Listening (held): see section 9.
 
 ## 4. The writing animation
 
@@ -43,16 +43,16 @@ Verdict on #213: the model is right, the choreography around it is not. "Lay the
 - **Beat 2, writing.** Nib on the baseline, body up and to the right, so the pen never covers the words. He is not shrunk (drop `WRITE_SCALE`); he is offset. The ink edge is soft, 2px, not a hard clip. A word gap is a 2px lift and drop of the pen. A title that wraps is traced on its first line, then the pen hops to the second line's start and continues; the wipe-only fallback is not acceptable.
 - **Beat 3, finish (120ms + 250ms).** A short flick as the last letter closes, the scratch stops, a 250ms hold.
 - **Beat 4, home (450ms).** Fly back to the dish, ease-out, one small overshoot, settle in 150ms. Then he speaks ("Okay, that one's in.") per section 3.
-- **Speed rule.** Rambl is a fast capture tool. A second submit during writing completes the current ink instantly and sends Rambo straight to the new row: no queue, no waiting.
+- **Interruptions.** Replaced by section 9: anything the user does interrupts him, writing pauses and resumes when he is let go, and the stored title pops to full on a reload.
 - **Reduced motion.** The title appears at once in ink; Rambo stays in the dish; the bubble still appears.
 
-For 20 glyphs the whole thing is about 3.2 seconds, and the row is readable from beat 2.
+For 20 glyphs the whole thing is about 3.2 seconds, and the row is readable from beat 2. Section 9 asks for slower, more considered writing in v1's feel; the times above are a starting point, not a limit.
 
 ## 5. Five things that make the app look dysfunctional, and the target look
 
 1. **Rambo's speech is loose italic text in the page corner** ("Okay, that one's in.", "Adding it now.", printed over the last row on the phone). Target: section 3. Physically: a voice comes from a mouth, so the words come from him.
 2. **The planner is a 24-hour ladder with no day names** (columns start at 00:00, the names scroll out of view, tasks pile up at 9 pm in 16px slips cut with "…"). Target: each column headed in the neat hand, "Tue 14", today underlined, pinned while the hours scroll; hours written as "8 am", "12 pm", "5 pm" (12-hour clock is the default, 24-hour is a gear-menu choice); the working day 8 am to 8 pm unless the gear menu widens it; a slip is a strip of paper never shorter than two lines of its title, with a 1px torn edge and the sheet shadow, and it lifts 2px while you slide it. Nothing on it is cut.
-3. **Rows break their meta into fragments** ("— 30 min · Tue" on one line, "21:00" alone on the next; a ticked task looks the same as an open one; nothing appears on hover). Target: the title on its own line in the expressive hand; under it one small neat-hand line that never splits: "30 min, Tue 9 pm"; done is a hand-drawn strike and the ink fading to `--ink-faint`; on desktop a small drawn x appears at the row's right edge on hover. **Tags** go on the same meta line as **ink stamps**: the tag word in the neat hand, lower case, in `--accent`, inside a hand-drawn oval outline 1px thick that does not quite close, rotated between -3° and 3° by a hash of the tag name, with no fill. Several tags sit in a row with a 0.6em gap. They never become pills, never get a solid background, and tapping one filters the list with the stamp pressing 1px into the paper.
+3. **Rows break their meta into fragments** ("— 30 min · Tue" on one line, "21:00" alone on the next; a ticked task looks the same as an open one; nothing appears on hover). Target: the title on its own line in the expressive hand; under it one small neat-hand line that never splits: "30 min, Tue 9 pm"; done is a hand-drawn strike and the ink fading to `--ink-faint`; on desktop a small drawn x appears at the row's right edge on hover. **Tags** are tiny and symbolic (an emoji or a letter, section 9); the stamp below is the drawing they sit in. They go on the same meta line as **ink stamps**: the tag word in the neat hand, lower case, in `--accent`, inside a hand-drawn oval outline 1px thick that does not quite close, rotated between -3° and 3° by a hash of the tag name, with no fill. Several tags sit in a row with a 0.6em gap. They never become pills, never get a solid background, and tapping one filters the list with the stamp pressing 1px into the paper.
 4. **Rambo reads as an icon in a button** (a dark pen in a brown disc). Target: sections 1 and 2. He is big, petrol, overlapping a dish that is plainly furniture.
 5. **The edit dialog and the gear menu are boxed forms** (native mm/dd/yyyy and --:-- pickers, radio buttons, a stray "15" input, a card with a drop shadow). Target: both are a sheet of wheat laid on the page at a 0.5° tilt with the soft sheet shadow only, and they slide in from the page edge as a sheet would, 250ms; labels in the neat hand on the left; choices are words you tap (Today, Tomorrow, Mon…; 15, 30, 60, 120); the date is a small drawn month grid; the time is a written "5:00 pm" on a rule. No native control is ever visible.
 
@@ -170,3 +170,33 @@ These are settled.
 4. Tack board with physics.
 5. Rambo styles + all moods; Zhipu's extras (rotating placeholder, long-press hour, fading pencil, nib gear).
 Deploy candidate = whatever is merged and passes god's end-to-end check of add, write, done, delete, planner.
+
+## 9. Owner answers (2026-10-14), settled
+
+The owner's answers to the questions in `docs/FRONTEND-PLAN.md` (interview 1, recorded in the hive's `SPEC-ANSWERS-2026-10-14.md`). They win over every section above.
+
+### The page
+- **One notebook page per page.** The whole app is a notebook, not a generic site; it must feel interactable and unique. The art is redrawn as a high-quality parchment journal page (Ping, reviewed by a Claude agent).
+- **The gear menu sits in the corner of the paper**, not in a toolbar.
+- **Task text wraps like handwriting in a notebook**, running on to the next ruled line.
+- **Tags are tiny and symbolic**: an emoji or a letter.
+- **768px upright (a tablet) gets the desktop layout.**
+- **Layers:** Rambo goes under dialogs.
+
+### Phone
+- The **task list opens first**.
+- The **capture bar shows on the planner page too**.
+- A **+ button** adds a task by hand.
+- With the on-screen keyboard up, **Rambo rides up with the dish** above it.
+
+### Rambo
+- **Size:** 1.4x today (64px phone, 80px desktop).
+- **Listening (held):** a listening pose, and he rides a little above the finger so the user sees him. The rest of the page dims a little, as if the light were turned down.
+- **Dazed** for about 3 seconds after a drop, then home. The time lives in the web tuning file, so it is easy to change.
+- **Scrolled or page turned while he is out of the nest:** he is smacked into the side of the screen, or flattened by the paper and pokes a hole through it. Only when he is out of the nest; at home he rides along.
+- **Writing takes a bit longer and gets more thought.** v1's writing was "miles better" (UI-BUGS #11, v1 commit `297dd44`): the pen glided along the line in one smooth motion with the ink revealed under it, and wrote along with the caret while you typed.
+- **Interruptions:** anything the user does interrupts him (a second capture, a tap, a drag, a page turn). **Writing pauses and resumes** when he is let go, or when the page is turned back. The task is already saved, so a reload shows the title in full at once. Users can wait, and can edit the title meanwhile.
+
+### Still open
+- On a computer, whether the capture box stays visible at the bottom while you scroll, as on a phone (being re-asked).
+- Which sounds go with which motions, and which motions are must-haves (options in `docs/FRONTEND-PLAN.md` §4).
