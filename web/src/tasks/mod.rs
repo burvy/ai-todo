@@ -96,7 +96,6 @@ fn occurrence_parts(id: &str) -> Option<(&str, NaiveDate)> {
     Some((series_id, date))
 }
 
-/// The series a row belongs to, when the row is an occurrence of one.
 /// What the edit sheet shows when it opens on the row `id`, or `None` when the
 /// list no longer holds it.
 #[derive(Clone, Debug, PartialEq)]
@@ -137,6 +136,7 @@ fn edit_form(snapshot: &Snapshot, id: &str) -> Option<EditForm> {
     })
 }
 
+/// The series a row belongs to, when the row is an occurrence of one.
 fn series_of<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a todo_core::Series> {
     let (series_id, _) = occurrence_parts(id)?;
     snapshot
