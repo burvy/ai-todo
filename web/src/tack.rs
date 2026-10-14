@@ -21,7 +21,6 @@ use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
 
-use crate::api;
 use crate::settings;
 
 /// What the board tells the mascot to react to. Fresh `Some(..)` per event;
@@ -982,20 +981,25 @@ pub fn TackBoard(
                 &bin_rect,
             ) {
                 DropAction::Restore => {
-                    let body = snapshot.with_untracked(|s| crate::edits::toggle_done_body(s, &id));
+                    // A done occurrence of a repeating task is not a stored
+                    // task: its done mark lives on the date in its id, so the
+                    // list's own tick is what clears it. The board's own PATCH
+                    // was answered 400 for every repeat-day strip.
                     let sink = crate::edits::EditSink {
                         set_snapshot,
                         set_error,
                         view_settings,
                     };
-                    wasm_bindgen_futures::spawn_local(async move {
-                        if let Some(body) = body {
-                            // The snapshot effect reconciles the strip away
-                            // once the server says the task is not done.
-                            crate::edits::patch_and_show(&TaskId(id), body, sink).await;
-                        }
-                    });
-                    // Until the PATCH answers, the strip goes back to where it
+                    if let Some(action) =
+                        snapshot.with_untracked(|s| crate::tasks::tick_action(s, &id))
+                    {
+                        wasm_bindgen_futures::spawn_local(async move {
+                            // The snapshot effect reconciles the strip away once
+                            // the server says the task is not done.
+                            crate::tasks::apply_tick(&TaskId(id), action, sink).await;
+                        });
+                    }
+                    // Until the write answers, the strip goes back to where it
                     // hung rather than hanging mid-air where it was dropped.
                     sync();
                 }
@@ -1054,7 +1058,11 @@ pub fn TackBoard(
                         sync();
                         let delete_id = id;
                         wasm_bindgen_futures::spawn_local(async move {
-                            match api::delete_task(&TaskId(delete_id)).await {
+                            // The list's delete path: an occurrence row is not a
+                            // stored task, so that one date is skipped where a
+                            // plain task is deleted. The board's own DELETE was
+                            // answered 400 for every repeat-day strip.
+                            match crate::tasks::delete_with_scribble(&TaskId(delete_id)).await {
                                 Ok(snap) => set_snapshot.set(snap),
                                 Err(_) => {
                                     set_error.set(Some("Could not delete that task.".to_owned()))
@@ -1193,6 +1201,7 @@ fn after_render(f: impl FnOnce() + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api;
     use chrono::{TimeZone, Utc};
     use todo_core::{Label, Plan, Priority, Source, When};
 
@@ -1552,7 +1561,9 @@ mod tests {
         // came back empty — and the save effect wrote that empty board out.
         let stored = vec![strip("a", 1, false)];
         assert!(
-            reconcile(stored.clone(), &[], &HashSet::new()).kept.is_empty(),
+            reconcile(stored.clone(), &[], &HashSet::new())
+                .kept
+                .is_empty(),
             "the placeholder pass really does drop every strip"
         );
 
@@ -1571,5 +1582,51 @@ mod tests {
         let pass = watch.pass(stored, &snapshot_of(&[("a", true)]), true);
         assert_eq!(pass.kept.len(), 1);
         assert!(may_save(true));
+    }
+
+    // ---- BUG-3: a repeat-day strip is not a stored task ----
+
+    #[test]
+    fn putting_a_strip_back_asks_the_list_what_that_id_needs() {
+        // The board used to build its own PATCH, which the server answers 400
+        // to for an occurrence row: a done occurrence is "{series}:{date}" and
+        // its done mark lives on that date, not on a task.
+        let mut snapshot = api::fixture_snapshot();
+        for row in snapshot.tasks.iter_mut() {
+            row.done = true;
+        }
+        assert!(
+            matches!(
+                crate::tasks::tick_action(&snapshot, "sgym:2026-10-15"),
+                Some(crate::tasks::TickAction::ClearDone { .. })
+            ),
+            "an occurrence has the done mark cleared on its own day"
+        );
+        assert!(
+            matches!(
+                crate::tasks::tick_action(&snapshot, "history"),
+                Some(crate::tasks::TickAction::Task(_))
+            ),
+            "a plain task is the task PATCH"
+        );
+    }
+
+    #[test]
+    fn the_board_never_builds_its_own_task_requests() {
+        // Crumple and restore go through the list's paths, which already know
+        // that an occurrence row is skipped rather than deleted and that its
+        // done mark is cleared on the day.
+        let (board, _) = include_str!("tack.rs")
+            .rsplit_once("#[cfg(test)]")
+            .expect("the tests come last in this file");
+        for forbidden in ["api::delete_task", "toggle_done_body", "patch_and_show"] {
+            assert!(
+                !board.contains(forbidden),
+                "the board must not call {forbidden} itself"
+            );
+        }
+        for wanted in ["delete_with_scribble", "tick_action", "apply_tick"] {
+            assert!(board.contains(wanted), "the board must use {wanted}");
+        }
     }
 }
