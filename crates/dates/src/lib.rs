@@ -11,11 +11,11 @@ pub use repeats::{RecurrenceMatch, recurrence};
 
 use std::ops::Range;
 
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{DateTime, Duration, NaiveDate, NaiveTime, SubsecRound, Timelike, Utc};
 use todo_core::{LocalContext, When};
 
-/// Longest phrase the resolvers accept, in words ("half an hour", "October 30, 2026").
-const MAX_WINDOW: usize = 3;
+/// Longest phrase the resolvers accept, in words ("in half an hour", "October 30, 2026").
+const MAX_WINDOW: usize = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -23,6 +23,17 @@ pub enum Value {
     Time(NaiveTime),
     /// Minutes.
     Duration(u16),
+    /// A time that many minutes after now: "in 10 minutes", "in an hour". It is an
+    /// instant, so it needs no day: [`after`] puts it on the clock.
+    After(u32),
+}
+
+/// The instant `minutes` after now, to the minute: "in 10 minutes" asked at 10:03:27 is
+/// 10:13, so the task does not carry the seconds the user happened to speak at.
+pub fn after(minutes: u32, ctx: &LocalContext) -> DateTime<Utc> {
+    let now = ctx.now.trunc_subsecs(0);
+    let on_the_minute = now - Duration::seconds(i64::from(now.second()));
+    on_the_minute + Duration::minutes(i64::from(minutes))
 }
 
 /// A phrase found in the text, with its byte span and resolved value.
@@ -86,6 +97,8 @@ pub fn resolve(text: &str, ctx: &LocalContext) -> Resolved {
             Value::Duration(minutes) => {
                 resolved.duration_min.get_or_insert(minutes);
             }
+            // An instant has no day or clock of its own to report here.
+            Value::After(_) => {}
         }
     }
     resolved
@@ -111,6 +124,7 @@ fn resolve_window(words: &[&str], ctx: &LocalContext) -> Option<Value> {
     phrases::day(words, ctx)
         .map(Value::Day)
         .or_else(|| phrases::time(words).map(Value::Time))
+        .or_else(|| phrases::minutes_from_now(words).map(Value::After))
         .or_else(|| phrases::duration(words).map(Value::Duration))
 }
 
@@ -313,6 +327,168 @@ mod tests {
         assert_eq!(phrases::time(&["noon"]), Some(time(12, 0)));
         assert_eq!(phrases::time(&["3"]), None);
         assert_eq!(phrases::time(&["at", "13"]), None);
+    }
+
+    fn after_of(text: &str, ctx: &LocalContext) -> Option<DateTime<Utc>> {
+        candidates(text, ctx)
+            .iter()
+            .find_map(|candidate| match candidate.value {
+                Value::After(minutes) => Some(after(minutes, ctx)),
+                _ => None,
+            })
+    }
+
+    #[test]
+    fn relative_times_are_that_long_after_now_to_the_minute() {
+        let now = DateTime::parse_from_rfc3339("2026-10-14T14:03:27Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let ctx = ny(now);
+        let at = |h, m| utc(2026, 10, 14, h, m);
+        for (text, expected) in [
+            ("wake up in 10 minutes", at(14, 13)),
+            ("in 10 min", at(14, 13)),
+            ("in 10mins", at(14, 13)),
+            ("in a minute", at(14, 4)),
+            ("in an hour", at(15, 3)),
+            ("in 1 hour", at(15, 3)),
+            ("in one hour", at(15, 3)),
+            ("in half an hour", at(14, 33)),
+            ("in half hour", at(14, 33)),
+            ("in 90 minutes", at(15, 33)),
+            ("in 2 hours", at(16, 3)),
+            ("in two hours", at(16, 3)),
+            ("in 3hrs", at(17, 3)),
+            ("in twenty minutes", at(14, 23)),
+            ("in forty five minutes", at(14, 48)),
+            ("in forty-five minutes", at(14, 48)),
+            ("in fifteen minutes", at(14, 18)),
+            ("in sixty minutes", at(15, 3)),
+            ("in twenty five minutes", at(14, 28)),
+        ] {
+            assert_eq!(after_of(text, &ctx), Some(expected), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_relative_phrase_is_one_candidate_that_covers_its_whole_text() {
+        let ctx = ny(utc(2026, 10, 14, 14, 0));
+        let found = candidates("Wake up in half an hour please", &ctx);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].text, "in half an hour");
+        // Without "in" it is still a task's length.
+        assert_eq!(resolve("a half an hour walk", &ctx).duration_min, Some(30));
+        assert_eq!(resolve("a 90 minutes call", &ctx).duration_min, Some(90));
+    }
+
+    #[test]
+    fn relative_days_and_weeks_are_dates() {
+        let ctx = ny(utc(2026, 10, 14, 14, 0));
+        for (text, days) in [
+            ("in a day", 1),
+            ("in 2 days", 2),
+            ("in two days", 2),
+            ("in a week", 7),
+            ("in 1 week", 7),
+            ("in 2 weeks", 14),
+            ("in 3 days at 5pm", 3),
+        ] {
+            assert_eq!(
+                resolve(text, &ctx).day,
+                Some(date(2026, 10, 14) + Duration::days(days)),
+                "{text}"
+            );
+        }
+        assert_eq!(resolve("in 3 days at 5pm", &ctx).time, Some(time(17, 0)));
+    }
+
+    #[test]
+    fn in_a_month_is_the_same_day_next_month_or_the_last_day_of_a_shorter_one() {
+        for (from, text, expected) in [
+            (date(2026, 10, 14), "in a month", date(2026, 11, 14)),
+            (date(2026, 10, 14), "in 2 months", date(2026, 12, 14)),
+            (date(2026, 12, 20), "in a month", date(2027, 1, 20)),
+            (date(2026, 1, 31), "in a month", date(2026, 2, 28)),
+            (date(2028, 1, 31), "in one month", date(2028, 2, 29)),
+        ] {
+            let ctx = ny(utc(from.year(), from.month(), from.day(), 15, 0));
+            assert_eq!(
+                resolve(text, &ctx).day,
+                Some(expected),
+                "{text} from {from}"
+            );
+        }
+    }
+
+    #[test]
+    fn spelled_numbers_up_to_sixty_are_durations_too() {
+        let ctx = ny(utc(2026, 10, 14, 14, 0));
+        for (text, minutes) in [
+            ("a twenty minutes walk", 20),
+            ("a forty five minutes call", 45),
+            ("thirty minutes", 30),
+            ("sixty minutes", 60),
+        ] {
+            assert_eq!(resolve(text, &ctx).duration_min, Some(minutes), "{text}");
+        }
+        // Not numbers this code reads: three hundred, twenty-ten, thirty one-tens.
+        assert!(resolve("seventy minutes", &ctx).duration_min.is_none());
+        assert!(resolve("twenty-ten minutes", &ctx).duration_min.is_none());
+    }
+
+    #[test]
+    fn relative_phrases_that_are_nonsense_are_left_alone() {
+        let ctx = ny(utc(2026, 10, 14, 14, 0));
+        for text in [
+            "in 0 minutes",
+            "in 99999 days",
+            "in a while",
+            "in the hour",
+            "in 5",
+            "in time",
+        ] {
+            assert!(
+                candidates(text, &ctx)
+                    .iter()
+                    .all(|c| !matches!(c.value, Value::After(_) | Value::Day(_))),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn near_midnight_a_relative_time_crosses_the_local_date() {
+        // 23:55 in New York on the 14th (03:55Z on the 15th): ten minutes is 00:05 local.
+        let ctx = ny(utc(2026, 10, 15, 3, 55));
+        let at = after_of("in 10 minutes", &ctx).unwrap();
+        assert_eq!(ctx.local(at).date(), date(2026, 10, 15));
+        assert_eq!(ctx.local(at).time(), time(0, 5));
+    }
+
+    #[test]
+    fn a_relative_time_is_exact_across_the_fall_back() {
+        // 00:30 EDT on 1 Nov 2026 (04:30Z): two hours later is 01:30 EST, three hours of
+        // wall clock earlier than a naive 02:30.
+        let ctx = ny(utc(2026, 11, 1, 4, 30));
+        let at = after_of("in 2 hours", &ctx).unwrap();
+        assert_eq!(at, utc(2026, 11, 1, 6, 30));
+        assert_eq!(ctx.local(at).time(), time(1, 30));
+    }
+
+    #[test]
+    fn a_relative_time_is_exact_across_the_spring_forward() {
+        // 01:30 EST on 8 Mar 2026 (06:30Z): one hour later is 03:30 EDT, the gap skipped.
+        let ctx = ny(utc(2026, 3, 8, 6, 30));
+        let at = after_of("in an hour", &ctx).unwrap();
+        assert_eq!(at, utc(2026, 3, 8, 7, 30));
+        assert_eq!(ctx.local(at).time(), time(3, 30));
+    }
+
+    #[test]
+    fn a_relative_day_across_the_fall_back_keeps_the_clock_date() {
+        // "in 2 days" from 30 Oct 2026 is 1 Nov, a 25-hour day: a date, not 48 hours.
+        let ctx = ny(utc(2026, 10, 30, 14, 0));
+        assert_eq!(resolve("in 2 days", &ctx).day, Some(date(2026, 11, 1)));
     }
 
     #[test]

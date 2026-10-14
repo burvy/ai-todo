@@ -88,6 +88,21 @@ pub fn day(words: &[&str], ctx: &LocalContext) -> Option<NaiveDate> {
     match words {
         ["today"] => Some(today),
         ["tomorrow"] => Some(today + Duration::days(1)),
+        ["in", amount, unit] if is_day_unit(unit) || is_week_unit(unit) => {
+            let count = count_of(amount)?;
+            let days = if is_week_unit(unit) {
+                count.checked_mul(7)?
+            } else {
+                count
+            };
+            // A year out is a typo or a joke, not a plan: leave it to the title.
+            (days <= MAX_RELATIVE_DAYS).then(|| today + Duration::days(i64::from(days)))
+        }
+        // The same day of the month, and the last day when that month is shorter.
+        ["in", amount, unit] if is_month_unit(unit) => {
+            let months = count_of(amount).filter(|months| *months <= MAX_RELATIVE_MONTHS)?;
+            today.checked_add_months(chrono::Months::new(months))
+        }
         ["next", "week"] => {
             Some(today + Duration::days(8 - today.weekday().number_from_monday() as i64))
         }
@@ -186,11 +201,13 @@ pub fn time(words: &[&str]) -> Option<NaiveTime> {
     }
 }
 
+/// A number as a digit string or spelled out, up to sixty: "7", "twelve", "twenty",
+/// "forty-five". Speech to text spells small numbers out.
 fn number_word(word: &str) -> Option<u32> {
     if let Ok(number) = word.parse::<u32>() {
         return Some(number);
     }
-    const WORDS: [(&str, u32); 12] = [
+    const WORDS: [(&str, u32); 29] = [
         ("one", 1),
         ("two", 2),
         ("three", 3),
@@ -203,11 +220,78 @@ fn number_word(word: &str) -> Option<u32> {
         ("ten", 10),
         ("eleven", 11),
         ("twelve", 12),
+        ("thirteen", 13),
+        ("fourteen", 14),
+        ("fifteen", 15),
+        ("sixteen", 16),
+        ("seventeen", 17),
+        ("eighteen", 18),
+        ("nineteen", 19),
+        ("twenty", 20),
+        ("thirty", 30),
+        ("forty", 40),
+        ("fifty", 50),
+        ("sixty", 60),
+        // Common mishearings of the tens.
+        ("fourty", 40),
+        ("twenny", 20),
+        ("thirdy", 30),
+        ("fivety", 50),
+        ("sixy", 60),
     ];
-    WORDS
-        .iter()
-        .find(|(name, _)| *name == word)
-        .map(|(_, number)| *number)
+    let lookup = |name: &str| {
+        WORDS
+            .iter()
+            .find(|(spelled, _)| *spelled == name)
+            .map(|(_, number)| *number)
+    };
+    match word.split_once('-') {
+        Some((tens, ones)) => spelled_pair(lookup(tens)?, lookup(ones)?),
+        None => lookup(word),
+    }
+}
+
+/// "forty" and "five" together: a multiple of ten from twenty to fifty, and one to nine.
+fn spelled_pair(tens: u32, ones: u32) -> Option<u32> {
+    ((20..=50).contains(&tens) && tens.is_multiple_of(10) && (1..=9).contains(&ones))
+        .then(|| tens + ones)
+}
+
+/// The count in front of a unit, one or two words: "10", "forty-five", "forty five".
+/// Returns the count and how many words it took.
+fn amount(words: &[&str]) -> Option<(u32, usize)> {
+    if let [tens, ones, ..] = words
+        && let Some(pair) = spelled_pair(number_word(tens)?, number_word(ones)?)
+    {
+        return Some((pair, 2));
+    }
+    Some((count_of(words.first()?)?, 1))
+}
+
+/// The most days ahead "in N days" and "in N weeks" reach.
+const MAX_RELATIVE_DAYS: u32 = 366;
+
+/// "a", "an" and "one" count one; a digit or a number word counts itself.
+fn count_of(word: &str) -> Option<u32> {
+    match word {
+        "a" | "an" => Some(1),
+        other => number_word(other),
+    }
+}
+
+fn is_day_unit(word: &str) -> bool {
+    matches!(word, "day" | "days")
+}
+
+/// The most months ahead "in N months" reaches.
+const MAX_RELATIVE_MONTHS: u32 = 12;
+
+fn is_month_unit(word: &str) -> bool {
+    matches!(word, "month" | "months")
+}
+
+fn is_week_unit(word: &str) -> bool {
+    matches!(word, "week" | "weeks")
 }
 
 fn is_minute_unit(word: &str) -> bool {
@@ -225,6 +309,9 @@ pub fn duration(words: &[&str]) -> Option<u16> {
         [one, unit] if matches!(*one, "an" | "a" | "one") && is_hour_unit(unit) => 60,
         [amount, unit] if is_minute_unit(unit) => number_word(amount)?,
         [amount, unit] if is_hour_unit(unit) => number_word(amount)?.checked_mul(60)?,
+        [tens, ones, unit] if is_minute_unit(unit) => {
+            spelled_pair(number_word(tens)?, number_word(ones)?)?
+        }
         [compact] => {
             let (number, unit) = split_compact_unit(compact)?;
             if is_minute_unit(unit) {
@@ -238,6 +325,42 @@ pub fn duration(words: &[&str]) -> Option<u16> {
         _ => return None,
     };
     u16::try_from(minutes).ok()
+}
+
+/// How many minutes from now a relative time phrase is: "in 10 minutes", "in an hour",
+/// "in half an hour", "in 90 minutes", "in 2 hours", "in 45min". Days and weeks ("in 2
+/// days", "in a week") are dates, not minutes: see [`day`].
+pub fn minutes_from_now(words: &[&str]) -> Option<u32> {
+    let minutes = match words {
+        ["in", "half", "an", "hour"] | ["in", "half", "hour"] => 30,
+        ["in", compact] => {
+            let (number, unit) = split_compact_unit(compact)?;
+            let number = number.parse::<u32>().ok()?;
+            if is_minute_unit(unit) {
+                number
+            } else if is_hour_unit(unit) {
+                number.checked_mul(60)?
+            } else {
+                return None;
+            }
+        }
+        ["in", counted @ .., unit] => {
+            let (count, used) = amount(counted)?;
+            if used != counted.len() {
+                return None;
+            }
+            if is_minute_unit(unit) {
+                count
+            } else if is_hour_unit(unit) {
+                count.checked_mul(60)?
+            } else {
+                return None;
+            }
+        }
+        _ => return None,
+    };
+    // Past a year it is a typo, not a wait: leave it to the title.
+    (minutes > 0 && minutes <= MAX_RELATIVE_DAYS * 24 * 60).then_some(minutes)
 }
 
 /// "45min" -> ("45", "min"); "2hrs" -> ("2", "hrs").

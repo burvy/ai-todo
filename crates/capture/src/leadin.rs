@@ -39,6 +39,62 @@ const OPENERS: [&[&str]; 11] = [
     &["let's"],
     &["lets"],
 ];
+/// What speech to text writes when it mishears "add a task": `(heard words, sure)`. A sure
+/// one is unmistakable and cuts the lead-in even with no link word after it ("attittask
+/// call mom"); the others are ordinary words too ("at a task force meeting"), so they
+/// only count when a link word or a colon follows.
+const HEARD_AS_ADD_A_TASK: [(&[&str], bool); 8] = [
+    (&["attittask"], true),
+    (&["attitask"], true),
+    (&["attit", "task"], true),
+    (&["add", "it", "task"], true),
+    (&["add", "a", "task"], false),
+    (&["at", "a", "task"], false),
+    (&["at", "it", "task"], false),
+    (&["ad", "a", "task"], false),
+];
+
+/// The words that open a request ("please", "can you", ...), as a count of words.
+fn opener_len(words: &[&str]) -> usize {
+    let is =
+        |index: usize, word: &str| words.get(index).is_some_and(|heard| plain(heard).0 == word);
+    let mut i = 0;
+    while let Some(opener) = OPENERS
+        .iter()
+        .find(|opener| opener.iter().enumerate().all(|(n, word)| is(i + n, word)))
+    {
+        i += opener.len();
+    }
+    i
+}
+
+/// `title` with a mishearing of "add a task" at its start (or right after a "please" or
+/// "can you") written as "add a task", and whether it was an unmistakable one.
+fn heard_right(title: &str) -> (String, bool) {
+    let words: Vec<&str> = title.split_whitespace().collect();
+    let at = opener_len(&words);
+    let heard = HEARD_AS_ADD_A_TASK.iter().find(|(heard, _)| {
+        heard.len() <= words.len() - at
+            && heard
+                .iter()
+                .enumerate()
+                .all(|(n, word)| plain(words[at + n]).0 == *word)
+    });
+    let Some(&(heard, sure)) = heard else {
+        return (title.to_owned(), false);
+    };
+    // "at a task: call mom": the colon stays on the noun, where the grammar looks for it.
+    let noun = if words[at + heard.len() - 1].ends_with(':') {
+        "task:"
+    } else {
+        "task"
+    };
+    let mut fixed: Vec<&str> = words[..at].to_vec();
+    fixed.extend(["add", "a", noun]);
+    fixed.extend(&words[at + heard.len()..]);
+    (fixed.join(" "), sure)
+}
+
 /// Whether `word` joins a lead-in to the title, given the word after it. "to" before an
 /// article or pronoun is an addressee ("a note to the landlord", "a note to self"), and
 /// "for me" is a favour, not a title.
@@ -74,6 +130,8 @@ fn capitalised(words: &[&str]) -> String {
 /// [new] task|todo|to-do|reminder|note|item [on my list] to|that|called|...`, or a bare
 /// `task:` / `new task:` / `to do:` / `add to my list:` label. `None` leaves the title as is.
 pub fn strip(title: &str) -> Option<String> {
+    let (heard, sure) = heard_right(title);
+    let title = heard.as_str();
     let words: Vec<&str> = title.split_whitespace().collect();
     let at = |index: usize| words.get(index).map(|word| plain(word));
     let is = |index: usize, set: &[&str]| {
@@ -142,7 +200,7 @@ pub fn strip(title: &str) -> Option<String> {
     // Without a link word the lead-in must be unmistakable: a colon label. A task noun
     // is also an ordinary word ("Write note cards for the talk", "Make task force
     // plans"), so "add task buy cards" is left whole here and only offered to Jev.
-    if !(linked || colon) {
+    if !(linked || colon || sure) {
         return None;
     }
     let rest = capitalised(&words[i..]);
@@ -205,6 +263,39 @@ mod tests {
             strip("Put a task on my list to clean the fridge").as_deref(),
             Some("Clean the fridge")
         );
+    }
+
+    #[test]
+    fn a_mishearing_of_add_a_task_is_cut_like_the_real_thing() {
+        for (heard, title) in [
+            ("Attittask buy milk", "Buy milk"),
+            ("attittask call mom", "Call mom"),
+            ("attitask call mom", "Call mom"),
+            ("Attit task email the TA", "Email the TA"),
+            ("Add it task pay rent", "Pay rent"),
+            ("add it task to pay rent", "Pay rent"),
+            ("Please attittask water the plants", "Water the plants"),
+            ("Can you attittask to book flights", "Book flights"),
+            ("At a task to book flights", "Book flights"),
+            ("at a task: renew the passport", "Renew the passport"),
+            ("Ad a task to call the vet", "Call the vet"),
+        ] {
+            assert_eq!(strip(heard).as_deref(), Some(title), "{heard}");
+        }
+    }
+
+    #[test]
+    fn a_phrase_that_only_sounds_like_the_mishearing_is_kept() {
+        for title in [
+            "At a task force meeting we agreed",
+            "Look at a task list with Priya",
+            "Meet at a task board review",
+            "Attit",
+            "Attittask",
+            "Add it to the list",
+        ] {
+            assert_eq!(strip(title), None, "{title}");
+        }
     }
 
     #[test]
