@@ -237,6 +237,15 @@ pub const FLIP_FINISH_OMEGA: f64 = 14.0;
 /// no rebound; lower swings). Safe range 12 to 20, and 0.4 to 0.8.
 pub const FLIP_FALL_OMEGA: f64 = 16.0;
 pub const FLIP_FALL_DAMPING: f64 = 0.55;
+/// How hard a Rambo caught under the leaf pushes its corner up, in `open` per second
+/// squared: it must beat the leaf's own pull (`FLIP_FALL_OMEGA` squared, about 256 per
+/// unit of `open`) to lift it at all. Safe range 100 to 300: lower and he cannot lift it,
+/// higher and the leaf pops up like a lid.
+pub const COVERED_PUSH_ACCEL: f64 = 160.0;
+/// How far his push can open the leaf, in `open`: a corner lifted a little (about 28
+/// degrees), never a turn. A leaf closing from beyond it is what catches him; one falling
+/// back from a push is not. Safe range 0.05 to 0.3.
+pub const COVERED_LIFT_REACH: f64 = 0.15;
 /// How much of its speed the leaf keeps when it meets the table or the spine. Safe range
 /// 0.4 to 0.8.
 pub const FLIP_WALL_BOUNCE: f64 = 0.65;
@@ -301,6 +310,22 @@ pub const NOTICE_PERK: f64 = 0.06;
 /// past it. Safe range 25 to 70: lower and he drags behind like a balloon, higher and
 /// he is glued to the finger with no weight at all.
 pub const RIDE_OMEGA: f64 = 40.0;
+
+/// How long he takes to ease from one pose into the next when his state changes, in
+/// ms (`engine::look`), eased in and out so no frame jumps. Safe range 100 to 240:
+/// shorter and the change snaps, longer and he still leans the old way after he has
+/// set off.
+pub const POSE_BLEND_MS: f64 = 160.0;
+/// How far he leans into where he is going, in degrees per px/s of sideways speed: a
+/// hop runs at up to about 6000 px/s. Safe range 0.0005 to 0.002: lower and a fast hop
+/// stays upright, higher and every hop pins him at `LEAN_MAX_DEG`.
+pub const LEAN_PER_PX_S: f64 = 0.001;
+/// How long his lean takes to follow his speed, in ms: a hop's speed rises and falls
+/// within it, and the lean eases after it instead of snapping. Safe range 50 to 200.
+pub const LEAN_EASE_MS: f64 = 100.0;
+/// The most he leans into a move, in degrees. Safe range 4 to 12: past that he reads
+/// as falling, not running.
+pub const LEAN_MAX_DEG: f64 = 8.0;
 
 /// How far above a finger he rides while held, in px between the finger and his
 /// bottom edge: a fingertip covers more than its point. Safe range 8 to 48.

@@ -901,17 +901,13 @@ li.task-row:focus-within .delete-mark {
 }
 
 /* The single Rambo button: independent fixed layer above everything.
-   Not a child of the nest — positioned by measuring the nest's bounding box.
-   --pen-x and --pen-y are always the center of the button.
+   Not a child of the nest. The engine owns his transform: where he is and his pose
+   (engine/look.rs) are written on the button each frame, so no rule here moves it.
    Phone 64px, desktop 80px (1.4x the old size). Spec: docs/DESIGN-DIRECTION.md §2 */
 .rambo {
   position: fixed;
   top: 0;
   left: 0;
-  transform: translate(
-    calc(var(--pen-x) - 50%),
-    calc(var(--pen-y) - 50%)
-  );
   z-index: var(--layer-rambo);
   display: inline-flex;
   width: 64px;
@@ -921,9 +917,6 @@ li.task-row:focus-within .delete-mark {
   border: none;
   cursor: grab;
   touch-action: none;
-  /* CSS variables for position (set by JS measuring the nest) */
-  --pen-x: 0px;
-  --pen-y: 0px;
 }
 
 .rambo:hover {
@@ -938,8 +931,8 @@ li.task-row:focus-within .delete-mark {
   width: 100%;
   height: 100%;
   pointer-events: none;
-  /* Moods move the drawing, never the button: the button's transform belongs
-     to dragging, flying and splatting. */
+  /* Moods move the drawing, never the button: the button's transform is the
+     engine's. */
   transform-origin: 50% 88%;
   /* Idle breathe: slow 4s cycle — 1px rise, 1° tilt. He is alive before you touch him.
      Spec: docs/DESIGN-DIRECTION.md §2 */
@@ -1002,95 +995,12 @@ li.task-row:focus-within .delete-mark {
   }
 }
 
-/* Home: down in the nest, his tip behind its rim. */
-.rambo.is-home {
-  transform: translate(
-    calc(var(--pen-x) - 50%),
-    calc(var(--pen-y) - 50% + var(--nest-sink))
-  );
-}
-
-/* Dragging: held/listening pose — tilted like a pen in hand, subtle pulse
-   shows he is alive even where speech recognition is unavailable. */
 .rambo.is-dragging {
   cursor: grabbing;
-  transform: translate(
-      calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50%)
-    ) rotate(-15deg);
-  animation: rambo-held 0.8s ease-in-out infinite;
 }
-
-@keyframes rambo-held {
-  0%, 100% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(-15deg);
-  }
-  50% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(-12deg) scale(1.05);
-  }
-}
-
-/* Dazed: dropped on the page, he lies where he landed, tipped over. */
-.rambo.is-dazed {
-  transform: translate(
-      calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50%)
-    ) rotate(12deg);
-}
-
 /* Inking: a dazed Rambo dragged nib-down across the page, writing. */
 .rambo.is-inking {
   cursor: grabbing;
-}
-
-/* Splatting: hard-drop ink splat with wobble, then settle */
-.rambo.is-splatting {
-  animation: rambo-splat 400ms ease-out forwards;
-}
-
-@keyframes rambo-splat {
-  0% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(-15deg) scale(1.15);
-  }
-  20% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(10deg) scale(0.95);
-  }
-  40% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(-6deg) scale(1.02);
-  }
-  60% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(4deg) scale(0.98);
-  }
-  80% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(-2deg) scale(1.0);
-  }
-  100% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(12deg);
-  }
 }
 
 /* Splat ink burst — ::after pseudo-element shows a small ink splat on hard drop */
@@ -1128,50 +1038,22 @@ li.task-row:focus-within .delete-mark {
   }
 }
 
-/* Skittering: the hops home are drawn frame by frame (hop.rs); the CSS only
-   leans him into the run. The nest never moves. */
-.rambo.is-skittering {
-  transform: translate(
-      calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50%)
-    ) rotate(6deg);
+/* Covered: the page turned over him; he stands where he was, upright, pushing at the
+   leaf (the page's own spring lifts its corner). He is not dazed; his pose is the
+   engine's (engine/look.rs). */
+.rambo.is-covered {
+  /* Beneath the leaf, above the page under it: the turn's layers are 0 (the page beneath)
+     and 1 (the page turning), and he comes after them in the tree. */
+  z-index: var(--layer-turn-under);
 }
 
-/* Writing: shrunk and rotated like a pen at work */
-.rambo.is-flying.is-writing {
-  transform: translate(
-      calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50%)
-    ) rotate(var(--write-lean)) scale(0.78);
-}
-
-/* Writing a row: not a flight, so nothing eases and the nib is where the ink is on
-   every frame. He leans and shrinks about his nib, the bottom of his box, so the
-   lean never moves it (pen::row_nib_center). */
-.rambo.is-writing:not(.is-caret) {
-  transform-origin: 50% 100%;
-  /* His hand: the nib's press or lift and the lean's wobble, set each frame from
-     the stroke he is on (pen::hand). */
-  transform: translate(
-      calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50% + var(--nib-dip, 0px))
-    ) rotate(calc(var(--write-lean) + var(--nib-tilt, 0deg))) scale(0.78);
-}
-
-/* Writing at caret (same as writing, but marked for future differentiation) */
-.rambo.is-flying.is-writing.is-caret {
-  transform: translate(
-      calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50%)
-    ) rotate(var(--write-lean)) scale(0.78);
-}
-
-/* Asking: positioned at the task */
-.rambo.is-asking {
-  transform: translate(
-    calc(var(--pen-x) - 50%),
-    calc(var(--pen-y) - 50%)
-  );
+/* The list page lies over him while he is caught, at rest as well as while it turns, and
+   is paper all the way: he is only seen where his push lifts its corner. */
+main:has(~ .rambo.is-covered) > .tasks-pane {
+  position: relative;
+  z-index: var(--layer-turn-front);
+  background-color: var(--paper);
+  background-image: var(--texture-paper);
 }
 
 /* Status text: speech bubble anchored to Rambo, follows him everywhere.
@@ -2247,11 +2129,6 @@ li.task-row:focus-within .delete-mark {
   *,
   *::before,
   *::after {
-    animation: none;
-    transition: none;
-  }
-
-  .rambo {
     animation: none;
     transition: none;
   }

@@ -4,12 +4,13 @@ use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
+use wasm_bindgen::closure::Closure;
 
 use crate::edits::{
     EditSink, heard_edit_applies, revisable, revise_and_show, revise_body, sheet_left,
 };
 use crate::tasks::{apply_tick, tick_action};
-use crate::{gesture, hop, ink, mascot, settings, speech, tuning, voice};
+use crate::{gesture, ink, mascot, settings, speech, tuning, voice};
 
 /// The single Rambo element: independent fixed layer above everything.
 ///
@@ -152,154 +153,90 @@ pub(crate) fn Rambo(
         bubble_below.set(below);
     });
 
-    // Where he is drawn. Everything that moves him sets his spot (`pen_pos`); he
-    // hops there (`hop`), or is simply there while he follows something exactly
-    // (`mascot::hops_there`). Home and on the run home his spot is the nest, read
-    // where it is now: the page may have carried it since anyone last looked.
-    let spot = move |state: &mascot::State| match state {
-        mascot::State::Home | mascot::State::Skittering => nest_box(nest_ref)
-            .map(mascot::nest_home)
-            .unwrap_or_else(|| pen_pos.get_untracked()),
-        _ => pen_pos.get_untracked(),
-    };
-    let run = std::rc::Rc::new(std::cell::RefCell::new(None::<crate::engine::Handle>));
-    // Whether he has come to rest at home, so the nest moving is the page
-    // scrolling, not a way to hop. True at load: he starts on the nest.
-    let settled_home = std::rc::Rc::new(std::cell::Cell::new(true));
-    // He is where his spot is: the run home ends here, and a run under way stops.
-    let arrive = {
-        let (run, settled_home) = (run.clone(), settled_home.clone());
-        move |at: (f64, f64)| {
-            if let Some(handle) = run.borrow_mut().take() {
-                handle.stop();
-            }
-            shown.set(at);
-            squash.set(0.0);
-            noticing.set(None);
-            let now = state.get_untracked();
-            settled_home.set(now == mascot::State::Home);
-            if now == mascot::State::Skittering {
-                set_state.set(mascot::transition(&now, mascot::Event::Return));
-            }
+    // Where he is drawn: his body in the engine's world (`engine::World`), which hops,
+    // rides after the finger, keeps his notice beat and times his splat and daze. Once
+    // a frame the page reads where the nest and his spot (`pen_pos`) are, steps the
+    // world and writes what it draws. His brain state goes both ways: the rest of the
+    // page sets `state`, and the world's own timers and landings set it back.
+    let world = std::rc::Rc::new(std::cell::RefCell::new(crate::engine::World::new(
+        pen_pos.get_untracked(),
+    )));
+    // His pose on top of where he is: lean, size, sink, the writing pose
+    // (`engine::look`). With `shown`, his button's only transform.
+    let look = RwSignal::new(world.borrow().look());
+    let ticking = std::rc::Rc::new(std::cell::Cell::new(false));
+    let wake = move || {
+        if ticking.replace(true) {
+            return;
         }
-    };
-    // The state the mover last saw, and the beat the last change of state owes: a
-    // caller often changes his state first and sets his spot a moment later, so
-    // the beat waits for the first run that sets off. `arrive` leaves it alone for
-    // that reason; a change that ends in a step leaves it owed, and the next change
-    // of state replaces it.
-    let last_state = std::rc::Rc::new(std::cell::RefCell::new(state.get_untracked()));
-    let owed = std::rc::Rc::new(std::cell::Cell::new(None::<mascot::Pose>));
-    Effect::new({
-        let (run, settled_home, arrive) = (run.clone(), settled_home.clone(), arrive.clone());
-        move |_| {
-            pen_pos.track();
-            let now = state.get();
-            let before = last_state.replace(now.clone());
-            if before != now {
-                owed.set(mascot::notice(&before, &now));
-            }
-            let to = spot(&now);
-            let hops =
-                mascot::hops_there(&now, settled_home.get()) && !mascot::prefers_reduced_motion();
-            if !hops {
-                arrive(to);
-                return;
-            }
-            // A run under way reads its far end every frame.
-            if run.borrow().is_some() {
-                return;
-            }
-            let Some(hop) = hop::Hop::plan(shown.get_untracked(), to) else {
-                arrive(to);
-                return;
+        let (world, ticking) = (world.clone(), ticking.clone());
+        crate::engine::on_tick(move |tick| {
+            let anchors = crate::engine::Anchors {
+                nest: nest_box(nest_ref)
+                    .map(mascot::nest_home)
+                    .unwrap_or_else(|| pen_pos.get_untracked()),
+                spot: pen_pos.get_untracked(),
+                reduced_motion: mascot::prefers_reduced_motion(),
+                leaf: crate::engine::leaf(),
             };
-            settled_home.set(false);
-            // He never moves instantly: setting off, he first notices and reacts
-            // where he stands, then hops. The beat is timed by the engine's tick.
-            let face = owed.take();
-            let beat = face.map_or(0, |_| tuning::NOTICE_BEAT_MS);
-            noticing.set(face);
-            let begun = crate::engine::now();
-            let arrive = arrive.clone();
-            let handle = crate::engine::on_tick(move |tick| {
-                let since = (tick.now - begun).max(0.0) as u32;
-                if since < beat {
-                    squash.set(mascot::notice_squash(since));
-                    return crate::engine::Flow::Go;
-                }
-                noticing.set(None);
-                let elapsed = since - beat;
-                let to = spot(&state.get_untracked());
-                if elapsed >= hop.ms() {
-                    arrive(to);
-                    return crate::engine::Flow::Stop;
-                }
-                let frame = hop.at(to, elapsed);
-                shown.set((frame.pos.0, frame.pos.1 - frame.lift));
-                squash.set(frame.squash);
+            let (brain, draw, posed, at_rest) = {
+                let mut world = world.borrow_mut();
+                world.adopt(state.get_untracked());
+                world.advance(tick.steps, &anchors);
+                crate::engine::set_push(world.leaf_push());
+                (
+                    world.rambo.brain.clone(),
+                    world.draw(),
+                    world.look(),
+                    world.at_rest(),
+                )
+            };
+            if brain != state.get_untracked() {
+                set_state.set(brain);
+            }
+            if shown.get_untracked() != draw.pos {
+                shown.set(draw.pos);
+            }
+            if squash.get_untracked() != draw.squash {
+                squash.set(draw.squash);
+            }
+            if look.get_untracked() != posed {
+                look.set(posed);
+            }
+            if noticing.get_untracked() != draw.notice {
+                noticing.set(draw.notice);
+            }
+            // The first frame after a sleep takes no step, so it never ends the run.
+            if tick.steps > 0 && at_rest {
+                ticking.set(false);
+                crate::engine::Flow::Stop
+            } else {
                 crate::engine::Flow::Go
-            });
-            *run.borrow_mut() = Some(handle);
-        }
+            }
+        });
+    };
+    let wake = std::rc::Rc::new(wake);
+    // The page turn moving its leaf wakes him, so a leaf closing over him is seen even
+    // while his loop sleeps.
+    crate::engine::on_leaf({
+        let wake = wake.clone();
+        move || wake()
+    });
+    Effect::new(move |_| {
+        state.track();
+        pen_pos.track();
+        wake();
     });
 
-    // The run home: dazed no longer, he hops to the nest and is home when he lands.
-    let skitter_home = move || {
-        set_state.set(mascot::transition(
-            &state.get_untracked(),
-            mascot::Event::Return,
-        ));
-        if nest_box(nest_ref).is_none() {
-            set_state.set(mascot::transition(
-                &state.get_untracked(),
-                mascot::Event::Return,
-            ));
-        }
-    };
-
-    // Each daze gets a ticket; a newer drop or a grab takes a new one, so an
-    // older timer finds its ticket stale and leaves him be.
-    let daze = std::rc::Rc::new(std::cell::Cell::new(0_u32));
-    let arm_daze = {
-        let daze = daze.clone();
-        move || {
-            let ticket = daze.get().wrapping_add(1);
-            daze.set(ticket);
-            let daze = daze.clone();
-            Timeout::new(mascot::DAZED_MS, move || {
-                if daze.get() == ticket && state.get_untracked() == mascot::State::Dazed {
-                    skitter_home();
-                }
-            })
-            .forget();
-        }
-    };
-    // Let go on the page: dazed where he lands, after a splat if he was flung.
-    let land_dazed = {
-        let arm_daze = arm_daze.clone();
-        move |hard_drop: bool| {
-            let event = if hard_drop && !mascot::prefers_reduced_motion() {
-                mascot::Event::DropHard
-            } else {
-                mascot::Event::DropEmpty
-            };
-            let landed = mascot::transition(&state.get_untracked(), event);
-            set_state.set(landed.clone());
-            if landed == mascot::State::Splatting {
-                let arm_daze = arm_daze.clone();
-                Timeout::new(mascot::SPLAT_MS, move || {
-                    set_state.set(mascot::transition(
-                        &state.get_untracked(),
-                        mascot::Event::Return,
-                    ));
-                    arm_daze();
-                })
-                .forget();
-            } else {
-                arm_daze();
-            }
-        }
+    // Let go on the page: dazed where he lands, after a splat if he was flung. The
+    // world times the splat and the daze.
+    let land_dazed = move |hard_drop: bool| {
+        let event = if hard_drop && !mascot::prefers_reduced_motion() {
+            mascot::Event::DropHard
+        } else {
+            mascot::Event::DropEmpty
+        };
+        set_state.set(mascot::transition(&state.get_untracked(), event));
     };
     // How far below his middle the nib is, measured when he is picked up.
     let nib_below = std::rc::Rc::new(std::cell::Cell::new(0.0_f64));
@@ -331,8 +268,12 @@ pub(crate) fn Rambo(
                 .is_some_and(|id| id != ev.pointer_id())
         }
     };
-    let (finger_down, finger_move, finger_up, finger_cancel) =
-        (finger.clone(), finger.clone(), finger.clone(), finger);
+    let (finger_down, finger_move, finger_up, finger_cancel) = (
+        finger.clone(),
+        finger.clone(),
+        finger.clone(),
+        finger.clone(),
+    );
     // A long press listens: each grab takes a ticket, and the hold's timer starts
     // listening only if its grab is still the current one and he was held still.
     let hold = std::rc::Rc::new(std::cell::Cell::new(0_u32));
@@ -621,6 +562,213 @@ pub(crate) fn Rambo(
         });
     });
 
+    // A stroke of his ink begun at `(x, y)`, on whatever lies there.
+    let start_stroke = move |(x, y): (f64, f64), t: f64| {
+        let page = list_page();
+        let on = ink::surface_at(x, y, page);
+        let (x, y) = ink::on_surface(on, x, y, page);
+        strokes.update(|strokes| {
+            strokes.push(ink::Stroke::new(
+                pen.get_untracked(),
+                on,
+                ink::Sample { x, y, t },
+            ))
+        });
+    };
+
+    // Dazed, a hold anywhere on the page draws him to the finger, and the finger is
+    // his from then on, as if it had picked him up there: his own handlers write
+    // and let go. What had the finger's Down lets go of it first, so a row never
+    // swipes or lifts beneath him.
+    let draw_over = {
+        let (nib_below, finger) = (nib_below.clone(), finger.clone());
+        let (moved, grab_state) = (moved.clone(), grab_state.clone());
+        move |watch: Watch| {
+            watch.tick.stop();
+            let before = state.get_untracked();
+            let (Some(event), Some(rambo)) = (
+                mascot::drawn_over(&before, &gesture::Gesture::Hold),
+                rambo_ref.get_untracked(),
+            ) else {
+                return;
+            };
+            let_go(&watch.on, watch.id);
+            *moved.borrow_mut() = false;
+            *grab_state.borrow_mut() = Some(watch.at);
+            let mut held = gesture::Recognizer::new();
+            held.advance(gesture::Sample {
+                pointer: gesture::Pointer::Down(gesture::Target::Rambo),
+                at: watch.at,
+                t: watch.t,
+                id: watch.id,
+            });
+            *finger.borrow_mut() = held;
+            let below = rambo.get_bounding_client_rect().height() * mascot::NIB_BELOW;
+            nib_below.set(below);
+            set_state.set(mascot::transition(&before, event));
+            pen_pos.set(watch.at);
+            start_stroke((watch.at.0, watch.at.1 + below), watch.t);
+            let _ = rambo.set_pointer_capture(watch.id);
+        }
+    };
+
+    // While he is dazed, and only then, the page's first finger is watched for a
+    // hold. The engine's tick times it, so a finger that never moves still holds
+    // on time.
+    let watching = std::rc::Rc::new(std::cell::RefCell::new(None::<Watch>));
+    let dazed = Memo::new(move |_| state.get() == mascot::State::Dazed);
+    let watchers = StoredValue::new_local(Vec::<WindowListenerHandle>::new());
+    Effect::new(move |_| {
+        for listener in watchers
+            .try_update_value(std::mem::take)
+            .unwrap_or_default()
+        {
+            listener.remove();
+        }
+        if let Some(watch) = watching.borrow_mut().take() {
+            watch.tick.stop();
+        }
+        if !dazed.get() {
+            return;
+        }
+        // One step of the watched finger. A hold is his; anything else it decides
+        // leaves the finger to the page.
+        let step = {
+            let (watching, draw_over) = (watching.clone(), draw_over.clone());
+            move |pointer: gesture::Pointer, id: i32, at: Option<(f64, f64)>, t: f64| {
+                let decided = {
+                    let mut slot = watching.borrow_mut();
+                    let Some(watch) = slot.as_mut().filter(|watch| watch.id == id) else {
+                        return;
+                    };
+                    watch.at = at.unwrap_or(watch.at);
+                    watch.t = t;
+                    let sample = gesture::Sample {
+                        pointer,
+                        at: watch.at,
+                        t,
+                        id,
+                    };
+                    match watch.finger.advance(sample) {
+                        Some(gesture) => gesture,
+                        None => return,
+                    }
+                };
+                let Some(watch) = watching.borrow_mut().take() else {
+                    return;
+                };
+                if matches!(decided, gesture::Gesture::Hold) {
+                    draw_over(watch);
+                } else {
+                    watch.tick.stop();
+                }
+            }
+        };
+        let down = {
+            let (watching, step) = (watching.clone(), step.clone());
+            window_event_listener(leptos::ev::pointerdown, move |ev| {
+                if ev.button() != 0 || watching.borrow().is_some() {
+                    return;
+                }
+                let Some(on) = ev
+                    .target()
+                    .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                else {
+                    return;
+                };
+                // On him, his own handlers pick him up.
+                if on.closest(".rambo").ok().flatten().is_some() {
+                    return;
+                }
+                let (at, t, id) = (
+                    (f64::from(ev.client_x()), f64::from(ev.client_y())),
+                    ev.time_stamp(),
+                    ev.pointer_id(),
+                );
+                let mut finger = gesture::Recognizer::new();
+                finger.advance(gesture::Sample {
+                    pointer: gesture::Pointer::Down(target_of(&on)),
+                    at,
+                    t,
+                    id,
+                });
+                let step = step.clone();
+                let tick = crate::engine::on_tick(move |tick| {
+                    step(gesture::Pointer::Tick, id, None, tick.now);
+                    crate::engine::Flow::Go
+                });
+                *watching.borrow_mut() = Some(Watch {
+                    finger,
+                    id,
+                    on,
+                    at,
+                    t,
+                    tick,
+                });
+            })
+        };
+        let at =
+            |ev: &web_sys::PointerEvent| Some((f64::from(ev.client_x()), f64::from(ev.client_y())));
+        let moved = {
+            let step = step.clone();
+            window_event_listener(leptos::ev::pointermove, move |ev| {
+                step(
+                    gesture::Pointer::Move,
+                    ev.pointer_id(),
+                    at(&ev),
+                    ev.time_stamp(),
+                );
+            })
+        };
+        let up = {
+            let step = step.clone();
+            window_event_listener(leptos::ev::pointerup, move |ev| {
+                step(
+                    gesture::Pointer::Up,
+                    ev.pointer_id(),
+                    at(&ev),
+                    ev.time_stamp(),
+                );
+            })
+        };
+        let cancel = window_event_listener(leptos::ev::pointercancel, move |ev| {
+            step(
+                gesture::Pointer::Cancel,
+                ev.pointer_id(),
+                at(&ev),
+                ev.time_stamp(),
+            );
+        });
+        watchers.set_value(vec![down, moved, up, cancel]);
+    });
+
+    // Writing, a finger that went down on the page would pan it instead: the page
+    // lets a touch scroll it. While he writes, the page holds still.
+    let inking = Memo::new(move |_| state.get() == mascot::State::Inking);
+    let hold_page = StoredValue::new_local(None::<Closure<dyn Fn(web_sys::Event)>>);
+    Effect::new(move |_| {
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        if let Some(block) = hold_page.try_update_value(Option::take).flatten() {
+            let _ = window
+                .remove_event_listener_with_callback("touchmove", block.as_ref().unchecked_ref());
+        }
+        if inking.get() {
+            let block = Closure::<dyn Fn(web_sys::Event)>::new(|ev: web_sys::Event| {
+                ev.prevent_default();
+            });
+            let options = web_sys::AddEventListenerOptions::new();
+            options.set_passive(false);
+            let _ = window.add_event_listener_with_callback_and_add_event_listener_options(
+                "touchmove",
+                block.as_ref().unchecked_ref(),
+                &options,
+            );
+            hold_page.set_value(Some(block));
+        }
+    });
+
     // Clone closures for multiple event handlers
     let still_move = still.clone();
     let hold_up = hold.clone();
@@ -641,11 +789,9 @@ pub(crate) fn Rambo(
             aria-label="Grab Rambo to listen"
             // Which pen he writes with: the gear menu sets it, remembered per device.
             data-pen=move || view_settings.get().pen.slug()
-            style:--pen-x=move || format!("{:.1}px", shown.get().0)
-            style:--pen-y=move || format!("{:.1}px", shown.get().1)
+            style:transform=move || look.get().transform(shown.get())
             style:--hop-squash=move || format!("{:.3}", squash.get())
             on:pointerdown={
-                let daze = daze.clone();
                 let nib_below = nib_below.clone();
                 let other_finger = other_finger.clone();
                 move |ev: leptos::ev::PointerEvent| {
@@ -677,8 +823,6 @@ pub(crate) fn Rambo(
                         t: ev.time_stamp(),
                         id: ev.pointer_id(),
                     });
-                    // In hand he never skitters off on his own.
-                    daze.set(daze.get().wrapping_add(1));
                     set_state.set(after.clone());
                     if after == mascot::State::Dragging {
                         pen_pos.set(held_spot(&ev, (gx, gy)));
@@ -703,17 +847,7 @@ pub(crate) fn Rambo(
                         // Dazed: this drag writes, starting where the nib is now.
                         let below = rambo.get_bounding_client_rect().height() * mascot::NIB_BELOW;
                         nib_below.set(below);
-                        let (x, y) = (ox, oy + below);
-                        let page = list_page();
-                        let on = ink::surface_at(x, y, page);
-                        let (x, y) = ink::on_surface(on, x, y, page);
-                        strokes.update(|strokes| {
-                            strokes.push(ink::Stroke::new(
-                                pen.get_untracked(),
-                                on,
-                                ink::Sample { x, y, t: ev.time_stamp() },
-                            ))
-                        });
+                        start_stroke((ox, oy + below), ev.time_stamp());
                     }
                     if let Some(el) = ev.target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
                         let _ = el.set_pointer_capture(ev.pointer_id());
@@ -761,8 +895,6 @@ pub(crate) fn Rambo(
                 }
             }
             on:pointerup={
-                let arm_daze = arm_daze.clone();
-                let land_dazed = land_dazed.clone();
                 let other_finger = other_finger.clone();
                 move |ev: leptos::ev::PointerEvent| {
                     if other_finger(&ev) {
@@ -790,13 +922,12 @@ pub(crate) fn Rambo(
                     let did_move = *moved_for_up.borrow();
                     if !did_move {
                         *grab_state_up.borrow_mut() = None;
-                        if before == mascot::State::Dragging && !was_listening {
+                        if before == mascot::State::Dragging
+                            && !was_listening
+                            && let Some(form) = form_ref.get()
+                        {
                             // Tap (no drag): submit the form (sends typed text) and go home
-                            if let Some(form) = form_ref.get() {
-                                let _ = form.request_submit();
-                            }
-                        } else {
-                            arm_daze();
+                            let _ = form.request_submit();
                         }
                         set_state.set(mascot::transition(&before, mascot::Event::Release));
                         return;
@@ -841,8 +972,6 @@ pub(crate) fn Rambo(
                 }
             }
             on:pointercancel={
-                let arm_daze = arm_daze.clone();
-                let land_dazed = land_dazed.clone();
                 move |ev: leptos::ev::PointerEvent| {
                     if other_finger(&ev) {
                         return;
@@ -866,7 +995,6 @@ pub(crate) fn Rambo(
                                 &state.get_untracked(),
                                 mascot::Event::DropEmpty,
                             ));
-                            arm_daze();
                         }
                         _ => {}
                     }
@@ -1026,6 +1154,42 @@ fn on_page_moved(moved: impl Fn() + Copy + 'static) {
         crate::tasks::write::wait_for_fonts().await;
         moved();
     });
+}
+
+/// A finger on the page while he is dazed, watched to see whether it holds.
+struct Watch {
+    finger: gesture::Recognizer,
+    id: i32,
+    /// What it went down on, which lets go of it if he takes it.
+    on: web_sys::Element,
+    at: (f64, f64),
+    t: f64,
+    tick: crate::engine::Handle,
+}
+
+/// What a finger went down on, as the recogniser names it.
+fn target_of(on: &web_sys::Element) -> gesture::Target {
+    match on
+        .closest("li[data-id]")
+        .ok()
+        .flatten()
+        .and_then(|row| row.get_attribute("data-id"))
+    {
+        Some(id) => gesture::Target::Row(id),
+        None if list_page().is_some() => gesture::Target::Page(gesture::Leaf::List),
+        None => gesture::Target::Page(gesture::Leaf::Planner),
+    }
+}
+
+/// Tells whatever had finger `id`'s Down that the finger is gone, as the browser
+/// does when it takes a finger for itself, so it lets go of its press.
+fn let_go(on: &web_sys::Element, id: i32) {
+    let init = web_sys::PointerEventInit::new();
+    init.set_bubbles(true);
+    init.set_pointer_id(id);
+    if let Ok(cancel) = web_sys::PointerEvent::new_with_event_init_dict("pointercancel", &init) {
+        let _ = on.dispatch_event(&cancel);
+    }
 }
 
 /// The task row under a point, looking past Rambo himself: he is under the

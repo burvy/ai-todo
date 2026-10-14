@@ -16,6 +16,7 @@
 //! table and rebounds. This file keeps the geometry, the spring and the decisions pure, so
 //! they are tested without a browser; `flip_turner` (browser only) reads the pointer, draws
 //! the leaf and steps the spring each frame.
+#![cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 
 use crate::tuning::{
     BEND_COMMIT_SHARE, BEND_FLICK_MIN_PX, BEND_FLICK_PX_PER_MS, BEND_SLOP_PX, FLIP_WALL_BOUNCE,
@@ -146,6 +147,7 @@ impl Spring {
     }
 
     /// Moves on by `dt` seconds toward `target`.
+    #[cfg(test)]
     pub(crate) fn step(&mut self, target: f64, pull: Pull, dt: f64) {
         self.step_with_push(target, pull, None, dt);
     }
@@ -203,8 +205,7 @@ pub(crate) fn edge_px(width: f64, angle: f64, distance: f64) -> f64 {
 /// Whether the leaf lies over `point` (px from the page's top left corner, the spine along
 /// its left edge) when it is `open`, for a page `width` by `height` px seen from `distance`
 /// px away: the leaf's footprint is the page's own, cut off at its free edge.
-/// `x` is measured from the spine; on the turn back the leaf lies the other way, so the caller
-/// mirrors `x` by `Turn`.
+/// `x` is measured from the spine, which is the page's left edge forward and back alike.
 #[allow(
     dead_code,
     reason = "asked for by Rambo being caught under the leaf, engine step 11"

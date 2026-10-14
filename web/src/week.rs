@@ -65,6 +65,8 @@ pub fn WeekGrid(
     set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
     capture_text: RwSignal<String>,
+    /// Rambo's state: dazed, every hold on the page is his, so no slip lifts.
+    mascot_state: ReadSignal<crate::mascot::State>,
     /// Turn to the list's page: what the note at this page's foot does.
     turn_back: std::rc::Rc<dyn Fn()>,
 ) -> impl IntoView {
@@ -259,7 +261,7 @@ pub fn WeekGrid(
                                     placements_on_day(&snapshot.plan.placements, i64::from(day), &ctx)
                                 }
                                 key=placement_key let:placement>
-                                <PlacementBlock placement snapshot settings set_snapshot set_error drag landing />
+                                <PlacementBlock placement snapshot settings set_snapshot set_error drag landing mascot_state />
                             </For>
                                 <For each=hours key=|hour| *hour let:hour>
                                     <div
@@ -616,6 +618,7 @@ fn PlacementBlock(
     set_error: WriteSignal<Option<String>>,
     drag: RwSignal<Option<Drag>>,
     landing: RwSignal<Option<Slot>>,
+    mascot_state: ReadSignal<crate::mascot::State>,
 ) -> impl IntoView {
     let task_id = placement.task.clone();
     let label_task_id = task_id.clone();
@@ -672,6 +675,16 @@ fn PlacementBlock(
             }
             // Only one slip is in hand at a time.
             if drag.get_untracked().is_some() {
+                return;
+            }
+            // Dazed, Rambo takes every hold on the page, and a mouse would lift the
+            // slip before he could: the slip stays put until he is home.
+            if crate::mascot::drawn_over(
+                &mascot_state.get_untracked(),
+                &crate::gesture::Gesture::Hold,
+            )
+            .is_some()
+            {
                 return;
             }
             // Take the pointer at once, so both the hold and a later slide stay
@@ -845,7 +858,7 @@ fn PlacementBlock(
     };
     // On a native build the patch paths never run; keep the unused-shelf silent.
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (&set_snapshot, &set_error, &drag, &landing);
+    let _ = (&set_snapshot, &set_error, &drag, &landing, &mascot_state);
     #[cfg(not(target_arch = "wasm32"))]
     let (grip_down, grip_move, grip_end, grip_cancel) = (
         |_: leptos::ev::PointerEvent| {},
