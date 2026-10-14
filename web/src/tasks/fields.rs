@@ -97,7 +97,7 @@ pub(crate) fn series_patch_from_dialog(
     })
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum EditWhen {
     Anytime,
     DueBy,

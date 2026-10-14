@@ -51,22 +51,6 @@ pub(crate) fn confirmed(message: &str) -> bool {
     }
 }
 
-/// The body that moves `id` to the next priority, against the version held now.
-pub(crate) fn next_priority_body(snapshot: &Snapshot, id: &str) -> Option<api::PatchTaskBody> {
-    let task = held(snapshot, id)?;
-    let next = match task.priority {
-        todo_core::Priority::Low => todo_core::Priority::Medium,
-        todo_core::Priority::Medium => todo_core::Priority::High,
-        todo_core::Priority::High => todo_core::Priority::Low,
-        todo_core::Priority::Critical => todo_core::Priority::High,
-    };
-    Some(
-        api::PatchTaskBody::new()
-            .priority(next)
-            .updated_at(task.updated_at),
-    )
-}
-
 /// What the page tells the user when an edit did not apply.
 ///
 /// The wording follows why the edit failed, not whether the reload afterwards worked: a
@@ -155,9 +139,6 @@ mod tests {
         let second = toggle_done_body(&snapshot, &id).expect("task is listed");
         assert_eq!(second.done, Some(false), "must flip the current state");
         assert_eq!(second.updated_at, Some(snapshot.tasks[0].updated_at));
-
-        let bump = next_priority_body(&snapshot, &id).expect("task is listed");
-        assert_eq!(bump.updated_at, Some(snapshot.tasks[0].updated_at));
     }
 
     #[test]
@@ -187,7 +168,6 @@ mod tests {
     fn no_edit_is_built_for_a_task_that_is_gone() {
         let snapshot = api::fixture_snapshot();
         assert!(toggle_done_body(&snapshot, "nope").is_none());
-        assert!(next_priority_body(&snapshot, "nope").is_none());
     }
 
     #[test]

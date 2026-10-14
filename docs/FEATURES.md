@@ -97,10 +97,12 @@ g. Code: `web/src/row.rs` (the gesture rules, unit-tested) and its `dom` module
 `server/src/v2/app.rs:reorder`.
 
 ### 4. Edit through Rambo
-a. Dropping Rambo on a task offers actions; the built actions can change priority,
-toggle completion, or delete the task.
-b. Drag Rambo onto a task, then choose **Edit**, **Done**, or **Delete**.
-c. Code: `web/src/rambo.rs:Rambo`; `web/src/api.rs:patch_task, delete_task`.
+a. Dropping Rambo on a task offers actions: **Edit** opens that task's edit sheet,
+**Done** toggles completion, **×** deletes it, **Move** does nothing yet. Rambo
+listening while the sheet is open (DESIGN-DIRECTION §9) is (planned).
+b. Drag Rambo onto a task, then choose **Edit**, **Move**, **Done**, or **×**.
+c. Code: `web/src/rambo.rs:Rambo`, which sets `edit_request` for
+`web/src/tasks/mod.rs:TaskList` to open its sheet; `web/src/api.rs:patch_task, delete_task`.
 
 ### 5. Labels and priorities
 a. Tasks carry one of six labels and one of four priorities.

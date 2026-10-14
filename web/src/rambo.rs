@@ -5,7 +5,7 @@ use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
 
-use crate::edits::{EditSink, next_priority_body, patch_and_show, series_note};
+use crate::edits::{EditSink, series_note};
 use crate::tasks::{apply_tick, delete_with_scribble, tick_action};
 use crate::{ink, mascot, settings, speech, voice};
 
@@ -33,6 +33,8 @@ pub(crate) fn Rambo(
     capture_text: RwSignal<String>,
     /// Capture form: Rambo calls requestSubmit on release
     form_ref: NodeRef<leptos::html::Form>,
+    /// Set to the task he was dropped on when you choose "Edit": the list opens its sheet
+    edit_request: RwSignal<Option<TaskId>>,
     /// The nest button: Rambo measures its bounding box to know where home is
     nest_ref: NodeRef<leptos::html::Button>,
     /// The tool he holds: it decides which drawing of each pose he wears
@@ -449,17 +451,9 @@ pub(crate) fn Rambo(
                             <span>{format!("Hey! What do you want with \"{title}\"?")}</span>
                             <button type="button" on:click=move |_| {
                                 if let mascot::State::Asking { ref task_id, .. } = state.get_untracked() {
-                                    let task_id_str = task_id.clone();
-                                    let body = snapshot.with_untracked(|s| next_priority_body(s, &task_id_str));
-                                    let sink = EditSink { set_snapshot, set_error };
-                                    let set_state_clone = set_state;
-                                    wasm_bindgen_futures::spawn_local(async move {
-                                        if let Some(body) = body {
-                                            patch_and_show(&todo_core::TaskId(task_id_str), body, sink).await;
-                                        }
-                                        set_state_clone.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
-                                    });
+                                    edit_request.set(Some(TaskId(task_id.clone())));
                                 }
+                                set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
                             }>"Edit"</button>
                             <button type="button" on:click=move |_| {
                                 set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
