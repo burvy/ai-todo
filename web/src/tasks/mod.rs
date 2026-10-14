@@ -109,13 +109,13 @@ fn series_of<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a todo_core::Seri
 /// the version the list holds; an occurrence writes — or, un-ticked, clears —
 /// an exception on its own date, because its flag is per date, never per task.
 #[derive(Debug)]
-enum TickAction {
+pub(crate) enum TickAction {
     Task(api::PatchTaskBody),
     MarkDone { series: String, date: NaiveDate },
     ClearDone { series: String, date: NaiveDate },
 }
 
-fn tick_action(snapshot: &Snapshot, id: &str) -> Option<TickAction> {
+pub(crate) fn tick_action(snapshot: &Snapshot, id: &str) -> Option<TickAction> {
     if let Some((series_id, date)) = occurrence_parts(id) {
         let done = held(snapshot, id)?.done;
         let series = series_id.to_owned();
@@ -126,6 +126,31 @@ fn tick_action(snapshot: &Snapshot, id: &str) -> Option<TickAction> {
         });
     }
     toggle_done_body(snapshot, id).map(TickAction::Task)
+}
+
+/// Writes a tick. A task edit is refused with a reload-and-retry note
+/// (`patch_and_show`); a series write has nothing to reload, so its refusals speak
+/// for themselves.
+pub(crate) async fn apply_tick(id: &TaskId, action: TickAction, sink: EditSink) {
+    let written = match action {
+        TickAction::Task(body) => {
+            patch_and_show(id, body, sink).await;
+            return;
+        }
+        TickAction::MarkDone { series, date } => {
+            api::mark_occurrence(&series, &date.to_string(), "done").await
+        }
+        TickAction::ClearDone { series, date } => {
+            api::clear_occurrence(&series, &date.to_string()).await
+        }
+    };
+    match written {
+        Ok(snapshot) => {
+            sink.set_error.set(None);
+            sink.set_snapshot.set(snapshot);
+        }
+        Err(e) => sink.set_error.set(Some(series_note(&e))),
+    }
 }
 
 fn label_name(label: Label) -> &'static str {
@@ -208,11 +233,17 @@ pub async fn on_delete_requested(_task_id: todo_core::TaskId) {}
 /// first. Every user-initiated delete goes through here, so the scribble is
 /// the rule rather than a promise in a comment: the `api::delete_task` calls
 /// that bypass it are the two that must not scribble, and each says why.
+///
+/// An occurrence of a repeat is not a stored task: deleting its row skips that one
+/// date, the way the series endpoint describes (docs/ARCHITECTURE.md 7.1).
 pub async fn delete_with_scribble(
     task_id: &todo_core::TaskId,
 ) -> Result<todo_core::Snapshot, api::ApiError> {
     on_delete_requested(task_id.clone()).await;
-    api::delete_task(task_id).await
+    match occurrence_parts(&task_id.0) {
+        Some((series, date)) => api::mark_occurrence(series, &date.to_string(), "skipped").await,
+        None => api::delete_task(task_id).await,
+    }
 }
 
 #[component]
@@ -399,32 +430,7 @@ pub(crate) fn TaskList(
                                     return;
                                 };
                                 wasm_bindgen_futures::spawn_local(async move {
-                                    // A task edit is refused with a reload-and-retry note
-                                    // (patch_and_show); a series write has nothing to reload,
-                                    // so its refusals speak for themselves.
-                                    match action {
-                                        TickAction::Task(body) => {
-                                            patch_and_show(&task_id_clone, body, sink).await;
-                                        }
-                                        TickAction::MarkDone { series, date } => {
-                                            match api::mark_occurrence(&series, &date.to_string(), "done").await {
-                                                Ok(snapshot) => {
-                                                    sink.set_error.set(None);
-                                                    sink.set_snapshot.set(snapshot);
-                                                }
-                                                Err(e) => sink.set_error.set(Some(series_note(&e))),
-                                            }
-                                        }
-                                        TickAction::ClearDone { series, date } => {
-                                            match api::clear_occurrence(&series, &date.to_string()).await {
-                                                Ok(snapshot) => {
-                                                    sink.set_error.set(None);
-                                                    sink.set_snapshot.set(snapshot);
-                                                }
-                                                Err(e) => sink.set_error.set(Some(series_note(&e))),
-                                            }
-                                        }
-                                    }
+                                    apply_tick(&task_id_clone, action, sink).await;
                                 });
                             }
                         };

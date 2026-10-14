@@ -5,7 +5,7 @@ use js_sys;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use todo_core::{ApiError as CoreApiError, ErrorCode, Snapshot, TaskDraft, TaskId, When};
+use todo_core::{ApiError as CoreApiError, ErrorCode, Snapshot, TaskId, When};
 use uuid::Uuid;
 
 /// Keeps the anonymous id the server issued, and ends the signed-in session when the
@@ -380,20 +380,6 @@ pub async fn capture_file(file: web_sys::File) -> Result<CaptureResponse, ApiErr
         .map_err(|e| ApiError::Decode(e.to_string()))
 }
 
-/// POST /api/v1/tasks - create a new task
-pub async fn create_task(draft: TaskDraft) -> Result<Snapshot, ApiError> {
-    Request::post("/api/v1/tasks")
-        .identity()
-        .header("Content-Type", "application/json")
-        .json(&draft)
-        .map_err(|e| ApiError::Network(e.to_string()))?
-        .send_checked()
-        .await?
-        .json::<Snapshot>()
-        .await
-        .map_err(|e| ApiError::Decode(e.to_string()))
-}
-
 /// PATCH /api/v1/tasks/{id} - update a task
 pub async fn patch_task(id: &TaskId, body: PatchTaskBody) -> Result<Snapshot, ApiError> {
     let url = format!("/api/v1/tasks/{}", id.0);
@@ -545,8 +531,9 @@ pub struct SeriesBody {
 }
 
 /// Body for `PATCH /api/v1/series/{id}`: absent fields stay as they are. The
-/// server cannot clear a field (`null` reads as absent), so an emptied time or
-/// end date in the dialog simply keeps the series' current one.
+/// time and end date are always sent, because the dialog holds the whole rule:
+/// `null` clears them (docs/ARCHITECTURE.md 7.1), so an emptied field ends the
+/// series' fixed time or end date.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct SeriesPatchBody {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -555,9 +542,7 @@ pub struct SeriesPatchBody {
     pub duration_min: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub weekdays: Option<Vec<Weekday>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub time_of_day: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub until: Option<String>,
 }
 

@@ -54,18 +54,20 @@ pub fn parse_calendar(text: &str) -> Result<ParsedCalendar, ImportError> {
         {
             continue;
         }
-        let start = date_of(event, "DTSTART").and_then(|value| to_utc(&value));
+        let Some(start) = date_of(event, "DTSTART").and_then(|value| to_utc(&value)) else {
+            continue;
+        };
         // `DTEND` is the norm, but `DURATION` is legal and Google uses it.
         // A missing `DTEND` must not drop the event, so no `?` here. With neither
         // `DTEND` nor `DURATION`, the event gets 30 minutes, never zero length.
         let end = date_of(event, "DTEND")
             .and_then(|value| to_utc(&value))
-            .or_else(|| start.and_then(|start| duration_after(event, start)))
-            .unwrap_or_else(|| start.unwrap_or_else(Utc::now) + chrono::Duration::minutes(30));
-        // No start, or an event that ends before it begins: nothing to import.
-        let Some(start) = start.filter(|start| end >= *start) else {
+            .or_else(|| duration_after(event, start))
+            .unwrap_or(start + chrono::Duration::minutes(30));
+        // An event that ends before it begins: nothing to import.
+        if end < start {
             continue;
-        };
+        }
         let uid = uid_of(event);
         let title = summary_of(event);
 
@@ -271,7 +273,8 @@ fn exdates_of(event: &Event, zone: Tz) -> Vec<NaiveDate> {
 /// instant, read in the event's zone; without one it is already a local wall clock.
 fn exdate_date(raw: &str, zone: Tz) -> Option<NaiveDate> {
     let body = raw.strip_suffix('Z').unwrap_or(raw);
-    let date_part = &body[..body.len().min(8)];
+    // `get`, not a slice: a non-ASCII byte near the start must not panic the import.
+    let date_part = body.get(..8).unwrap_or(body);
     let date = NaiveDate::parse_from_str(date_part, "%Y%m%d").ok()?;
     match raw.ends_with('Z') {
         true => utc_instant(raw).map(|instant| instant.with_timezone(&zone).date_naive()),
@@ -286,7 +289,7 @@ fn exdate_date(raw: &str, zone: Tz) -> Option<NaiveDate> {
 /// last occurrence land on the day the user meant.
 fn until_date(raw: &str, zone: Tz) -> Result<NaiveDate, String> {
     let raw = raw.trim();
-    let date_part = &raw[..raw.len().min(8)];
+    let date_part = raw.get(..8).unwrap_or(raw);
     let date = NaiveDate::parse_from_str(date_part, "%Y%m%d")
         .map_err(|_| format!("UNTIL={raw} is not a date, imported as one task"))?;
     Ok(match utc_instant(raw) {
@@ -347,12 +350,22 @@ fn zone_of(event: &Event) -> Tz {
 }
 
 /// The iCalendar UID an import keys on, when the event has one.
+/// The id a re-import matches on. A moved instance of a repeating event shares its
+/// series' `UID` and names the instance it replaces in `RECURRENCE-ID`, so the two
+/// together are what is unique; one export holds several such instances.
 fn uid_of(event: &Event) -> Option<String> {
-    event
-        .properties()
-        .get("UID")
-        .map(|property| property.value().trim().to_string())
-        .filter(|uid| !uid.is_empty())
+    let property = |key| {
+        event
+            .properties()
+            .get(key)
+            .map(|property| property.value().trim())
+            .filter(|value| !value.is_empty())
+    };
+    let uid = property("UID")?;
+    Some(match property("RECURRENCE-ID") {
+        Some(instance) => format!("{uid}/{instance}"),
+        None => uid.to_owned(),
+    })
 }
 
 /// An event's length in minutes, inside the same limits as any task.
@@ -431,6 +444,16 @@ mod tests {
     /// durations; [`parse_calendar`] is what the server calls, and it also reads rules.
     fn parse_ics(text: &str) -> Result<Vec<ImportedEvent>, ImportError> {
         parse_calendar(text).map(|calendar| calendar.events)
+    }
+
+    /// A non-ASCII character where the date's eighth byte would be is a bad date,
+    /// not a panic on the request path.
+    #[test]
+    fn a_non_ascii_until_or_exdate_is_refused_not_a_panic() {
+        let zone = chrono_tz::America::New_York;
+        assert!(until_date("2026121\u{e9}", zone).is_err());
+        assert_eq!(exdate_date("2026101\u{e9}", zone), None);
+        assert_eq!(exdate_date("2026101\u{e9}Z", zone), None);
     }
 
     #[test]

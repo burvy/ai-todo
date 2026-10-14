@@ -75,9 +75,8 @@ pub(crate) fn series_from_dialog(
     })
 }
 
-/// The series edit the dialog's fields describe. An absent field keeps what
-/// the series already has: the server cannot clear one (`null` reads as
-/// absent), so an emptied end date or time changes nothing.
+/// The series edit the dialog's fields describe. The dialog opens holding the
+/// series' rule, so an emptied end date or time is sent as `null` and clears it.
 pub(crate) fn series_patch_from_dialog(
     title: &str,
     duration: Option<u16>,
@@ -127,7 +126,11 @@ pub(crate) fn local_input_value(time: DateTime<Utc>) -> String {
 fn parse_local_input(value: &str) -> Option<DateTime<Utc>> {
     #[cfg(target_arch = "wasm32")]
     {
+        // An empty or bad field parses to NaN, and `NaN as i64` is 0: 1 January 1970.
         let millis = js_sys::Date::parse(&format!("{value}:00"));
+        if millis.is_nan() {
+            return None;
+        }
         return DateTime::from_timestamp_millis(millis as i64);
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -361,9 +364,13 @@ mod tests {
         assert_eq!(patch.title.as_deref(), Some("Gym"));
         assert_eq!(patch.duration_min, Some(45));
         assert_eq!(patch.weekdays, Some(vec![Weekday::Fri]));
-        // An emptied end date cannot clear the series' one (7.1: null reads absent).
         assert_eq!(patch.until, None);
         assert_eq!(patch.time_of_day.as_deref(), Some("08:30"));
+        // An emptied end date goes as null, which clears it (7.1); a missing key
+        // would keep the old one.
+        let wire = serde_json::to_value(&patch).unwrap();
+        assert_eq!(wire["until"], serde_json::Value::Null);
+        assert!(wire.as_object().unwrap().contains_key("until"));
         assert!(series_patch_from_dialog("Gym", Some(45), &[], "", "").is_none());
     }
 }

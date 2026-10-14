@@ -1992,7 +1992,10 @@ impl Store for SqliteStore {
         let mut conn = self.conn.lock_recover();
         let tx = conn.transaction().map_err(|e| backend(e, at!()))?;
         let cutoff = format_ts(cutoff);
-        let stale = "SELECT id FROM v2_users WHERE plan = 'anon' AND last_activity_at <= ?1";
+        // The id, not the plan, says who is anonymous: an admin can put a signed-in
+        // account on the anon plan, and that must never delete it.
+        let stale = "SELECT id FROM v2_users WHERE plan = 'anon' AND id LIKE 'anon\\_%' ESCAPE '\\'
+             AND last_activity_at <= ?1";
         // The series' own rows go first, for the same reason the tasks do: nothing
         // cascades here, so leaving them would keep a dead visitor's routines
         // forever with nobody left who could see or delete them.
@@ -3634,6 +3637,24 @@ mod tests {
 
         assert_eq!(store.expire_anonymous(at(12) - DAY * 30).unwrap(), 0);
         assert_eq!(store.tasks("erin").unwrap().len(), 1);
+    }
+
+    /// `plan <email> anon` changes what an account may spend, not whether it is
+    /// anonymous: a signed-in account on that plan is still never expired.
+    fn a_signed_in_user_on_the_anon_plan_is_kept(store: &dyn Store) {
+        sign_in(store, "frank");
+        store
+            .set_user_plan("frank", super::super::auth::Plan::Anon)
+            .unwrap();
+
+        assert_eq!(store.expire_anonymous(at(12) + DAY * 365).unwrap(), 0);
+        assert_eq!(store.tasks("frank").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn both_stores_keep_signed_in_users_on_the_anon_plan() {
+        a_signed_in_user_on_the_anon_plan_is_kept(&MemoryStore::new());
+        a_signed_in_user_on_the_anon_plan_is_kept(&SqliteStore::open_in_memory().unwrap());
     }
 
     /// A database as an earlier build left it: the first `version` migrations applied.

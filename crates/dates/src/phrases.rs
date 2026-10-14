@@ -94,9 +94,11 @@ pub fn day(words: &[&str], ctx: &LocalContext) -> Option<NaiveDate> {
             Some(today + Duration::days(days_ahead(today.weekday(), target)))
         }
         [name] if weekday_of(name).is_some() => Some(upcoming(weekday_of(name)?, ctx)),
+        // chrono's `%Y` takes one to four digits, so "10/30/26" would be year 26.
         [numeric] => NaiveDate::parse_from_str(numeric, "%Y-%m-%d")
             .or_else(|_| NaiveDate::parse_from_str(numeric, "%m/%d/%Y"))
-            .ok(),
+            .ok()
+            .filter(|date| date.year() >= 1000),
         [month, number] => month_day(month_of(month)?, number, None, today),
         [month, number, year] => {
             let year = year.parse::<i32>().ok().filter(|y| *y >= 1000)?;
@@ -138,7 +140,8 @@ fn split_suffix(token: &str) -> (&str, Option<&str>) {
 }
 
 /// One clock time. A bare hour is read as a clock time only after "at":
-/// 1-6 is afternoon, 7-11 is morning, 12 is noon.
+/// 1-6 is afternoon, 7-11 is morning, 12 is noon. "at 3:30" follows the same rule,
+/// while "15:30" or "at 3:30am" say exactly what they mean.
 fn clock(number: &str, suffix: Option<&str>, after_at: bool) -> Option<NaiveTime> {
     let (hour, minute) = match number.split_once(':') {
         Some((hour, minute)) => (hour.parse::<u32>().ok()?, minute.parse::<u32>().ok()?),
@@ -154,17 +157,9 @@ fn clock(number: &str, suffix: Option<&str>, after_at: bool) -> Option<NaiveTime
             }
             hour % 12 + if suffix == "pm" { 12 } else { 0 }
         }
-        None if number.contains(':') => {
-            if hour > 23 {
-                return None;
-            }
-            hour
-        }
-        None if after_at => match hour {
-            1..=6 => hour + 12,
-            7..=12 => hour,
-            _ => return None,
-        },
+        None if after_at && (1..=6).contains(&hour) => hour + 12,
+        None if number.contains(':') && hour <= 23 => hour,
+        None if after_at && (7..=12).contains(&hour) => hour,
         None => return None,
     };
     NaiveTime::from_hms_opt(hour, minute, 0)
@@ -226,13 +221,13 @@ pub fn duration(words: &[&str]) -> Option<u16> {
         ["half", "an", "hour"] | ["half", "hour"] => 30,
         [one, unit] if matches!(*one, "an" | "a" | "one") && is_hour_unit(unit) => 60,
         [amount, unit] if is_minute_unit(unit) => number_word(amount)?,
-        [amount, unit] if is_hour_unit(unit) => number_word(amount)? * 60,
+        [amount, unit] if is_hour_unit(unit) => number_word(amount)?.checked_mul(60)?,
         [compact] => {
             let (number, unit) = split_compact_unit(compact)?;
             if is_minute_unit(unit) {
                 number.parse::<u32>().ok()?
             } else if is_hour_unit(unit) {
-                number.parse::<u32>().ok()? * 60
+                number.parse::<u32>().ok()?.checked_mul(60)?
             } else {
                 return None;
             }

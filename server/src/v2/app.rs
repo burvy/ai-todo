@@ -64,6 +64,7 @@ pub struct Patch {
     pub when: Option<When>,
     pub done: Option<bool>,
     pub label: Option<Label>,
+    pub priority: Option<Priority>,
     /// The `updated_at` of the task as the client last saw it. Absent means "don't check".
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -347,11 +348,6 @@ impl<S: Store> App<S> {
         tz: Tz,
     ) -> Result<Snapshot, ApiError> {
         let ctx = self.ctx(tz);
-        // An occurrence row's id names a date, not a stored task. Finding no task would
-        // read as "gone", so it says where that row is edited instead.
-        if id.contains(':') {
-            return Err(occurrence_id_error());
-        }
         let mut tasks = self.load(user)?;
         let task = Self::held(&mut tasks, id)?;
         check_fresh(task, patch.updated_at)?;
@@ -371,6 +367,9 @@ impl<S: Store> App<S> {
         }
         if let Some(label) = patch.label {
             task.label = label;
+        }
+        if let Some(priority) = patch.priority {
+            task.priority = priority;
         }
         task.updated_at = ctx.now;
         let task = task.clone();
@@ -396,8 +395,22 @@ impl<S: Store> App<S> {
         let mut created = Vec::new();
         let mut updated = Vec::new();
         let series_ids = self.import_series(series, user, &ctx)?;
+        let held = tasks.len();
         for event in events {
             let duration_min = event_minutes(event.start, event.end);
+            // A UID this import already added is not in the store yet: the later copy
+            // wins, rather than a second insert breaking the unique index.
+            let fresh = event.uid.as_ref().and_then(|uid| {
+                tasks[held..]
+                    .iter_mut()
+                    .find(|task| task.external_uid.as_ref() == Some(uid))
+            });
+            if let Some(task) = fresh {
+                task.title = event.title;
+                task.duration_min = duration_min;
+                task.when = When::At(event.start);
+                continue;
+            }
             // The store owns the uid index, so this is one lookup per event
             // rather than a map built from every task on the server.
             let existing = match &event.uid {
@@ -412,7 +425,9 @@ impl<S: Store> App<S> {
                 task.duration_min = duration_min;
                 task.when = When::At(event.start);
                 task.updated_at = ctx.now;
-                updated.push(task.id.clone());
+                if !updated.contains(&task.id) {
+                    updated.push(task.id.clone());
+                }
                 if let Some(slot) = tasks.iter_mut().find(|held| held.id == task.id) {
                     *slot = task.clone();
                 }
@@ -440,7 +455,6 @@ impl<S: Store> App<S> {
         }
         // The imported batch lands on top in import order: its orders run from
         // one below the smallest held order down to min - created.len().
-        let held = tasks.len() - created.len();
         let min = tasks[..held]
             .iter()
             .map(|task| task.order)
@@ -891,6 +905,7 @@ impl<S: Store> App<S> {
 
     /// The task with this id, in a list already loaded, for mutation.
     fn held<'a>(tasks: &'a mut [Task], id: &str) -> Result<&'a mut Task, ApiError> {
+        check_not_occurrence(id)?;
         tasks
             .iter_mut()
             .find(|task| task.id.0 == id)
@@ -901,6 +916,7 @@ impl<S: Store> App<S> {
     }
 
     fn find(&self, user: &str, id: &str) -> Result<Task, ApiError> {
+        check_not_occurrence(id)?;
         self.load(user)?
             .into_iter()
             .find(|task| task.id.0 == id)
@@ -985,7 +1001,7 @@ pub const MAX_TITLE_CHARS: usize = 500;
 /// one lock, so an unbounded list lets one account slow everyone down.
 pub const MAX_TASKS_PER_USER: usize = 5000;
 
-fn check_title(title: &str) -> Result<(), ApiError> {
+pub fn check_title(title: &str) -> Result<(), ApiError> {
     if title.trim().is_empty() {
         return Err(ApiError {
             code: ErrorCode::BadRequest,
@@ -1012,7 +1028,7 @@ pub fn check_room(held: usize, adding: usize) -> Result<(), ApiError> {
     Ok(())
 }
 
-fn check_duration(minutes: u16) -> Result<(), ApiError> {
+pub fn check_duration(minutes: u16) -> Result<(), ApiError> {
     if !(MIN_DURATION_MIN..=MAX_DURATION_MIN).contains(&minutes) {
         return Err(ApiError {
             code: ErrorCode::BadRequest,
@@ -1036,10 +1052,16 @@ fn check_span(start_day: NaiveDate, until: Option<NaiveDate>) -> Result<(), ApiE
 
 /// What a task endpoint says when it is handed an occurrence id
 /// (`"{series_id}:{date}"`), which names a date rather than a stored task.
-fn occurrence_id_error() -> ApiError {
-    ApiError {
-        code: ErrorCode::BadRequest,
-        message: "that id names an occurrence; patch it at /api/v1/series/{id}/dates/{date}".into(),
+/// An occurrence row's id names a date, not a stored task. Finding no task would read
+/// as "gone", so every task endpoint says where that row is changed instead.
+fn check_not_occurrence(id: &str) -> Result<(), ApiError> {
+    match id.contains(':') {
+        true => Err(ApiError {
+            code: ErrorCode::BadRequest,
+            message: "that id names an occurrence; change it at /api/v1/series/{id}/dates/{date}"
+                .into(),
+        }),
+        false => Ok(()),
     }
 }
 
@@ -1836,6 +1858,21 @@ mod tests {
         app.find(USER, id).unwrap().updated_at
     }
 
+    /// Rambo's "Edit" steps a task's priority with a PATCH, so the field must be read,
+    /// not dropped as unknown (FEATURES 4a).
+    #[test]
+    fn a_patch_changes_the_priority() {
+        let clock = Arc::new(FixedClock(
+            Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
+        ));
+        let mut app = App::new(MemoryStore::new(), clock);
+        let created = app.create(draft("Taxes"), USER, NEW_YORK).expect("create");
+        let id = created.tasks[0].id.0.clone();
+        let patch: Patch = serde_json::from_str(r#"{"priority":"high"}"#).expect("parses");
+        app.patch(&id, patch, USER, NEW_YORK).expect("patched");
+        assert_eq!(app.find(USER, &id).unwrap().priority, Priority::High);
+    }
+
     fn done_patch(seen: Option<DateTime<Utc>>) -> Patch {
         Patch {
             done: Some(true),
@@ -2311,20 +2348,23 @@ mod tests {
     #[test]
     fn an_occurrence_id_cannot_be_patched_as_a_task() {
         let (mut app, id) = app_with_one_series();
-        let error = app
-            .patch(
-                &format!("{id}:2026-10-12"),
-                done_patch(None),
-                USER,
-                NEW_YORK,
-            )
-            .expect_err("an occurrence is not a task");
-        assert_eq!(error.code, ErrorCode::BadRequest);
-        assert!(
-            error.message.contains("/dates/"),
-            "the message must name the endpoint: {}",
-            error.message
-        );
+        let occurrence = format!("{id}:2026-10-12");
+        let errors = [
+            app.patch(&occurrence, done_patch(None), USER, NEW_YORK)
+                .expect_err("an occurrence is not a task"),
+            app.delete(&occurrence, USER, NEW_YORK)
+                .expect_err("nor can it be deleted as one"),
+            app.title_of(USER, &occurrence)
+                .expect_err("nor revised as one"),
+        ];
+        for error in errors {
+            assert_eq!(error.code, ErrorCode::BadRequest);
+            assert!(
+                error.message.contains("/dates/"),
+                "the message must name the endpoint: {}",
+                error.message
+            );
+        }
     }
 
     /// An edit that leaves the series unable to fire is refused as well, not only one

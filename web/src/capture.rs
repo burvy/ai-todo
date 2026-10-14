@@ -2,7 +2,7 @@
 
 use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
-use todo_core::{Label, Priority, Snapshot, Source, TaskDraft, TaskId, When};
+use todo_core::{Snapshot, TaskId};
 
 use crate::{api, mascot, pen, settings};
 
@@ -94,7 +94,6 @@ fn capture_note(title: &str, error: &api::ApiError) -> String {
 pub(crate) fn CaptureBox(
     form_ref: NodeRef<leptos::html::Form>,
     nest_ref: NodeRef<leptos::html::Button>,
-    snapshot: ReadSignal<Snapshot>,
     set_snapshot: WriteSignal<Snapshot>,
     state: ReadSignal<mascot::State>,
     set_state: WriteSignal<mascot::State>,
@@ -232,37 +231,24 @@ pub(crate) fn CaptureBox(
             if let Some(timer) = linger_timer.borrow_mut().take() {
                 timer.cancel();
             }
-            // Record current task IDs so we can find the new one after capture
-            let old_ids: std::collections::HashSet<_> =
-                snapshot.with_untracked(|s| s.tasks.iter().map(|t| t.id.clone()).collect());
             // The box empties now, so whatever is typed while the task is on its way
             // is the next task, not wiped when this one lands.
             sending.set(true);
             set_text.set(String::new());
             capture_text.set(String::new());
             wasm_bindgen_futures::spawn_local(async move {
-                let draft = TaskDraft {
-                    title: title.clone(),
-                    duration_min: 30,
-                    when: When::Anytime,
-                    label: Label::Other,
-                    priority: Priority::Medium,
-                    source: Source::Text,
-                };
-                match api::create_task(draft).await {
-                    Ok(new_snapshot) => {
-                        // Find the new task ID (the one not in old_ids)
-                        let new_id: Option<TaskId> = new_snapshot
-                            .tasks
-                            .iter()
-                            .find(|t| !old_ids.contains(&t.id))
-                            .map(|t| t.id.clone());
-                        if let Some(id) = new_id {
-                            let mut queue = pen_queue.get_untracked();
-                            queue.push(id);
-                            pen_queue.set(queue);
+                // The capture pipeline (docs/ARCHITECTURE.md 5) splits the ramble into
+                // tasks and reads their days, times, labels and priorities.
+                match api::capture_text(&title).await {
+                    Ok(captured) => {
+                        if captured.created.is_empty() {
+                            if text.get_untracked().trim().is_empty() {
+                                set_text.set(title.clone());
+                            }
+                            set_error.set(Some(format!("No task found in \"{title}\".")));
                         }
-                        set_snapshot.set(new_snapshot);
+                        pen_queue.update(|queue| queue.extend(captured.created));
+                        set_snapshot.set(captured.snapshot);
                     }
                     Err(error) => {
                         // Never lose what was said: it goes back in the box when the
