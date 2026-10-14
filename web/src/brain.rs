@@ -42,6 +42,7 @@ fn step(
     brain: &Rc<RefCell<Brain>>,
     rng: &Rc<RefCell<Seeded>>,
     event: Option<Event>,
+    audible: Signal<bool>,
     set_speech: WriteSignal<Option<String>>,
     set_pose: WriteSignal<String>,
 ) {
@@ -64,9 +65,24 @@ fn step(
         match action {
             Action::Say(key) => {
                 if let Some(line) = rambl_brain::data::lines().resolve(&key) {
-                    set_speech.set(Some(line.to_owned()));
-                    let clear = set_speech;
-                    Timeout::new(3500, move || clear.set(None)).forget();
+                    let line = line.to_owned();
+                    set_speech.set(Some(line.clone()));
+                    // The bubble and the voice are one thing: with a voice it
+                    // goes when the voice is done, plus a beat. Without one there
+                    // is nothing to wait for, so it holds on its own — it is then
+                    // the only channel the line has. Exactly one timer, either way.
+                    let clear_later = move |after_ms: u32| {
+                        let clear = set_speech;
+                        Timeout::new(after_ms, move || clear.set(None)).forget();
+                    };
+                    let spoke = audible.get_untracked()
+                        && crate::voice::say(&line, {
+                            let clear = clear_later;
+                            move || clear(crate::voice::bubble_ms(true))
+                        });
+                    if !spoke {
+                        clear_later(crate::voice::bubble_ms(false));
+                    }
                 }
             }
             Action::Pose(pose) | Action::Animate(pose) => set_pose.set(pose.to_owned()),
@@ -81,6 +97,9 @@ pub fn Controller(
     mode: Signal<crate::settings::RamblMode>,
     event: ReadSignal<Option<Event>>,
     set_event: WriteSignal<Option<Event>>,
+    /// Whether he may be heard at all: the gear menu's sound mute and his own
+    /// `Rambo talks` toggle, already combined by the caller.
+    audible: Signal<bool>,
     set_speech: WriteSignal<Option<String>>,
     set_pose: WriteSignal<String>,
 ) -> impl IntoView {
@@ -101,7 +120,7 @@ pub fn Controller(
         let rng = rng.clone();
         move |_| {
             if let Some(event) = event.get() {
-                step(&brain, &rng, Some(event), set_speech, set_pose);
+                step(&brain, &rng, Some(event), audible, set_speech, set_pose);
                 set_event.set(None);
             }
         }
@@ -144,7 +163,7 @@ pub fn Controller(
                 None
             };
             if event.is_some() {
-                step(&brain, &rng, event, set_speech, set_pose);
+                step(&brain, &rng, event, audible, set_speech, set_pose);
             }
         }
     });
@@ -179,7 +198,7 @@ pub fn Controller(
                 } else {
                     Some(Event::Tick)
                 };
-                step(&brain, &rng, event, set_speech, set_pose);
+                step(&brain, &rng, event, audible, set_speech, set_pose);
             }
         })
     };

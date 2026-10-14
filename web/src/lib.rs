@@ -16,6 +16,7 @@ pub mod pen;
 pub mod settings;
 pub mod sound;
 pub mod speech;
+pub mod voice;
 pub mod week;
 
 /// Load snapshot from API and return it, falling back to fixture on error
@@ -462,7 +463,7 @@ pub fn App() -> impl IntoView {
         {move || error.get().map(|e| view! {
             <div class="error" aria-live="polite">{e}</div>
         })}
-        <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event set_speech=set_brain_speech set_pose=set_brain_pose />
+        <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event audible=Signal::derive(move || voice::audible(view_settings.get().sounds, view_settings.get().rambo_talks)) set_speech=set_brain_speech set_pose=set_brain_pose />
         <nav class="pane-switch" aria-label="Show">
             <button
                 type="button"
@@ -1005,6 +1006,9 @@ fn Rambo(
                 set_error.set(Some(speech::UNAVAILABLE_NOTE.to_owned()));
                 return;
             }
+            // He stops mid-sentence: his own voice would otherwise come back
+            // through the microphone as a transcript of what he just said.
+            voice::cancel();
             set_error.set(None);
             transcript.borrow_mut().clear();
             let result = speech::Session::start(
