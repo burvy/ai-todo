@@ -52,6 +52,9 @@ pub enum State {
     Skittering,
     /// Dropped on a task: asking what to do with it.
     Asking { task_id: String, title: String },
+    /// Dropped on an empty planner hour: he stays on it and listens for the new task
+    /// that starts there (SPEC-ANSWERS Interview 3 item 4).
+    Noting,
     /// Flying to the capture caret or a task row (transit, not writing yet).
     Flying,
     /// Writing along at the capture caret while the user types.
@@ -81,6 +84,8 @@ pub enum Event {
     Smack,
     /// Dropped on a task row or planner block.
     DropTask { task_id: String, title: String },
+    /// Dropped on an empty hour of the planner.
+    DropHour,
     /// Put back in his nest.
     DropNest,
     /// The throw has stopped sliding (home), the splat is over (dazed), the daze is
@@ -155,6 +160,7 @@ pub fn transition(state: &State, event: Event) -> State {
         (State::Thrown, Event::Return | Event::DropNest) => State::Home,
         (State::Thrown, Event::Grab) => State::Dragging,
         (State::Dragging, Event::DropTask { task_id, title }) => State::Asking { task_id, title },
+        (State::Dragging, Event::DropHour) => State::Noting,
 
         // Splatting → Dazed → Skittering → Home.
         (State::Splatting, Event::Return) => State::Dazed,
@@ -166,7 +172,7 @@ pub fn transition(state: &State, event: Event) -> State {
         // undazed. Home is the nest, in the bar and
         // on no page; in hand he is above the page; in transit he is not standing there.
         (
-            State::Dazed | State::Inking | State::Splatting | State::Asking { .. },
+            State::Dazed | State::Inking | State::Splatting | State::Asking { .. } | State::Noting,
             Event::Covered,
         ) => State::Covered,
         (State::Covered, Event::Uncovered) => State::Home,
@@ -182,6 +188,8 @@ pub fn transition(state: &State, event: Event) -> State {
 
         // Asking: choose or return goes home.
         (State::Asking { .. }, Event::Choose | Event::Return) => State::Home,
+        // Noting: the new task sent, or never mind, goes home.
+        (State::Noting, Event::Return) => State::Home,
 
         // Writing caret: fly home when done, or fly to a row (after Add). A
         // row he cannot see is skipped without a flight.
@@ -267,15 +275,18 @@ impl Choice {
     }
 }
 
-/// Whether `gesture` while he asks means never mind: a tap anywhere but on his
-/// bubble (`on_bubble`), on him as much as on the page. A drag or a hold is the
-/// page's business, and a tap on the bubble is a choice.
+/// Whether `gesture` while he asks means never mind: a tap anywhere but on what he
+/// asks with (`on_answer`: his bubble while he asks about a task, the capture box
+/// while he notes a new one), on him as much as on the page. A drag or a hold is
+/// the page's business, and a tap on the answer is the answer.
 pub fn asking_dismissed_by(
     state: &State,
     gesture: &crate::gesture::Gesture,
-    on_bubble: bool,
+    on_answer: bool,
 ) -> bool {
-    matches!(state, State::Asking { .. }) && *gesture == crate::gesture::Gesture::Tap && !on_bubble
+    matches!(state, State::Asking { .. } | State::Noting)
+        && *gesture == crate::gesture::Gesture::Tap
+        && !on_answer
 }
 
 /// What a finger elsewhere on the page does to him: dazed, a hold anywhere draws
@@ -331,6 +342,7 @@ pub fn is_off_nest(state: &State) -> bool {
             | State::Mending
             | State::Skittering
             | State::Asking { .. }
+            | State::Noting
             | State::Flying
             | State::WritingCaret
             | State::WritingRow
@@ -365,7 +377,8 @@ pub fn hops_there(state: &State, settled_home: bool) -> bool {
         | State::Dazed
         | State::Splatting
         | State::Covered
-        | State::Asking { .. } => false,
+        | State::Asking { .. }
+        | State::Noting => false,
         State::Home => !settled_home,
         State::Flying | State::WritingCaret | State::Skittering | State::Mending => true,
     }
@@ -438,6 +451,7 @@ pub fn rambo_class(state: &State, pose: &str) -> String {
         State::Splatting => " is-splatting",
         State::Skittering => " is-skittering",
         State::Asking { .. } => " is-asking",
+        State::Noting => " is-noting",
         State::Flying => " is-flying",
         State::WritingCaret => " is-flying is-writing is-caret",
         // Not a flight: the flight's eased transition would trail the nib behind
@@ -580,7 +594,7 @@ pub fn mood_for(brain_pose: &str, typing: bool) -> Mood {
 /// type. A lobotomized Rambl is vacant whatever you do, so it wins over both.
 pub fn pose_for(state: &State, brain_pose: &str, typing: bool) -> Pose {
     match state {
-        State::Dragging => Pose::Listening,
+        State::Dragging | State::Noting => Pose::Listening,
         State::WritingCaret | State::WritingRow | State::Inking => Pose::Writing,
         State::Flying | State::Thrown => Pose::Flying,
         State::Asking { .. } => Pose::Teasing,
@@ -832,6 +846,7 @@ mod tests {
                 task_id: "t1".into(),
                 title: "Lab report".into(),
             },
+            State::Noting,
             State::Flying,
             State::WritingCaret,
             State::WritingRow,
@@ -844,6 +859,7 @@ mod tests {
             Event::Release,
             Event::DropEmpty,
             Event::DropHard,
+            Event::DropHour,
             Event::DropTask {
                 task_id: "t1".into(),
                 title: "Lab report".into(),
@@ -1551,6 +1567,11 @@ mod tests {
             (&asking, &Gesture::Drop { pos: (0.0, 0.0) }, false, false),
             (&State::Home, &Gesture::Tap, false, false),
             (&State::Dazed, &Gesture::Tap, false, false),
+            // Noting a task, the capture box is what he asks with.
+            (&State::Noting, &Gesture::Tap, false, true),
+            (&State::Noting, &Gesture::Tap, true, false),
+            (&State::Noting, &Gesture::Hold, false, false),
+            (&State::Noting, &drag, false, false),
         ];
         for (state, gesture, on_bubble, dismissed) in table {
             assert_eq!(
@@ -1561,6 +1582,27 @@ mod tests {
         }
         // Never mind sends him home.
         assert_eq!(transition(&asking, Event::Return), State::Home);
+    }
+
+    #[test]
+    fn only_a_listening_rambo_dropped_on_an_hour_notes_a_task_there() {
+        for state in every_state() {
+            let after = transition(&state, Event::DropHour);
+            match state {
+                State::Dragging => assert_eq!(after, State::Noting),
+                // Dazed and writing, a drop is ink, never a task.
+                _ => assert_eq!(after, state, "{state:?} ignores an hour"),
+            }
+        }
+        // He stays on the hour, listening, away from his nest, until the task is sent
+        // or never mind; a grab does not pick him off it, and a leaf closing over the
+        // planner catches him under it like anywhere on the page.
+        assert!(!hops_there(&State::Noting, false));
+        assert!(is_off_nest(&State::Noting));
+        assert_eq!(pose_for(&State::Noting, "happy", false), Pose::Listening);
+        assert_eq!(transition(&State::Noting, Event::Return), State::Home);
+        assert_eq!(transition(&State::Noting, Event::Grab), State::Noting);
+        assert_eq!(transition(&State::Noting, Event::Covered), State::Covered);
     }
 
     #[test]

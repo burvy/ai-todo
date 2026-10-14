@@ -20,6 +20,9 @@ use crate::{gesture, ink, mascot, settings, speech, tuning, voice};
 /// where he lands, writes when dragged again, and hops back to the nest.
 #[component]
 pub(crate) fn Rambo(
+    /// The empty planner hour he was dropped on, as a date phrase: the capture box's
+    /// next task starts then
+    noting_at: RwSignal<Option<String>>,
     state: ReadSignal<mascot::State>,
     set_state: WriteSignal<mascot::State>,
     talking: ReadSignal<bool>,
@@ -501,20 +504,78 @@ pub(crate) fn Rambo(
         }
     };
 
-    // While he asks, a tap anywhere off his bubble, on him too, or Esc is never mind
+    // Dropped on an empty planner hour he notes a new task there: the box takes what
+    // you type, and he listens, sending what he hears as you stop speaking. A tap off
+    // the box, or Esc, is never mind (the ask's listeners below).
+    let note_session = std::rc::Rc::new(std::cell::RefCell::new(None::<speech::Session>));
+    Effect::new(move |_| {
+        if state.get() != mascot::State::Noting {
+            if let Some(session) = note_session.borrow_mut().take() {
+                session.stop();
+                set_talking.set(false);
+            }
+            if noting_at.with_untracked(Option::is_some) {
+                noting_at.set(None);
+            }
+            return;
+        }
+        if let Some(input) = document()
+            .query_selector(".capture input")
+            .ok()
+            .flatten()
+            .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let _ = input.focus();
+        }
+        if !speech::supported() {
+            return;
+        }
+        voice::cancel();
+        let session = speech::Session::start(
+            std::rc::Rc::default(),
+            move |heard| capture_text.set(heard),
+            move |on| {
+                set_talking.set(on);
+                if !on
+                    && state.get_untracked() == mascot::State::Noting
+                    && !capture_text.with_untracked(|heard| heard.trim().is_empty())
+                    && let Some(form) = form_ref.get_untracked()
+                {
+                    let _ = form.request_submit();
+                }
+            },
+            // Typing the task instead of saying it is not a failure to hear one.
+            move |note: Option<String>| {
+                if note.as_deref() != Some(speech::NO_SPEECH_NOTE) {
+                    set_error.set(note);
+                }
+            },
+        );
+        if let Ok(session) = session {
+            *note_session.borrow_mut() = Some(session);
+            set_talking.set(true);
+        }
+    });
+
+    // While he asks, a tap anywhere off what he asks with (his bubble, or the capture
+    // box while he notes a task), on him too, or Esc is never mind
     // (`mascot::asking_dismissed_by`). The listeners live only as long as the ask,
     // and start after the drop that opened it, so that drop is never a tap.
     let ask_listeners =
         std::rc::Rc::new(std::cell::RefCell::new(Vec::<WindowListenerHandle>::new()));
     Effect::new(move |_| {
-        let asking = matches!(state.get(), mascot::State::Asking { .. });
+        let answer = match state.get() {
+            mascot::State::Asking { .. } => Some(".ask"),
+            mascot::State::Noting => Some(".capture"),
+            _ => None,
+        };
         ask_listeners
             .borrow_mut()
             .drain(..)
             .for_each(WindowListenerHandle::remove);
-        if !asking {
+        let Some(answer) = answer else {
             return;
-        }
+        };
         let finger = std::rc::Rc::new(std::cell::RefCell::new(gesture::Recognizer::new()));
         let on_bubble = std::rc::Rc::new(std::cell::Cell::new(false));
         let never_mind = move || {
@@ -541,7 +602,7 @@ pub(crate) fn Rambo(
             move |ev| {
                 // Only the first finger's place counts: the recogniser ignores the rest.
                 if finger.borrow().finger().is_none() {
-                    on_bubble.set(within(&ev, ".ask"));
+                    on_bubble.set(within(&ev, answer));
                 }
                 let target = match within(&ev, ".rambo") {
                     true => gesture::Target::Rambo,
@@ -591,6 +652,9 @@ pub(crate) fn Rambo(
             }
         }));
         // The first choice takes the focus, so the keyboard can answer him at once.
+        if answer != ".ask" {
+            return;
+        }
         crate::engine::next_frame(move || {
             if let Some(button) = bubble_ref
                 .get_untracked()
@@ -997,6 +1061,18 @@ pub(crate) fn Rambo(
                         set_state.set(after);
                         return;
                     }
+                    // Dropped on an empty planner hour, he notes a new task that starts then.
+                    if before == mascot::State::Dragging
+                        && let Some(at) = free_hour_under(
+                            (client_x, client_y),
+                            &snapshot.get_untracked(),
+                            &view_settings.get_untracked(),
+                        )
+                    {
+                        noting_at.set(Some(at));
+                        set_state.set(mascot::transition(&before, mascot::Event::DropHour));
+                        return;
+                    }
                     // A listening Rambo dropped on a task row asks what to do with it.
                     if before == mascot::State::Dragging
                         && let Some(row) = row_under(client_x, client_y)
@@ -1239,6 +1315,19 @@ fn let_go(on: &web_sys::Element, id: i32) {
 
 /// The task row under a point, looking past Rambo himself: he is under the
 /// pointer while he is carried, so the topmost element there is always him.
+/// The empty planner hour under `(x, y)`, as the date phrase a task starting then is
+/// sent with; None off the planner, over a placed task, or at a time the clock skips.
+fn free_hour_under(
+    (x, y): (f64, f64),
+    snapshot: &Snapshot,
+    settings: &settings::Settings,
+) -> Option<String> {
+    let slot = crate::week::hour_at(x, y, settings)?;
+    let ctx = crate::week::planner_context(&snapshot.tz);
+    crate::week::free_at(&snapshot.plan.placements, &ctx, slot)
+        .then(|| crate::week::hour_prefill_text(&ctx, slot.day, slot.minutes))
+}
+
 fn row_under(x: f64, y: f64) -> Option<web_sys::Element> {
     let doc = web_sys::window()?.document()?;
     doc.elements_from_point(x as f32, y as f32)

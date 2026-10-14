@@ -622,9 +622,18 @@ pub(crate) fn drop_start(ctx: &LocalContext, day: i64, minutes: u16) -> Option<D
         .map(|l| l.with_timezone(&Utc))
 }
 
+/// Whether a new task could start at `slot`: the time exists that day, and no placed
+/// task is under way then (one that ends at that minute is over).
+pub(crate) fn free_at(placements: &[Placement], ctx: &LocalContext, slot: Slot) -> bool {
+    drop_start(ctx, slot.day, slot.minutes).is_some_and(|instant| {
+        !placements
+            .iter()
+            .any(|placement| (placement.start..placement.end).contains(&instant))
+    })
+}
+
 /// What the capture box gets pre-filled with on a long-press of an empty hour:
 /// the slot as a date phrase Jev already understands, plus a trailing space.
-#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn hour_prefill_text(ctx: &LocalContext, day: i64, minutes: u16) -> String {
     let date = ctx.today() + chrono::Duration::days(day);
     let day_phrase = match day {
@@ -1027,6 +1036,12 @@ pub(crate) fn hour_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
     landing_at(x, y, settings)
 }
 
+/// Off the browser there is no page to point at.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn hour_at(_x: f64, _y: f64, _settings: &Settings) -> Option<Slot> {
+    None
+}
+
 /// The paper a not-yet-lifted finger slides over: `main` along its length,
 /// the planner's own scroll box down its hours, in the direction the finger
 /// drags them, because a slip itself never scrolls (it is touch-action: none).
@@ -1127,6 +1142,50 @@ mod tests {
         let berlin = zone("Europe/Berlin", at_utc(2026, 10, 12, 12, 0));
         // The same instant is 01:30 on 13 Oct in Berlin: tomorrow.
         assert_eq!(day_index(at_utc(2026, 10, 12, 23, 30), &berlin), 1);
+    }
+
+    #[test]
+    fn an_hour_is_free_unless_a_placed_task_is_under_way_then() {
+        let ny = zone("America/New_York", at_utc(2026, 10, 12, 12, 0));
+        // A seeded generator, so the run is the same every time.
+        let mut seed = 7_u64;
+        let mut next = |below: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % below
+        };
+        let slot = |day: i64, minutes: u16| Slot { day, minutes };
+        for _ in 0..200 {
+            let placements: Vec<Placement> = (0..next(5))
+                .map(|n| {
+                    let (day, minutes) = (next(4) as i64, (8 * 60 + next(36) * 15) as u16);
+                    let start = drop_start(&ny, day, minutes).unwrap();
+                    Placement {
+                        task: todo_core::TaskId(format!("t{n}")),
+                        start,
+                        end: start + chrono::Duration::minutes(15 * (1 + next(8) as i64)),
+                    }
+                })
+                .collect();
+            for day in 0..4 {
+                for minutes in (8 * 60..20 * 60).step_by(15) {
+                    let instant = drop_start(&ny, day, minutes).unwrap();
+                    let under_way = placements
+                        .iter()
+                        .any(|placement| placement.start <= instant && instant < placement.end);
+                    assert_eq!(
+                        free_at(&placements, &ny, slot(day, minutes)),
+                        !under_way,
+                        "day {day} at {minutes}: {placements:?}"
+                    );
+                }
+            }
+        }
+        // With nothing placed every hour is free, but never a time the clock skips.
+        assert!(free_at(&[], &ny, slot(0, 9 * 60)));
+        let spring = zone("America/New_York", at_utc(2026, 3, 5, 12, 0));
+        assert!(!free_at(&[], &spring, slot(3, 2 * 60 + 30)));
     }
 
     #[test]

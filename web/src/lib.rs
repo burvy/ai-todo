@@ -105,6 +105,9 @@ pub fn App() -> impl IntoView {
     let edit_request = RwSignal::new(None::<TaskId>);
     // A row Rambo was asked to move: the planner waits for a tap on an hour
     let move_request = RwSignal::new(None::<TaskId>);
+    // When Rambo was dropped on an empty planner hour, that hour as a date phrase: the
+    // capture box's next task starts then.
+    let noting_at = RwSignal::new(None::<String>);
     // The task whose edit sheet is open: the list owns it, Rambo listens while it is
     let open_sheet = RwSignal::new(None::<TaskId>);
     // The scrap a swiped-out row leaves in the corner, to tape it back
@@ -153,6 +156,7 @@ pub fn App() -> impl IntoView {
                 view_settings
                 pen_pos
                 capture_text
+                noting_at
                 pen_queue
                 set_typing
                 set_error
@@ -252,6 +256,7 @@ pub fn App() -> impl IntoView {
         <inklayer::InkLayer strokes on=ink::Surface::Floor />
         // Rambo: independent fixed layer above everything, not part of the capture form
         <Rambo
+            noting_at
             state=mascot_state
             set_state=set_mascot_state
             talking
