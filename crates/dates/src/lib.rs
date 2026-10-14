@@ -10,16 +10,11 @@ pub use repeats::{RecurrenceMatch, recurrence};
 
 use std::ops::Range;
 
-use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+use chrono::{NaiveDate, NaiveTime};
 use todo_core::{LocalContext, When};
 
 /// Longest phrase the resolvers accept, in words ("half an hour", "October 30, 2026").
 const MAX_WINDOW: usize = 3;
-
-/// 17:00 local: where a day-only deadline lands.
-fn end_of_day() -> NaiveTime {
-    NaiveTime::from_hms_opt(17, 0, 0).expect("17:00 is a valid time")
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Value {
@@ -95,24 +90,18 @@ pub fn resolve(text: &str, ctx: &LocalContext) -> Resolved {
     resolved
 }
 
-/// A day alone: 17:00 local on that day. Without a day, `None`.
-pub fn due_by(text: &str, ctx: &LocalContext) -> Option<DateTime<Utc>> {
-    let day = resolve(text, ctx).day?;
-    Some(ctx.at(day, end_of_day()))
-}
-
-/// The scheduling rule for a capture: day + time pins the task, a day alone makes it
-/// due by 17:00 that day, and anything else floats.
-pub fn when(text: &str, ctx: &LocalContext) -> When {
-    let resolved = resolve(text, ctx);
-    when_from(resolved.day, resolved.time, ctx)
-}
-
-/// [`when`] for a day and time already chosen, such as the ones Jev picked.
-pub fn when_from(day: Option<NaiveDate>, time: Option<NaiveTime>, ctx: &LocalContext) -> When {
+/// The scheduling rule for a capture, from the day and time already chosen: day + time
+/// pins the task, a day alone makes it due by `deadline` (the user's day-only deadline
+/// time) that day, and anything else floats.
+pub fn when_from(
+    day: Option<NaiveDate>,
+    time: Option<NaiveTime>,
+    deadline: NaiveTime,
+    ctx: &LocalContext,
+) -> When {
     match (day, time) {
         (Some(day), Some(time)) => When::At(ctx.at(day, time)),
-        (Some(day), None) => When::DueBy(ctx.at(day, end_of_day())),
+        (Some(day), None) => When::DueBy(ctx.at(day, deadline)),
         _ => When::Anytime,
     }
 }
@@ -166,6 +155,7 @@ fn push_token(text: &str, begin: usize, end: usize, tokens: &mut Vec<Token>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::{DateTime, Utc};
 
     /// A day and a time together: the exact instant. Without both, `None`.
     fn pinned_start(text: &str, ctx: &LocalContext) -> Option<DateTime<Utc>> {
@@ -424,26 +414,36 @@ mod tests {
         );
     }
 
-    #[test]
-    fn when_follows_the_capture_rule() {
-        let ctx = sunday_night();
-        assert_eq!(
-            when("tomorrow at 3", &ctx),
-            When::At(utc(2026, 10, 12, 19, 0))
-        );
-        assert_eq!(
-            when("tomorrow", &ctx),
-            When::DueBy(utc(2026, 10, 12, 21, 0))
-        );
-        assert_eq!(when("at 3", &ctx), When::Anytime);
-        assert_eq!(when("buy milk", &ctx), When::Anytime);
+    fn when(text: &str, deadline: NaiveTime, ctx: &LocalContext) -> When {
+        let resolved = resolve(text, ctx);
+        when_from(resolved.day, resolved.time, deadline, ctx)
     }
 
     #[test]
-    fn due_by_is_five_pm_local() {
+    fn when_follows_the_capture_rule() {
         let ctx = sunday_night();
-        assert_eq!(due_by("tomorrow", &ctx), Some(utc(2026, 10, 12, 21, 0)));
-        assert_eq!(due_by("at 3", &ctx), None);
+        let deadline = todo_core::DaySettings::default().deadline;
+        assert_eq!(
+            when("tomorrow at 3", deadline, &ctx),
+            When::At(utc(2026, 10, 12, 19, 0))
+        );
+        // Day alone: due 23:59 New York time on Monday, 03:59 UTC on Tuesday.
+        assert_eq!(
+            when("tomorrow", deadline, &ctx),
+            When::DueBy(utc(2026, 10, 13, 3, 59))
+        );
+        assert_eq!(when("at 3", deadline, &ctx), When::Anytime);
+        assert_eq!(when("buy milk", deadline, &ctx), When::Anytime);
+    }
+
+    #[test]
+    fn the_day_only_deadline_follows_the_setting() {
+        let ctx = sunday_night();
+        let five = NaiveTime::from_hms_opt(17, 0, 0).unwrap();
+        assert_eq!(
+            when("tomorrow", five, &ctx),
+            When::DueBy(utc(2026, 10, 12, 21, 0))
+        );
     }
 
     #[test]

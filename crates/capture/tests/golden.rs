@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 use capture::capture_text;
 use chrono::{TimeZone, Utc};
 use judge::FakeJudge;
-use todo_core::{LocalContext, Source, TaskDraft};
+use todo_core::{DaySettings, LocalContext, Source, TaskDraft};
 
 const RAMBLES: &str = "tests/fixtures/rambles.md";
 const EXPECTED: &str = "tests/fixtures/rambles.expected.txt";
@@ -55,9 +55,15 @@ async fn rambles_match_the_golden_output() {
     let mut actual = String::new();
     for (index, ramble) in rambles(&source).iter().enumerate() {
         writeln!(actual, "## ramble {}", index + 1).unwrap();
-        let drafts = capture_text(&FakeJudge, ramble, Source::Voice, &ctx())
-            .await
-            .expect("fake judge never fails");
+        let drafts = capture_text(
+            &FakeJudge,
+            ramble,
+            Source::Voice,
+            DaySettings::default().deadline,
+            &ctx(),
+        )
+        .await
+        .expect("fake judge never fails");
         actual.push_str(&render(&drafts));
     }
 

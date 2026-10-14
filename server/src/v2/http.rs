@@ -14,7 +14,7 @@ use axum::{
 };
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
-use todo_core::{ApiError, ErrorCode, Snapshot, Task, TaskDraft};
+use todo_core::{ApiError, DaySettings, ErrorCode, Snapshot, Task, TaskDraft};
 use uuid::Uuid;
 
 use super::LockExt;
@@ -427,6 +427,7 @@ fn build_router_with(
         .route("/api/v1/snapshot", get(snapshot))
         .route("/api/v1/tasks", post(create))
         .route("/api/v1/tasks/order", put(reorder))
+        .route("/api/v1/settings", get(get_settings).patch(patch_settings))
         .route("/api/v1/import", post(import))
         .route("/api/v1/tasks/{id}", patch(update).delete(remove))
         .route("/api/v1/series", post(create_series))
@@ -991,6 +992,29 @@ async fn create(
     Ok(Json(app.create(draft, &user, tz)?))
 }
 
+/// The signed-in user's day-only times: when "by Friday" is due, and where on its day
+/// a task with no time goes when they have no habits to learn from.
+async fn get_settings(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+) -> Result<Json<DaySettings>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
+    let app = shared.app.lock_recover();
+    Ok(Json(app.day_settings(&user)?))
+}
+
+/// Changes the fields sent (`deadline`, `placement`, each `HH:MM`) and answers with
+/// both as they now stand. The next snapshot places tasks by them.
+async fn patch_settings(
+    State(shared): State<Arc<Shared>>,
+    headers: HeaderMap,
+    Json(patch): Json<app::DaySettingsPatch>,
+) -> Result<Json<DaySettings>, HttpError> {
+    let user = CurrentUser::resolve(&headers, &shared)?;
+    let mut app = shared.app.lock_recover();
+    Ok(Json(app.patch_day_settings(&user, patch)?))
+}
+
 async fn update(
     State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
@@ -1277,12 +1301,13 @@ async fn capture(
             .map_err(store_failed)?;
         fallback
     };
+    let deadline = shared.app.lock_recover().day_settings(&user)?.deadline;
     let drafts = if jev_fallback {
-        capture_text(&judge::FakeJudge, &text, source, &ctx)
+        capture_text(&judge::FakeJudge, &text, source, deadline, &ctx)
             .await
             .map_err(upstream)?
     } else {
-        capture_text(&shared.judge, &text, source, &ctx)
+        capture_text(&shared.judge, &text, source, deadline, &ctx)
             .await
             .map_err(upstream)?
     };
@@ -1682,6 +1707,111 @@ mod tests {
             .find(|p| p.task == meet.id)
             .unwrap();
         assert!(read_place.end <= meet_place.start || read_place.start >= meet_place.end);
+    }
+
+    #[tokio::test]
+    async fn day_only_settings_start_at_the_defaults_and_change_by_field() {
+        let router = router_at(sunday_night());
+        let (status, body) = send(&router, "GET", "/api/v1/settings", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["deadline"], "23:59");
+        assert_eq!(body["placement"], "12:00");
+
+        // One field at a time: the other stays as it was.
+        let (status, body) = send(
+            &router,
+            "PATCH",
+            "/api/v1/settings",
+            Some(r#"{"deadline":"17:00"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["deadline"], "17:00");
+        assert_eq!(body["placement"], "12:00");
+        let (_, body) = send(&router, "GET", "/api/v1/settings", None).await;
+        assert_eq!(body["deadline"], "17:00");
+    }
+
+    #[tokio::test]
+    async fn a_deadline_of_midnight_is_refused_and_changes_nothing() {
+        let router = router_at(sunday_night());
+        let (status, _) = send(
+            &router,
+            "PATCH",
+            "/api/v1/settings",
+            Some(r#"{"deadline":"00:00","placement":"09:00"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (_, body) = send(&router, "GET", "/api/v1/settings", None).await;
+        assert_eq!(
+            body["placement"], "12:00",
+            "a refused patch applies none of it"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_deadline_setting_decides_when_a_captured_day_is_due() {
+        let router = router_at(sunday_night());
+        let capture = |router: Router| async move {
+            let (_, body, _) = send_raw(
+                &router,
+                "POST",
+                "/api/v1/capture",
+                "application/json",
+                r#"{"text":"Pay rent tomorrow"}"#,
+            )
+            .await;
+            serde_json::from_value::<Snapshot>(body["snapshot"].clone()).unwrap()
+        };
+        // Tomorrow is Monday 12 October. Default: 23:59 New York, 03:59 UTC on the 13th.
+        let snapshot = capture(router.clone()).await;
+        assert_eq!(
+            snapshot.tasks[0].when,
+            When::DueBy(Utc.with_ymd_and_hms(2026, 10, 13, 3, 59, 0).unwrap())
+        );
+        send(
+            &router,
+            "PATCH",
+            "/api/v1/settings",
+            Some(r#"{"deadline":"17:00"}"#),
+        )
+        .await;
+        let snapshot = capture(router).await;
+        assert!(
+            snapshot.tasks.iter().any(|task| task.when
+                == When::DueBy(Utc.with_ymd_and_hms(2026, 10, 12, 21, 0, 0).unwrap())),
+            "the second capture is due 17:00: {:?}",
+            snapshot.tasks
+        );
+    }
+
+    #[tokio::test]
+    async fn the_placement_setting_moves_a_day_only_task_within_its_day() {
+        let router = router_at(sunday_night());
+        // Due Monday 23:59 New York.
+        let draft = r#"{"title":"Call mom","duration_min":60,"when":{"kind":"due_by","time":"2026-10-13T03:59:00Z"},"label":"Personal","priority":"low","source":"text"}"#;
+        let (_, body) = send(&router, "POST", "/api/v1/tasks", Some(draft)).await;
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        // No timed tasks to learn from: noon New York on Monday, 16:00 UTC.
+        assert_eq!(
+            snapshot.plan.placements[0].start,
+            Utc.with_ymd_and_hms(2026, 10, 12, 16, 0, 0).unwrap()
+        );
+
+        send(
+            &router,
+            "PATCH",
+            "/api/v1/settings",
+            Some(r#"{"placement":"09:00"}"#),
+        )
+        .await;
+        let (_, body) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(
+            snapshot.plan.placements[0].start,
+            Utc.with_ymd_and_hms(2026, 10, 12, 13, 0, 0).unwrap()
+        );
     }
 
     #[tokio::test]
@@ -4616,6 +4746,16 @@ mod tests {
         }
         fn set_user_plan(&self, user: &str, plan: crate::v2::auth::Plan) -> Result<(), StoreError> {
             self.inner.set_user_plan(user, plan)
+        }
+        fn day_settings(&self, user: &str) -> Result<todo_core::DaySettings, StoreError> {
+            self.inner.day_settings(user)
+        }
+        fn set_day_settings(
+            &self,
+            user: &str,
+            settings: todo_core::DaySettings,
+        ) -> Result<(), StoreError> {
+            self.inner.set_day_settings(user, settings)
         }
         fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
             self.inner.anonymous_exists(user)

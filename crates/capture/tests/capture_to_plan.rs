@@ -6,7 +6,7 @@ use chrono::{DateTime, NaiveTime, TimeZone, Utc};
 use chrono_tz::America::New_York;
 use judge::FakeJudge;
 use scheduler::{WorkingHours, plan};
-use todo_core::{LocalContext, Source, Task, TaskDraft, TaskId, When};
+use todo_core::{DaySettings, LocalContext, Source, Task, TaskDraft, TaskId, When};
 
 /// Wednesday 2026-10-14 05:00 in New York, before working hours start.
 fn ctx() -> LocalContext {
@@ -16,10 +16,10 @@ fn ctx() -> LocalContext {
     }
 }
 
-fn local(ctx: &LocalContext, day: u32, hour: u32) -> DateTime<Utc> {
+fn local(ctx: &LocalContext, day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
     ctx.at(
         chrono::NaiveDate::from_ymd_opt(2026, 10, day).unwrap(),
-        NaiveTime::from_hms_opt(hour, 0, 0).unwrap(),
+        NaiveTime::from_hms_opt(hour, minute, 0).unwrap(),
     )
 }
 
@@ -42,21 +42,22 @@ fn task(index: usize, draft: TaskDraft, ctx: &LocalContext) -> Task {
 }
 
 #[tokio::test]
-async fn a_day_only_task_keeps_its_friday_deadline_and_is_placed_before_it() {
+async fn a_day_only_task_is_placed_on_its_day_near_the_users_usual_time() {
     let ctx = ctx();
     let drafts = capture_text(
         &FakeJudge,
         "buy milk tomorrow at 3 and call mom friday",
         Source::Text,
+        DaySettings::default().deadline,
         &ctx,
     )
     .await
     .unwrap();
     assert_eq!(drafts.len(), 2, "{drafts:?}");
 
-    // Thursday at 3 pm pins the first; "friday" alone is due by 17:00 that day.
-    assert_eq!(drafts[0].when, When::At(local(&ctx, 15, 15)));
-    assert_eq!(drafts[1].when, When::DueBy(local(&ctx, 16, 17)));
+    // Thursday at 3 pm pins the first; "friday" alone is due by 23:59 that day.
+    assert_eq!(drafts[0].when, When::At(local(&ctx, 15, 15, 0)));
+    assert_eq!(drafts[1].when, When::DueBy(local(&ctx, 16, 23, 59)));
 
     let tasks: Vec<Task> = drafts
         .into_iter()
@@ -70,12 +71,13 @@ async fn a_day_only_task_keeps_its_friday_deadline_and_is_placed_before_it() {
     );
     let planned = plan(&tasks, &hours, &ctx);
 
-    // "Due by" means by, not on: the earliest free slot before the deadline is today.
+    // Friday is the day it is placed on, at the one time the user has given so far
+    // (Thursday 3 pm), not the earliest free hour of the week.
     let call = planned
         .placements
         .iter()
         .find(|placement| placement.task.0 == "t1")
         .expect("call mom is placed");
-    assert_eq!(call.start, local(&ctx, 14, 8));
-    assert!(call.end <= local(&ctx, 16, 17));
+    assert_eq!(call.start, local(&ctx, 16, 15, 0));
+    assert!(call.end <= local(&ctx, 16, 23, 59));
 }

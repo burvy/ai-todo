@@ -2,6 +2,7 @@
 //! (ARCHITECTURE.md section 5). Code makes every candidate and every date; Jev chooses.
 
 use anyhow::Result;
+use chrono::NaiveTime;
 use dates::{Candidate, Value, candidates};
 use judge::{ClauseAnswer, ClauseQuestion, Judge};
 use todo_core::{LocalContext, Source, TaskDraft};
@@ -14,10 +15,12 @@ const MIN_DURATION_MIN: u16 = 5;
 const MAX_DURATION_MIN: u16 = 480;
 
 /// Turn a capture into task drafts. Clauses Jev does not judge to be tasks are dropped.
+/// `deadline` is the user's day-only deadline time: "by Friday" is due then.
 pub async fn capture_text<J: Judge>(
     judge: &J,
     text: &str,
     source: Source,
+    deadline: NaiveTime,
     ctx: &LocalContext,
 ) -> Result<Vec<TaskDraft>> {
     let clauses = split_clauses(text);
@@ -43,7 +46,7 @@ pub async fn capture_text<J: Judge>(
 
     let mut drafts = Vec::new();
     for ((clause, found), answer) in clauses.iter().zip(&found).zip(&answers) {
-        if let Some(draft) = draft(clause, found, answer, source, ctx) {
+        if let Some(draft) = draft(clause, found, answer, source, deadline, ctx) {
             drafts.push(draft);
         }
     }
@@ -188,6 +191,7 @@ fn draft(
     found: &[Candidate],
     answer: &ClauseAnswer,
     source: Source,
+    deadline: NaiveTime,
     ctx: &LocalContext,
 ) -> Option<TaskDraft> {
     if answer.is_task < 0.5 {
@@ -225,7 +229,7 @@ fn draft(
     Some(TaskDraft {
         title,
         duration_min: duration.clamp(MIN_DURATION_MIN, MAX_DURATION_MIN),
-        when: dates::when_from(day, time, ctx),
+        when: dates::when_from(day, time, deadline, ctx),
         label: answer.label,
         priority: answer.priority,
         source,
@@ -279,8 +283,16 @@ mod tests {
         }
     }
 
+    fn deadline() -> NaiveTime {
+        todo_core::DaySettings::default().deadline
+    }
+
     async fn drafts(text: &str, answer: ClauseAnswer) -> Vec<TaskDraft> {
-        capture_text(&Scripted(answer), text, Source::Text, &ctx())
+        drafts_due(text, answer, deadline()).await
+    }
+
+    async fn drafts_due(text: &str, answer: ClauseAnswer, deadline: NaiveTime) -> Vec<TaskDraft> {
+        capture_text(&Scripted(answer), text, Source::Text, deadline, &ctx())
             .await
             .unwrap()
     }
@@ -367,10 +379,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_day_alone_is_due_by_five_pm() {
+    async fn a_day_alone_is_due_by_the_deadline_time() {
         let mut picked = answer();
         picked.day = Some(0);
-        let out = drafts("Pay rent tomorrow", picked).await;
+        // 23:59 New York time on Monday the 12th.
+        let out = drafts("Pay rent tomorrow", picked.clone()).await;
+        let due = Utc.with_ymd_and_hms(2026, 10, 13, 3, 59, 0).unwrap();
+        assert_eq!(out[0].when, When::DueBy(due));
+
+        // The user's own deadline setting moves it.
+        let five = NaiveTime::from_hms_opt(17, 0, 0).unwrap();
+        let out = drafts_due("Pay rent tomorrow", picked, five).await;
         let due = Utc.with_ymd_and_hms(2026, 10, 12, 21, 0, 0).unwrap();
         assert_eq!(out[0].when, When::DueBy(due));
     }
@@ -425,7 +444,7 @@ mod tests {
         let day = NaiveDate::from_ymd_opt(2026, 10, 15).unwrap();
         let time = NaiveTime::from_hms_opt(14, 0, 0).unwrap();
         assert_eq!(
-            dates::when_from(Some(day), Some(time), &ctx()),
+            dates::when_from(Some(day), Some(time), deadline(), &ctx()),
             When::At(Utc.with_ymd_and_hms(2026, 10, 15, 18, 0, 0).unwrap())
         );
     }
@@ -486,7 +505,8 @@ mod tests {
     #[tokio::test]
     async fn ten_k_char_input_does_not_panic() {
         let long = "a ".repeat(5000);
-        let result = capture_text(&Scripted(answer()), &long, Source::Text, &ctx()).await;
+        let result =
+            capture_text(&Scripted(answer()), &long, Source::Text, deadline(), &ctx()).await;
         assert!(result.is_ok(), "10k input must not panic");
     }
 
