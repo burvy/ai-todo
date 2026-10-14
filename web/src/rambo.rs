@@ -42,7 +42,7 @@ pub(crate) fn Rambo(
     /// The nest button: Rambo measures its bounding box to know where home is
     nest_ref: NodeRef<leptos::html::Button>,
     /// The corner a deleted row's scrap lies in: his × lays one like any delete
-    scraps: RwSignal<Option<crate::scrap::Scrap>>,
+    scraps: RwSignal<Vec<crate::scrap::Scrap>>,
     /// The tool he holds: it decides which drawing of each pose he wears
     pen: Signal<settings::Pen>,
     /// True while you are typing, so he peeks over at the box
