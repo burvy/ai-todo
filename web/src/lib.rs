@@ -11,11 +11,13 @@ pub mod ink;
 pub mod inklayer;
 pub mod mascot;
 pub mod pen;
+pub mod pickers;
 pub mod row;
 pub mod settings;
 pub mod sound;
 pub mod speech;
 pub mod tack;
+pub mod tuning;
 pub mod voice;
 pub mod week;
 
