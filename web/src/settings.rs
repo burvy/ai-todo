@@ -475,17 +475,15 @@ pub fn load() -> Settings {
     }
 }
 
-fn save(_settings: Settings) {
+fn save(settings: Settings) {
     #[cfg(target_arch = "wasm32")]
+    if let Ok(Some(storage)) = leptos::prelude::window().local_storage()
+        && let Ok(value) = serde_json::to_string(&settings)
     {
-        if let Ok(Some(storage)) = leptos::prelude::window().local_storage() {
-            if let Ok(value) = serde_json::to_string(&_settings) {
-                let _ = storage.set_item("rambl-view-settings", &value);
-            }
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        let _ = _settings;
+        let _ = storage.set_item("rambl-view-settings", &value);
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = settings;
 }
 
 #[cfg(test)]
