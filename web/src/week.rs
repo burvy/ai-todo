@@ -7,7 +7,7 @@ use todo_core::When;
 use todo_core::{Clock, SystemClock};
 use todo_core::{LocalContext, Placement, Snapshot, TaskId};
 
-use crate::{mascot, settings::Settings};
+use crate::{clock, mascot, settings::Settings};
 
 /// A task being dragged by its grip: who it is, and where the finger is.
 /// Where it may land is drawn from `landing`; the drop's `updated_at` guard
@@ -139,7 +139,10 @@ pub fn WeekGrid(
                                         on:pointercancel=long_press_stop
                                     >
                                         {(day == 0).then(|| view! {
-                                            <span>{format!("{hour:02}:00")}</span>
+                                            <span>{clock::format_time(
+                                u16::from(hour) * 60,
+                                settings.get().clock,
+                            )}</span>
                                         })}
                                     </div>
                                 </For>
@@ -339,9 +342,19 @@ pub(crate) fn planner_context(tz_name: &str) -> LocalContext {
     }
 }
 
-/// A placement's start as the planner shows it: weekday and clock time in the zone.
-pub(crate) fn local_time_label(ctx: &LocalContext, start: DateTime<Utc>) -> String {
-    ctx.local(start).format("%a %H:%M").to_string()
+/// A placement's start as the planner shows it: weekday and clock time in the
+/// zone, written in the paper's clock, short or long as the gear set it.
+pub(crate) fn local_time_label(
+    ctx: &LocalContext,
+    start: DateTime<Utc>,
+    clock: clock::Clock,
+) -> String {
+    let local = ctx.local(start);
+    clock::format_day_time(
+        &local.format("%a").to_string(),
+        local.hour() as u16 * 60 + local.minute() as u16,
+        clock,
+    )
 }
 
 /// What an occurrence row's id is named from: `"{series_id}:{date}"`, the
@@ -464,7 +477,14 @@ fn PlacementBlock(
     #[cfg(target_arch = "wasm32")]
     let cancel_id = task_id.clone();
     let drop_id = task_id.clone();
-    let render_time = local_time_label(&planner_context(&snapshot.get().tz), placement.start);
+    // The slip's time rides the gear's clock: it re-writes when the clock flips.
+    let render_time = move || {
+        local_time_label(
+            &planner_context(&snapshot.get().tz),
+            placement.start,
+            settings.get().clock,
+        )
+    };
 
     #[cfg(target_arch = "wasm32")]
     let grip_down = {
@@ -798,7 +818,16 @@ mod tests {
         // 14:00 UTC on Monday 12 Oct is 10:00 in New York (EDT, UTC-4).
         let ny = zone("America/New_York", at_utc(2026, 10, 12, 12, 0));
         assert_eq!(
-            local_time_label(&ny, at_utc(2026, 10, 12, 14, 0)),
+            local_time_label(&ny, at_utc(2026, 10, 12, 14, 0), clock::Clock::Twelve),
+            "Mon 10 am"
+        );
+        assert_eq!(
+            local_time_label(&ny, at_utc(2026, 10, 12, 14, 30), clock::Clock::Twelve),
+            "Mon 10:30 am"
+        );
+        // The 24-hour clock keeps the machine hours.
+        assert_eq!(
+            local_time_label(&ny, at_utc(2026, 10, 12, 14, 0), clock::Clock::TwentyFour),
             "Mon 10:00"
         );
     }
