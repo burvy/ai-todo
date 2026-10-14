@@ -164,22 +164,28 @@ impl TokenVerifier for GoogleVerifier {
                 .json()
                 .await
                 .map_err(|why| AuthError::Rejected(format!("unreadable tokeninfo: {why}")))?;
-            // The two checks that matter. An audience is not ours, so the token is
-            // real but for someone else's app: reject rather than trust it.
-            if info.aud != self.client_id {
-                return Err(AuthError::Rejected(
-                    "token was not made for this app".into(),
-                ));
-            }
-            if info.email_verified != "true" {
-                return Err(AuthError::Rejected("email is not verified".into()));
-            }
-            Ok(info)
+            accept(info, &self.client_id)
         })
     }
 }
 
-/// Verifies with a fixed answer. Tests use this; it is never wired into a router.
+/// The two checks that matter once Google has vouched for a token. An audience that
+/// is not ours means the token is real but for someone else's app: reject rather
+/// than trust it.
+fn accept(info: TokenInfo, client_id: &str) -> Result<TokenInfo, AuthError> {
+    if info.aud != client_id {
+        return Err(AuthError::Rejected(
+            "token was not made for this app".into(),
+        ));
+    }
+    if info.email_verified != "true" {
+        return Err(AuthError::Rejected("email is not verified".into()));
+    }
+    Ok(info)
+}
+
+/// Verifies with a fixed answer. Tests use this, and local mode wires one in that
+/// refuses every credential, since nobody signs in there.
 pub struct FakeVerifier {
     pub answer: Result<TokenInfo, String>,
 }
@@ -301,4 +307,64 @@ pub fn bearer(headers: &axum::http::HeaderMap) -> Option<String> {
         .and_then(|value| value.strip_prefix("Bearer "))
         .map(|token| token.trim().to_owned())
         .filter(|token| !token.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rejection(result: Result<TokenInfo, AuthError>) -> String {
+        match result {
+            Err(AuthError::Rejected(why)) => why,
+            other => panic!("expected a rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_verified_token_for_this_app_is_accepted() {
+        let info = TokenInfo::for_test("google-1", "sam@example.com");
+        let accepted = accept(info, "test-client").expect("accepted");
+        assert_eq!(accepted.sub, "google-1");
+    }
+
+    #[test]
+    fn a_token_made_for_another_app_is_rejected() {
+        let info = TokenInfo::for_test("google-1", "sam@example.com");
+        assert!(rejection(accept(info, "our-client")).contains("not made for this app"));
+    }
+
+    #[test]
+    fn an_unverified_email_is_rejected() {
+        for verified in ["false", "", "TRUE"] {
+            let info = TokenInfo {
+                email_verified: verified.into(),
+                ..TokenInfo::for_test("google-1", "sam@example.com")
+            };
+            assert!(
+                rejection(accept(info, "test-client")).contains("not verified"),
+                "email_verified={verified:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_rejection_is_a_bad_request_and_an_outage_is_unavailable() {
+        let rejected: todo_core::ApiError = AuthError::Rejected("no".into()).into();
+        assert_eq!(rejected.code, ErrorCode::BadRequest);
+        let outage: todo_core::ApiError = AuthError::Unavailable(anyhow::anyhow!("down")).into();
+        assert_eq!(outage.code, ErrorCode::Unavailable);
+    }
+
+    #[test]
+    fn a_bearer_token_is_read_trimmed_and_never_empty() {
+        let header = |value: &str| {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(axum::http::header::AUTHORIZATION, value.parse().unwrap());
+            bearer(&headers)
+        };
+        assert_eq!(header("Bearer abc ").as_deref(), Some("abc"));
+        assert_eq!(header("Bearer   "), None);
+        assert_eq!(header("Basic abc"), None);
+        assert_eq!(bearer(&axum::http::HeaderMap::new()), None);
+    }
 }
