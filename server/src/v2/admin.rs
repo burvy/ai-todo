@@ -319,6 +319,7 @@ mod tests {
                     plan: Plan::Free,
                 },
                 "token",
+                SystemClock.now(),
                 SystemClock.now() + chrono::Duration::days(1),
             )
             .unwrap();
@@ -335,6 +336,7 @@ mod tests {
                     plan: Plan::Free,
                 },
                 &format!("token-{}", id),
+                SystemClock.now(),
                 SystemClock.now() + chrono::Duration::days(1),
             )
             .unwrap();

@@ -393,11 +393,13 @@ pub trait Store: Send + Sync {
         date: NaiveDate,
     ) -> Result<bool, StoreError>;
 
-    /// Create or refresh the user and open a session, in one transaction.
+    /// Create or refresh the user and open a session, in one transaction. `now` is the
+    /// app's clock, recorded as when the user and the session were created.
     fn upsert_user_and_session(
         &self,
         user: &super::auth::Me,
         token: &str,
+        now: chrono::DateTime<Utc>,
         expires_at: chrono::DateTime<Utc>,
     ) -> Result<(), StoreError>;
 
@@ -607,9 +609,10 @@ impl<S: Store + ?Sized> Store for Box<S> {
         &self,
         user: &super::auth::Me,
         token: &str,
+        now: chrono::DateTime<Utc>,
         expires_at: chrono::DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        (**self).upsert_user_and_session(user, token, expires_at)
+        (**self).upsert_user_and_session(user, token, now, expires_at)
     }
 
     fn delete_session(&self, token: &str) -> Result<(), StoreError> {
@@ -979,6 +982,7 @@ impl Store for MemoryStore {
         &self,
         user: &super::auth::Me,
         token: &str,
+        _now: chrono::DateTime<Utc>,
         expires_at: chrono::DateTime<Utc>,
     ) -> Result<(), StoreError> {
         let mut users = self.users.lock_recover();
@@ -1550,7 +1554,7 @@ impl Store for SqliteStore {
             .map_err(|e| backend(e, at!()))?;
         let mut held = Vec::new();
         for row in rows {
-            held.push(row.map_err(|e| backend(e, at!()))?);
+            held.extend(row.map_err(|e| backend(e, at!()))?);
         }
         Ok(held)
     }
@@ -1606,6 +1610,7 @@ impl Store for SqliteStore {
         &self,
         user: &super::auth::Me,
         token: &str,
+        now: chrono::DateTime<Utc>,
         expires_at: chrono::DateTime<Utc>,
     ) -> Result<(), StoreError> {
         let mut conn = self.conn.lock_recover();
@@ -1622,7 +1627,7 @@ impl Store for SqliteStore {
                 user.email,
                 user.name,
                 user.picture,
-                format_ts(Utc::now()),
+                format_ts(now),
                 user.plan.as_str()
             ],
         )
@@ -1634,7 +1639,7 @@ impl Store for SqliteStore {
                 hash_token(token),
                 user.id,
                 format_ts(expires_at),
-                format_ts(Utc::now())
+                format_ts(now)
             ],
         )
         .map_err(|e| backend(e, at!()))?;
@@ -2210,8 +2215,10 @@ fn read_task(row: &rusqlite::Row<'_>) -> Result<Task, rusqlite::Error> {
         label: label_from_stored(&label),
         priority: priority_from_stored(&priority),
         source: source_from_stored(&source),
-        created: parse_ts(&created).unwrap_or_else(Utc::now),
-        updated_at: parse_ts(&updated_at).unwrap_or_else(Utc::now),
+        // A hand-edited timestamp reads as a fixed instant, never the wall clock: a
+        // version that moved on every read would refuse every edit as stale.
+        created: parse_ts(&created).unwrap_or(DateTime::UNIX_EPOCH),
+        updated_at: parse_ts(&updated_at).unwrap_or(DateTime::UNIX_EPOCH),
         due_tz,
         external_uid: row.get(11)?,
     })
@@ -2236,7 +2243,7 @@ fn read_series(row: &rusqlite::Row<'_>) -> Result<Series, rusqlite::Error> {
     let until: Option<String> = row.get(4)?;
     let start_day: String = row.get(5)?;
     let time_of_day: Option<String> = row.get(6)?;
-    let created: String = row.get(9)?;
+    let created = parse_ts(&row.get::<_, String>(9)?).unwrap_or(DateTime::UNIX_EPOCH);
     Ok(Series {
         id: SeriesId(row.get(0)?),
         title: row.get(1)?,
@@ -2245,12 +2252,14 @@ fn read_series(row: &rusqlite::Row<'_>) -> Result<Series, rusqlite::Error> {
             weekdays: weekdays_from_stored(&weekdays),
             until: until.and_then(|day| NaiveDate::parse_from_str(&day, "%Y-%m-%d").ok()),
         },
+        // An unreadable start day falls back to when the series was made, not today:
+        // "today" would move the series' start every day it is read.
         start_day: NaiveDate::parse_from_str(&start_day, "%Y-%m-%d")
-            .unwrap_or_else(|_| Utc::now().date_naive()),
+            .unwrap_or_else(|_| created.date_naive()),
         time_of_day: time_of_day.and_then(|text| parse_time_of_day(&text)),
         zone: row.get(7)?,
         external_uid: row.get(8)?,
-        created: parse_ts(&created).unwrap_or_else(Utc::now),
+        created,
         order: row.get(10)?,
     })
 }
@@ -2324,18 +2333,22 @@ fn exception_from_parts(
     }
 }
 
-fn read_exception(row: &rusqlite::Row<'_>) -> Result<SeriesException, rusqlite::Error> {
+/// `None` for a row whose date will not parse: an exception is about one day, and
+/// guessing the day (today, say) would mark or skip a day the user never touched.
+fn read_exception(row: &rusqlite::Row<'_>) -> Result<Option<SeriesException>, rusqlite::Error> {
     let date: String = row.get(0)?;
     let kind: String = row.get(1)?;
     let moved_when: Option<String> = row.get(2)?;
     let moved_tz: Option<String> = row.get(3)?;
-    Ok(SeriesException {
-        date: NaiveDate::parse_from_str(&date, "%Y-%m-%d")
-            .unwrap_or_else(|_| Utc::now().date_naive()),
+    let Ok(date) = NaiveDate::parse_from_str(&date, "%Y-%m-%d") else {
+        return Ok(None);
+    };
+    Ok(Some(SeriesException {
+        date,
         // A moved row whose `When` will not parse degrades to skipped: the day
         // stays out of the way instead of failing the load.
         kind: exception_from_parts(&kind, moved_when, moved_tz).unwrap_or(ExceptionKind::Skipped),
-    })
+    }))
 }
 
 /// A uniqueness violation is a conflict the caller can act on; anything else
@@ -3109,13 +3122,13 @@ mod tests {
         };
         let expires = at(23);
         store
-            .upsert_user_and_session(&me(USER, Plan::Free), "tok-alice", expires)
+            .upsert_user_and_session(&me(USER, Plan::Free), "tok-alice", at(0), expires)
             .unwrap();
         store
-            .upsert_user_and_session(&me(USER, Plan::Free), "tok-alice-2", expires)
+            .upsert_user_and_session(&me(USER, Plan::Free), "tok-alice-2", at(0), expires)
             .unwrap();
         store
-            .upsert_user_and_session(&me(OTHER, Plan::Paid), "tok-bob", expires)
+            .upsert_user_and_session(&me(OTHER, Plan::Paid), "tok-bob", at(0), expires)
             .unwrap();
 
         // -- a live session resolves to its user; an unknown or expired one to nobody
@@ -3349,7 +3362,7 @@ mod tests {
             plan: super::super::auth::Plan::Free,
         };
         store
-            .upsert_user_and_session(&me, "token-alice", at(12))
+            .upsert_user_and_session(&me, "token-alice", at(0), at(12))
             .unwrap();
         let found = store.session_user("token-alice", at(1)).unwrap();
         assert_eq!(found.map(|me| me.id), Some("alice".to_owned()));
@@ -3617,7 +3630,7 @@ mod tests {
             plan: super::super::auth::Plan::Free,
         };
         store
-            .upsert_user_and_session(&me, &format!("token-{id}"), at(23))
+            .upsert_user_and_session(&me, &format!("token-{id}"), at(0), at(23))
             .unwrap();
         store.put(id, task("keep", 0)).unwrap();
     }
@@ -3730,6 +3743,81 @@ mod tests {
         visits_keep_anonymous_ids_alive_with_a_throttle(&SqliteStore::open_in_memory().unwrap());
     }
 
+    /// A sign-in records the app's time, not the wall clock (AGENTS.md rule 4), so a
+    /// fixed clock in tests and a restored clock in production both hold.
+    #[test]
+    fn a_sign_in_records_the_app_clock() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        let me = super::super::auth::Me {
+            id: "carol".to_owned(),
+            email: "carol@example.com".to_owned(),
+            name: "carol".to_owned(),
+            picture: None,
+            plan: super::super::auth::Plan::Free,
+        };
+        store
+            .upsert_user_and_session(&me, "token-carol", at(3), at(23))
+            .unwrap();
+        let conn = store.conn.lock_recover();
+        let created = |sql: &str| -> String { conn.query_row(sql, [], |row| row.get(0)).unwrap() };
+        assert_eq!(
+            created("SELECT created_at FROM v2_users WHERE id = 'carol'"),
+            format_ts(at(3))
+        );
+        assert_eq!(
+            created("SELECT created_at FROM v2_sessions"),
+            format_ts(at(3))
+        );
+    }
+
+    /// A timestamp or date that will not parse (a hand-edited row) reads the same way
+    /// every time: a task's version that followed the wall clock would refuse every
+    /// edit as stale, and an exception guessed onto today would mark a day the user
+    /// never touched.
+    #[test]
+    fn unreadable_times_read_the_same_every_time() {
+        let store = SqliteStore::open_in_memory().unwrap();
+        store.put(USER, task("t1", 0)).unwrap();
+        store.put_series(USER, series("s1", 0)).unwrap();
+        store
+            .put_exception(
+                USER,
+                &SeriesId("s1".into()),
+                SeriesException {
+                    date: on((2026, 10, 12)),
+                    kind: ExceptionKind::Done,
+                },
+            )
+            .unwrap();
+        store
+            .conn
+            .lock_recover()
+            .execute_batch(
+                "UPDATE v2_tasks SET created = 'junk', updated_at = 'junk';
+                 UPDATE v2_series SET start_day = 'junk';
+                 UPDATE v2_series_exceptions SET date = 'junk';",
+            )
+            .unwrap();
+
+        let task = store.tasks(USER).unwrap().remove(0);
+        assert_eq!(task.created, DateTime::UNIX_EPOCH);
+        assert_eq!(task.updated_at, DateTime::UNIX_EPOCH);
+        assert_eq!(store.tasks(USER).unwrap()[0], task);
+        let held = store.series(USER).unwrap();
+        assert_eq!(
+            held[0].start_day,
+            at(9).date_naive(),
+            "an unreadable start day is the day the series was made"
+        );
+        assert!(
+            store
+                .exceptions(USER, &SeriesId("s1".into()))
+                .unwrap()
+                .is_empty(),
+            "an exception with no readable day applies to no day"
+        );
+    }
+
     #[test]
     fn a_signed_in_user_is_kept_however_long_since_their_last_activity() {
         let store = SqliteStore::open_in_memory().unwrap();
@@ -3786,7 +3874,7 @@ mod tests {
             plan: Plan::Free,
         };
         store
-            .upsert_user_and_session(&dana, "tok-dana", at(23))
+            .upsert_user_and_session(&dana, "tok-dana", at(0), at(23))
             .unwrap();
         let mine = todo_core::DaySettings {
             deadline: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),

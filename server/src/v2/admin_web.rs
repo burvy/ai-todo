@@ -291,6 +291,7 @@ mod tests {
                     plan,
                 },
                 &format!("token-{id}"),
+                SystemClock.now(),
                 SystemClock.now() + chrono::Duration::days(1),
             )
             .unwrap();

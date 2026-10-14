@@ -253,7 +253,7 @@ pub fn open_session<S: Store + ?Sized>(
     let token = new_token();
     let expires_at = now + ChronoDuration::from_std(SESSION_LENGTH).unwrap_or_default();
     store
-        .upsert_user_and_session(&user, &token, expires_at)
+        .upsert_user_and_session(&user, &token, now, expires_at)
         .map_err(store_auth_error)?;
     if let Some(anonymous) = anonymous {
         store

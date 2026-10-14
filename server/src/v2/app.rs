@@ -1233,9 +1233,11 @@ mod tests {
             &self,
             user: &crate::v2::auth::Me,
             token: &str,
+            now: chrono::DateTime<Utc>,
             expires_at: chrono::DateTime<Utc>,
         ) -> Result<(), StoreError> {
-            self.inner.upsert_user_and_session(user, token, expires_at)
+            self.inner
+                .upsert_user_and_session(user, token, now, expires_at)
         }
 
         fn delete_session(&self, token: &str) -> Result<(), StoreError> {
