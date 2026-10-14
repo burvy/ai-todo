@@ -78,20 +78,32 @@ c. The whole row is the grab area. Pressing and holding it for ~280 ms picks it
 up; there is no separate grip to find.
 d. A row answers three gestures from one finger, and which one it is depends on
 travel and time, not on where you touched:
-- a **tap** — released early, without moving — is the old behaviour: the box
-ticks, the title opens the dialog, the x deletes;
+- a **tap** — released early, without moving — is the old behaviour: the title
+opens the dialog from the title, the x deletes;
 - a **press-and-hold** picks the row up to move it, on mouse and on touch
 alike;
 - a **swipe right** (mostly horizontal) **scribbles the row out**: the row stays
 put and Rambo's ink loops across its words under your finger, in the page's
 ink, each row's loops its own (seeded by the row). Let go past
 `SCRIBBLE_COMMIT_SHARE` of the row (or flick past `row::SWIPE_PX`) and the ink
-finishes across and the row is deleted; short of that, the ink lifts away. Every
-delete (the swipe, the row's x, Rambo's x, the sheet's x) leaves a **paper scrap**
-in the bottom-left corner for `SCRAP_UNDO_MS` of time the page is in view. Scraps pile up, newest at the bottom, up to `SCRAP_MAX` (two quick deletes leave two, each taping back its own task; a third sends the oldest away). Tap one and the task is taped back as it was (`POST
-/api/v1/tasks/restore`; a repeat's day has its skip cleared), otherwise it slides
-away. The scrap is paper, so it slides and never fades. Times and thresholds are in `web/src/tuning.rs`; the scrap is
-`web/src/scrap.rs`.
+finishes across and the task is **done**: it tears off and flies to the pin; short of that, the ink lifts away. Done and
+delete are different things: a done task is kept, a deleted one is gone after the undo.
+A **done task** (the swipe, Rambo's Done button) leaves its row, crossed out, and flies
+to the **pin** at the top right of the list's page, where it hangs as a vertical strip
+down the page's right edge, always in view: the newest nearest the pin. Only whole strips
+show: as many as fit the page's height (a strip is at most `STRIP_H_PX` tall, `STRIP_H_WIDE_PX`
+on a wide screen), up to `PIN_SHOWN`; when a newer one arrives the oldest slides off the page's
+edge and stays done. Tap a strip and it is taped back (not done): its row flies back from the
+strip and the rows below slide down to make room. (A repeat's done day is skipped, so it
+does not hang.)
+There is no checkbox and no board. Every delete (the row's x, Rambo's x, the sheet's x)
+leaves a **paper scrap** flying from the row to the same pin, hanging for `SCRAP_UNDO_MS`
+of time the page is in view; up to `SCRAP_MAX` (two quick deletes leave two, each taping
+back its own task; a third sends the oldest away). Tap one and the task is taped back as
+it was (`POST /api/v1/tasks/restore`; a repeat's day has its skip cleared), otherwise it
+slides away. Paper slides and never fades. The rows below a row that left slide up to close the
+gap (`ROW_CLOSE_MS`), never jump. Times and counts are in `web/src/tuning.rs`;
+the pin is `web/src/scrap.rs`.
 e. A finger that slides before the hold is a **scroll**, and the row keeps its
 hands off it. That is also what keeps the gestures apart from the page flip: a
 swipe left is never this row's to delete, so it reaches the panes and turns the

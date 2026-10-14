@@ -100,6 +100,24 @@ pub const SCRAP_SLIDE_MS: u32 = 240;
 /// The most scraps lying in the corner at once; a new delete beyond it sends the oldest
 /// away. Safe range 1 to 5: two quick deletes keep two, but the pile never fills the page.
 pub const SCRAP_MAX: usize = 3;
+/// How long the rows below a removed row take to slide up and close the gap, in ms. Safe
+/// range 120 to 400.
+pub const ROW_CLOSE_MS: u32 = 220;
+/// The most done tasks that can hang at the pin, newest first; the older ones stay done
+/// (and in the planner's history) but are not drawn. How many show is the most that fit the
+/// page's height, up to this. Safe range 3 to 12.
+pub const PIN_SHOWN: usize = 8;
+/// The tallest a strip at the pin grows on a phone, in px, so six fit a short screen.
+/// Safe range 80 to 140.
+pub const STRIP_H_PX: f64 = 110.0;
+/// The tallest a strip grows on a wide screen, where titles have room, in px.
+/// Safe range 120 to 240.
+pub const STRIP_H_WIDE_PX: f64 = 190.0;
+/// The gap between hanging strips, in px. Safe range 2 to 12.
+pub const STRIP_GAP_PX: f64 = 4.0;
+/// What lies above the first strip in the pin's column (the pin itself), in px.
+/// Safe range 20 to 40.
+pub const PIN_ROOM_PX: f64 = 28.0;
 /// How often the scrap's undo clock is read, in ms: it only runs while the page is
 /// in view. Safe range 50 to 500; a hidden tab may tick slower, which only pauses.
 pub const SCRAP_TICK_MS: u32 = 100;

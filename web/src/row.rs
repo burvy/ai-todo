@@ -22,7 +22,6 @@ pub const SLOP_PX: f64 = 8.0;
 /// needs this much, a slow swipe a share of the row (see [`scribble_commits`]).
 pub const SWIPE_PX: f64 = 64.0;
 
-use crate::tack::hash_unit;
 use crate::tuning::{
     SCRIBBLE_BAND, SCRIBBLE_COMMIT_SHARE, SCRIBBLE_FLICK_PX_PER_MS, SCRIBBLE_JITTER,
     SCRIBBLE_LOOP_PX,
@@ -75,8 +74,8 @@ pub enum Release {
     Tap,
     /// Dropped somewhere in the list: reorder onto whatever row is under it.
     Reorder,
-    /// Finish the scribble across the row and delete it.
-    Delete,
+    /// Finish the scribble across the row: the task is done, and tears off.
+    Done,
     /// Not far enough to mean it: the ink lifts away and the row stays.
     SnapBack,
     /// A scroll, not ours. Nothing to undo.
@@ -91,7 +90,7 @@ pub fn release(g: Gesture, dx: f64, width: f64, velocity: f64) -> Release {
         Gesture::Pressed => Release::Tap,
         Gesture::Lifted => Release::Reorder,
         Gesture::Scrolling => Release::Scroll,
-        Gesture::Swiping if scribble_commits(dx, width, velocity) => Release::Delete,
+        Gesture::Swiping if scribble_commits(dx, width, velocity) => Release::Done,
         Gesture::Swiping => Release::SnapBack,
     }
 }
@@ -117,6 +116,22 @@ pub fn ink_drawn(dx: f64, width: f64) -> f64 {
 /// before the lift ends draws a stroke of its own, and keeps it.
 pub fn lift_clears(lifted: u32, on_row: Option<u32>) -> bool {
     on_row == Some(lifted)
+}
+
+/// Deterministic small value for a strip, so a given task always hangs from
+/// the same offset on the pin and lies at the same jaunty angle. FNV-1a.
+pub fn hash_unit(id: &str, salt: u8) -> f64 {
+    // The top 24 bits mapped to -1..=1.
+    (f64::from(hash32(id, salt) >> 8) / 16_777_215.0 - 0.5) * 2.0
+}
+
+fn hash32(id: &str, salt: u8) -> u32 {
+    let mut hash: u32 = 2166136261;
+    for byte in id.bytes().chain([salt]) {
+        hash ^= u32::from(byte);
+        hash = hash.wrapping_mul(16777619);
+    }
+    hash
 }
 
 /// Where a row's words sit inside the row, in px from its top-left corner: the
@@ -501,7 +516,7 @@ pub mod dom {
         let _ = press.row.release_pointer_capture(press.pointer_id);
         settle(&press.row);
         match outcome {
-            Release::Delete => end_ink(&press.row, true),
+            Release::Done => end_ink(&press.row, true),
             Release::SnapBack => end_ink(&press.row, false),
             Release::Tap | Release::Reorder | Release::Scroll => remove_ink(&press.row),
         }
@@ -566,7 +581,7 @@ mod tests {
         assert_eq!(held(Gesture::Pressed, SWIPE_PX, 0.0, 50), Gesture::Swiping);
         assert_eq!(
             release(Gesture::Swiping, SWIPE_PX, ROW, SLOW),
-            Release::Delete
+            Release::Done
         );
         // A diagonal that happens to go far right is still a scroll unless the
         // rightward travel clearly wins.
@@ -606,7 +621,7 @@ mod tests {
             held(g, f64::from(step) * 2.0, 1.0, step * 4)
         });
         assert_eq!(gesture, Gesture::Swiping);
-        assert_eq!(release(gesture, 80.0, ROW, SLOW), Release::Delete);
+        assert_eq!(release(gesture, 80.0, ROW, SLOW), Release::Done);
     }
 
     #[test]

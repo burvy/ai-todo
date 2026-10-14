@@ -94,6 +94,7 @@
   /* What a phone's fixed capture bar covers at the bottom: the nest, the bar's padding and rule, and the home-indicator inset. */
   --capture-clear: calc(var(--nest-size) + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
   --page-foot-h: 2rem; /* the note at a phone page's foot */
+  --pin-w: 2.4rem; /* the pin's column down the list page's right edge */
   --page-top: var(--gutter); /* what lies above a phone's pages: the body's own padding */
 
   /* Layers, lowest to highest: the one scale every z-index reads (docs/FRONTEND-PLAN.md
@@ -101,10 +102,10 @@
      modal in the browser's top layer, so --layer-sheet only orders it should that
      change); only a drag in progress rides above him. */
   --layer-behind: -1;
-  --layer-page: 2; /* ink, curl, placements, a lifted row, the desktop tack board */
-  --layer-sticky: 4; /* day names, the phone tack board and its tab */
+  --layer-page: 2; /* ink, curl, placements, a lifted row, the desktop pin column */
+  --layer-sticky: 4; /* day names */
   --layer-capture: 6; /* the capture bar, the landing: above the sticky things that scroll or sit beside it */
-  --layer-note: 40; /* the page note, a deleted row's scrap */
+  --layer-note: 40; /* the page note, the scraps hanging at the pin */
   --layer-rambo: 50;
   --layer-nest-rim: 51; /* the nest's front rim, over his tip (its back is the capture bar's) */
   --layer-rambo-bubble: 52; /* his ask bubble */
@@ -116,7 +117,7 @@
   --layer-turn-under: 0; /* inside main while a page turns: the page beneath, */
   --layer-turn-front: 1; /* the page turning, */
   --layer-turn-fx: 2; /* and the flap and shadows between them */
-  --layer-lifted: 99; /* a strip being carried, above its pile inside the tack board */
+  --layer-lifted: 99; /* a strip being carried, above its neighbours */
 
   /* The page turn (docs/FRONTEND-PLAN.md; web/src/bend.rs). Looks only: the numbers
      that decide a turn are in web/src/tuning.rs. */
@@ -441,6 +442,9 @@ main.bending > .bend-fx {
   display: grid;
   gap: var(--space-4);
   min-width: 0;
+  /* The pin's column down the right edge belongs to the pile; the list stops short of it. */
+  position: relative;
+  padding-right: var(--pin-w);
   /* The list is the written page: it alone gets the notebook's red margin. */
   border-left: 1px solid var(--margin-line);
   padding-left: var(--space-3);
@@ -492,39 +496,6 @@ button:hover {
   text-underline-offset: 4px;
 }
 
-/* Tick boxes are drawn on the paper, not browser widgets: a slightly
-   crooked square, and a tick in golden-brown ink when it is on. Radios
-   keep the browser's circle but take the accent colour. The 44px hit
-   area comes from the row or the label they sit in, not the control. */
-input[type="checkbox"] {
-  position: relative;
-  width: 1.35rem;
-  height: 1.35rem;
-  min-width: 0;
-  min-height: 0;
-  padding: 0;
-  border: none;
-  border-bottom: none;
-  appearance: none;
-  -webkit-appearance: none;
-  background-color: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--rule-strong);
-  border-radius: 2px 4px 3px 5px / 4px 2px 5px 3px;
-  cursor: pointer;
-}
-
-input[type="checkbox"]:checked::after {
-  content: "";
-  position: absolute;
-  left: 22%;
-  top: 38%;
-  width: 32%;
-  height: 46%;
-  border-right: 2.5px solid var(--accent);
-  border-bottom: 2.5px solid var(--accent);
-  transform: rotate(38deg);
-}
-
 input[type="radio"] {
   width: 1.25rem;
   height: 1.25rem;
@@ -574,10 +545,6 @@ a {
   border-bottom: none;
 }
 
-.task-list input[type="checkbox"] {
-  flex: 0 0 auto;
-}
-
 /* Section 4 row delete (Angela): hover mark on desktop, faint x + swipe right on phone */
 /* The row answers three gestures from one finger - a tap, a hold that picks it
    up to reorder, and a swipe right that crosses it out - so the browser must
@@ -617,48 +584,82 @@ li.task-row.row-lifted {
   stroke-linejoin: round;
 }
 
-/* The corner the scraps pile in, newest at the bottom; it takes no taps itself. */
+/* The pin at the top right of the list's page, and the strips hanging down the right edge
+   from it, always visible: each done task, and for a few seconds each deleted one, hangs
+   sideways so it fits (the title runs down it). The column sits in the page, so it turns
+   with it, and takes no taps itself. */
 .scrap-pile {
-  position: fixed;
-  left: var(--gutter);
-  bottom: var(--capture-clear);
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--pin-w);
+  bottom: var(--page-foot-h);
   z-index: var(--layer-note);
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
+  align-items: flex-end;
+  gap: var(--strip-gap, 4px);
+  padding-top: var(--pin-room, 28px);
+  /* Not clipped: a strip pushed past the last that fits slides off the page's edge. */
   pointer-events: none;
 }
 
-/* The deleted row's scrap: torn paper laid in the corner above the capture line,
-   tapped to tape the task back. It slides in from the edge and away again; paper
-   slides, only ink fades (DESIGN-DIRECTION §9). */
+.scrap-pile::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  right: calc(var(--pin-w) / 2 - 10px);
+  width: 20px;
+  height: 20px;
+  background: url("assets/tackboard/pin.svg") center / contain no-repeat;
+}
+
+/* A deleted row's scrap: torn paper hanging from its top edge, the title running down it
+   and struck through; a tap tapes the task back. It flies in from the row (`fly` in
+   scrap.rs sets `--fly-x` and `--fly-y`), and slides off the page's edge when its time is
+   up. Paper moves; only ink fades (DESIGN-DIRECTION §9). */
 .scrap-undo {
   pointer-events: auto;
-  display: grid;
-  gap: 0.1em;
-  max-width: min(18em, 70vw);
-  padding: 0.55em 1em 0.6em;
+  position: relative;
+  display: block;
+  writing-mode: vertical-rl;
+  max-height: var(--strip-h, 110px);
+  margin-right: calc(var(--pin-w) / 2 - 0.9em);
+  padding: 0.8em 0.4em 0.5em;
   border: 0;
   color: var(--ink);
   font: inherit;
-  text-align: left;
   background: var(--wheat);
   box-shadow: 0 6px 14px -8px rgba(0, 0, 0, 0.45);
-  clip-path: polygon(0 6%, 9% 0, 22% 5%, 37% 0, 52% 4%, 68% 0, 83% 5%, 100% 1%, 98% 30%, 100% 62%, 97% 100%, 80% 95%, 63% 100%, 47% 96%, 30% 100%, 14% 95%, 0 100%, 2% 55%);
-  transform: rotate(-3deg);
+  clip-path: polygon(6% 0, 100% 3%, 97% 28%, 100% 55%, 96% 80%, 100% 100%, 55% 97%, 28% 100%, 0 96%, 4% 66%, 0 38%, 4% 14%);
+  transform-origin: top center;
+  transform: rotate(var(--hang, 0deg));
   transition: transform var(--scrap-ms) cubic-bezier(0.23, 1, 0.32, 1);
   cursor: pointer;
 }
 
-@starting-style {
-  .scrap-undo {
-    transform: translateX(calc(-100% - var(--gutter))) rotate(-8deg);
-  }
+/* The start of the flight: at the row, laid flat as its line was, with no transition so
+   the browser settles it before the release carries the scrap to where it hangs. */
+.scrap-undo.flying {
+  transition: none;
+  transform: translate(var(--fly-x, 0), var(--fly-y, 0)) rotate(90deg);
+}
+
+/* The pin it hangs from. */
+.scrap-undo::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 50%;
+  width: 12px;
+  height: 12px;
+  transform: translateX(-50%);
+  background: url("assets/tackboard/pin.svg") center / contain no-repeat;
 }
 
 .scrap-undo.leaving {
-  transform: translateX(calc(-100% - var(--gutter))) rotate(-8deg);
+  transform: translateX(calc(100% + var(--gutter))) rotate(14deg);
+  pointer-events: none;
 }
 
 /* Tapped, waiting for the server: it stays put until the task is back. */
@@ -667,7 +668,7 @@ li.task-row.row-lifted {
 }
 
 .scrap-undo:active {
-  transform: rotate(-3deg) scale(0.97);
+  transform: rotate(var(--hang, 0deg)) scale(0.97);
 }
 
 .scrap-undo s {
@@ -677,16 +678,16 @@ li.task-row.row-lifted {
   text-decoration-color: var(--ink);
 }
 
-.scrap-undo small {
-  opacity: 0.75;
-}
-
-/* No motion: the scrap simply appears, and is simply gone. */
+/* No motion: the scrap simply hangs, and is simply gone. */
 @media (prefers-reduced-motion: reduce) {
   .scrap-undo,
   .scrap-undo.leaving {
-    transform: rotate(-3deg);
+    transform: rotate(var(--hang, 0deg));
     transition: none;
+  }
+
+  .scrap-undo.done.leaving {
+    visibility: hidden;
   }
 }
 
@@ -1804,6 +1805,11 @@ li.task-row:focus-within .delete-mark {
 
   .week-scroll {
     max-height: 70vh;
+  }
+
+  /* The list page is as tall as the screen allows, so the strips at the pin have room to hang. */
+  .tasks-pane {
+    min-height: 80dvh;
   }
 
   /* Nest and Rambo are larger on desktop. Spec: docs/DESIGN-DIRECTION.md §2 */
