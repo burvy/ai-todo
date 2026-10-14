@@ -1627,6 +1627,7 @@ fn TaskList(
                         };
                         view! {
                     <li
+                        class="task-row"
                         data-id={render_task_id_attr}
                         data-title={render_task_title.clone()}
                         on:drop=handle_drop
