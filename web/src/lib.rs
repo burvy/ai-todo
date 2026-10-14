@@ -227,9 +227,11 @@ pub fn start() {
 #[component]
 pub(crate) fn PageFoot(page: u8, turn: std::rc::Rc<dyn Fn()>) -> impl IntoView {
     view! {
-        <button type="button" class="page-foot" on:click=move |_| turn()>
-            {page_foot_note(page)}
-        </button>
+        <div class="page-foot-rail">
+            <button type="button" class="page-foot" on:click=move |_| turn()>
+                {page_foot_note(page)}
+            </button>
+        </div>
     }
 }
 

@@ -315,7 +315,8 @@ main {
 }
 
 main.bending {
-  overflow: hidden;
+  /* `clip`, not `hidden`: a scroll container would stop the page notes sticking. */
+  overflow: clip;
   user-select: none;
 }
 
@@ -340,7 +341,7 @@ main.bending > .bend-under {
 main.bending > .bend-front {
   position: relative;
   z-index: var(--layer-turn-front);
-  overflow: hidden; /* cut at the height the turner sets: what shows of a long list */
+  overflow: clip; /* cut at the height the turner sets: what shows of a long list */
   will-change: transform;
 }
 
@@ -437,7 +438,8 @@ main.bending > .bend-fx {
   height: var(--flip-h, 100%);
   transform-origin: var(--flip-origin, 0 50%);
   transform: var(--flip-transform, none);
-  background: linear-gradient(to right, transparent 35%, var(--flip-shade));
+  /* A rigid leaf under one light darkens evenly, by how far it has turned from it. */
+  background: var(--flip-shade);
   opacity: var(--flip-sheen, 0);
   will-change: transform;
 }
@@ -465,7 +467,7 @@ main:not(.flipping) .flip-cast {
 
 /* The leaf is cut where the turner says, so a long list is not repainted whole each frame. */
 main.flipping > .bend-front {
-  overflow: hidden;
+  overflow: clip;
 }
 
 .tasks-pane {
@@ -1614,6 +1616,7 @@ li.task-row:focus-within .delete-mark {
   }
 
   main > * {
+    position: relative;
     box-sizing: border-box;
     align-content: start;
     min-height: calc(100dvh - var(--page-top) - var(--capture-clear));
@@ -1624,10 +1627,23 @@ li.task-row:focus-within .delete-mark {
   }
 }
 
-.page-foot {
+/* The note stays at the foot of the screen while the page is in view, and rests at the
+   page's own foot at its end: a rail as tall as the page, the note sticking inside it. */
+.page-foot-rail {
   position: absolute;
-  left: 0;
+  top: 0;
   bottom: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.page-foot {
+  position: sticky;
+  top: calc(100dvh - var(--capture-clear) - var(--page-foot-h));
+  pointer-events: auto;
+  /* Paper under the words, so a row that runs behind the note does not show through. */
+  background-color: color-mix(in srgb, var(--paper) 94%, transparent);
+  border-radius: var(--radius-sm, 4px);
   min-height: var(--page-foot-h);
   padding: 0 var(--space-1);
   font-family: var(--font-hand);
@@ -1824,7 +1840,7 @@ li.task-row:focus-within .delete-mark {
     box-shadow: var(--fold-shadow);
   }
 
-  .page-foot {
+  .page-foot-rail {
     display: none;
   }
 
