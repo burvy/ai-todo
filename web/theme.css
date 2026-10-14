@@ -92,6 +92,9 @@
      tall as the bar, rule to screen edge. */
   --nest-w: 104px;
   --nest-h: calc(var(--nest-size) + 2 * var(--space-2) + env(safe-area-inset-bottom, 0px));
+  /* While he listens the light is turned down a little (Interview 1 item 12). */
+  --listening-dim: rgb(28 18 6 / 0.2);
+  --listening-dim-ms: 260ms;
   --nest-sink: 4px; /* how far below his rest point he sits: down in the bowl */
   /* What a phone's fixed capture bar covers at the bottom: the nest, the bar's padding and rule, and the home-indicator inset. */
   --capture-clear: calc(var(--nest-size) + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
@@ -108,6 +111,7 @@
   --layer-sticky: 4; /* day names */
   --layer-capture: 6; /* the capture bar, the landing: above the sticky things that scroll or sit beside it */
   --layer-note: 40; /* the page note, the scraps hanging at the pin */
+  --layer-dim: 45; /* the light turned down while he listens: over the page, under him */
   --layer-rambo: 50;
   --layer-nest-rim: 51; /* the nest's front rim, over his tip (its back is the capture bar's) */
   --layer-rambo-bubble: 52; /* his ask bubble */
@@ -163,6 +167,7 @@
    light by default and never follows the OS (owner QA, 2026-10-13). */
 :root[data-theme="dark"] {
   color-scheme: dark;
+  --listening-dim: rgb(0 0 0 / 0.32);
 
   --parchment: #241c11;
   --wheat: #2d2315;
@@ -1185,6 +1190,29 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 }
 
 .brain-line,
+/* While he listens the light is turned down a little over everything but him, his
+   nest's rim and his bubble (Interview 1 item 12). A light dims, so this is a fade. It
+   never takes a touch: what is under it is still what a drop or a tap lands on. */
+.listening-dim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-dim);
+  background: var(--listening-dim);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--listening-dim-ms) ease;
+}
+
+.listening-dim.on {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .listening-dim {
+    transition: none;
+  }
+}
+
 .talking {
   font-family: var(--font-heading);
   font-style: italic;

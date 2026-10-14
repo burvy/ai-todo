@@ -269,7 +269,12 @@ fn is_instruction(lower: &str) -> bool {
     // One word alone ("Thanks", "Groceries") is too little to call an instruction.
     rest.len() >= 2
         && rest.first().is_some_and(|first| {
-            !NOT_A_VERB.contains(first) && !is_gerund(first) && !is_past_form(first)
+            !NOT_A_VERB.contains(first)
+                && !is_gerund(first)
+                && !is_past_form(first)
+                // A bare mind verb ("remember", "believe", "imagine") opens a
+                // remark, not an errand, unless it hands the errand on.
+                && (!MENTAL_VERBS.contains(first) || is_errand_handed_on(first, &rest[1..]))
         })
 }
 
@@ -280,9 +285,12 @@ fn verb_and_rest<'a>(lead: &[&str], words: &'a [&str]) -> Option<&'a [&'a str]> 
     Some(&words[index..])
 }
 
-/// Whether the mind verb in a request still hands on the errand: "remember to call
-/// mom" and "tell mom to call" do, while what follows otherwise ("when we moved",
-/// "that we are late", a bare "it") is a remark on the moment, not an errand.
+/// Whether the mind verb still hands on the errand as to + action: "remember to
+/// call mom" and "tell mom to call" do, while what follows otherwise ("when we
+/// moved", "that we are late", a bare "it") is a remark on the moment, not an
+/// errand. The asked forms ("can you remember to call mom") use it as is; a
+/// bare "remember" is the reminder verb and takes a thing too — see
+/// [`is_errand_handed_on`].
 fn is_action_handed_on(words: &[&str]) -> bool {
     /// The person the errand is passed to: a name ("mom") or an object pronoun
     /// ("tell her to call").
@@ -293,6 +301,35 @@ fn is_action_handed_on(words: &[&str]) -> bool {
         [someone, "to", verb, ..] if SOMEONE.contains(someone) || !NOT_A_VERB.contains(someone) => {
             is_action(verb)
         }
+        _ => false,
+    }
+}
+
+/// Whether a bare mind verb hands the errand on. "Remember" is the reminder
+/// verb: whatever follows that does not open a remembered moment is the errand
+/// itself ("remember the milk", "remember mom's birthday", "remember to call").
+/// The other mind verbs ("believe", "imagine") only react, so the errand passes
+/// on solely as an action handed on ("tell mom to call").
+fn is_errand_handed_on(verb: &str, words: &[&str]) -> bool {
+    if verb == "remember" {
+        !recalls_a_moment(words)
+    } else {
+        is_action_handed_on(words)
+    }
+}
+
+/// Whether what follows a bare "remember" opens a remembered moment — a question
+/// or subordinating word ("remember when we went to the lake", "remember that we
+/// are late", "remember how it looked") or a past-time phrase ("remember the
+/// time we got lost", "remember back then"). Anything else after "remember" is
+/// the thing to remember.
+fn recalls_a_moment(words: &[&str]) -> bool {
+    const RECALL: &[&str] = &[
+        "when", "that", "how", "why", "where", "whether", "if", "who",
+    ];
+    match words {
+        [first, ..] if RECALL.contains(first) => true,
+        ["the", "time", ..] | ["back", "then", ..] => true,
         _ => false,
     }
 }
@@ -573,6 +610,66 @@ mod tests {
         assert_eq!(answers[2].is_task, 0.0);
         assert_eq!(answers[3].is_task, 1.0);
         assert_eq!(answers[4].is_task, 1.0);
+    }
+
+    /// A bare mind verb opens a remark, not an errand — the same rule #342 gave
+    /// the asked forms. "Remember" is the reminder verb, so whatever follows
+    /// that does not open a remembered moment is the errand itself, a thing
+    /// ("the milk") as much as an action ("to call").
+    #[test]
+    fn a_bare_mind_verb_is_an_errand_only_when_it_hands_something_on() {
+        for clause in [
+            "remember when we went to the lake",
+            "remember the time we got lost",
+            "remember back then",
+            "remember that we are late",
+            "believe it or not it rained",
+            "imagine the view from up there",
+        ] {
+            assert!(is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
+        }
+        for clause in [
+            "remember the milk",
+            "remember mom's birthday",
+            "remember to call",
+            "remember to call mom",
+            "tell mom to call",
+        ] {
+            assert!(!is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_bare_mind_verb_is_a_task_only_when_the_errand_is_handed_on() {
+        let questions = [
+            question(
+                "remember when we went to the lake",
+                &["Remember when we went to the lake"],
+                &[],
+            ),
+            question(
+                "remember the time we got lost",
+                &["Remember the time we got lost"],
+                &[],
+            ),
+            question(
+                "believe it or not it rained",
+                &["believe it or not it rained"],
+                &[],
+            ),
+            question("imagine the view from up there", &["Imagine the view"], &[]),
+            question("remember the milk", &["Remember the milk"], &[]),
+            question("remember mom's birthday", &["Remember mom's birthday"], &[]),
+            question("remember to call mom", &["Remember to call mom"], &[]),
+            question("tell mom to call", &["Tell mom to call"], &[]),
+        ];
+        let answers = FakeJudge.judge(&questions).await.unwrap();
+        for answer in &answers[..4] {
+            assert_eq!(answer.is_task, 0.0);
+        }
+        for answer in &answers[4..] {
+            assert_eq!(answer.is_task, 1.0);
+        }
     }
 
     #[tokio::test]

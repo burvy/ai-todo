@@ -335,8 +335,10 @@ the page; `web/src/placing.rs:PlacingNote, next_free`;
 ### 1. Talk button
 a. Rambo, in his nest in the bottom-right corner, is the send and talk control.
 b. Tap the nest to send, or press and hold Rambo still to talk. Only a Rambo resting in
-his nest listens: picked up while dazed (below), he writes instead.
-c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:State, Event, transition`.
+his nest listens: picked up while dazed (below), he writes instead. While he listens the
+light is turned down a little over everything but him, his nest's rim and his bubble, and
+comes back up when he stops; the dim never takes a touch.
+c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/theme.css:.listening-dim`; `web/src/mascot.rs:State, Event, transition`.
 
 ### 2. Drag, daze, write and return
 a. A drag carries him without listening (a still hold listens), riding just above

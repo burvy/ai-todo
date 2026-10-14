@@ -1099,6 +1099,8 @@ pub(crate) fn Rambo(
                 })}
             </span>
         </button>
+        // While he listens the light is turned down over everything but him.
+        <div class="listening-dim" class:on=move || talking.get() aria-hidden="true"></div>
         // The nest's front rim, over his tip: a layer of its own above him, on the
         // nest's box wherever the page has carried it. Its back is drawn on the nest.
         <span
