@@ -8,6 +8,7 @@ use wasm_bindgen::JsCast;
 pub mod account;
 pub mod api;
 pub mod brain;
+pub mod ink;
 pub mod mascot;
 pub mod pen;
 pub mod settings;
