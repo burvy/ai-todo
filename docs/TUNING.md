@@ -35,12 +35,34 @@ pub const DEFAULT_JEV_DAILY_CAP: u32 = 200;
 - **A doc comment on every value**: what it controls, its unit, a safe range, and the
   environment variable that overrides it, if any.
 - **The unit is in the type or the name.** Prefer `Duration`, `NaiveTime` and other
-  typed values. A bare number ends its name with its unit: `_MIN` (minutes), `_DAYS`,
-  `_CHARS`, `_BYTES`, `_ROWS`.
+  typed values; where the type reaches, a typed value wins over a suffix. A bare
+  number ends its name with its unit: `_MS` (milliseconds), `_SECS`, `_MIN`
+  (minutes), `_DAYS`, `_CHARS`, `_BYTES`, `_ROWS`, `_PX` (CSS pixels), `_PERCENT`.
 - **Relations are checked at compile time** where two values must agree, for example
   `const _: () = assert!(TASK_MIN_DURATION_MIN <= TASK_DEFAULT_DURATION_MIN);`.
 - **Grouped by what they affect**, with a `// ---- heading` per group, so related values
   sit together.
+
+### On the web
+
+`web/src/tuning.rs` is not written yet. When it is, it follows the same rules; a
+behaviour value lives there and a look value is a CSS token:
+
+```rust
+// ---- the capture box
+
+/// How long each whisper hint shows before the next. Safe range 3000 to 15000 ms.
+pub const WHISPER_ROTATE_MS: u32 = 6000;
+/// Drag a slip at least this far before it counts as a drag, not a click. Safe
+/// range 3 to 12 px.
+pub const DRAG_START_PX: f64 = 6.0;
+```
+
+```css
+:root {
+  --radius-slip: 6px;   /* corner of a task slip; safe range 0 to 12px */
+}
+```
 
 ## What is not a tuning value
 
