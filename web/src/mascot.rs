@@ -1444,6 +1444,20 @@ mod tests {
         );
     }
 
+    /// The dimmed light while he listens never takes a touch: a drop, a tap off his
+    /// bubble or a tap on the page lands on what is under it.
+    #[test]
+    fn the_dim_while_he_listens_never_takes_a_touch() {
+        let css = include_str!("../theme.css");
+        let rule = css
+            .split(".listening-dim {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("theme.css styles .listening-dim");
+        assert!(rule.contains("pointer-events: none"), "{rule}");
+        assert!(rule.contains("z-index: var(--layer-dim)"), "{rule}");
+    }
+
     /// Rambo and his bubbles sit under the edit sheet and the gear menu; the sheet is
     /// the highest rung a person can open.
     #[test]
@@ -1460,6 +1474,9 @@ mod tests {
         assert!(layer("rambo-bubble") < layer("menu"));
         assert!(layer("menu") < layer("sheet"));
         assert!(layer("note") < layer("rambo"));
+        // The light turned down while he listens lies over the page and under him.
+        assert!(layer("note") < layer("dim"));
+        assert!(layer("dim") < layer("rambo"));
         // The capture bar is above everything sticky: day names.
         assert!(layer("sticky") < layer("capture"));
     }
