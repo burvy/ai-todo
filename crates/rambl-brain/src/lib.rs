@@ -90,7 +90,7 @@ pub struct Moods {
 impl Moods {
     fn drift(&mut self, p: &Personality, night: bool) {
         // A night costs him more than a day does, and boredom barely builds asleep.
-        let weight = if night { 2.0 } else { 1.0 };
+        let weight = if night { p.night_drain } else { 1.0 };
         self.energy = clamp01(self.energy - p.energy_drift * weight);
         self.cheer = clamp01(self.cheer - p.cheer_decay);
         self.boredom = clamp01(self.boredom + p.boredom_drift / weight);
@@ -132,15 +132,16 @@ pub struct Brain {
 
 impl Brain {
     pub fn new(mode: Mode) -> Self {
+        let p = data::personality();
         Self {
             moods: Moods {
-                energy: 0.7,
-                cheer: 0.5,
-                boredom: 0.2,
+                energy: p.start_energy,
+                cheer: p.start_cheer,
+                boredom: p.start_boredom,
             },
             state: State::Home,
             mode,
-            hour: 9,
+            hour: p.start_hour,
             last_say: None,
             asking_about: None,
             cooldowns: Cooldowns::default(),
@@ -214,14 +215,14 @@ pub fn step_with(
     let mut actions = Vec::new();
     match &event {
         Event::TaskAdded => {
-            next.moods.boredom = clamp01(next.moods.boredom - 0.2);
+            next.moods.boredom = clamp01(next.moods.boredom - p.task_added_relief);
             next.state = State::Thinking;
             next.idle_rounds = 0;
             react(&mut next, "task_added", "think", "nod", rng, &mut actions);
         }
         Event::TaskDone => {
             next.moods.cheer = clamp01(next.moods.cheer + p.cheer_gain);
-            next.moods.boredom = clamp01(next.moods.boredom - 0.1);
+            next.moods.boredom = clamp01(next.moods.boredom - p.task_done_relief);
             next.state = State::Reacting;
             next.idle_rounds = 0;
             react(&mut next, "task_done", "cheer", "bounce", rng, &mut actions);
@@ -246,7 +247,7 @@ pub fn step_with(
             react(&mut next, "list_empty", "smile", "grin", rng, &mut actions);
         }
         Event::Poked => {
-            next.moods.cheer = clamp01(next.moods.cheer + 0.05);
+            next.moods.cheer = clamp01(next.moods.cheer + p.poke_cheer);
             next.asking_about = None;
             next.state = State::Reacting;
             next.idle_rounds = 0;
@@ -256,7 +257,7 @@ pub fn step_with(
         }
         Event::PutBack => {
             // He forgives you, a little.
-            next.moods.cheer = clamp01(next.moods.cheer + FORGIVE_CHEER);
+            next.moods.cheer = clamp01(next.moods.cheer + p.put_back_cheer);
             next.idle_rounds = 0;
         }
         Event::Dragged => {
@@ -272,13 +273,13 @@ pub fn step_with(
         }
         Event::UserIdle(minutes) => {
             next.idle_rounds = next.idle_rounds.saturating_add(*minutes);
-            if next.idle_rounds >= IDLE_AFTER {
+            if next.idle_rounds >= p.idle_after {
                 idle(&mut next, p, rng, &mut actions);
             }
         }
         Event::Tick => {
             next.idle_rounds = next.idle_rounds.saturating_add(1);
-            if next.idle_rounds >= IDLE_AFTER {
+            if next.idle_rounds >= p.idle_after {
                 idle(&mut next, p, rng, &mut actions);
             }
         }
@@ -286,7 +287,7 @@ pub fn step_with(
             let asleep = next.state == State::Dozing;
             if p.is_night(*hour) {
                 next.state = State::Dozing;
-                next.moods.energy = clamp01(next.moods.energy + 0.05);
+                next.moods.energy = clamp01(next.moods.energy + p.doze_energy);
                 actions.push(Action::Pose("sleep"));
                 actions.push(Action::Animate("doze"));
             } else {
@@ -305,13 +306,6 @@ pub fn step_with(
     }
     (next, actions)
 }
-
-/// Idle steps before he starts doing something of his own.
-const IDLE_AFTER: u32 = 3;
-
-/// How much putting him back in his nest makes up for leaving him dazed:
-/// a little, less than a poke.
-const FORGIVE_CHEER: f32 = 0.03;
 
 /// The pose, the animation and the line for reacting to something.
 fn react(
@@ -368,24 +362,24 @@ fn idle(brain: &mut Brain, p: &Personality, rng: &mut impl Rng, actions: &mut Ve
     let m = brain.moods;
     let mut options = vec![IdleOption {
         state: State::Home,
-        worth: 0.6 - m.boredom * 0.7 + m.energy * 0.2,
+        worth: p.home_base - m.boredom * p.home_boredom + m.energy * p.home_energy,
         situation: "home",
         animate: "idle",
         spot: Spot::Circle,
     }];
-    if brain.cooldowns.wander == 0 && m.energy > 0.25 {
+    if brain.cooldowns.wander == 0 && m.energy > p.wander_min_energy {
         options.push(IdleOption {
             state: State::Wandering,
-            worth: 0.5 + m.boredom * 0.8 - m.energy * 0.3,
+            worth: p.wander_base + m.boredom * p.wander_boredom - m.energy * p.wander_energy,
             situation: "wander",
             animate: "wander",
             spot: Spot::Window,
         });
     }
-    if brain.cooldowns.play == 0 && m.cheer > 0.4 {
+    if brain.cooldowns.play == 0 && m.cheer > p.play_min_cheer {
         options.push(IdleOption {
             state: State::Playing,
-            worth: 0.4 + m.cheer * 0.5 + m.boredom * 0.5,
+            worth: p.play_base + m.cheer * p.play_cheer + m.boredom * p.play_boredom,
             situation: "play",
             animate: "play",
             spot: Spot::Circle,

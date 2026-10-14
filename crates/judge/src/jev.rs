@@ -178,12 +178,14 @@ fn parse_answer(answers: &Map<String, Value>) -> Result<ClauseAnswer> {
     confidences.push(answer_confidence(label_answer));
 
     let priority_answer = field("priority")?;
+    // The score indexes the criteria the question lists, one per priority level.
+    let highest = (PRIORITY_LEVELS.len() - 1) as f64;
     let level = priority_answer
         .get("score")
         .and_then(Value::as_f64)
         .unwrap_or(0.0)
         .round()
-        .clamp(0.0, 3.0) as usize;
+        .clamp(0.0, highest) as usize;
     confidences.push(answer_confidence(priority_answer));
 
     Ok(ClauseAnswer {

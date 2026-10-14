@@ -89,14 +89,37 @@ impl Lines {
     }
 }
 
-/// How Rambl feels and how quickly he changes.
+/// How Rambl feels and how quickly he changes: every number in
+/// `content/personality.toml`, whose comments say what each one does.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Personality {
+    pub start_energy: f32,
+    pub start_cheer: f32,
+    pub start_boredom: f32,
+    pub start_hour: u8,
     pub energy_drift: f32,
     pub cheer_decay: f32,
     pub boredom_drift: f32,
     pub cheer_gain: f32,
     pub cheer_loss: f32,
+    pub night_drain: f32,
+    pub task_added_relief: f32,
+    pub task_done_relief: f32,
+    pub poke_cheer: f32,
+    pub put_back_cheer: f32,
+    pub doze_energy: f32,
+    pub idle_after: u32,
+    pub wander_min_energy: f32,
+    pub play_min_cheer: f32,
+    pub home_base: f32,
+    pub home_boredom: f32,
+    pub home_energy: f32,
+    pub wander_base: f32,
+    pub wander_boredom: f32,
+    pub wander_energy: f32,
+    pub play_base: f32,
+    pub play_cheer: f32,
+    pub play_boredom: f32,
     pub wander_cooldown: u32,
     pub play_cooldown: u32,
     pub idle_line_cooldown: u32,
@@ -109,16 +132,41 @@ pub struct Personality {
 impl Personality {
     pub fn parse(text: &str) -> Result<Self, DataError> {
         let all = tables(text);
+        let start = all.get("start");
         let rates = all.get("rates");
+        let events = all.get("events");
+        let idle = all.get("idle");
         let cooldowns = all.get("cooldowns");
         let day = all.get("day");
         let voice = all.get("voice");
         Ok(Self {
+            start_energy: number(start, "start", "energy")?,
+            start_cheer: number(start, "start", "cheer")?,
+            start_boredom: number(start, "start", "boredom")?,
+            start_hour: hour(start, "start", "hour")?,
             energy_drift: number(rates, "rates", "energy_drift")?,
             cheer_decay: number(rates, "rates", "cheer_decay")?,
             boredom_drift: number(rates, "rates", "boredom_drift")?,
             cheer_gain: number(rates, "rates", "cheer_gain")?,
             cheer_loss: number(rates, "rates", "cheer_loss")?,
+            night_drain: number(rates, "rates", "night_drain")?,
+            task_added_relief: number(events, "events", "task_added_relief")?,
+            task_done_relief: number(events, "events", "task_done_relief")?,
+            poke_cheer: number(events, "events", "poke_cheer")?,
+            put_back_cheer: number(events, "events", "put_back_cheer")?,
+            doze_energy: number(events, "events", "doze_energy")?,
+            idle_after: count(idle, "idle", "after")?,
+            wander_min_energy: number(idle, "idle", "wander_min_energy")?,
+            play_min_cheer: number(idle, "idle", "play_min_cheer")?,
+            home_base: number(idle, "idle", "home_base")?,
+            home_boredom: number(idle, "idle", "home_boredom")?,
+            home_energy: number(idle, "idle", "home_energy")?,
+            wander_base: number(idle, "idle", "wander_base")?,
+            wander_boredom: number(idle, "idle", "wander_boredom")?,
+            wander_energy: number(idle, "idle", "wander_energy")?,
+            play_base: number(idle, "idle", "play_base")?,
+            play_cheer: number(idle, "idle", "play_cheer")?,
+            play_boredom: number(idle, "idle", "play_boredom")?,
             wander_cooldown: count(cooldowns, "cooldowns", "wander")?,
             play_cooldown: count(cooldowns, "cooldowns", "play")?,
             idle_line_cooldown: count(cooldowns, "cooldowns", "idle_line")?,
@@ -234,17 +282,17 @@ mod tests {
 
     #[test]
     fn a_missing_or_wrong_key_is_an_error() {
-        let text = "[rates]\nenergy_drift = fast\n";
+        let text = "[start]\nenergy = fast\n";
         let error = Personality::parse(text).unwrap_err();
         assert_eq!(
             error,
             DataError::NotANumber {
-                key: "rates.energy_drift".into(),
+                key: "start.energy".into(),
                 value: "fast".into()
             }
         );
-        let error = Personality::parse("[rates]\nenergy_drift = 0.1\n").unwrap_err();
-        assert_eq!(error, DataError::Missing("rates.cheer_decay".into()));
+        let error = Personality::parse("[start]\nenergy = 0.1\n").unwrap_err();
+        assert_eq!(error, DataError::Missing("start.cheer".into()));
     }
 
     #[test]
