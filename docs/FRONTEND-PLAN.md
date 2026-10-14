@@ -248,8 +248,11 @@ Each becomes a ticket when the steps before it have landed, written with what th
 - **Preset C: music and dancing.** Calm classical background music from CC0 or public-domain recordings, and Rambo dancing to its beat. After the sound engine.
 - **Full calendar view** (owner: later): scrolling back in time and further ahead.
 - **Rambo's ask bubble does what it says** (2.6): Edit, Move, the planner-slip choices and the empty-hour task, one ticket each.
-- **Slash-out delete** (DESIGN-DIRECTION §9): swipe left on a row draws an ink slash that follows the finger; past the threshold the row is deleted, short of it the ink lifts away. Replaces the swipe-right delete in `row.rs`; waits for the open page-turn question (2.6). Accept: a pure test of the stroke's length against the finger's travel, and the delete threshold.
-- **Scrap undo** (with the slash-out): the deleted row's scrap lies in the page corner for a few seconds; a tap tapes it back and the task returns as it was. Accept: a test that undo restores the task unchanged, and that the scrap goes after its time.
+- **Scribble-out delete** (DESIGN-DIRECTION §9, Gestures, final): swipe right on a row draws Rambo's scribble over the words, growing with the finger's travel; past `SWIPE_PX` (`row.rs`) the row is deleted, short of it the ink lifts away. It replaces today's slide-away (`.swipe-deleted`) and keeps `row.rs`'s gesture rules. Accept: a pure test of how much scribble shows for a given travel, and that the delete threshold is unchanged.
+- **Planner swipes** (with or after BUG-9): on the planner page, swipe left scrolls to later days; swipe right inside the grid scrolls back, and outside the grid turns the page back to the list. Accept: a pure test that maps the swipe's direction and where it started (inside or outside the grid) to scroll or turn.
+- **The page rips:** a left-to-right swipe on the list page that does not start on a task tears the page edge a little. Rambo walks over and tapes it, and his face stays grumpy for a while; the tape and tear fade after a while. Tear and tape art in asset slots; the times in the tuning file. Accept: a pure test that a swipe on a task deletes and one off a task rips; the tear never covers a row's words.
+- **The reaction beat:** every Rambo move (skitter home, fly to a row, go to write, tape the rip) starts with a beat: he notices, his expression changes, then he moves. One place in `mascot.rs` adds the beat in front of every move, with its times in the tuning file, and a guard test that no move starts without it. After FE-4, since every change of state goes through `transition` there. The interruption step (writing pauses and resumes) must keep the beat short enough that capture never feels slow.
+- **Scrap undo** (with the scribble-out): the deleted row's scrap lies in the page corner for a few seconds; a tap tapes it back and the task returns as it was. Accept: a test that undo restores the task unchanged, and that the scrap goes after its time.
 - **Ink dries:** a new row is glossy for a few seconds after Rambo writes it; a tap in that time smudges it. Accept: the gloss time is a tuning constant; the smudge is only a look and never changes the task.
 - **The nib runs dry:** after a long run of rows, Rambo taps his nib on the dish's rim before the next. Accept: a pure test of when the tap comes (a tuning count of rows); it never delays a capture by more than the tap.
 - **Bookmark ribbon:** a cloth ribbon down the planner's edge marks today; pulling it scrolls the planner back to today. Art in an asset slot. Accept: the pull lands on today at both screen sizes.
@@ -352,9 +355,9 @@ Rambo's ask bubble (dropping him on a task) offers Edit, Move, Done and Never mi
 - **Dropped on a planner slip:** a bubble with time choices: Move, Longer, Shorter, Off the planner. Needs a hit test for slips, as `row_under` is for rows.
 - **Dropped on an empty hour:** a new task at that time, and he listens; a tap or click elsewhere cancels.
 
-Also decided: the bubble keeps Edit, Move, Done and Never mind, with no Delete; deleting is the slash-out (2.4).
+Also decided: the bubble keeps Edit, Move, Done and Never mind, with no Delete; deleting is the scribble-out (2.4).
 
-Still open, for god to ask the owner: swipe left on a task now slashes it out. What does swipe right on a task do, and how is the page turned on the phone (today swipe left turns it, and swipe right on the planner turns back)?
+The gestures are final too (DESIGN-DIRECTION §9, Gestures, final): swipe right on a task is the scribble-out delete, swipe left turns to the planner, and on the planner the swipes scroll inside the grid and turn back outside it. Nothing in 2.6 is open.
 
 ## 3. Not checked
 
