@@ -18,8 +18,8 @@ use crate::api;
 use crate::edits::series_note;
 use crate::tasks::occurrence_parts;
 use crate::tuning::{
-    PIN_EDGES, PIN_ROOM_PX, ROW_CLOSE_MS, SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS,
-    STRIP_GAP_PX, STRIP_H_PX,
+    BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGES, PIN_ROOM_PX, ROW_CLOSE_MS, SCRAP_MAX,
+    SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX, STRIP_GAP_PX, STRIP_H_PX,
 };
 
 /// What taping a scrap back does.
@@ -89,6 +89,21 @@ fn note_return(id: &str, spot: Spot) {
 
 fn forget_return(id: &str) {
     RETURNS.with(|noted| noted.borrow_mut().remove(id));
+}
+
+/// Whether a point (`x`, `y`) in a `width` x `height` window is in the bin corner: the
+/// bottom-left, where dragging a strip deletes its task for good.
+fn in_bin_corner(x: f64, y: f64, width: f64, height: f64) -> bool {
+    x <= width * BIN_CORNER_FRACTION && y >= height * (1.0 - BIN_CORNER_FRACTION)
+}
+
+/// The window's width and height in px, or nothing when there is no window.
+fn viewport() -> Option<(f64, f64)> {
+    let window = web_sys::window()?;
+    Some((
+        window.inner_width().ok()?.as_f64()?,
+        window.inner_height().ok()?.as_f64()?,
+    ))
 }
 
 /// How far below the top strip the strip at `rank` shows: each rank one edge deeper, up to
@@ -512,6 +527,15 @@ pub fn ScrapCorner(
                         });
                         ready.is_some()
                     });
+                    // Dragging the top strip: it follows the finger; in the bin corner it
+                    // leans, and on release there it crumples and its task is deleted.
+                    let grip = StoredValue::new(None::<(f64, f64)>);
+                    let offset = RwSignal::new((0.0_f64, 0.0_f64));
+                    let dragging = RwSignal::new(false);
+                    let binned = RwSignal::new(false);
+                    let just_dragged = StoredValue::new(false);
+                    let task_id = StoredValue::new(hung.id.clone());
+                    let deletable = occurrence_parts(&hung.id.0).is_none();
                     let rank_id = hung.id.clone();
                     let rank = Memo::new(move |_| snapshot.with(|held| stack_rank(held, &rank_id)).unwrap_or(0));
                     let top = Memo::new(move |_| rank.get() == 0);
@@ -525,14 +549,84 @@ pub fn ScrapCorner(
                             class="scrap-undo done"
                             node_ref=hung_ref
                             style:--hang=style
+                            style:--drag-x=move || format!("{}px", offset.get().0)
+                            style:--drag-y=move || format!("{}px", offset.get().1)
+                            class:dragging=move || dragging.get()
+                            class:over-bin=move || binned.get() && dragging.get()
+                            class:binned=move || binned.get() && !dragging.get()
                             style:--depth=move || edge_depth(rank.get()).to_string()
                             style:z-index=move || (PIN_EDGES + 1 - edge_depth(rank.get())).to_string()
                             aria-label=label
                             aria-hidden=move || (!top.get()).to_string()
                             disabled=move || !top.get()
                             title="Tap to tape it back"
+                            on:pointerdown=move |event: leptos::ev::PointerEvent| {
+                                if top.get_untracked() {
+                                    grip.set_value(Some((f64::from(event.client_x()), f64::from(event.client_y()))));
+                                    just_dragged.set_value(false);
+                                    // Moves go to the strip even once the finger has left it.
+                                    if let Some(button) = hung_ref.get_untracked() {
+                                        let _ = button.set_pointer_capture(event.pointer_id());
+                                    }
+                                }
+                            }
+                            on:pointermove=move |event: leptos::ev::PointerEvent| {
+                                let Some((x0, y0)) = grip.get_value() else { return };
+                                let (x, y) = (f64::from(event.client_x()), f64::from(event.client_y()));
+                                let (dx, dy) = (x - x0, y - y0);
+                                if !dragging.get_untracked() {
+                                    if dx.hypot(dy) < STRIP_DRAG_PX {
+                                        return;
+                                    }
+                                    dragging.set(true);
+                                }
+                                offset.set((dx, dy));
+                                let over = viewport().is_some_and(|(w, h)| in_bin_corner(x, y, w, h));
+                                binned.set(over && deletable);
+                            }
+                            on:pointerup=move |_| {
+                                if grip.get_value().is_none() {
+                                    return;
+                                }
+                                grip.set_value(None);
+                                if !dragging.get_untracked() {
+                                    return;
+                                }
+                                dragging.set(false);
+                                just_dragged.set_value(true);
+                                if binned.get_untracked() {
+                                    let id = task_id.get_value();
+                                    set_timeout(
+                                        move || {
+                                            wasm_bindgen_futures::spawn_local(async move {
+                                                match api::delete_task(&id).await {
+                                                    Ok(snapshot) => set_snapshot.set(snapshot),
+                                                    Err(e) => {
+                                                        binned.set(false);
+                                                        offset.set((0.0, 0.0));
+                                                        set_error.set(Some(series_note(&e)));
+                                                    }
+                                                }
+                                            });
+                                        },
+                                        std::time::Duration::from_millis(BIN_CRUMPLE_MS),
+                                    );
+                                } else {
+                                    offset.set((0.0, 0.0));
+                                }
+                            }
+                            on:pointercancel=move |_| {
+                                grip.set_value(None);
+                                dragging.set(false);
+                                binned.set(false);
+                                offset.set((0.0, 0.0));
+                            }
                             on:click=move |_| {
-                                let id = hung.id.clone();
+                                if just_dragged.get_value() {
+                                    just_dragged.set_value(false);
+                                    return;
+                                }
+                                let id = task_id.get_value();
                                 let Some(action) = snapshot.with_untracked(|s| crate::tasks::tick_action(s, &id.0)) else {
                                     return;
                                 };
@@ -839,6 +933,15 @@ mod tests {
         let before = [row("a", 0), row("b", 50)];
         let after = [row("b", 0), row("a", 50)];
         assert!(rows_to_slide(&before, &after).is_empty());
+    }
+
+    #[test]
+    fn the_bin_is_the_bottom_left_corner_and_nothing_else() {
+        // A 390x844 phone: the corner is the left 30% of the width, the bottom 30% of the height.
+        assert!(in_bin_corner(10.0, 800.0, 390.0, 844.0), "bottom left");
+        assert!(!in_bin_corner(300.0, 800.0, 390.0, 844.0), "bottom right");
+        assert!(!in_bin_corner(10.0, 100.0, 390.0, 844.0), "top left");
+        assert!(in_bin_corner(0.0, 844.0, 390.0, 844.0), "the very corner");
     }
 
     #[test]

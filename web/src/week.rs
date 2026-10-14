@@ -183,13 +183,12 @@ pub fn WeekGrid(
     let days = move || (0..settings.get().days).collect::<Vec<_>>();
     let hours = move || (settings.get().start_hour..settings.get().end_hour).collect::<Vec<_>>();
     view! {
-        <section class="planner-page" aria-labelledby="week-heading">
+        <section class="planner-page" aria-label="Planner">
             // The settings gear and the account link live on this page only, at its top right.
             <div class="planner-corner">
                 <crate::account::HeaderLink />
                 <crate::settings::GearMenu settings set_settings set_snapshot set_error />
             </div>
-            <h2 id="week-heading">"Planner"</h2>
             <crate::PageFoot page=1 turn=turn_back />
             <div
                 class="week-scroll"

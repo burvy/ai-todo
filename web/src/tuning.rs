@@ -137,6 +137,15 @@ pub const PIN_EDGES: usize = 3;
 pub const STRIP_H_PX: f64 = 110.0;
 /// The gap between hanging strips, in px. Safe range 2 to 12.
 pub const STRIP_GAP_PX: f64 = 4.0;
+/// How far, in px, a strip must be dragged before it counts as a drag and not a tap.
+/// Safe range 4 to 12.
+pub const STRIP_DRAG_PX: f64 = 6.0;
+/// The bottom-left corner that deletes a dragged strip, as a share of the screen's width
+/// and of its height. Safe range 0.2 to 0.4.
+pub const BIN_CORNER_FRACTION: f64 = 0.3;
+/// How long a strip crumples in the bin corner before the task is deleted, in ms.
+/// Safe range 200 to 600.
+pub const BIN_CRUMPLE_MS: u64 = 360;
 /// What lies above the first strip in the pin's column (the pin itself), in px.
 /// Safe range 20 to 40.
 pub const PIN_ROOM_PX: f64 = 28.0;
