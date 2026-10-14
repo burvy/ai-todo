@@ -349,7 +349,8 @@ mod tests {
             ("wake up in 10 minutes", at(14, 13)),
             ("in 10 min", at(14, 13)),
             ("in 10mins", at(14, 13)),
-            ("in a minute", at(14, 4)),
+            ("in 1 minute", at(14, 4)),
+            ("in one minute", at(14, 4)),
             ("in an hour", at(15, 3)),
             ("in 1 hour", at(15, 3)),
             ("in one hour", at(15, 3)),
@@ -440,6 +441,9 @@ mod tests {
     fn relative_phrases_that_are_nonsense_are_left_alone() {
         let ctx = ny(utc(2026, 10, 14, 14, 0));
         for text in [
+            // "in a minute" means soon, not sixty seconds.
+            "in a minute",
+            "in a min",
             "in 0 minutes",
             "in 99999 days",
             "in a while",

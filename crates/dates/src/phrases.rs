@@ -344,6 +344,8 @@ pub fn minutes_from_now(words: &[&str]) -> Option<u32> {
                 return None;
             }
         }
+        // "I'll call mom in a minute" means soon, not sixty seconds: leave it to the title.
+        ["in", "a" | "an", unit] if is_minute_unit(unit) => return None,
         ["in", counted @ .., unit] => {
             let (count, used) = amount(counted)?;
             if used != counted.len() {
