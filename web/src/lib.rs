@@ -409,6 +409,7 @@ pub fn App() -> impl IntoView {
     let _ = (page, turning, settling);
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
+    let (typing, set_typing) = signal(false);
     let pen_pos = RwSignal::new((0.0_f64, 0.0));
     // Transcript buffer: Rambo fills it while listening, CaptureBox reads it
     let capture_text = RwSignal::new(String::new());
@@ -416,6 +417,8 @@ pub fn App() -> impl IntoView {
     let pen_queue = RwSignal::new(Vec::<TaskId>::new());
     // Capture form ref so Rambo can requestSubmit on release
     let form_ref = NodeRef::<leptos::html::Form>::new();
+    // Nest ref so Rambo (independent fixed layer) can measure where to sit at home
+    let nest_ref = NodeRef::<leptos::html::Button>::new();
 
     window_event_listener(leptos::ev::keydown, move |event| {
         if event.key() == " "
@@ -441,6 +444,7 @@ pub fn App() -> impl IntoView {
             />
             <CaptureBox
                 form_ref
+                nest_ref
                 snapshot=snapshot
                 set_snapshot=set_snapshot
                 state=mascot_state
@@ -451,6 +455,8 @@ pub fn App() -> impl IntoView {
                 pen_queue
                 talking
                 set_talking
+                typing
+                set_typing
                 set_error
                 brain_speech
                 brain_pose
@@ -496,6 +502,26 @@ pub fn App() -> impl IntoView {
                 set_mascot_state=set_mascot_state
             />
         </main>
+        // Rambo: independent fixed layer above everything, not part of the capture form
+        <Rambo
+            state=mascot_state
+            set_state=set_mascot_state
+            talking
+            set_talking
+            snapshot
+            set_snapshot
+            set_error
+            view_settings
+            brain_speech
+            brain_pose
+            set_brain_event
+            pen_pos
+            capture_text
+            form_ref
+            nest_ref
+            pen=Signal::derive(move || view_settings.get().pen)
+            typing
+        />
     }
 }
 
@@ -638,6 +664,7 @@ fn capture_note(title: &str, error: &api::ApiError) -> String {
 #[component]
 fn CaptureBox(
     form_ref: NodeRef<leptos::html::Form>,
+    nest_ref: NodeRef<leptos::html::Button>,
     snapshot: ReadSignal<Snapshot>,
     set_snapshot: WriteSignal<Snapshot>,
     state: ReadSignal<mascot::State>,
@@ -648,15 +675,14 @@ fn CaptureBox(
     pen_queue: RwSignal<Vec<TaskId>>,
     talking: ReadSignal<bool>,
     set_talking: WriteSignal<bool>,
+    typing: ReadSignal<bool>,
+    set_typing: WriteSignal<bool>,
     set_error: WriteSignal<Option<String>>,
     brain_speech: ReadSignal<Option<String>>,
     brain_pose: ReadSignal<String>,
     set_brain_event: WriteSignal<Option<rambl_brain::Event>>,
 ) -> impl IntoView {
     let (text, set_text) = signal(String::new());
-    // Rambo peeks over at you while you type. He lives in the capture form, so
-    // the peek signal belongs with the input that drives it.
-    let (typing, set_typing) = signal(false);
 
     // Watch for speech transcript from Rambo: when capture_text changes, fill the input
     Effect::new(move |_| {
@@ -726,15 +752,8 @@ fn CaptureBox(
             let caret_x = rect.left() + f64::from(sel) * 8.0;
             let caret_y = rect.top() + rect.height() / 2.0;
             let center = pen::writing_pen_center(caret_x, caret_y);
-            // Convert to offset from Rambo's home position
-            if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                if let Some(rambo) = doc.query_selector(".rambo").ok().flatten() {
-                    let rrect = rambo.get_bounding_client_rect();
-                    let hx = rrect.left() + rrect.width() / 2.0;
-                    let hy = rrect.top() + rrect.height() / 2.0;
-                    pen_pos.set((center.0 - hx, center.1 - hy));
-                }
-            }
+            // Rambo is now a fixed layer — pen_pos is absolute page coords
+            pen_pos.set(center);
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -847,38 +866,21 @@ fn CaptureBox(
             />
             // The nest: clicking it submits the form (replaces the Add button)
             <button
+                node_ref=nest_ref
                 type="submit"
                 class="nest"
                 aria-label="Submit task"
             >
-                // Rambo sits here as a sibling element; clicking the nest area around him submits
             </button>
-            <Rambo
-                state
-                set_state
-                talking
-                set_talking
-                snapshot
-                set_snapshot
-                set_error
-                view_settings
-                brain_speech
-                brain_pose
-                set_brain_event
-                pen_pos
-                capture_text
-                form_ref
-                pen=Signal::derive(move || view_settings.get().pen)
-                typing
-            />
         </form>
     }
 }
 
-/// The single Rambo element: fixed at bottom-right, draggable, writes, skitters.
+/// The single Rambo element: independent fixed layer above everything.
 ///
-/// This replaces the old three-element setup (mascot-home button, away .mascot span,
-/// and PenRig overlay). One `<button>`, one state machine, one CSS block.
+/// Rambo is not a child of the nest or the capture form. He sits at a
+/// `position: fixed` spot measured from the nest's bounding box. Drag moves
+/// only Rambo; he follows the pointer exactly and skitters back to the nest.
 #[component]
 fn Rambo(
     state: ReadSignal<mascot::State>,
@@ -897,11 +899,44 @@ fn Rambo(
     capture_text: RwSignal<String>,
     /// Capture form: Rambo calls requestSubmit on release
     form_ref: NodeRef<leptos::html::Form>,
+    /// The nest button: Rambo measures its bounding box to know where home is
+    nest_ref: NodeRef<leptos::html::Button>,
     /// The tool he holds: it decides which drawing of each pose he wears
     pen: Signal<settings::Pen>,
     /// True while you are typing, so he peeks over at the box
     typing: ReadSignal<bool>,
 ) -> impl IntoView {
+    // Measure the nest's center so Rambo knows where to sit at home.
+    // Update on mount, on resize, and whenever state changes to Home.
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Reactive effect: re-measure when state changes (so returning home updates pen_pos)
+        Effect::new(move |_| {
+            let _ = state.get(); // track state
+            if let Some(nest) = nest_ref.get() {
+                let rect = nest.get_bounding_client_rect();
+                let cx = rect.left() + rect.width() / 2.0;
+                let cy = rect.top() + rect.height() / 2.0;
+                if matches!(state.get_untracked(), mascot::State::Home) {
+                    pen_pos.set((cx, cy));
+                }
+            }
+        });
+        // Also measure on window resize (non-reactive, just a listener)
+        window_event_listener(leptos::ev::resize, move |_| {
+            if matches!(state.get_untracked(), mascot::State::Home) {
+                if let Some(nest) = nest_ref.get() {
+                    let rect = nest.get_bounding_client_rect();
+                    let cx = rect.left() + rect.width() / 2.0;
+                    let cy = rect.top() + rect.height() / 2.0;
+                    pen_pos.set((cx, cy));
+                }
+            }
+        });
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (nest_ref, pen_pos, state);
+
     let start_return_with = move |hard_drop: bool| {
         if mascot::prefers_reduced_motion() {
             set_state.set(mascot::State::Home);
@@ -1044,7 +1079,7 @@ fn Rambo(
                 }
                 set_brain_event.set(Some(rambl_brain::Event::Poked));
                 *moved_down.borrow_mut() = false;
-                // Save grab state: pointer position, pen offset, and timestamp at grab
+                // Save grab state: pointer position and pen position at grab
                 let gx = ev.client_x() as f64;
                 let gy = ev.client_y() as f64;
                 let (ox, oy) = pen_pos.get_untracked();
@@ -1060,11 +1095,8 @@ fn Rambo(
             on:pointermove=move |ev| {
                 if matches!(state.get_untracked(), mascot::State::Dragging) {
                     *moved_move.borrow_mut() = true;
-                    if let Some((gx, gy, ox, oy, _t)) = *grab_state_move.borrow() {
-                        let dx = ev.client_x() as f64 - gx;
-                        let dy = ev.client_y() as f64 - gy;
-                        pen_pos.set((ox + dx, oy + dy));
-                    }
+                    // Rambo follows the pointer exactly — pen_pos is the pointer position
+                    pen_pos.set((ev.client_x() as f64, ev.client_y() as f64));
                 }
             }
             on:pointerup=move |ev: leptos::ev::PointerEvent| {
@@ -1079,14 +1111,16 @@ fn Rambo(
                     set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Release));
                     return;
                 }
-                // Update pen position one last time using delta from grab; also compute
+                // Update pen position one last time to the pointer position; also compute
                 // drop velocity to detect hard drops (fast release → splat).
-                let hard_drop = if let Some((gx, gy, ox, oy, grab_time)) = *grab_state_up.borrow() {
-                    let dx = ev.client_x() as f64 - gx;
-                    let dy = ev.client_y() as f64 - gy;
-                    pen_pos.set((ox + dx, oy + dy));
+                let hard_drop = if let Some((gx, gy, _ox, _oy, grab_time)) = *grab_state_up.borrow() {
+                    let px = ev.client_x() as f64;
+                    let py = ev.client_y() as f64;
+                    pen_pos.set((px, py));
                     let elapsed = (js_sys::Date::now() as u64).saturating_sub(grab_time) as f64;
                     if elapsed > 0.0 {
+                        let dx = px - gx;
+                        let dy = py - gy;
                         let distance = (dx * dx + dy * dy).sqrt();
                         let velocity = distance / elapsed;
                         velocity >= mascot::HARD_DROP_VELOCITY
@@ -1484,13 +1518,8 @@ fn TaskList(
                                     rect.left() + 40.0,
                                     rect.top() + rect.height() / 2.0,
                                 );
-                                // Convert to offset from Rambo's home position
-                                if let Some(rambo) = doc.query_selector(".rambo").ok().flatten() {
-                                    let rrect = rambo.get_bounding_client_rect();
-                                    let hx = rrect.left() + rrect.width() / 2.0;
-                                    let hy = rrect.top() + rrect.height() / 2.0;
-                                    pen_pos.set((center.0 - hx, center.1 - hy));
-                                }
+                                // pen_pos is absolute page coords (Rambo is a fixed layer)
+                                pen_pos.set(center);
                             }
                         }
                         gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;

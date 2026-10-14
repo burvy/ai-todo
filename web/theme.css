@@ -504,15 +504,17 @@ a {
   flex-shrink: 0;
 }
 
-/* The single Rambo button: rests in the nest, fixed when away.
-   All states (dragging, writing, skittering) use CSS classes on this one element.
-   At home he sits in the nest, which is the last thing in the capture bar, so
-   he is anchored to the bar's right edge rather than to a spot of his own. */
+/* The single Rambo button: independent fixed layer above everything.
+   Not a child of the nest — positioned by measuring the nest's bounding box.
+   --pen-x and --pen-y are always the center of the button. */
 .rambo {
-  position: absolute;
-  top: 50%;
-  right: 2px;
-  transform: translateY(-50%);
+  position: fixed;
+  top: 0;
+  left: 0;
+  transform: translate(
+    calc(var(--pen-x) - 50%),
+    calc(var(--pen-y) - 50%)
+  );
   z-index: 50;
   display: inline-flex;
   width: calc(var(--tap) * 1.25 - 4px);
@@ -523,32 +525,13 @@ a {
   border-radius: var(--radius-round);
   cursor: grab;
   touch-action: none;
-  /* CSS variables for writing position — ignored at home */
+  /* CSS variables for position (set by JS measuring the nest) */
   --pen-x: 0px;
   --pen-y: 0px;
 }
 
 .rambo:hover {
   text-decoration: none;
-}
-
-/* When Rambo is away from home, he becomes fixed so he can move freely.
-   --pen-x and --pen-y are the center of the button, so we position top/left
-   there and translate back by half. */
-.rambo.is-dragging,
-.rambo.is-flying,
-.rambo.is-recovering,
-.rambo.is-splatting,
-.rambo.is-skittering,
-.rambo.is-asking,
-.rambo.is-writing {
-  position: fixed;
-  top: 0;
-  left: 0;
-  transform: translate(
-    calc(var(--pen-x) - 50%),
-    calc(var(--pen-y) - 50%)
-  );
 }
 
 .rambo:active {
