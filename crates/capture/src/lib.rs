@@ -6,6 +6,7 @@
 //! into [`todo_core::TaskDraft`]s with a [`judge::Judge`].
 
 pub mod email;
+pub mod leadin;
 pub mod pdf;
 pub mod pipeline;
 pub mod revise;

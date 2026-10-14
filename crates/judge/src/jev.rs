@@ -65,6 +65,8 @@ struct Response {
     answers: Map<String, Value>,
 }
 
+const TITLE_INSTRUCTIONS: &str = "Which span is the task itself, as a short title? Words that only ask the app to create the task, such as \"add a task to\", \"remind me to\", \"can you\" or \"please\", are not part of the title. If the clause is already the task, choose the whole clause.";
+
 const IS_TASK_INSTRUCTIONS: &str = "Does this clause name an actionable obligation, deadline, assessment to prepare for, or errand? Observations, wishes, feelings, past events and chit-chat are not tasks.";
 
 /// The questions to ask for one clause. Choice questions with no candidates are left out.
@@ -81,7 +83,7 @@ fn questions(question: &ClauseQuestion) -> Value {
     questions.insert(
         "title".into(),
         choice(
-            "Which title span best names the task?",
+            TITLE_INSTRUCTIONS,
             indexed(&question.titles, "title_", None),
         ),
     );

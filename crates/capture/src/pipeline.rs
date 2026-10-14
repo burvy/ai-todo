@@ -7,6 +7,7 @@ use dates::{Candidate, Value, candidates};
 use judge::{ClauseAnswer, ClauseQuestion, Judge};
 use todo_core::{LocalContext, Source, TaskDraft};
 
+use crate::leadin;
 use crate::segment::split_clauses;
 
 /// Used when Jev has no duration candidate to choose.
@@ -76,7 +77,13 @@ fn phrases(found: &[Candidate], keep: impl Fn(&Value) -> bool) -> Vec<String> {
 /// Title spans the code proposes: the clause without its date, time and duration
 /// phrases. The whole clause is offered only when stripping removed everything,
 /// so a captured date never repeats inside the title.
-fn title_spans(clause: &str, found: &[Candidate]) -> Vec<String> {
+pub fn title_spans(clause: &str, found: &[Candidate]) -> Vec<String> {
+    leadin::options(&base_title(clause, found))
+}
+
+/// The clause without its date, time and duration phrases and its filler words: the
+/// title before the lead-in question ([`leadin`]) is asked.
+pub fn base_title(clause: &str, found: &[Candidate]) -> String {
     let mut stripped = String::new();
     let mut cursor = 0;
     for candidate in found {
@@ -87,13 +94,13 @@ fn title_spans(clause: &str, found: &[Candidate]) -> Vec<String> {
 
     let stripped = clean_title(&stripped);
     if !stripped.is_empty() {
-        return vec![stripped];
+        return stripped;
     }
     let whole = clean_title(clause);
     if !whole.is_empty() {
-        return vec![whole];
+        return whole;
     }
-    vec![clause.trim().to_owned()]
+    clause.trim().to_owned()
 }
 
 fn is_edge_noise(c: char) -> bool {
@@ -392,6 +399,18 @@ mod tests {
         let out = drafts_due("Pay rent tomorrow", picked, five).await;
         let due = Utc.with_ymd_and_hms(2026, 10, 12, 21, 0, 0).unwrap();
         assert_eq!(out[0].when, When::DueBy(due));
+    }
+
+    #[tokio::test]
+    async fn a_lead_in_is_cut_from_the_title_by_default_and_kept_if_jev_prefers() {
+        let out = drafts("Add a task to buy milk tomorrow", answer()).await;
+        assert_eq!(out[0].title, "Buy milk");
+
+        // Jev choosing the second candidate (the whole clause) keeps it.
+        let mut picked = answer();
+        picked.title = Some(1);
+        let out = drafts("Add a task to buy milk tomorrow", picked).await;
+        assert_eq!(out[0].title, "Add a task to buy milk");
     }
 
     #[tokio::test]
