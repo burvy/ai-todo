@@ -7,7 +7,7 @@
 
 use super::world::Vec2;
 use crate::mascot::State;
-use crate::tuning::{LEAN_MAX_DEG, LEAN_PER_PX_S, POSE_BLEND_MS};
+use crate::tuning::{LEAN_EASE_MS, LEAN_MAX_DEG, LEAN_PER_PX_S, POSE_BLEND_MS};
 
 /// Held, he tilts like a pen in a hand.
 const HELD_LEAN_DEG: f64 = -15.0;
@@ -93,9 +93,9 @@ impl Look {
     }
 }
 
-/// The pose `state` asks for after `ms` in it, moving at `vel` px/s: with reduced
-/// motion, the same pose without the pulse or the wobble.
-pub(crate) fn pose(state: &State, vel: Vec2, ms: f64, reduced_motion: bool) -> Look {
+/// The pose `state` asks for after `ms` in it: with reduced motion, the same pose
+/// without the pulse or the wobble. His lean into a move comes on top (`sway_toward`).
+pub(crate) fn pose(state: &State, ms: f64, reduced_motion: bool) -> Look {
     let plain = Look::PLAIN;
     let writing = Look {
         scale: WRITING_SCALE,
@@ -112,7 +112,7 @@ pub(crate) fn pose(state: &State, vel: Vec2, ms: f64, reduced_motion: bool) -> L
             // 0 at rest, 1 at the top of the pulse.
             let pulse = (1.0 - (std::f64::consts::TAU * ms / HELD_PULSE_MS).cos()) / 2.0;
             Look {
-                lean_deg: HELD_LEAN_DEG + HELD_PULSE_LEAN_DEG * pulse + lean_for(vel),
+                lean_deg: HELD_LEAN_DEG + HELD_PULSE_LEAN_DEG * pulse,
                 scale: 1.0 + HELD_PULSE_GROW * pulse,
                 ..plain
             }
@@ -122,24 +122,43 @@ pub(crate) fn pose(state: &State, vel: Vec2, ms: f64, reduced_motion: bool) -> L
             lean_deg: DAZED_LEAN_DEG,
             ..plain
         },
-        State::Flying | State::Skittering => Look {
-            lean_deg: lean_for(vel),
-            ..plain
-        },
         State::WritingCaret => writing,
         State::WritingRow => Look {
             hand: 1.0,
             pivot: 1.0,
             ..writing
         },
-        State::Inking | State::Asking { .. } => plain,
+        // Hopping he stands upright; his lean into the move is his sway (`sway_toward`).
+        // Caught under the leaf he stands upright, pushing.
+        State::Flying
+        | State::Skittering
+        | State::Covered
+        | State::Inking
+        | State::Asking { .. } => plain,
     }
 }
 
-/// He leans into where he is going, more the faster he goes, up to `LEAN_MAX_DEG`.
-fn lean_for(vel: Vec2) -> f64 {
-    (vel.0 * LEAN_PER_PX_S).clamp(-LEAN_MAX_DEG, LEAN_MAX_DEG)
+/// The sway, in degrees, he leans toward while moving at `vel` px/s in `state`: into
+/// where he is going, more the faster he goes, up to `LEAN_MAX_DEG`, while he hops or is
+/// carried; upright otherwise, and always with reduced motion.
+pub(crate) fn sway_toward(state: &State, vel: Vec2, reduced_motion: bool) -> f64 {
+    match state {
+        State::Flying | State::Skittering | State::Dragging if !reduced_motion => {
+            (vel.0 * LEAN_PER_PX_S).clamp(-LEAN_MAX_DEG, LEAN_MAX_DEG)
+        }
+        _ => 0.0,
+    }
 }
+
+/// His sway after `dt` ms more of easing toward `toward`: a low-pass over
+/// `LEAN_EASE_MS`, so his lean follows his speed without ever jumping, though a hop's
+/// speed rises and falls within it and drops to nothing as it lands.
+pub(crate) fn eased_sway(sway: f64, toward: f64, dt: f64) -> f64 {
+    sway + (toward - sway) * (1.0 - (-dt / LEAN_EASE_MS).exp())
+}
+
+/// Below this, in degrees, his sway has died away and no longer moves him.
+pub(crate) const SWAY_GONE_DEG: f64 = 0.05;
 
 /// The splat's wobble `ms` in, along [`SPLAT_WOBBLE`] over `SPLAT_MS`.
 fn splat(ms: f64) -> Look {
@@ -165,8 +184,9 @@ pub(crate) fn blended(from: &Look, to: &Look, ms: f64, reduced_motion: bool) -> 
     if reduced_motion || ms >= POSE_BLEND_MS {
         return *to;
     }
-    // Ease out: most of the change comes first, as a pen tipped by a hand.
-    let t = 1.0 - (1.0 - ms / POSE_BLEND_MS).powi(3);
+    // Ease in and out: no frame of the change is a jump, at its start or its end.
+    let x = ms / POSE_BLEND_MS;
+    let t = x * x * (3.0 - 2.0 * x);
     from.toward(to, t)
 }
 
@@ -180,10 +200,8 @@ pub(crate) fn still(state: &State, ms: f64) -> bool {
 mod tests {
     use super::*;
 
-    const AT_REST: Vec2 = (0.0, 0.0);
-
     fn settled(state: &State) -> Look {
-        pose(state, AT_REST, POSE_BLEND_MS, false)
+        pose(state, POSE_BLEND_MS, false)
     }
 
     #[test]
@@ -218,42 +236,58 @@ mod tests {
     }
 
     #[test]
-    fn he_leans_into_where_he_hops_and_never_past_the_most() {
-        let right = settled(&State::Skittering);
-        assert_eq!(right.lean_deg, 0.0, "standing, upright");
-        let going = |vx: f64| pose(&State::Skittering, (vx, 0.0), POSE_BLEND_MS, false);
-        assert!(going(300.0).lean_deg > 0.0 && going(-300.0).lean_deg < 0.0);
-        assert_eq!(going(1e6).lean_deg, LEAN_MAX_DEG);
-        assert_eq!(going(-1e6).lean_deg, -LEAN_MAX_DEG);
+    fn he_leans_into_where_he_hops_or_is_carried_and_never_past_the_most() {
+        let going = |state: &State, vx: f64| sway_toward(state, (vx, 0.0), false);
+        assert_eq!(going(&State::Skittering, 0.0), 0.0, "standing, upright");
+        assert!(going(&State::Flying, 3000.0) > 0.0 && going(&State::Flying, -3000.0) < 0.0);
+        assert!(going(&State::Dragging, 3000.0) > 0.0);
+        assert_eq!(going(&State::Skittering, 1e6), LEAN_MAX_DEG);
+        assert_eq!(going(&State::Skittering, -1e6), -LEAN_MAX_DEG);
+        assert_eq!(
+            going(&State::WritingRow, 3000.0),
+            0.0,
+            "the nib stays on the ink"
+        );
+        assert_eq!(sway_toward(&State::Flying, (3000.0, 0.0), true), 0.0);
+    }
+
+    #[test]
+    fn his_sway_follows_his_speed_but_never_jumps() {
+        // The worst a hop does: full speed one step, nothing the next.
+        let step = 1000.0 / 120.0;
+        let mut sway = 0.0;
+        for i in 0..240 {
+            let toward = if i % 18 < 9 { LEAN_MAX_DEG } else { 0.0 };
+            let next = eased_sway(sway, toward, step);
+            assert!((next - sway).abs() < 1.0, "{sway} -> {next}");
+            sway = next;
+        }
+        for _ in 0..240 {
+            sway = eased_sway(sway, 0.0, step);
+        }
+        assert!(sway.abs() < SWAY_GONE_DEG, "it dies away: {sway}");
     }
 
     #[test]
     fn held_he_tilts_and_pulses_and_with_reduced_motion_only_tilts() {
-        let top = pose(&State::Dragging, AT_REST, HELD_PULSE_MS / 2.0, false);
-        let start = pose(&State::Dragging, AT_REST, 0.0, false);
+        let top = pose(&State::Dragging, HELD_PULSE_MS / 2.0, false);
+        let start = pose(&State::Dragging, 0.0, false);
         assert_eq!(start.lean_deg, HELD_LEAN_DEG);
         assert!(top.scale > start.scale && top.lean_deg > start.lean_deg);
-        let still = pose(&State::Dragging, AT_REST, HELD_PULSE_MS / 2.0, true);
+        let still = pose(&State::Dragging, HELD_PULSE_MS / 2.0, true);
         assert_eq!((still.lean_deg, still.scale), (HELD_LEAN_DEG, 1.0));
     }
 
     #[test]
     fn the_splat_wobbles_and_ends_in_the_daze_tilt_without_a_jump() {
         let ms = f64::from(crate::mascot::SPLAT_MS);
-        assert_eq!(pose(&State::Splatting, AT_REST, 0.0, false).scale, 1.15);
-        let end = pose(&State::Splatting, AT_REST, ms, false);
+        assert_eq!(pose(&State::Splatting, 0.0, false).scale, 1.15);
+        let end = pose(&State::Splatting, ms, false);
         assert_eq!(end, settled(&State::Dazed));
         // Every 1/120 s of the wobble is a small move.
         let steps = (ms / (1000.0 / 120.0)) as usize;
         let looks: Vec<_> = (0..=steps)
-            .map(|i| {
-                pose(
-                    &State::Splatting,
-                    AT_REST,
-                    ms * i as f64 / steps as f64,
-                    false,
-                )
-            })
+            .map(|i| pose(&State::Splatting, ms * i as f64 / steps as f64, false))
             .collect();
         for pair in looks.windows(2) {
             assert!(
