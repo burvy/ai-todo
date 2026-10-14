@@ -1521,12 +1521,22 @@ a {
 }
 /* Section 4 row delete (Angela): hover mark on desktop, faint x + swipe right on phone */
 li.task-row { position: relative; }
-.delete-mark { opacity: 0; pointer-events: none; transition: opacity .15s ease; position: absolute; right: .4em; top: 50%; transform: translateY(-50%); font-size: .7rem; line-height: 1; padding: .1em .25em; border: none; background: transparent; color: var(--ink-soft, #5D4732); cursor: pointer; }
+/* The row answers three gestures from one finger - a tap, a hold that picks it
+   up to reorder, and a swipe right that crosses it out - so the browser must
+   not claim the pan itself. `pan-y` keeps a slide up or down scrolling the
+   list, which is what a finger that slides is almost always doing, and leaves
+   the row the horizontal travel it needs for a swipe. Once the hold has lifted
+   the row the handlers call preventDefault, so a drag is a drag. */
+li.task-row { touch-action: pan-y; }
+li.task-row.row-lifted { z-index: 2; position: relative; box-shadow: 0 10px 22px -12px rgba(0,0,0,.45); background: var(--parchment, #f6efdd); touch-action: none; }
+li.task-row.row-swiping { transition: transform .18s ease-out; }
+.delete-mark { opacity: 0; pointer-events: none; transition: opacity .15s ease; position: absolute; right: .4em; top: 50%; transform: translateY(-50%); font-size: .7rem; line-height: 1; padding: .1em .25rem; border: none; background: transparent; color: var(--ink-soft, #5D4732); cursor: pointer; }
 li.task-row:hover .delete-mark, li.task-row:focus-within .delete-mark { opacity: .32; pointer-events: auto; }
 .delete-mark:hover, .delete-mark:focus-visible { opacity: .75; }
 @media (max-width: 720px) { .delete-mark { opacity: .35; pointer-events: auto; font-size: .65rem; } }
 .swipe-deleted { transform: translateX(110%); transition: transform .25s ease-out; opacity: 0; }
 .swipe-snapped { transform: translateX(0); transition: transform .2s ease-out; opacity: 1; }
+
 
 /* Recurring tasks (ARCHITECTURE.md 7.1): the hand-drawn repeat mark on an
    occurrence row, and the edit dialog's day picker. Word buttons, no boxes —

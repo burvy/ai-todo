@@ -12,6 +12,7 @@ pub mod api;
 pub mod brain;
 pub mod mascot;
 pub mod pen;
+pub mod row;
 pub mod settings;
 pub mod speech;
 pub mod week;
@@ -33,14 +34,22 @@ fn held<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a todo_core::Task> {
     snapshot.tasks.iter().find(|task| task.id.0 == id)
 }
 
-/// The order the server wants after moving `dragged` before `target`, or `None`
-/// when the drop is not a reorder at all.
+/// The order the server wants after moving `dragged` to `slot` beside `target`,
+/// or `None` when the drop is not a reorder at all.
 ///
 /// The server renumbers stored tasks only (`ids must list every task exactly once`),
 /// and a snapshot lists series occurrences too — rows with `{series}:{date}` ids
 /// that are expanded on the fly and share the series' row. A slip dragged from or
 /// onto one is not a reorder, so the handler skips the call instead of failing 400.
-fn reorder_ids(snapshot: &Snapshot, dragged: &TaskId, target: &TaskId) -> Option<Vec<TaskId>> {
+fn reorder_ids(
+    snapshot: &Snapshot,
+    dragged: &TaskId,
+    target: &TaskId,
+    slot: row::Slot,
+) -> Option<Vec<TaskId>> {
+    if dragged == target {
+        return None;
+    }
     if snapshot
         .tasks
         .iter()
@@ -48,24 +57,20 @@ fn reorder_ids(snapshot: &Snapshot, dragged: &TaskId, target: &TaskId) -> Option
     {
         return None;
     }
-    let mut new_order = Vec::new();
-    let mut found_target = false;
-    for task in &snapshot.tasks {
-        if task.source == Source::Series {
-            continue;
-        }
-        if task.id == *dragged {
-            continue;
-        }
-        if task.id == *target && !found_target {
-            new_order.push(dragged.clone());
-            found_target = true;
-        }
-        new_order.push(task.id.clone());
-    }
-    if !found_target {
-        new_order.push(dragged.clone());
-    }
+    let mut new_order: Vec<TaskId> = snapshot
+        .tasks
+        .iter()
+        .filter(|task| task.source != Source::Series && task.id != *dragged)
+        .map(|task| task.id.clone())
+        .collect();
+    // A drop that missed every row lands the slip at the end rather than
+    // nowhere, which is where a finger that let go over empty paper expects it.
+    let at = match (new_order.iter().position(|id| id == target), slot) {
+        (Some(at), row::Slot::Before) => at,
+        (Some(at), row::Slot::After) => at + 1,
+        (None, _) => new_order.len(),
+    };
+    new_order.insert(at, dragged.clone());
     Some(new_order)
 }
 
@@ -1400,7 +1405,6 @@ fn TaskList(
 ) -> impl IntoView {
     #[cfg(not(target_arch = "wasm32"))]
     let _ = pen_pos;
-    let (dragged_task, set_dragged_task) = signal::<Option<TaskId>>(None);
     let (selected_label, set_selected_label) = signal(load_label_filter());
     let (editing_task, set_editing_task) = signal::<Option<TaskId>>(None);
     let (edit_title, set_edit_title) = signal(String::new());
@@ -1593,7 +1597,6 @@ fn TaskList(
                             </span>
                         });
                         let drop_task_id = task_id.0.clone();
-                        let drop_task_title = task_title.clone();
                         let render_task_id = task_id.0.clone();
                         let render_task_id_attr = render_task_id.clone();
                         let render_task_title = task_title.clone();
@@ -1654,71 +1657,120 @@ fn TaskList(
                             }
                         };
 
-                        let handle_drag_start = {
-                            let task_id_clone = task_id.clone();
-                            move |_| {
-                                set_dragged_task.set(Some(task_id_clone.clone()));
+                        // One finger's whole time on this row, shared by the four
+                        // handlers below. `row::dom` decides what the press has
+                        // become; this only tells it what to do about it.
+                        let presses: row::dom::Presses =
+                            std::rc::Rc::new(std::cell::RefCell::new(None));
+
+                        let handle_pointer_down = {
+                            let presses = presses.clone();
+                            move |ev: leptos::ev::PointerEvent| {
+                                row::dom::down(&presses, &ev);
                             }
                         };
 
-                        let handle_drag_end = move |_| {
-                            set_dragged_task.set(None);
+                        let handle_pointer_move = {
+                            let presses = presses.clone();
+                            move |ev: leptos::ev::PointerEvent| {
+                                // Only once the row is lifted: a press that is
+                                // still a tap must not stop the click, and one
+                                // that has become a scroll must not stop the
+                                // scroll.
+                                let lifted = matches!(
+                                    row::dom::gesture(&presses),
+                                    Some(row::Gesture::Lifted)
+                                );
+                                if lifted {
+                                    ev.prevent_default();
+                                }
+                                row::dom::drag(&presses, &ev);
+                            }
                         };
 
-                        let handle_drop = {
-                            let task_id_clone = task_id.clone();
-                            let set_mascot_state_clone = set_mascot_state;
+                        let handle_pointer_up = {
+                            let presses = presses.clone();
                             let set_snapshot_clone = set_snapshot;
                             let drop_task_id_clone = drop_task_id.clone();
-                            let drop_task_title_clone = drop_task_title.clone();
-                            move |ev: leptos::ev::DragEvent| {
-                                ev.prevent_default();
-                                // Handle mascot drop
-                                set_mascot_state_clone.update(|state| {
-                                    if matches!(state, mascot::State::Dragging) {
-                                        *state = mascot::transition(state, mascot::Event::DropTask {
-                                            task_id: drop_task_id_clone.clone(), title: drop_task_title_clone.clone()
+                            move |ev: leptos::ev::PointerEvent| {
+                                let Some((outcome, row_id, x, y)) = row::dom::up(&presses, &ev)
+                                else {
+                                    return;
+                                };
+                                let dragged = TaskId(row_id);
+                                match outcome {
+                                    // A tap belongs to the controls, which answer
+                                    // it themselves; a scroll and a backed-out
+                                    // swipe leave the list exactly as it was.
+                                    row::Release::Tap | row::Release::Scroll | row::Release::SnapBack => {}
+                                    row::Release::Delete => {
+                                        let task_id = TaskId(drop_task_id_clone.clone());
+                                        let set_snapshot = set_snapshot_clone;
+                                        wasm_bindgen_futures::spawn_local(async move {
+                                            if let Ok(new_snap) = api::delete_task(&task_id).await {
+                                                set_snapshot.set(new_snap);
+                                            }
                                         });
                                     }
-                                });
-
-                                // Handle task reorder drop. A drop that involves a
-                                // series occurrence is a no-op here, not a reorder
-                                // the server would refuse (reorder_ids explains).
-                                if let Some(dragged_id) = dragged_task.get()
-                                    && dragged_id != task_id_clone
-                                    && let Some(new_order) =
-                                        reorder_ids(&snapshot.get_untracked(), &dragged_id, &task_id_clone)
-                                {
-                                    wasm_bindgen_futures::spawn_local(async move {
-                                        if let Ok(new_snap) = api::reorder_tasks(new_order).await {
-                                            set_snapshot_clone.set(new_snap);
-                                        }
-                                    });
+                                    row::Release::Reorder => {
+                                        // A drop that lands on a series occurrence
+                                        // is not a reorder at all, and the server
+                                        // would refuse it: reorder_ids says no
+                                        // instead, so nothing is sent.
+                                        let new_order = row::dom::drop_target(x, y)
+                                            .and_then(|(target, slot)| {
+                                                reorder_ids(
+                                                    &snapshot.get_untracked(),
+                                                    &dragged,
+                                                    &TaskId(target),
+                                                    slot,
+                                                )
+                                            });
+                                        let Some(new_order) = new_order else {
+                                            return;
+                                        };
+                                        let set_snapshot = set_snapshot_clone;
+                                        wasm_bindgen_futures::spawn_local(async move {
+                                            if let Ok(new_snap) = api::reorder_tasks(new_order).await {
+                                                set_snapshot.set(new_snap);
+                                            }
+                                        });
+                                    }
                                 }
                             }
                         };
-
-                        let handle_drag_over = |ev: leptos::ev::DragEvent| {
-                            ev.prevent_default();
+                        let handle_pointer_cancel = {
+                            let presses = presses.clone();
+                            move |_| row::dom::cancel(&presses)
                         };
                         view! {
                     <li
                         class="task-row"
                         data-id={render_task_id_attr}
                         data-title={render_task_title.clone()}
-                        on:drop=handle_drop
-                        on:dragover=handle_drag_over
-                        draggable="true"
-                        on:dragstart=handle_drag_start
-                        on:dragend=handle_drag_end
+                        on:pointerdown=handle_pointer_down
+                        on:pointermove=handle_pointer_move
+                        on:pointerup=handle_pointer_up
+                        on:pointercancel=handle_pointer_cancel
                         // The row answers its own touch gestures and stops them here, so nothing
                         // above the row sees the same touch. This does NOT stop the page
                         // flip: that listens on pointer events, which are a separate
                         // dispatch. What keeps swipe right (delete) and swipe left (turn
-                        // the page) apart is the direction rule in flip_target.
+                        // the page) apart is the direction rule in `row::advance`: right
+                        // far enough is this row's to delete, anything left is a scroll
+                        // and belongs to the panes.
                         on:touchstart=move |ev: leptos::ev::TouchEvent| ev.stop_propagation()
                         on:touchend=move |ev: leptos::ev::TouchEvent| ev.stop_propagation()
+                        // Once the row is lifted the finger belongs to the row, not the
+                        // page: without this the list scrolls out from under the drag.
+                        on:touchmove=move |ev: leptos::ev::TouchEvent| {
+                            if matches!(
+                                row::dom::gesture(&presses),
+                                Some(row::Gesture::Lifted)
+                            ) {
+                                ev.prevent_default();
+                            }
+                        }
                     >
                         <input
                             type="checkbox"
@@ -2263,6 +2315,7 @@ mod tests {
     /// lands on one is not a reorder at all.
     #[test]
     fn a_reorder_lists_stored_tasks_once_and_never_an_occurrence() {
+        use row::Slot;
         let mut snapshot = api::fixture_snapshot();
         // An expanded day of a repeating series sits between the stored tasks.
         let mut occurrence = snapshot.tasks[0].clone();
@@ -2272,7 +2325,8 @@ mod tests {
 
         let first = snapshot.tasks[0].id.clone();
         let third = snapshot.tasks[2].id.clone();
-        let order = reorder_ids(&snapshot, &third, &first).expect("stored slip onto stored slip");
+        let order = reorder_ids(&snapshot, &third, &first, Slot::Before)
+            .expect("stored slip onto stored slip");
         assert_eq!(
             order.first(),
             Some(&third),
@@ -2283,15 +2337,67 @@ mod tests {
 
         let occ = snapshot.tasks[1].id.clone();
         assert_eq!(
-            reorder_ids(&snapshot, &occ, &first),
+            reorder_ids(&snapshot, &occ, &first, Slot::Before),
             None,
             "dragged occurrence"
         );
         assert_eq!(
-            reorder_ids(&snapshot, &first, &occ),
+            reorder_ids(&snapshot, &first, &occ, Slot::Before),
             None,
             "dropped on occurrence"
         );
+    }
+
+    #[test]
+    fn a_drop_below_its_target_moves_the_slip_down() {
+        use row::Slot;
+        let snapshot = api::fixture_snapshot();
+        let first = snapshot.tasks[0].id.clone();
+        let second = snapshot.tasks[1].id.clone();
+
+        let below =
+            reorder_ids(&snapshot, &first, &second, Slot::After).expect("dropped on the lower half");
+        assert_eq!(below.first(), Some(&second), "the slip sits after its target");
+        assert_eq!(below.get(1), Some(&first));
+
+        let above =
+            reorder_ids(&snapshot, &second, &first, Slot::Before).expect("dropped on the upper half");
+        assert_eq!(above.first(), Some(&second), "the slip sits before its target");
+    }
+
+    #[test]
+    fn a_slip_dropped_on_itself_keeps_its_place() {
+        use row::Slot;
+        let snapshot = api::fixture_snapshot();
+        let first = snapshot.tasks[0].id.clone();
+        assert_eq!(
+            reorder_ids(&snapshot, &first, &first, Slot::Before),
+            None,
+            "a row dropped on itself is not a move, and re-sending the order would fight the user"
+        );
+    }
+
+    #[test]
+    fn a_slip_dropped_over_empty_paper_goes_to_the_end() {
+        use row::Slot;
+        let snapshot = api::fixture_snapshot();
+        let first = snapshot.tasks[0].id.clone();
+        // The finger let go where no row is: there is no target to land beside.
+        let empty = TaskId("no-row-here".into());
+
+        let order =
+            reorder_ids(&snapshot, &first, &empty, Slot::Before).expect("a target the list lacks");
+        assert_eq!(
+            order.last(),
+            Some(&first),
+            "landing nowhere puts the slip at the end, where the finger left off"
+        );
+        let stored = snapshot
+            .tasks
+            .iter()
+            .filter(|task| task.source != Source::Series)
+            .count();
+        assert_eq!(order.len(), stored, "still every stored task exactly once");
     }
 
     #[test]
@@ -2681,35 +2787,4 @@ pub fn on_delete_requested(task_id: todo_core::TaskId) {
     // Placeholder: the row's delete event handler will call the existing
     // delete API; this function is the public hook for pre-delete effects.
     let _ = task_id;
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum SwipeAction {
-    Delete,
-    SnapBack,
-}
-
-pub fn swipe_action(delta_x: f64, threshold: f64) -> SwipeAction {
-    if delta_x >= threshold {
-        SwipeAction::Delete
-    } else {
-        SwipeAction::SnapBack
-    }
-}
-
-#[cfg(test)]
-mod swipe_tests {
-    use super::*;
-    #[test]
-    fn swipe_past_threshold_deletes() {
-        assert_eq!(swipe_action(80.0, 50.0), SwipeAction::Delete);
-    }
-    #[test]
-    fn short_swipe_snaps_back() {
-        assert_eq!(swipe_action(20.0, 50.0), SwipeAction::SnapBack);
-    }
-    #[test]
-    fn exactly_threshold_deletes() {
-        assert_eq!(swipe_action(50.0, 50.0), SwipeAction::Delete);
-    }
 }
