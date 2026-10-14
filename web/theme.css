@@ -1767,6 +1767,25 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   margin: 0;
 }
 
+/* A task waiting to be placed (the ask bubble's Move, web/src/placing.rs): a note at the
+   planner's top in the bubble's hand, with the same torn scraps for its choices. It keeps
+   clear of the gear in the corner. */
+.placing-note {
+  margin: 0 5.5rem var(--space-2) 0;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-heading);
+  font-size: var(--text-sm);
+  background-color: var(--paper-raised);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+/* Every hour is somewhere to put it. */
+.hours.placing {
+  cursor: pointer;
+}
+
 /* The note at the foot of a phone page, in the hand. It is part of the page, so it turns
    with it.
    Each page is as tall as the screen above the capture bar, so the note sits at that foot,

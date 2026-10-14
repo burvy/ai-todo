@@ -38,6 +38,8 @@ pub(crate) fn Rambo(
     form_ref: NodeRef<leptos::html::Form>,
     /// Set to the task he was dropped on when you choose "Edit": the list opens its sheet
     edit_request: RwSignal<Option<TaskId>>,
+    /// Set to the task he was dropped on when you choose "Move": the planner places it
+    move_request: RwSignal<Option<TaskId>>,
     /// The task whose edit sheet is open, if any: listening for an edit ends with it
     open_sheet: RwSignal<Option<TaskId>>,
     /// The nest button: Rambo measures its bounding box to know where home is
@@ -474,8 +476,10 @@ pub(crate) fn Rambo(
                 listen_for_edit(id);
                 chosen();
             }
-            // A stub until moving a task lands: he goes home.
-            mascot::Choice::Move => chosen(),
+            mascot::Choice::Move => {
+                move_request.set(Some(TaskId(task_id)));
+                chosen();
+            }
             mascot::Choice::Done => {
                 // The list's tick, so a repeat's day is marked on its own date.
                 let action = snapshot.with_untracked(|s| tick_action(s, &task_id));
