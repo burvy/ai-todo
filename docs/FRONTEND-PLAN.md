@@ -66,7 +66,7 @@ A read-only audit of `web/src` and the CSS on 3fc7aba, made by the cloud session
 | 1 | Done strips are never pinned: `just_done` is built from the same snapshot as `listed`, so it is always empty (`tack.rs`) | BUG-1 (2.5) |
 | 2 | Saved strip positions are wiped on load: the reconcile runs on the empty first snapshot and saves it | BUG-2 |
 | 3 | Crumple and restore on a repeat-day strip send a `series:date` id the server refuses | BUG-3 |
-| 4 | Rambo's Edit only cycles priority, and Move only sends him home; spec 8.1 promises real ones | questions in 2.6 |
+| 4 | Rambo's Edit only cycles priority, and Move only sends him home; spec 8.1 promises real ones | later step: the ask bubble (2.6) |
 | 5 | Planner day and hour labels never refresh (after midnight, or a clock-format change) | BUG-4 |
 | 6 | Rambo reacts to "task added" on every page load (`brain.rs`) | BUG-5 |
 | 7 | The edit dialog is not modal (`open`, not `showModal()`): no backdrop, the page stays clickable | z-index step: switch to `showModal()`, which also puts it above Rambo, as answered |
@@ -246,6 +246,8 @@ Each becomes a ticket when the steps before it have landed, written with what th
 - **Sound engine and presets A, B and C** (DESIGN-DIRECTION §9): one module that plays named sounds, a preset choice in the settings, the mute in the gear menu.
 - **Preset C: music and dancing.** Calm classical background music from CC0 or public-domain recordings, and Rambo dancing to its beat. After the sound engine.
 - **Full calendar view** (owner: later): scrolling back in time and further ahead.
+- **Rambo's ask bubble does what it says** (2.6): Edit, Move, the planner-slip choices and the empty-hour task, one ticket each.
+- **A cross-out that follows the finger** (2.6): the stroke is drawn as the finger moves, once the open swipe questions are answered.
 - **One animation clock, then one gesture module.**
 - **Split the big files**, move-only, last.
 
@@ -335,15 +337,18 @@ BUG-1 and BUG-2 both change the snapshot effect in `tack.rs`: give them to one a
   - On the site: moving a slip on the planner works as before. Two tabs, move the same task in both: the second shows the reload note, not raw error text.
 - Do not touch: the Overdue badge's look.
 
-### 2.6 Rambo's Edit and Move: questions for the owner
+### 2.6 Rambo's ask bubble: answered (DESIGN-DIRECTION §9, interview 3)
 
-Rambo's ask bubble (dropping him on a task) offers Edit, Move, Done and Never mind. Edit only changes the priority, and Move only sends him home (`rambo.rs` about line 450). Dropping him on a planner block does nothing, because those handlers are for HTML drag and drop, which he does not use. Before a ticket:
+Rambo's ask bubble (dropping him on a task) offers Edit, Move, Done and Never mind. Today Edit only changes the priority and Move only sends him home (`rambo.rs` about line 450). Dropping him on a planner block does nothing, because those handlers are for HTML drag and drop, which he does not use. The owner's answers become later steps (2.4), each a small ticket once the two-element and gesture steps have landed:
 
-1. **Edit.** When you drop Rambo on a task and pick Edit, what should happen: the edit sheet opens for that task, or he listens and you say the change ("make it Friday at 3"), and Jev applies it?
-2. **Move.** When you pick Move, how do you choose the new time: he carries the task and you drop him on the planner, the page turns to the planner and you tap an hour, or he offers the next free time?
-3. **Dropping him on the planner.** Dropped on a task's slip in the planner, should he ask the same as on a row (Edit, Move, Done), or offer things about its time (move, make longer or shorter, take it off the planner)?
-4. **An empty hour.** Dropped on an empty hour in the planner, should he start a new task at that time and listen, like the long press does?
-5. **The bubble.** Which choices should the bubble keep? Is there one missing, such as Delete?
+- **Edit:** opens the edit sheet for the task and starts listening; a spoken change goes through Jev like a capture and is applied to that task.
+- **Move:** turns the page to the planner and waits for a tap on an hour; the bubble also offers the next free time as one button.
+- **Dropped on a planner slip:** a bubble with time choices: Move, Longer, Shorter, Off the planner. Needs a hit test for slips, as `row_under` is for rows.
+- **Dropped on an empty hour:** a new task at that time, and he listens; a tap or click elsewhere cancels.
+
+Still open, for god to ask the owner:
+1. **The bubble's choices.** Keep Edit, Move, Done and Never mind? Add Delete?
+2. **Swipe left crosses out** (new): does crossing out mean done or delete? Swipe left on a task today means "turn the page to the planner", and swipe right means delete. What do swipe right and the page turn become?
 
 ## 3. Not checked
 
