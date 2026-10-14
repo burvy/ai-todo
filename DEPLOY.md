@@ -30,7 +30,11 @@ and `rambl.env.example` there. Copy `rambl.env.example` to `rambl.env` and fill 
   address such as an office network.
 - `GOOGLE_CLIENT_ID=138340425604-qagdhrfblj66i5s9i9icq07lb32sd2g2.apps.googleusercontent.com`,
   the public Google OAuth web client (its authorized origins are https://rambl.burvy.dev
-  and http://localhost:3160). Leave it empty to turn sign-in off.
+  and http://localhost:3160). Leaving the line out turns sign-in off and puts the
+  server in local mode, where every visitor shares one local user's tasks: for a test
+  machine only, never a public site. `GOOGLE_CLIENT_ID=` with an empty value stops the
+  server at startup with `GOOGLE_CLIENT_ID is set but empty`, so a blanked id can never
+  quietly turn a public site into one shared list.
 - `RAMBL_LOCAL_LOGIN=1`, **test sites only, never in production.** Shows "Continue locally"
   in the settings panel, which signs in as one fixed local user with no Google account.
   Only a peer on this machine or the private LAN (10/8, 172.16/12, 192.168/16, `::1`,
@@ -178,7 +182,8 @@ The database file only moves forward, so two cases matter:
 ## Troubleshooting
 
 - If the window exits, run `rambl-server.exe` from PowerShell to read the error. A
-  refused `RAMBL_BIND` is one of the few reasons to do this.
+  refused `RAMBL_BIND` or an empty `GOOGLE_CLIENT_ID=` line is one of the few reasons
+  to do this.
 - If the page is unavailable, check that port 3160 is free and the server
   window is still open.
 - If the page works on `http://localhost:3160` but not through Cloudflare, the server

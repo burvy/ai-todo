@@ -120,7 +120,7 @@ Task edits use an `updated_at` field and last-write-wins per task. The server se
 | `RAMBL_DEFAULT_TZ` | `America/New_York` | Zone for requests with no `X-Rambl-TZ`. `TZ_NAME` is read behind it. |
 | `RAMBL_PORT` | `3160` | HTTP port. `PORT` is read when it is unset. |
 | `RAMBL_BIND` | `127.0.0.1` | Address to listen on. Loopback, because the Cloudflare tunnel on this machine is the way in: it keeps the server off the LAN and stops Windows prompting for firewall access every time a new build path runs the exe. Set `0.0.0.0` or one address to serve more, which does not by itself let a caller name their own address (a peer's `CF-Connecting-IP` is only read from a trusted proxy) but does mean a tunnel running elsewhere has to be named in `RAMBL_TRUSTED_PROXIES`, by its own address and never a client's network. A value that is not an IP address stops the server rather than falling back. |
-| `GOOGLE_CLIENT_ID` | unset | The OAuth client ID tokens must be minted for. Unset means local mode: one user, no sign-in. |
+| `GOOGLE_CLIENT_ID` | unset | The OAuth client ID tokens must be minted for. Unset means local mode: one user, no sign-in. Set but blank stops startup with an error, so a public server never falls into local mode by accident. |
 | `RAMBL_JEV_DAILY_CAP` | `200` | Captures per user per day before capture falls back to `FakeJudge`. |
 | `RAMBL_JEV_DAILY_CAP_ANON` | `30` | Captures per anonymous user per day before capture falls back to `FakeJudge` with `jev_fallback: true`. |
 | `RAMBL_JEV_DAILY_CAP_PAID` | `1000` | Captures per paid user per day before capture falls back to `FakeJudge`. |

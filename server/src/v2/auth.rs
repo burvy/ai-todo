@@ -99,6 +99,8 @@ pub enum AuthError {
     Rejected(String),
     /// We could not ask Google. This is our failure to reach them, not the caller's.
     Unavailable(anyhow::Error),
+    /// Our own database failed while signing in or checking a session.
+    Store(StoreError),
 }
 
 impl std::fmt::Display for AuthError {
@@ -106,6 +108,7 @@ impl std::fmt::Display for AuthError {
         match self {
             AuthError::Rejected(why) => write!(f, "invalid Google sign-in: {why}"),
             AuthError::Unavailable(_) => write!(f, "could not reach Google"),
+            AuthError::Store(error) => write!(f, "server error: {error}"),
         }
     }
 }
@@ -275,12 +278,12 @@ pub fn session_user<S: Store + ?Sized>(
 }
 
 /// Forget a person and everything they own.
-pub fn delete_user<S: Store>(store: &S, user: &str) -> Result<(), AuthError> {
+pub fn delete_user<S: Store + ?Sized>(store: &S, user: &str) -> Result<(), AuthError> {
     store.delete_user(user).map_err(store_auth_error)
 }
 
 fn store_auth_error(error: StoreError) -> AuthError {
-    AuthError::Unavailable(anyhow::anyhow!("{error}"))
+    AuthError::Store(error)
 }
 
 /// An [`AuthError`] as the error a client sees.
@@ -290,6 +293,8 @@ impl From<AuthError> for todo_core::ApiError {
             // We could not reach Google: that is a dependency being down, so the
             // caller should retry. Not the caller's credential.
             AuthError::Unavailable(_) => ErrorCode::Unavailable,
+            // Our own fault: neither Google nor the caller's credential.
+            AuthError::Store(_) => ErrorCode::Internal,
             AuthError::Rejected(_) => ErrorCode::BadRequest,
         };
         todo_core::ApiError {
@@ -353,6 +358,23 @@ mod tests {
         assert_eq!(rejected.code, ErrorCode::BadRequest);
         let outage: todo_core::ApiError = AuthError::Unavailable(anyhow::anyhow!("down")).into();
         assert_eq!(outage.code, ErrorCode::Unavailable);
+    }
+
+    /// A database failure while checking a session is our fault: a 500, and never
+    /// blamed on Google.
+    #[test]
+    fn a_store_failure_is_a_server_error_not_google() {
+        let failed: todo_core::ApiError = store_auth_error(StoreError::Backend(
+            super::super::store::Failure::plain("session_user", "disk I/O error".into()),
+        ))
+        .into();
+        assert_eq!(failed.code, ErrorCode::Internal);
+        assert!(
+            failed.message.starts_with("server error"),
+            "{}",
+            failed.message
+        );
+        assert!(!failed.message.contains("Google"), "{}", failed.message);
     }
 
     #[test]
