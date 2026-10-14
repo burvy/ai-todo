@@ -63,7 +63,7 @@ Each step is one PR, gated in full, small enough to review in one sitting, and l
 
 | # | Step | Owner | Size |
 |---|---|---|---|
-| 0 | **Rambo/nest fix** (the four causes in 1.1): dish on the nest, the `:active` rule gone, follow the nest on any scroll/resize/page-size change/font load, aim the skitter at the nest's current place, no flight to off-screen rows. Test for the transform rule and for `pen::on_screen`. | Core (Emilio) | done, separate PR |
+| 0 | **Rambo/nest fix** (the four causes in 1.1): dish on the nest, the `:active` rule gone, follow the nest on any scroll/resize/page-size change/font load, aim the skitter at the nest's current place, no flight to off-screen rows. Test for the transform rule and for `pen::on_screen`. | Core (Emilio) | PR #267 |
 | 1 | **One owner for his place.** A `Place` enum in `mascot.rs` (`Nest`, `At(x, y)`, `Nib(x, y)`); `rambo.rs` turns it into `--pen-x/--pen-y`, measuring the nest live for `Nest`. Writers say where he should be, never compute pixels for him. Fixes the jump at the end of writing (1.7). | Core | M |
 | 2 | **Every state change through `transition`.** Remove the nine direct `set_state(State::…)` calls; add the missing events; one test per path. | Core | S |
 | 3 | **Two-element Rambo.** An outer element that is only placed (translate) and an inner one that is only posed (rotate, scale, keyframes). The 24 restated translates go; a pose can no longer move him. Drop the home transition so he sits on the nest exactly. | Core view + CSS | M |
