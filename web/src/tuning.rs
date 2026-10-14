@@ -316,6 +316,12 @@ pub const RIDE_OMEGA: f64 = 40.0;
 /// shorter and the change snaps, longer and he still leans the old way after he has
 /// set off.
 pub const POSE_BLEND_MS: f64 = 160.0;
+/// The same into or out of the writing pose, which turns him by the theme's whole
+/// `--write-lean` (34 degrees): longer, so no frame turns him by more than 2 or 3
+/// degrees. Safe range 300 to 600.
+pub const WRITE_BLEND_MS: f64 = 400.0;
+// The longest blend is the writing pose's: the loop sleeps once it has passed.
+const _: () = assert!(POSE_BLEND_MS < WRITE_BLEND_MS);
 /// How far he leans into where he is going, in degrees per px/s of sideways speed: a
 /// hop runs at up to about 6000 px/s. Safe range 0.0005 to 0.002: lower and a fast hop
 /// stays upright, higher and every hop pins him at `LEAN_MAX_DEG`.
@@ -326,6 +332,36 @@ pub const LEAN_EASE_MS: f64 = 100.0;
 /// The most he leans into a move, in degrees. Safe range 4 to 12: past that he reads
 /// as falling, not running.
 pub const LEAN_MAX_DEG: f64 = 8.0;
+// Rambo thrown (`engine/fling.rs`, SPEC-ANSWERS item 31). Speeds in px per ms, as the
+// finger's release speed is read (`gesture::release_velocity`), accelerations in px
+// per ms².
+
+/// How hard the paper slows him: a steady loss of speed against his motion. Safe range
+/// 0.002 to 0.008: a 2 px/ms throw slides about 500 px at 0.004.
+pub const FLING_FRICTION: f64 = 0.004;
+/// The pull toward the bottom of the screen while he slides, so a throw curves down.
+/// Safe range 0 to 0.003; it must stay below `FLING_FRICTION`, or he would creep down
+/// while lying still.
+pub const FLING_GRAVITY: f64 = 0.0015;
+/// The share of his speed an edge gives back. Safe range 0.2 to 0.7.
+pub const FLING_BOUNCE: f64 = 0.45;
+/// Below this speed he has stopped sliding. Safe range 0.01 to 0.1.
+pub const FLING_REST_SPEED: f64 = 0.03;
+/// How fast he must hit an edge to splat, and only then is he dazed. Safe range 0.8 to
+/// 2.5: lower and every bounce dazes him, higher and only a wild flick does.
+pub const FLING_SPLAT_SPEED: f64 = 1.2;
+/// The strokes in a splat, and how far the longest reaches at the least splatting
+/// speed, in px (a harder hit reaches up to twice as far). Safe ranges 4 to 12 and 12
+/// to 48.
+pub const FLING_SPLAT_STROKES: u8 = 7;
+pub const FLING_SPLAT_REACH_PX: f64 = 26.0;
+
+const _: () = assert!(
+    FLING_GRAVITY < FLING_FRICTION
+        && FLING_REST_SPEED < GESTURE_FLING_MIN_SPEED
+        && GESTURE_FLING_MIN_SPEED < FLING_SPLAT_SPEED
+        && FLING_SPLAT_SPEED < GESTURE_RELEASE_MAX_SPEED
+);
 
 /// How far above a finger he rides while held, in px between the finger and his
 /// bottom edge: a fingertip covers more than its point. Safe range 8 to 48.

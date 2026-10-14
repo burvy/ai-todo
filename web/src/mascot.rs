@@ -39,13 +39,16 @@ pub enum State {
     Home,
     /// Picked up: listening, being dragged with the pointer.
     Dragging,
-    /// Dropped on the page: he stays where he landed and does not listen.
+    /// Let go mid-flick: he slides across the screen on the throw's speed and bounces
+    /// off its edges until he stops (then he hops home) or hits one hard enough to splat.
+    Thrown,
+    /// Smacked into an edge of the screen: he lies where he fell and does not listen.
     Dazed,
     /// A dazed Rambo being dragged: he writes on the page and does not listen.
     Inking,
-    /// Dropped hard (fast release): ink splat + wobble, then dazed.
+    /// Thrown into an edge hard enough to splat: ink splat + wobble, then dazed.
     Splatting,
-    /// Running home in little hops.
+    /// Running home after a daze in little hops, each leaving an ink dot.
     Skittering,
     /// Dropped on a task: asking what to do with it.
     Asking { task_id: String, title: String },
@@ -67,16 +70,18 @@ pub enum Event {
     Grab,
     /// Released without moving: capture what he heard, back to home.
     Release,
-    /// Dropped on empty space.
+    /// Dropped on empty space: he hops home (only a smack dazes him).
     DropEmpty,
-    /// Dropped hard on empty space (fast release — triggers splat).
+    /// Let go mid-flick on empty space: thrown.
     DropHard,
+    /// Thrown into an edge hard enough to splat.
+    Smack,
     /// Dropped on a task row or planner block.
     DropTask { task_id: String, title: String },
     /// Put back in his nest.
     DropNest,
-    /// The splat is over (dazed), the daze is over (he skitters), or the
-    /// skitter ends (home).
+    /// The throw has stopped sliding (home), the splat is over (dazed), the daze is
+    /// over (he skitters), or the skitter ends (home).
     Return,
     /// He chose an action on the task he was dropped on.
     Choose,
@@ -127,11 +132,16 @@ pub fn transition(state: &State, event: Event) -> State {
         (State::Home, Event::WriteRow) => State::Flying,
         (State::Home, Event::FlyHome) => State::Home,
 
-        // Dragging: release or the nest goes home; drop on task asks; drop on
-        // the page dazes him; drop hard splats first.
-        (State::Dragging, Event::Release | Event::DropNest) => State::Home,
-        (State::Dragging, Event::DropEmpty) => State::Dazed,
-        (State::Dragging, Event::DropHard) => State::Splatting,
+        // Dragging: release, the nest or the page sends him home; drop on a task
+        // asks; let go mid-flick throws him (SPEC-ANSWERS item 31).
+        (State::Dragging, Event::Release | Event::DropNest | Event::DropEmpty) => State::Home,
+        (State::Dragging, Event::DropHard) => State::Thrown,
+
+        // Thrown: only a smack into an edge dazes him; a throw that just stops sends
+        // him home. Caught mid-slide, he is held again.
+        (State::Thrown, Event::Smack) => State::Splatting,
+        (State::Thrown, Event::Return) => State::Home,
+        (State::Thrown, Event::Grab) => State::Dragging,
         (State::Dragging, Event::DropTask { task_id, title }) => State::Asking { task_id, title },
 
         // Splatting → Dazed → Skittering → Home.
@@ -301,6 +311,7 @@ pub fn is_off_nest(state: &State) -> bool {
     matches!(
         state,
         State::Dragging
+            | State::Thrown
             | State::Dazed
             | State::Inking
             | State::Splatting
@@ -335,6 +346,7 @@ pub fn speaks_later(state: &State) -> bool {
 pub fn hops_there(state: &State, settled_home: bool) -> bool {
     match state {
         State::Dragging
+        | State::Thrown
         | State::Inking
         | State::WritingRow
         | State::Dazed
@@ -403,6 +415,7 @@ pub fn rambo_class(state: &State, pose: &str) -> String {
     let extra = match state {
         State::Home => " is-home",
         State::Dragging => " is-dragging",
+        State::Thrown => " is-thrown",
         State::Dazed => " is-dazed",
         State::Covered => " is-covered",
         State::Inking => " is-inking",
@@ -553,7 +566,7 @@ pub fn pose_for(state: &State, brain_pose: &str, typing: bool) -> Pose {
     match state {
         State::Dragging => Pose::Listening,
         State::WritingCaret | State::WritingRow | State::Inking => Pose::Writing,
-        State::Flying => Pose::Flying,
+        State::Flying | State::Thrown => Pose::Flying,
         State::Asking { .. } => Pose::Teasing,
         // Vacant: the nearest drawing to a daze until one is drawn.
         State::Dazed => Pose::Lobotomized,
@@ -619,22 +632,29 @@ mod tests {
     }
 
     #[test]
-    fn a_drop_on_the_page_dazes_him_where_he_lands_until_he_skitters_home() {
+    fn a_gentle_drop_on_the_page_sends_him_home_undazed() {
         let state = transition(&State::Home, Event::Grab);
-        let state = transition(&state, Event::DropEmpty);
-        assert_eq!(state, State::Dazed);
-        assert!(is_off_nest(&state), "he stays where he landed");
-        let state = transition(&state, Event::Return);
-        assert_eq!(state, State::Skittering);
-        assert_eq!(transition(&state, Event::Return), State::Home);
+        assert_eq!(transition(&state, Event::DropEmpty), State::Home);
     }
 
     #[test]
-    fn hard_drop_splats_then_dazes_him() {
-        let state = transition(&State::Home, Event::Grab);
-        let state = transition(&state, Event::DropHard);
-        assert_eq!(state, State::Splatting);
-        assert_eq!(transition(&state, Event::Return), State::Dazed);
+    fn only_a_smack_dazes_him_and_after_the_daze_he_skitters_home() {
+        let thrown = transition(&transition(&State::Home, Event::Grab), Event::DropHard);
+        assert_eq!(thrown, State::Thrown);
+        assert!(is_off_nest(&thrown));
+        assert_eq!(
+            transition(&thrown, Event::Return),
+            State::Home,
+            "it just stopped"
+        );
+        assert_eq!(transition(&thrown, Event::Grab), State::Dragging, "caught");
+        let splat = transition(&thrown, Event::Smack);
+        assert_eq!(splat, State::Splatting);
+        let dazed = transition(&splat, Event::Return);
+        assert_eq!(dazed, State::Dazed);
+        let skittering = transition(&dazed, Event::Return);
+        assert_eq!(skittering, State::Skittering);
+        assert_eq!(transition(&skittering, Event::Return), State::Home);
     }
 
     #[test]

@@ -295,20 +295,24 @@ c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/src/mas
 ### 2. Drag, daze, write and return
 a. A drag carries him without listening (a still hold listens), riding just above
 your finger or cursor so it never covers him. Every move he makes from one spot to
-another is a few brisk hops, never a glide, and never instant: first he notices, his face reacts, then he goes. Dropped on the page (not on a task or his nest), Rambo
-is dazed: he stays where he landed, tipped over, and does not listen. Dragging a
-dazed Rambo writes on the page in his tool's ink, and so does holding a finger
-anywhere on the page while he is dazed: he comes to the finger and writes where it
-goes. He hops home on his own
-after 3 seconds untouched, or comes home at once when dropped on his nest, and
-forgives you a little for putting him back (a small lift in the brain's cheer).
-His writing dries and fades on its own; home again, he listens again. Let go of him
-mid-flick and he splats before he is dazed. He leans into where he hops, and
-eases from one pose into the next, never snapping.
-b. Drag the pen to empty space and release it; drag it again to write, or hold
+another is a few brisk hops, never a glide, and never instant: first he notices, his face reacts, then he goes. Dropped gently on the page (not on a task or his nest), he
+hops home. Let go of him mid-flick and he is thrown: he slides on with the flick's
+speed and bounces off the screen's edges. Only a smack into an edge hard enough
+dazes him: his ink splats off the edge and he lies tipped over where he hit, not
+listening. Dragging a dazed Rambo writes on the page in his tool's ink, and so does
+holding a finger anywhere on the page while he is dazed: he comes to the finger and
+writes where it goes. After 3
+seconds untouched he skitters home in small hops, each leaving a dot of ink, or
+he comes home at once when dropped on his nest, and forgives you a little for
+putting him back (a small lift in the brain's cheer). A softer throw just slides
+and stops, and he hops home undazed. He leans into where he hops, and eases from
+one pose into the next, never snapping. His ink dries and fades on its own; home
+again, he listens again.
+b. Flick the pen hard at a side of the screen; drag it again to write, or hold
 anywhere and drag; drop it on the nest, or leave it 3 seconds.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/engine/world.rs:World, behaviour`;
 `web/src/engine/look.rs:pose, blended, Look`;
+`web/src/engine/fling.rs:step, splat_strokes`;
 `web/src/mascot.rs:transition, listens_on_grab,
 put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `web/src/hop.rs:Hop`;
 `web/src/gesture.rs:Recognizer, release_velocity, flung`;
