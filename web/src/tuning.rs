@@ -264,11 +264,19 @@ pub const HOP_MAX: u32 = 2;
 /// Moves shorter than this, in px, are a step, not a hop: the caret moving a
 /// letter, a nudge. Safe range 4 to 30.
 pub const HOP_MIN_PX: f64 = 12.0;
-/// The highest a hop rises above the straight way, in px. Safe range 8 to 40.
-pub const HOP_HEIGHT_PX: f64 = 22.0;
 /// How high a short hop rises, as a share of its length: a small hop is a small
 /// arc. Safe range 0.15 to 0.6.
 pub const HOP_RISE: f64 = 0.35;
+/// The height, in px, where a hop stops rising at `HOP_RISE`: past it a hop rises
+/// only `HOP_LONG_RISE` of its length. Safe range 8 to 40.
+pub const HOP_HEIGHT_PX: f64 = 22.0;
+/// How high a long hop rises, as a share of its length: lower than a short hop's
+/// round arc, but still clearly a hop, never the glide Interview 4 removed. Safe
+/// range 0.08 to 0.2.
+pub const HOP_LONG_RISE: f64 = 0.12;
+/// The highest any hop rises above the straight way, in px, however long: two hops
+/// across a desk stay a pen's hops, not a ball's. Safe range 32 to 80.
+pub const HOP_HEIGHT_MAX_PX: f64 = 48.0;
 /// How much he squashes crouching and landing, and stretches in the air, as a
 /// share of his size. Safe range 0 to 0.25.
 pub const HOP_SQUASH: f64 = 0.14;
@@ -299,6 +307,7 @@ pub const HELD_GAP_POINTER_PX: f64 = 12.0;
 // The beat and the longest run of hops fit in one flight, which the writing waits out.
 const _: () = assert!(NOTICE_BEAT_MS + HOP_MS * HOP_MAX <= FLY_MS);
 const _: () = assert!(HOP_MIN_PX < HOP_SPAN_PX);
+const _: () = assert!(HOP_HEIGHT_PX <= HOP_HEIGHT_MAX_PX);
 
 // ---- Rambo writing a new row (UI-BUGS #11, v1's writing)
 
