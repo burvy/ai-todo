@@ -349,6 +349,38 @@ pub fn App() -> impl IntoView {
     account::start();
     let main_ref = NodeRef::<leptos::html::Main>::new();
     let (pane, set_pane) = signal(0_u8);
+    // The page turn is the browser's own scroll: `main` is a scroll-snap row, so a
+    // real touch never reaches a pointer handler — the browser scrolls and
+    // cancels the pointer. The curl therefore follows the scroll, and stops
+    // when the scroll settles. Some(true) = turning forward (list → planner).
+    let page = RwSignal::new(0_u8);
+    let turning = RwSignal::new(None::<bool>);
+    let settling = std::rc::Rc::new(std::cell::RefCell::new(None::<Timeout>));
+    #[cfg(target_arch = "wasm32")]
+    let curl = move |_: leptos::ev::Event| {
+        let Some(element) = main_ref.get() else {
+            return;
+        };
+        set_pane.set(nearest_pane(&element));
+        turning.set(curl_for(page.get_untracked(), nearest_pane(&element)));
+        if let Some(timer) = settling.borrow_mut().take() {
+            timer.cancel();
+        }
+        let (main_ref, page, turning) = (main_ref, page, turning);
+        settling
+            .borrow_mut()
+            .replace(Timeout::new(SETTLE_MS, move || {
+                let Some(element) = main_ref.get() else {
+                    return;
+                };
+                page.set(nearest_pane(&element));
+                turning.set(None);
+            }));
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let curl = |_: leptos::ev::Event| {};
+    #[cfg(not(target_arch = "wasm32"))]
+    let _ = (page, turning, settling);
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
     let pen_pos = RwSignal::new((0.0_f64, 0.0));
@@ -417,7 +449,15 @@ pub fn App() -> impl IntoView {
                 on:click=move |_| show_pane(main_ref, 1, set_pane)
             >"Planner"</button>
         </nav>
-        <main node_ref=main_ref on:scroll=move |_| track_pane(main_ref, set_pane)>
+        <main
+                node_ref=main_ref
+                on:scroll=curl
+                class=move || match turning.get() {
+                    Some(true) => "turning-forward",
+                    Some(false) => "turning-back",
+                    None => "",
+                }
+            >
             <div class="tasks-pane">
                 <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
             </div>
@@ -461,19 +501,29 @@ fn show_pane(_main: NodeRef<leptos::html::Main>, index: u8, set_pane: WriteSigna
     set_pane.set(index);
 }
 
+/// The page `main` is scrolled to, nearest pane first.
 #[cfg(target_arch = "wasm32")]
-fn track_pane(main: NodeRef<leptos::html::Main>, set_pane: WriteSignal<u8>) {
-    if let Some(element) = main.get() {
-        let index = pane_at(
-            f64::from(element.scroll_left()),
-            f64::from(element.client_width()),
-        );
-        set_pane.set(index);
-    }
+fn nearest_pane(element: &web_sys::HtmlElement) -> u8 {
+    pane_at(
+        f64::from(element.scroll_left()),
+        f64::from(element.client_width()),
+    )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn track_pane(_main: NodeRef<leptos::html::Main>, _set_pane: WriteSignal<u8>) {}
+/// Milliseconds of quiet after the last scroll event before the turn is called
+/// over. `scrollend` is not everywhere yet, and a fixed guess is worse than the
+/// scroll going quiet: while the pages are still moving, scroll events keep
+/// arriving and the curl keeps its lean.
+#[cfg(target_arch = "wasm32")]
+const SETTLE_MS: u32 = 220;
+
+/// Which way the curl leans while the pages are turning, and nothing at all
+/// when the scroll has not left the page it settled on. `from` is the page the
+/// last turn ended on, `nearest` the page the scroll is closest to now.
+#[cfg(any(target_arch = "wasm32", test))]
+fn curl_for(from: u8, nearest: u8) -> Option<bool> {
+    (from != nearest).then_some(nearest == 1)
+}
 
 /// Rambo's whisper: short handwritten prompts the empty capture line cycles
 /// through, one every few seconds, as if he's quietly suggesting what to type.
@@ -1584,8 +1634,13 @@ fn TaskList(
                         draggable="true"
                         on:dragstart=handle_drag_start
                         on:dragend=handle_drag_end
-                        on:touchstart=move |ev: leptos::ev::TouchEvent| { let _ = ev; }
-                        on:touchend=move |ev: leptos::ev::TouchEvent| { let _ = ev; }
+                        // The row answers its own touch gestures and stops them here, so nothing
+                        // above the row sees the same touch. This does NOT stop the page
+                        // flip: that listens on pointer events, which are a separate
+                        // dispatch. What keeps swipe right (delete) and swipe left (turn
+                        // the page) apart is the direction rule in flip_target.
+                        on:touchstart=move |ev: leptos::ev::TouchEvent| ev.stop_propagation()
+                        on:touchend=move |ev: leptos::ev::TouchEvent| ev.stop_propagation()
                     >
                         <input
                             type="checkbox"
@@ -2454,7 +2509,7 @@ mod tests {
 
 #[cfg(test)]
 mod pane_tests {
-    use super::pane_at;
+    use super::{curl_for, pane_at};
 
     #[test]
     fn a_phone_swipe_maps_to_the_nearest_pane() {
@@ -2464,6 +2519,22 @@ mod pane_tests {
         assert_eq!(pane_at(400.0, 400.0), 1);
         assert_eq!(pane_at(900.0, 400.0), 1, "never past the last pane");
         assert_eq!(pane_at(100.0, 0.0), 0, "no width yet, so the first pane");
+    }
+
+    #[test]
+    fn a_turn_leans_the_curl_towards_the_page_it_is_going_to() {
+        // The scroll is the turn now: whatever direction the finger went, the
+        // curl leans the way the pages are travelling.
+        assert_eq!(curl_for(0, 1), Some(true), "list → planner");
+        assert_eq!(curl_for(1, 0), Some(false), "planner → list");
+    }
+
+    #[test]
+    fn a_scroll_that_stays_on_its_page_is_not_a_turn() {
+        // Vertical scrolling, a rubber-band at the end, and the quiet after a
+        // turn has settled all leave the pages where they were: no curl.
+        assert_eq!(curl_for(0, 0), None);
+        assert_eq!(curl_for(1, 1), None);
     }
 }
 
