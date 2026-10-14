@@ -171,9 +171,6 @@ impl Settings {
     }
 }
 
-/// The gear, top right: one small button holding every setting — the working
-/// day, the paper (light/dark/system), sounds, Rambo's mode and pen, Import
-/// .ics and the account. Nothing else on the page may show a settings control.
 /// One of the two times the server keeps per user for a task with a day and no time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DayTime {
@@ -286,6 +283,9 @@ fn DayTimes(
     }
 }
 
+/// The gear, top right: one small button holding every setting — the working
+/// day, the paper (light/dark/system), sounds, Rambo's mode and pen, Import
+/// .ics and the account. Nothing else on the page may show a settings control.
 #[component]
 pub fn GearMenu(
     settings: ReadSignal<Settings>,
