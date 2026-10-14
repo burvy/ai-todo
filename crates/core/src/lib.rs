@@ -48,6 +48,26 @@ impl LocalContext {
     }
 }
 
+/// The two times of day a task with a day but no time depends on, both per user
+/// (ARCHITECTURE.md 4.1). They are local wall-clock times.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DaySettings {
+    /// When "by Friday" is due: the deadline lands at this time on that day.
+    pub deadline: NaiveTime,
+    /// Where on that day the task is placed when the user has given no times of their
+    /// own to learn from.
+    pub placement: NaiveTime,
+}
+
+impl Default for DaySettings {
+    fn default() -> Self {
+        Self {
+            deadline: NaiveTime::from_hms_opt(23, 59, 0).expect("23:59 is a valid time"),
+            placement: NaiveTime::from_hms_opt(12, 0, 0).expect("12:00 is a valid time"),
+        }
+    }
+}
+
 /// When a task should happen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "time", rename_all = "snake_case")]

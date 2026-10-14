@@ -117,7 +117,7 @@ c. Code: `server/src/v2/store.rs:SqliteStore, Store`;
 `server/src/v2/mod.rs:app_from_env`.
 
 ### 7. Due dates keep their zone
-a. A `DueBy` deadline remembers the zone it was set in (`due_tz`), so a deadline set as Friday 17:00 in New York reads Friday 17:00 New York even after the user travels or changes zone; the instant itself never moves. Day-only captures become the end of that day in the capture zone (the same end of day either side of a DST change). Editing a task's instant re-anchors the deadline to the zone the edit is made in — an edit that leaves the instant alone (a title-only save, or a revision that repeats the day the task already has) keeps the stored zone — and a task that stops being a deadline has no zone.
+a. A `DueBy` deadline remembers the zone it was set in (`due_tz`), so a deadline set as Friday 17:00 in New York reads Friday 17:00 New York even after the user travels or changes zone; the instant itself never moves. Day-only captures become the end of that day (the user's deadline setting, 23:59 by default) in the capture zone (the same end of day either side of a DST change). Editing a task's instant re-anchors the deadline to the zone the edit is made in — an edit that leaves the instant alone (a title-only save, or a revision that repeats the day the task already has) keeps the stored zone — and a task that stops being a deadline has no zone.
 b. Open a task whose due date was set in another zone: the edit box still shows the original zone's time, names the zone next to the date field, and saving keeps the same instant. A deadline typed into the dialog is read as that zone's wall clock; a repeated fall-back hour resolves to its first occurrence. A clock time inside a spring-forward gap names no instant, so saving shows a short inline message and leaves the dialog open instead of doing nothing.
 c. Code: `crates/core/src/lib.rs:Task::due_tz, When::DueBy`;
 `server/src/v2/app.rs:due_zone, set_when, patch, apply_revision`;
@@ -146,6 +146,18 @@ deadline first, so a task higher in the list cannot take the only room a deadlin
 b. Capture a phrase such as `dinner Friday at 7`, then inspect the Friday block.
 c. Code: `server/src/v2/app.rs:plan, working_hours`;
 `crates/scheduler/src/lib.rs:plan, WorkingHours`.
+
+### 3a. Day-only tasks
+a. A task with a day but no time ("call mom Friday") is due at the end of that day
+(23:59 by default) and is placed on that day, in the free slot closest to the average
+time of day of the times the user has given explicitly; with no timed tasks yet, around
+12:00. If the day is full it falls back to the earliest free slot before the deadline.
+b. Both defaults, the deadline time and the no-history placement time, are per user and
+read and changed with `GET`/`PATCH /api/v1/settings` (`deadline`, `placement`, `HH:MM`).
+The settings controls in the gear menu are *(planned)*.
+c. Code: `crates/scheduler/src/lib.rs:plan, usual_time, slot_near`;
+`crates/core/src/lib.rs:DaySettings`; `crates/dates/src/lib.rs:when_from`;
+`server/src/v2/app.rs:patch_day_settings`; `server/src/v2/http.rs:get_settings`.
 
 ### 4. Unplaced tasks are reported
 a. A task that cannot fit is reported as unplaced rather than silently dropped.

@@ -6,14 +6,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use capture::Revision;
-use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc, Weekday};
+use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Timelike, Utc, Weekday};
 use chrono_tz::Tz;
 use scheduler::{WorkingHours, expand};
 use serde::{Deserialize, Serialize};
 use todo_core::{
-    ApiError, Clock, ErrorCode, ExceptionKind, Label, LocalContext, Occurrence, OccurrenceStatus,
-    Plan, Priority, Recurrence, Series, SeriesException, SeriesId, Snapshot, Source, Task,
-    TaskDraft, TaskId, When,
+    ApiError, Clock, DaySettings, ErrorCode, ExceptionKind, Label, LocalContext, Occurrence,
+    OccurrenceStatus, Plan, Priority, Recurrence, Series, SeriesException, SeriesId, Snapshot,
+    Source, Task, TaskDraft, TaskId, When,
 };
 
 use super::ics_import::ParsedCalendar;
@@ -27,12 +27,30 @@ pub const MAX_DURATION_MIN: u16 = 480;
 const DEFAULT_EXPANSION_DAYS: u32 = 7;
 
 /// Working hours used when placing floating tasks. Local time, every day.
-fn working_hours(tz: Tz) -> WorkingHours {
-    WorkingHours::every_day(
-        tz,
-        NaiveTime::from_hms_opt(8, 0, 0).expect("08:00 is valid"),
-        NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59 is valid"),
-    )
+fn working_hours(tz: Tz, settings: &DaySettings) -> WorkingHours {
+    WorkingHours {
+        day_only_time: settings.placement,
+        ..WorkingHours::every_day(
+            tz,
+            NaiveTime::from_hms_opt(8, 0, 0).expect("08:00 is valid"),
+            NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59 is valid"),
+        )
+    }
+}
+
+/// What a client may change about its day-only times with PATCH /settings. Absent
+/// fields stay as they are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+pub struct DaySettingsPatch {
+    pub deadline: Option<NaiveTime>,
+    pub placement: Option<NaiveTime>,
+}
+
+/// A time of day to the minute: the settings are `HH:MM`, so seconds are dropped.
+fn to_the_minute(time: NaiveTime) -> NaiveTime {
+    time.with_second(0)
+        .and_then(|time| time.with_nanosecond(0))
+        .unwrap_or(time)
 }
 
 /// The zone a `DueBy` deadline was set in, and `None` for anything that is not a
@@ -147,6 +165,37 @@ impl<S: Store> App<S> {
         }
     }
 
+    /// This user's day-only deadline and placement times (defaults until changed).
+    pub fn day_settings(&self, user: &str) -> Result<DaySettings, ApiError> {
+        self.store.day_settings(user).map_err(Self::storage_error)
+    }
+
+    /// Changes the fields the patch names and returns the settings that now hold.
+    ///
+    /// A deadline of 00:00 is refused: it would fall at the very start of the day it is
+    /// meant to end, so a "by Friday" task would already be late on Friday morning.
+    pub fn patch_day_settings(
+        &mut self,
+        user: &str,
+        patch: DaySettingsPatch,
+    ) -> Result<DaySettings, ApiError> {
+        let held = self.day_settings(user)?;
+        let settings = DaySettings {
+            deadline: patch.deadline.map_or(held.deadline, to_the_minute),
+            placement: patch.placement.map_or(held.placement, to_the_minute),
+        };
+        if settings.deadline == NaiveTime::MIN {
+            return Err(ApiError {
+                code: ErrorCode::BadRequest,
+                message: "deadline cannot be 00:00; pick 00:01 to 23:59".into(),
+            });
+        }
+        self.store
+            .set_day_settings(user, settings)
+            .map_err(Self::storage_error)?;
+        Ok(settings)
+    }
+
     fn load(&self, user: &str) -> Result<Vec<Task>, ApiError> {
         let mut tasks = self.store.tasks(user).map_err(Self::storage_error)?;
         Self::sort_tasks(&mut tasks);
@@ -214,7 +263,7 @@ impl<S: Store> App<S> {
         // like it landed at the bottom of the list.
         Self::sort_tasks(&mut tasks);
         Ok(Snapshot {
-            plan: plan(&tasks, ctx),
+            plan: plan(&tasks, &self.day_settings(user)?, ctx),
             tasks,
             tz: tz.name().to_owned(),
             generated: ctx.now,
@@ -636,7 +685,12 @@ impl<S: Store> App<S> {
         if revision.day.is_some() {
             set_when(
                 task,
-                dates::when_from(revision.day, revision.time, &ctx),
+                dates::when_from(
+                    revision.day,
+                    revision.time,
+                    self.day_settings(user)?.deadline,
+                    &ctx,
+                ),
                 tz,
             );
         }
@@ -1067,8 +1121,8 @@ fn check_not_occurrence(id: &str) -> Result<(), ApiError> {
 
 /// Where each open task goes: the scheduler fits floating tasks into the working
 /// time around pinned (`At`) tasks, which stay exactly where they are.
-pub fn plan(tasks: &[Task], ctx: &LocalContext) -> Plan {
-    scheduler::plan(tasks, &working_hours(ctx.tz), ctx)
+pub fn plan(tasks: &[Task], settings: &DaySettings, ctx: &LocalContext) -> Plan {
+    scheduler::plan(tasks, &working_hours(ctx.tz, settings), ctx)
 }
 
 #[cfg(test)]
@@ -1214,6 +1268,14 @@ mod tests {
 
         fn set_user_plan(&self, user: &str, plan: crate::v2::auth::Plan) -> Result<(), StoreError> {
             self.inner.set_user_plan(user, plan)
+        }
+
+        fn day_settings(&self, user: &str) -> Result<DaySettings, StoreError> {
+            self.inner.day_settings(user)
+        }
+
+        fn set_day_settings(&self, user: &str, settings: DaySettings) -> Result<(), StoreError> {
+            self.inner.set_day_settings(user, settings)
         }
 
         fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
@@ -1560,7 +1622,7 @@ mod tests {
 
     /// A revision re-stamps a deadline's zone the way an edit does: repeating the day
     /// the task already has leaves the instant alone, and the zone with it. Toronto and
-    /// New York share their offset in October, so both revisions name 17:00 Friday at
+    /// New York share their offset in October, so both revisions name 23:59 Friday at
     /// the same instant and the zone may only change when that instant really moves.
     #[test]
     fn a_revision_only_re_anchors_the_due_zone_when_it_moves_the_instant() {
@@ -1569,7 +1631,7 @@ mod tests {
             Utc.with_ymd_and_hms(2026, 10, 12, 1, 0, 0).unwrap(),
         ));
         let mut app = App::new(MemoryStore::new(), clock);
-        let due = Utc.with_ymd_and_hms(2026, 10, 16, 21, 0, 0).unwrap();
+        let due = Utc.with_ymd_and_hms(2026, 10, 17, 3, 59, 0).unwrap();
         let mut draft = draft("Deadline");
         draft.when = When::DueBy(due);
         let created = app.create(draft, USER, TORONTO).expect("create");
@@ -1591,14 +1653,14 @@ mod tests {
         assert_eq!(task.when, When::DueBy(due), "the instant did not move");
         assert_eq!(task.due_tz.as_deref(), Some("America/Toronto"));
 
-        // Friday 17:00 from Los Angeles is a different instant, so the deadline takes
+        // Friday 23:59 from Los Angeles is a different instant, so the deadline takes
         // the zone of the revision that moved it.
         app.apply_revision(&id, &same_day, None, USER, chrono_tz::America::Los_Angeles)
             .expect("revised");
         let task = app.find(USER, &id).unwrap();
         assert_eq!(
             task.when,
-            When::DueBy(Utc.with_ymd_and_hms(2026, 10, 17, 0, 0, 0).unwrap())
+            When::DueBy(Utc.with_ymd_and_hms(2026, 10, 17, 6, 59, 0).unwrap())
         );
         assert_eq!(task.due_tz.as_deref(), Some("America/Los_Angeles"));
     }
