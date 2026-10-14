@@ -1097,6 +1097,12 @@ li.task-row:focus-within .delete-mark {
      outside the grid (the heading, the margins) reaches main's snap scroll and
      turns back to the list. */
   overscroll-behavior-x: contain;
+  /* Hide the scrollbar but keep scrolling: swipes already scroll the grid (#300). */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.week-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 .day {
