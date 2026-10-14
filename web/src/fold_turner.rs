@@ -58,7 +58,8 @@ mod imp {
         BEND_FULL_TURN, BEND_LIFT, BEND_LIFT_CAP, BEND_SHADOW_FAR_PX, BEND_SHADOW_NEAR_PX,
         BEND_SLIDE_MS, BEND_SPRING_MS,
     };
-    use crate::turn_util::{el_style, element_of, may_turn_from, now, phone, show_pane};
+    use crate::engine::now;
+    use crate::turn_util::{el_style, element_of, may_turn_from, phone, show_pane};
 
     /// Where the page turn is.
     enum Phase {
@@ -479,33 +480,28 @@ mod imp {
 
         /// Animates the corner along `flight` and then ends the turn.
         fn run(&self, flight: Flight) {
-            self.frame(Flight {
+            let this = self.clone();
+            let flight = Flight {
                 started: now(),
                 ..flight
+            };
+            crate::engine::on_tick(move |tick| {
+                if this.frame(&flight, tick.now) {
+                    this.end(&flight.stage, flight.outcome);
+                    crate::engine::Flow::Stop
+                } else {
+                    crate::engine::Flow::Go
+                }
             });
         }
 
-        fn frame(&self, flight: Flight) {
-            let Flight {
-                stage,
-                from,
-                to,
-                ms,
-                outcome,
-                ease,
-                arc,
-                started,
-            } = flight;
-            let t = ((now() - started) / ms).clamp(0.0, 1.0);
-            let e = ease.at(t);
-            let at = fold::arced(fold::along(from, to, e), e, arc, stage.h);
-            self.draw(&stage, at);
-            if t < 1.0 {
-                let this = self.clone();
-                request_animation_frame(move || this.frame(flight));
-            } else {
-                self.end(&stage, outcome);
-            }
+        /// Draws the corner where the flight has it at `now`; true once it has landed.
+        fn frame(&self, flight: &Flight, now: f64) -> bool {
+            let t = ((now - flight.started) / flight.ms).clamp(0.0, 1.0);
+            let e = flight.ease.at(t);
+            let at = fold::arced(fold::along(flight.from, flight.to, e), e, flight.arc, flight.stage.h);
+            self.draw(&flight.stage, at);
+            t >= 1.0
         }
 
         /// Un-stacks the panes and shows the page that landed.

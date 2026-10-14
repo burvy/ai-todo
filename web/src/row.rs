@@ -218,7 +218,7 @@ pub mod dom {
 
     impl Press {
         fn held_ms(&self) -> u32 {
-            (js_sys::Date::now() - self.started_ms).max(0.0) as u32
+            (crate::engine::now() - self.started_ms).max(0.0) as u32
         }
         /// How far the pointer has travelled from where it went down.
         fn travel(&self, ev: &leptos::ev::PointerEvent) -> (f64, f64) {
@@ -427,7 +427,7 @@ pub mod dom {
             row: row.clone(),
             x: f64::from(ev.client_x()),
             y: f64::from(ev.client_y()),
-            started_ms: js_sys::Date::now(),
+            started_ms: crate::engine::now(),
             gesture: Gesture::Pressed,
             width: row.get_bounding_client_rect().width(),
         });

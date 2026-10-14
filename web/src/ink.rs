@@ -55,19 +55,31 @@ pub struct Sample {
     pub t: f64,
 }
 
-/// One stroke of ink: the samples the nib passed through, in order, and the tool
-/// that drew it, which it keeps if the tool is changed later.
+/// What a stroke is laid on. Ink on the list page is held in the page's own
+/// coordinates, so it scrolls and turns with the paper; ink on no page lies on the
+/// floor, in the window's.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Surface {
+    List,
+    #[default]
+    Floor,
+}
+
+/// One stroke of ink: the samples the nib passed through, in order, the tool that
+/// drew it, which it keeps if the tool is changed later, and what it lies on.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stroke {
     pub samples: Vec<Sample>,
     pub pen: Pen,
+    pub on: Surface,
 }
 
 impl Stroke {
-    pub fn new(pen: Pen, first: Sample) -> Self {
+    pub fn new(pen: Pen, on: Surface, first: Sample) -> Self {
         Stroke {
             samples: vec![first],
             pen,
+            on,
         }
     }
 
@@ -412,6 +424,41 @@ pub fn age_alpha(age_ms: f64, thinness: f64) -> f64 {
 /// Whether ink laid `age_ms` ago has faded from the page entirely.
 pub fn faded(age_ms: f64) -> bool {
     age_ms >= INK_HOLD_MS + INK_FADE_OUT_MS
+}
+
+/// The list page's box in the window, in px, while it lies open at rest.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PageBox {
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+impl PageBox {
+    fn holds(&self, x: f64, y: f64) -> bool {
+        (self.left..=self.left + self.width).contains(&x)
+            && (self.top..=self.top + self.height).contains(&y)
+    }
+}
+
+/// What a stroke begun at `(x, y)` in the window lies on: the list page when it is open
+/// at rest under the nib (`list`), else the floor.
+pub fn surface_at(x: f64, y: f64, list: Option<PageBox>) -> Surface {
+    match list {
+        Some(page) if page.holds(x, y) => Surface::List,
+        _ => Surface::Floor,
+    }
+}
+
+/// A point in the window, in `on`'s coordinates: the list page's own, which go with the
+/// paper, or the window's. A stroke stays on its surface to its end, off the page's edge
+/// too; a page that cannot be measured (mid-turn) leaves the point where it is.
+pub fn on_surface(on: Surface, x: f64, y: f64, list: Option<PageBox>) -> (f64, f64) {
+    match (on, list) {
+        (Surface::List, Some(page)) => (x - page.left, y - page.top),
+        _ => (x, y),
+    }
 }
 
 #[cfg(test)]
@@ -774,6 +821,32 @@ mod tests {
         );
     }
 
+    const PAGE: PageBox = PageBox {
+        left: 20.0,
+        top: -300.0,
+        width: 340.0,
+        height: 1200.0,
+    };
+
+    #[test]
+    fn ink_begun_over_the_open_list_lies_on_it_in_its_own_coordinates() {
+        assert_eq!(surface_at(100.0, 50.0, Some(PAGE)), Surface::List);
+        // The page has scrolled 300 px up: a point 50 px down the window is 350 down it.
+        assert_eq!(on_surface(Surface::List, 100.0, 50.0, Some(PAGE)), (80.0, 350.0));
+    }
+
+    #[test]
+    fn ink_begun_off_the_page_or_while_it_turns_lies_on_the_floor() {
+        assert_eq!(surface_at(370.0, 50.0, Some(PAGE)), Surface::Floor);
+        assert_eq!(surface_at(100.0, 50.0, None), Surface::Floor);
+        assert_eq!(on_surface(Surface::Floor, 370.0, 50.0, Some(PAGE)), (370.0, 50.0));
+    }
+
+    #[test]
+    fn a_stroke_on_the_page_stays_on_it_past_the_edge() {
+        assert_eq!(on_surface(Surface::List, 370.0, 50.0, Some(PAGE)), (350.0, 350.0));
+    }
+
     #[test]
     fn the_same_stroke_always_draws_the_same_way() {
         // Grain must not be random: the same samples twice are the same trail, or
@@ -783,6 +856,7 @@ mod tests {
             let stroke = Stroke {
                 samples: samples.clone(),
                 pen,
+                on: Surface::Floor,
             };
             assert_eq!(stroke.dots(), stroke.dots(), "{pen:?}");
         }
@@ -790,7 +864,7 @@ mod tests {
 
     #[test]
     fn a_stroke_keeps_its_tool_and_ages_from_its_last_touch() {
-        let mut stroke = Stroke::new(Pen::Marker, at(0.0, 0.0, 100.0));
+        let mut stroke = Stroke::new(Pen::Marker, Surface::Floor, at(0.0, 0.0, 100.0));
         stroke.samples.push(at(20.0, 0.0, 180.0));
         assert_eq!(stroke.laid_at(), 180.0);
         let radius = Nib::for_pen(Pen::Marker).radius;
