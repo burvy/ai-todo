@@ -32,17 +32,20 @@ use crate::pane::{SETTLE_MS, curl_for, nearest_pane};
 use crate::rambo::Rambo;
 use crate::tasks::TaskList;
 
-/// Load snapshot from API and return it, falling back to fixture on error
-async fn load_snapshot_from_api(days: u8) -> Snapshot {
-    match api::fetch_snapshot(&api::today_date(), days).await {
-        Ok(s) => s,
-        Err(_) => api::fixture_snapshot(),
+/// The list before the server has answered: empty, never the demo fixture, whose
+/// made-up tasks would read as the user's own.
+fn empty_snapshot() -> Snapshot {
+    Snapshot {
+        tasks: Vec::new(),
+        plan: todo_core::Plan::default(),
+        series: Vec::new(),
+        ..api::fixture_snapshot()
     }
 }
 
 #[component]
 pub fn App() -> impl IntoView {
-    let (snapshot, set_snapshot) = signal(api::fixture_snapshot());
+    let (snapshot, set_snapshot) = signal(empty_snapshot());
     let (view_settings, set_view_settings) = signal(settings::load());
     let (error, set_error) = signal::<Option<String>>(None);
     let (brain_speech, set_brain_speech) = signal::<Option<String>>(None);
@@ -64,8 +67,10 @@ pub fn App() -> impl IntoView {
     Effect::new(move |_| {
         wasm_bindgen_futures::spawn_local(async move {
             let days = view_settings.get_untracked().days;
-            let new_snapshot = load_snapshot_from_api(days).await;
-            set_snapshot.set(new_snapshot);
+            match api::fetch_snapshot(&api::today_date(), days).await {
+                Ok(loaded) => set_snapshot.set(loaded),
+                Err(error) => set_error.set(Some(format!("Could not load your tasks: {error}"))),
+            }
         });
     });
 
@@ -144,7 +149,6 @@ pub fn App() -> impl IntoView {
             <CaptureBox
                 form_ref
                 nest_ref
-                snapshot=snapshot
                 set_snapshot=set_snapshot
                 state=mascot_state
                 set_state=set_mascot_state

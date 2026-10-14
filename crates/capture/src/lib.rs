@@ -11,7 +11,7 @@ pub mod pipeline;
 pub mod revise;
 pub mod segment;
 
-pub use email::{Email, parse_email};
+pub use email::{Email, Sent, parse_email};
 pub use pdf::{PdfError, pdf_to_text};
 pub use pipeline::{DEFAULT_DURATION_MIN, capture_text, clean_title};
 pub use revise::{Revision, revise};

@@ -368,11 +368,49 @@ mod tests {
         );
     }
 
+    /// "at 3:30" is the afternoon, like "at 3"; a 24-hour time or an "am" is kept.
+    #[test]
+    fn a_time_with_minutes_after_at_follows_the_bare_hour_rule() {
+        let ctx = sunday_night();
+        let time = |text| resolve(text, &ctx).time;
+        assert_eq!(time("call mom at 3:30"), NaiveTime::from_hms_opt(15, 30, 0));
+        assert_eq!(time("call mom at 3"), NaiveTime::from_hms_opt(15, 0, 0));
+        assert_eq!(
+            time("call mom at 3:30am"),
+            NaiveTime::from_hms_opt(3, 30, 0)
+        );
+        assert_eq!(time("call mom at 9:15"), NaiveTime::from_hms_opt(9, 15, 0));
+        assert_eq!(
+            time("call mom at 15:30"),
+            NaiveTime::from_hms_opt(15, 30, 0)
+        );
+        assert_eq!(time("call mom at 0:30"), NaiveTime::from_hms_opt(0, 30, 0));
+    }
+
+    /// chrono reads a two-digit `%Y` literally; year 26 is not what anyone meant.
+    #[test]
+    fn a_two_digit_year_is_not_a_date_in_year_26() {
+        let ctx = sunday_night();
+        assert_eq!(resolve("pay rent by 10/30/26", &ctx).day, None);
+        assert_eq!(
+            resolve("pay rent by 10/30/2026", &ctx).day,
+            Some(date(2026, 10, 30))
+        );
+    }
+
+    /// A huge number of hours is not a duration, and never an overflow.
+    #[test]
+    fn an_absurd_duration_is_ignored_not_an_overflow() {
+        let ctx = sunday_night();
+        assert_eq!(resolve("nap for 71582789 hours", &ctx).duration_min, None);
+        assert_eq!(resolve("nap 71582789h", &ctx).duration_min, None);
+    }
+
     #[test]
     fn spring_forward_pin_moves_the_gap_forward() {
         let ctx = ny(utc(2026, 3, 1, 12, 0));
         assert_eq!(
-            pinned_start("2026-03-08 at 2:30", &ctx),
+            pinned_start("2026-03-08 at 2:30am", &ctx),
             Some(utc(2026, 3, 8, 7, 30))
         );
     }
@@ -381,7 +419,7 @@ mod tests {
     fn fall_back_pin_takes_the_earlier_instant() {
         let ctx = ny(utc(2026, 10, 1, 12, 0));
         assert_eq!(
-            pinned_start("2026-11-01 at 1:30", &ctx),
+            pinned_start("2026-11-01 at 1:30am", &ctx),
             Some(utc(2026, 11, 1, 5, 30))
         );
     }
@@ -497,7 +535,7 @@ mod tests {
             tz: berlin,
         };
         // 2:30 after fall-back is unambiguous (second occurrence; earlier wins per spec)
-        let pinned = pinned_start("2026-10-25 at 2:30", &ctx);
+        let pinned = pinned_start("2026-10-25 at 2:30am", &ctx);
         assert!(
             pinned.is_some(),
             "DST fall-back should resolve 2:30 to earlier instant"
@@ -512,7 +550,7 @@ mod tests {
             now: utc(2026, 11, 1, 6, 30),
             tz: ny_tz,
         };
-        let pinned = pinned_start("2026-11-01 at 1:30", &ctx);
+        let pinned = pinned_start("2026-11-01 at 1:30am", &ctx);
         assert_eq!(pinned, Some(utc(2026, 11, 1, 5, 30)));
     }
 }

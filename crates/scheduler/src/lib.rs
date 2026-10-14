@@ -78,7 +78,12 @@ pub fn plan(
         }
     }
     overdue.sort_by_key(|&index| (tasks[index].order, index));
-    flexible.sort_by_key(|&index| (tasks[index].order, index));
+    // A deadline takes precedence over list position (ARCHITECTURE.md 4.1): deadlines
+    // first, earliest first, so an `Anytime` task above them cannot take their room.
+    flexible.sort_by_key(|&index| {
+        let deadline = deadline_of(&tasks[index]);
+        (deadline.is_none(), deadline, tasks[index].order, index)
+    });
 
     let mut unplaced = Vec::new();
 
@@ -322,6 +327,36 @@ mod tests {
         );
         assert!(result.placements[0].start < due);
         assert!(result.placements[0].end <= due);
+    }
+
+    /// An `Anytime` task higher in the list must not take the only room a deadline
+    /// has: both fit when the deadline goes first.
+    #[test]
+    fn a_deadline_goes_before_an_anytime_task_above_it() {
+        let due = Utc.with_ymd_and_hms(2026, 1, 5, 10, 0, 0).unwrap();
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+        );
+        let result = plan(
+            &[
+                task("anytime", 120, When::Anytime, 0),
+                task("due", 60, When::DueBy(due), 1),
+            ],
+            &hours,
+            &ctx(
+                Utc.with_ymd_and_hms(2026, 1, 5, 8, 0, 0).unwrap(),
+                chrono_tz::UTC,
+            ),
+        );
+        assert!(result.unplaced.is_empty(), "{:?}", result.unplaced);
+        let due_task = result
+            .placements
+            .iter()
+            .find(|placement| placement.task.0 == "due")
+            .expect("the deadline is placed");
+        assert!(due_task.end <= due);
     }
 
     #[test]

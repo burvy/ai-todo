@@ -25,7 +25,7 @@ use super::ics_export::build_ics;
 use super::ics_import;
 use super::store::{Store, StoreError};
 use capture::{Revision, capture_text};
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{Datelike, NaiveDate, Utc};
 use judge::AnyJudge;
 use todo_core::{LocalContext, Source, TaskId};
 
@@ -692,7 +692,7 @@ async fn sign_in_local(
         .and_then(|value| value.to_str().ok())
         .filter(|value| valid_anon_id(value))
         .map(str::to_owned);
-    let app = shared.app.lock().expect("app mutex");
+    let app = shared.app.lock_recover();
     let session = auth::open_session(
         app.store(),
         &auth::TokenInfo::local_login(),
@@ -962,6 +962,10 @@ async fn snapshot(
             "days must be between 1 and {MAX_WINDOW_DAYS}"
         )));
     }
+    // A four-digit year keeps every step of the window far from chrono's limits.
+    if !(1..=9999).contains(&from.year()) {
+        return Err(bad_request("from must be a date between years 1 and 9999"));
+    }
     Ok(Json(app.snapshot_in_window(&user, tz, from, days)?))
 }
 
@@ -1143,27 +1147,19 @@ async fn import(
     }
 
     // Validate all tasks before writing any (all or nothing).
+    // The same limits as any task, so an export always imports again.
     for (i, task) in import_in.tasks.iter().enumerate() {
-        if task.title.trim().is_empty() {
-            return Err(bad_request(format!("task {} has an empty title", i)));
-        }
-        if task.title.len() > 200 {
-            return Err(bad_request(format!("task {} title is too long", i)));
-        }
-        if task.duration_min < 1 || task.duration_min > 480 {
-            return Err(bad_request(format!(
-                "task {} duration_min must be 1..480, got {}",
-                i, task.duration_min
-            )));
-        }
+        app::check_title(&task.title)
+            .and_then(|()| app::check_duration(task.duration_min))
+            .map_err(|error| bad_request(format!("task {i}: {}", error.message)))?;
     }
 
-    // All valid — now write them.
+    // All valid — now write them, under one lock so a second import cannot pass the
+    // room check against the same count or take the same orders.
     let app = shared.app.lock_recover();
     let now = app.now();
     let tasks = app.store().tasks(&user).map_err(store_failed)?;
     app::check_room(tasks.len(), import_in.tasks.len())?;
-    drop(app);
     let min_order = tasks.iter().map(|t| t.order).min().unwrap_or(0);
 
     let mut created = Vec::new();
@@ -1178,7 +1174,6 @@ async fn import(
         // Clear external_uid — this is not a calendar import.
         task.external_uid = None;
 
-        let app = shared.app.lock_recover();
         app.store().put(&user, task).map_err(|e| {
             HttpError(ApiError {
                 code: ErrorCode::Internal,
@@ -1188,7 +1183,6 @@ async fn import(
         created.push(new_id);
     }
 
-    let app = shared.app.lock_recover();
     let snapshot = app.snapshot(&user, tz)?;
     Ok(Json(ImportResult {
         created,
@@ -1255,8 +1249,14 @@ async fn capture(
     let tz = zone(request.headers())?;
     let (text, source, anchor) = read_capture(request).await?;
     check_capture_size(&text)?;
-    let now = anchor.unwrap_or_else(|| shared.app.lock_recover().now());
-    let ctx = LocalContext { now, tz };
+    let today = shared.app.lock_recover().now();
+    // An email's send date anchors its words ("tomorrow"), but the daily caps count on
+    // the server's day: a sender can write any date, and a far one would reset them.
+    let ctx = LocalContext { now: today, tz };
+    let ctx = LocalContext {
+        now: anchor.map_or(today, |sent| sent.instant(&ctx)),
+        ..ctx
+    };
     let plan = if headers.contains_key(axum::http::header::AUTHORIZATION) {
         let app = shared.app.lock_recover();
         app.store().user_plan(&user).map_err(store_failed)?
@@ -1266,7 +1266,7 @@ async fn capture(
     let jev_fallback = {
         let app = shared.app.lock_recover();
         let store = app.store();
-        let day = now.date_naive();
+        let day = today.date_naive();
         let blocked = store.is_blocked(&user, &ip).map_err(store_failed)?;
         let used = store.captures_today(&user, day).map_err(store_failed)?;
         let ip_used = store.ip_captures_today(&ip, day).map_err(store_failed)?;
@@ -1318,7 +1318,7 @@ fn check_capture_size(text: &str) -> Result<(), HttpError> {
 /// binary noise.
 async fn read_capture(
     request: axum::extract::Request,
-) -> Result<(String, Source, Option<DateTime<Utc>>), HttpError> {
+) -> Result<(String, Source, Option<capture::Sent>), HttpError> {
     let multipart = request
         .headers()
         .get(axum::http::header::CONTENT_TYPE)
@@ -1349,7 +1349,7 @@ async fn read_capture(
 fn file_text(
     name: &str,
     bytes: &[u8],
-) -> Result<(String, Source, Option<DateTime<Utc>>), HttpError> {
+) -> Result<(String, Source, Option<capture::Sent>), HttpError> {
     if name.ends_with(".pdf") {
         let text = capture::pdf_to_text(bytes).map_err(|capture::PdfError::Unreadable(why)| {
             bad_request(format!("could not read that PDF: {why}"))
@@ -1504,7 +1504,7 @@ mod tests {
     use crate::v2::store::{MemoryStore, SqliteStore};
     use axum::body::Body;
     use axum::http::Request;
-    use chrono::{TimeZone, Utc};
+    use chrono::{DateTime, TimeZone, Utc};
     use http_body_util::BodyExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use todo_core::{FixedClock, Label, Priority, Source, SystemClock, When};
@@ -1893,6 +1893,53 @@ mod tests {
         assert_eq!(again.tasks.len(), 2, "re-import must not duplicate");
     }
 
+    /// Google and Outlook write each moved instance of a repeating event as its own
+    /// VEVENT with the series' UID and a `RECURRENCE-ID`. Two of them, and a plain
+    /// duplicate UID, import without a 409, and a re-import updates rather than adds.
+    #[tokio::test]
+    async fn moved_instances_and_repeated_uids_import_and_reimport() {
+        let router = router_at(sunday_night());
+        let moved = |instance: &str, start: &str| {
+            format!(
+                "BEGIN:VEVENT\r\nUID:weekly-standup@example.com\r\nSUMMARY:Standup (moved)\r\n\
+                 RECURRENCE-ID;TZID=America/New_York:{instance}\r\n\
+                 DTSTART;TZID=America/New_York:{start}\r\n\
+                 DTEND;TZID=America/New_York:{start}\r\nEND:VEVENT\r\n"
+            )
+        };
+        let once = |summary: &str| {
+            format!(
+                "BEGIN:VEVENT\r\nUID:twice@example.com\r\nSUMMARY:{summary}\r\n\
+                 DTSTART;TZID=America/New_York:20261015T100000\r\n\
+                 DTEND;TZID=America/New_York:20261015T110000\r\nEND:VEVENT\r\n"
+            )
+        };
+        let ics = calendar(&[
+            &weekly_event("FREQ=WEEKLY;BYDAY=TU", ""),
+            &moved("20261020T093000", "20261021T093000"),
+            &moved("20261027T093000", "20261028T093000"),
+            &once("First copy"),
+            &once("Second copy"),
+        ]);
+
+        let (status, first) = import_ics(&router, &ics).await;
+        assert_eq!(status, StatusCode::OK, "{first}");
+        assert_eq!(first["created"].as_array().unwrap().len(), 3, "{first}");
+        let snapshot: Snapshot = serde_json::from_value(first["snapshot"].clone()).unwrap();
+        assert!(
+            snapshot
+                .tasks
+                .iter()
+                .any(|task| task.title == "Second copy"),
+            "the later copy of a repeated UID wins"
+        );
+
+        let (status, second) = import_ics(&router, &ics).await;
+        assert_eq!(status, StatusCode::OK, "{second}");
+        assert!(second["created"].as_array().unwrap().is_empty(), "{second}");
+        assert_eq!(second["updated"].as_array().unwrap().len(), 3, "{second}");
+    }
+
     /// A synthetic export shaped like a real Outlook calendar: CRLF, a VTIMEZONE, and
     /// the VEVENT blocks the test needs. Nothing here is anyone's real calendar.
     fn calendar(events: &[&str]) -> String {
@@ -2249,6 +2296,39 @@ mod tests {
             "/api/v1/import",
             "application/json",
             r#"{"tasks":[]}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// A JSON import takes exactly what any task may hold: a 300-character title (in
+    /// letters that are two bytes each) exports and so must import, a 3-minute task
+    /// could never have been exported.
+    #[tokio::test]
+    async fn import_json_uses_the_task_limits() {
+        let router = router_at(sunday_night());
+        let file = |title: &str, minutes: u16| {
+            format!(
+                r#"{{"tasks":[{{"id":"t1","title":"{title}","duration_min":{minutes},"when":{{"kind":"anytime"}},"done":false,"order":0,"label":"Other","priority":"low","source":"text","created":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","external_uid":null}}]}}"#
+            )
+        };
+        let long = "\u{e9}".repeat(300);
+        let (status, body, _) = send_raw(
+            &router,
+            "POST",
+            "/api/v1/import",
+            "application/json",
+            &file(&long, 30),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        let (status, _, _) = send_raw(
+            &router,
+            "POST",
+            "/api/v1/import",
+            "application/json",
+            &file("Too short", 3),
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -3065,7 +3145,14 @@ mod tests {
     #[tokio::test]
     async fn a_bad_snapshot_window_is_a_400() {
         let router = router_at(sunday_night());
-        for query in ["?days=0", "?days=9999", "?from=not-a-date"] {
+        for query in [
+            "?days=0",
+            "?days=9999",
+            "?from=not-a-date",
+            // chrono reads signed years: the last date there is must not panic.
+            "?from=%2B262142-12-31&days=1",
+            "?from=-0001-01-01&days=1",
+        ] {
             let (status, body) =
                 send(&router, "GET", &format!("/api/v1/snapshot{query}"), None).await;
             assert_eq!(
@@ -4803,6 +4890,54 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK, "{second}");
         assert_eq!(second["jev_fallback"], true, "{second}");
+    }
+
+    /// An email's send date resolves its words, but it must not pick the day the caps
+    /// count on: an old date would sidestep the cap, a far one would prune every counter.
+    #[tokio::test]
+    async fn an_emails_date_does_not_choose_the_capped_day() {
+        let router = router_with_caps(
+            MemoryStore::default(),
+            Caps {
+                anon: 1,
+                ..Caps::default()
+            },
+        );
+        let (_, headers, first) = call(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            Some(r#"{"text":"buy milk tomorrow"}"#),
+            &[],
+        )
+        .await;
+        assert_eq!(first["jev_fallback"], false, "{first}");
+        let id = anonymous_id_of(&headers);
+
+        let boundary = "XRAMBLEML";
+        let body = format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"old.eml\"\r\n\r\n\
+             Sent: Monday, January 1, 2001 10:03 AM\r\n\r\ncall the dentist\r\n--{boundary}--\r\n"
+        );
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/v1/capture")
+            .header("x-rambl-tz", "America/New_York")
+            .header("x-rambl-anon", &id)
+            .header(
+                "content-type",
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(body))
+            .unwrap();
+        let response = router.clone().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let second: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            second["jev_fallback"], true,
+            "the 2001 email still counts against today: {second}"
+        );
     }
 
     /// A paused account stops using the app: every user-facing call is refused with 403,

@@ -5,16 +5,38 @@
 //! task extractor produces phantom tasks like "see below" and "Jane Doe,
 //! Senior Analyst". So we cut at the first sign of any of it.
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use todo_core::LocalContext;
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Email {
     pub subject: String,
     /// When it was sent. Used as the anchor for "tomorrow" / "by Friday".
-    pub sent: Option<DateTime<Utc>>,
+    pub sent: Option<Sent>,
     pub from: String,
     /// Just the new message, with quoted text and signatures removed.
     pub body: String,
+}
+
+/// A send time as the header wrote it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sent {
+    /// The header carried an offset, so it names one instant.
+    Instant(DateTime<Utc>),
+    /// Outlook's `Sent:` is a bare wall-clock time with no offset.
+    Local(NaiveDateTime),
+}
+
+impl Sent {
+    /// The instant, reading a bare wall-clock time in the user's zone: Outlook writes
+    /// the sender's local time, and reading it as UTC would shift "tomorrow" by a day
+    /// for a late-evening or early-morning mail.
+    pub fn instant(self, ctx: &LocalContext) -> DateTime<Utc> {
+        match self {
+            Sent::Instant(at) => at,
+            Sent::Local(naive) => ctx.at(naive.date(), naive.time()),
+        }
+    }
 }
 
 /// Markers that mean "everything below this is quoted history".
@@ -155,7 +177,7 @@ fn starts_new_quoted_message(line: &str, lower: &str) -> bool {
 }
 
 /// Parse the date formats that turn up in real Outlook exports.
-fn parse_email_date(raw: &str) -> Option<DateTime<Utc>> {
+fn parse_email_date(raw: &str) -> Option<Sent> {
     let value = raw.trim();
     if value.is_empty() {
         return None;
@@ -163,15 +185,17 @@ fn parse_email_date(raw: &str) -> Option<DateTime<Utc>> {
 
     // Already unambiguous, e.g. 2026-10-12T14:03:00Z
     if let Ok(parsed) = DateTime::parse_from_rfc3339(value) {
-        return Some(parsed.with_timezone(&Utc));
+        return Some(Sent::Instant(parsed.with_timezone(&Utc)));
     }
 
     // RFC 5322 `Date:`. Parsed with its offset: a plain format string would read
     // "+0200" and drop it, so a 10:03 +0200 mail would land two hours late.
     if let Ok(parsed) = DateTime::parse_from_rfc2822(value) {
-        return Some(parsed.with_timezone(&Utc));
+        return Some(Sent::Instant(parsed.with_timezone(&Utc)));
     }
 
+    // A date with no time anchors at the start of a working day.
+    const NINE_AM: NaiveTime = NaiveTime::from_hms_opt(9, 0, 0).expect("09:00 is valid");
     const DATE_TIME_FORMATS: [&str; 5] = [
         "%A, %B %d, %Y %I:%M %p",
         "%A, %B %d, %Y %l:%M %p",
@@ -185,19 +209,19 @@ fn parse_email_date(raw: &str) -> Option<DateTime<Utc>> {
     DATE_TIME_FORMATS
         .iter()
         .find_map(|format| NaiveDateTime::parse_from_str(value, format).ok())
-        .map(|naive| naive.and_utc())
         .or_else(|| {
             DATE_FORMATS
                 .iter()
                 .find_map(|format| NaiveDate::parse_from_str(value, format).ok())
-                .and_then(|date| date.and_hms_opt(9, 0, 0))
-                .map(|naive| Utc.from_utc_datetime(&naive))
+                .map(|date| date.and_time(NINE_AM))
         })
+        .map(Sent::Local)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
 
     const OUTLOOK: &str = "From: Jane Doe <jane@example.edu>\n\
 Sent: Monday, October 12, 2026 10:03 AM\n\
@@ -230,7 +254,34 @@ Are you still going to do the lab report?\n";
     fn reads_the_sent_date_so_it_can_anchor_deadlines() {
         let email = parse_email(OUTLOOK);
         let sent = email.sent.expect("sent date parsed");
-        assert_eq!(sent.to_rfc3339(), "2026-10-12T10:03:00+00:00");
+        assert_eq!(sent, Sent::Local(local(2026, 10, 12, 10, 3)));
+    }
+
+    /// Outlook's `Sent:` has no offset: it is the wall clock in the user's zone, so a
+    /// 1 AM mail in New York is that day, not the evening before as UTC would make it.
+    #[test]
+    fn a_bare_sent_time_is_read_in_the_users_zone() {
+        let ctx = LocalContext {
+            now: Utc.with_ymd_and_hms(2026, 10, 1, 0, 0, 0).unwrap(),
+            tz: chrono_tz::America::New_York,
+        };
+        let sent = parse_email_date("Tuesday, October 13, 2026 1:00 AM").expect("parsed");
+        assert_eq!(
+            sent.instant(&ctx),
+            Utc.with_ymd_and_hms(2026, 10, 13, 5, 0, 0).unwrap()
+        );
+        let offset = parse_email_date("Tue, 13 Oct 2026 01:00:00 +0000").expect("parsed");
+        assert_eq!(
+            offset.instant(&ctx),
+            Utc.with_ymd_and_hms(2026, 10, 13, 1, 0, 0).unwrap(),
+            "an explicit offset is kept, whatever the user's zone"
+        );
+    }
+
+    fn local(year: i32, month: u32, day: u32, hour: u32, minute: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(year, month, day)
+            .and_then(|date| date.and_hms_opt(hour, minute, 0))
+            .expect("a real time")
     }
 
     #[test]
@@ -306,25 +357,31 @@ Subject: Invoice\nPlease pay the invoice by Friday.\n";
 
     #[test]
     fn accepts_several_date_formats() {
+        let instant = |hour, minute| {
+            Sent::Instant(Utc.with_ymd_and_hms(2026, 10, 12, hour, minute, 0).unwrap())
+        };
         let cases = [
             (
                 "Monday, October 12, 2026 10:03 AM",
-                "2026-10-12T10:03:00+00:00",
+                Sent::Local(local(2026, 10, 12, 10, 3)),
             ),
-            ("10/12/2026 10:03 AM", "2026-10-12T10:03:00+00:00"),
-            ("2026-10-12T14:03:00Z", "2026-10-12T14:03:00+00:00"),
-            // The offset is honoured, not dropped.
             (
-                "Mon, 12 Oct 2026 10:03:00 +0200",
-                "2026-10-12T08:03:00+00:00",
+                "10/12/2026 10:03 AM",
+                Sent::Local(local(2026, 10, 12, 10, 3)),
             ),
+            ("2026-10-12T14:03:00Z", instant(14, 3)),
+            // The offset is honoured, not dropped.
+            ("Mon, 12 Oct 2026 10:03:00 +0200", instant(8, 3)),
             // A date with no time anchors at 09:00.
-            ("Monday, October 12, 2026", "2026-10-12T09:00:00+00:00"),
-            ("2026-10-12", "2026-10-12T09:00:00+00:00"),
+            (
+                "Monday, October 12, 2026",
+                Sent::Local(local(2026, 10, 12, 9, 0)),
+            ),
+            ("2026-10-12", Sent::Local(local(2026, 10, 12, 9, 0))),
         ];
         for (raw, expected) in cases {
             let parsed = parse_email_date(raw).unwrap_or_else(|| panic!("failed on {raw}"));
-            assert_eq!(parsed.to_rfc3339(), expected, "for {raw}");
+            assert_eq!(parsed, expected, "for {raw}");
         }
         assert!(parse_email_date("not a date").is_none());
     }
@@ -386,7 +443,10 @@ Subject: Invoice\nPlease pay the invoice by Friday.\n";
             Please finish the lab report by Friday.\n";
         let email = parse_email(text);
         let sent = email.sent.expect("Date: is read as the send time");
-        assert_eq!(sent.to_rfc3339(), "2026-10-12T10:03:00+00:00");
+        assert_eq!(
+            sent,
+            Sent::Instant(Utc.with_ymd_and_hms(2026, 10, 12, 10, 3, 0).unwrap())
+        );
     }
 
     #[test]

@@ -12,7 +12,7 @@ b. Type text in the box labelled "Ramble" and tap the nest (Rambo's dish) at its
 c. While the box is empty, Rambo whispers a short prompt in it ("Ramble on…", "What's on
 today?", …); the line rotates every ~6 s with a soft fade, and with reduced motion it stays
 on one line with no fade.
-d. Code: `web/src/capture.rs:CaptureBox, WHISPER_PROMPTS, schedule_whisper`; `web/src/api.rs:capture_text, create_task`;
+d. Code: `web/src/capture.rs:CaptureBox, WHISPER_PROMPTS, schedule_whisper`; `web/src/api.rs:capture_text`;
 `crates/capture/src/pipeline.rs:capture_text, clean_title`.
 
 ### 2. Capture from speech
@@ -39,11 +39,13 @@ c. Code: `crates/capture/src/segment.rs:split_clauses`;
 
 ### 5. PDF and email capture
 a. A PDF, email, or text upload is converted to task candidates; email headers,
-quoted replies and signatures are cleaned before judging.
+quoted replies and signatures are cleaned before judging. An email's send time anchors
+words like "tomorrow": a `Date:` with an offset is that instant, while Outlook's bare
+`Sent:` time is read in the user's zone. The daily Jev caps still count on the server's day.
 b. Not visible; upload through `POST /api/v1/capture`. Covered by tests in
 `crates/capture/src/pdf.rs` and `crates/capture/src/email.rs`.
 c. Code: `crates/capture/src/pdf.rs:pdf_to_text`;
-`crates/capture/src/email.rs:parse_email`; `server/src/v2/http.rs:file_text`.
+`crates/capture/src/email.rs:parse_email, Sent`; `server/src/v2/http.rs:file_text`.
 
 ### 6. Offline capture fallback
 a. Capture still works without a Jev key by using deterministic rules.
@@ -56,7 +58,7 @@ c. Code: `crates/judge/src/fake.rs:FakeJudge`;
 ### 1. Shared task list
 a. The page lists every task with its status, label, priority, duration and planned time.
 b. Open the **Tasks** panel.
-c. Code: `web/src/tasks/mod.rs:TaskList`; `web/src/lib.rs:load_snapshot_from_api`; `web/src/api.rs:fetch_snapshot`.
+c. Code: `web/src/tasks/mod.rs:TaskList`; `web/src/lib.rs:App`; `web/src/api.rs:fetch_snapshot`.
 
 ### 2. Add, complete and delete
 a. Tasks can be added from the capture box, marked done, and deleted; each change
@@ -64,8 +66,8 @@ refreshes the complete snapshot. An edit made from a stale copy of a task (it ch
 device since this page loaded it) is refused with `409 stale_update`; the page keeps what the server has.
 b. Type a task and press **Add**; use the task row's controls to finish or delete it.
 c. Code: `web/src/capture.rs:CaptureBox`; `web/src/tasks/mod.rs:TaskList`;
-`web/src/api.rs:create_task, patch_task, delete_task`;
-`server/src/v2/http.rs:create, update, remove`.
+`web/src/api.rs:capture_text, patch_task, delete_task`;
+`server/src/v2/http.rs:capture, update, remove`.
 
 ### 3. Reorder tasks
 a. Dragging task rows changes their saved order.
@@ -139,7 +141,8 @@ c. Code: `web/src/lib.rs:App`; `web/src/api.rs:fetch_snapshot`;
 
 ### 3. Fixed and flexible placement
 a. Tasks with an explicit start stay there; other tasks flow into available
-working hours around them.
+working hours around them. Tasks with a deadline are planned first, earliest
+deadline first, so a task higher in the list cannot take the only room a deadline has.
 b. Capture a phrase such as `dinner Friday at 7`, then inspect the Friday block.
 c. Code: `server/src/v2/app.rs:plan, working_hours`;
 `crates/scheduler/src/lib.rs:plan, WorkingHours`.

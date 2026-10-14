@@ -52,15 +52,16 @@ fn step(
         .single()
         .unwrap_or_else(|| Utc.timestamp_opt(0, 0).single().expect("unix epoch"));
     let hour = js_sys::Date::new_0().get_hours() as u8;
-    let mut current = brain.borrow().clone();
-    let (next, actions) = rambl_brain::step(
-        &current,
-        event.or(Some(Event::LocalHour(hour))),
-        now,
-        &mut *rng.borrow_mut(),
-    );
-    current = next;
-    *brain.borrow_mut() = current;
+    // He hears the hour when it changes, ahead of the event itself: every caller
+    // passes an event, so folding the hour into a missing one meant he never heard
+    // it and never slept. Not on every step, since the hour also settles his state.
+    let told = (brain.borrow().hour != hour).then_some(Event::LocalHour(hour));
+    let mut actions = Vec::new();
+    for event in told.into_iter().map(Some).chain([event]) {
+        let (next, more) = rambl_brain::step(&brain.borrow(), event, now, &mut *rng.borrow_mut());
+        *brain.borrow_mut() = next;
+        actions.extend(more);
+    }
     for action in actions {
         match action {
             Action::Say(key) => {
