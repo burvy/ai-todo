@@ -99,13 +99,13 @@ impl Hop {
 }
 
 /// How high a hop `span` px long rises above the straight way, in px. A short hop
-/// is a round arc ([`HOP_RISE`] of its length); a long one is flatter
-/// ([`HOP_LONG_RISE`]) but still grows with its length, so a long phone trip in
-/// few hops never reads as a glide; no hop rises past [`HOP_HEIGHT_MAX_PX`].
+/// is a round arc ([`HOP_RISE`] of its length); past [`HOP_HEIGHT_PX`] the height
+/// keeps growing, by [`HOP_LONG_RISE`] of each extra px, so a longer hop is always
+/// higher — there is no flat stretch — and a long phone trip in few hops never
+/// reads as a glide; no hop rises past [`HOP_HEIGHT_MAX_PX`].
 fn arc_height(span: f64) -> f64 {
-    (span * HOP_RISE)
-        .min(HOP_HEIGHT_PX.max(span * HOP_LONG_RISE))
-        .min(HOP_HEIGHT_MAX_PX)
+    let join = HOP_HEIGHT_PX / HOP_RISE;
+    (span.min(join) * HOP_RISE + (span - join).max(0.0) * HOP_LONG_RISE).min(HOP_HEIGHT_MAX_PX)
 }
 
 /// His squash `share` of the way through one hop, read off [`SQUASH_KEYS`].
@@ -221,22 +221,29 @@ mod tests {
             heights.windows(2).all(|pair| pair[0] <= pair[1]),
             "a longer hop never rises lower"
         );
-        for (span, height) in spans.zip(heights) {
+        for (span, &height) in spans.zip(heights.iter()) {
             assert!(height <= HOP_HEIGHT_MAX_PX, "{span}: {height}");
             assert!(
                 height >= (span * HOP_LONG_RISE).min(HOP_HEIGHT_MAX_PX),
                 "{span}: never flatter than a long hop: {height}"
             );
+            // No flat band: below the cap a longer hop rises strictly higher.
+            if height < HOP_HEIGHT_MAX_PX {
+                assert!(arc_height(span + 1.0) > height, "{span}: {height}");
+            }
         }
-        // A phone's longest trip, capture box to top row, in two hops: each rises
-        // twice the height where a short hop stops rising, the old cap that made them
-        // read flat.
+        // A phone's longest trip, capture box to top row, in two hops: each is a
+        // 370 px hop that rises about twice the height where a short hop stops
+        // rising — the old cap that made them read flat.
         let phone_hop = 740.0 / f64::from(HOP_MAX);
+        let near = arc_height(phone_hop);
         assert!(
-            arc_height(phone_hop) >= 2.0 * HOP_HEIGHT_PX,
-            "{}",
-            arc_height(phone_hop)
+            (2.0 * HOP_HEIGHT_PX..2.0 * HOP_HEIGHT_PX + 2.0).contains(&near),
+            "{near}"
         );
+        // Long enough hops all top out at the cap itself.
+        assert_eq!(arc_height(1000.0), HOP_HEIGHT_MAX_PX);
+        assert_eq!(arc_height(2000.0), HOP_HEIGHT_MAX_PX);
     }
 
     #[test]
