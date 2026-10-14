@@ -1,10 +1,10 @@
 # Front-end plan: where `web/` stands and how to restructure it
 
-Written 2026-10-14 by Emilio (front-end owner) after the human's report on the test site (fa48124): *Rambo still moves with his nest and flies to the top left*. Part 1 is what I found. Part 2 is the plan in small steps, each one PR that leaves the app working. `docs/DESIGN-DIRECTION.md` stays the authority on look and feel; this file is about structure.
+Written 2026-10-14 by Emilio (front-end owner) after the human's report on the test site (fa48124): *Rambo still moves with his nest and flies to the top left*. Part 1 is what I found. Part 2 is the plan as tickets for GLM agents, each one PR that leaves the app working, reviewed by Emilio. `docs/DESIGN-DIRECTION.md` stays the authority on look and feel; this file is about structure.
 
 ## 1. Assessment
 
-### 1.1 The Rambo/nest bug: five causes, all fixed in step 0
+### 1.1 The Rambo/nest bug: five causes, all fixed in FE-0 (#267)
 
 Reproduced on my own server at desktop width in Chrome with a real mouse. I could not get the browser below 905px wide, so phone width and touch were checked from the code and layout, not on a device.
 
@@ -24,13 +24,13 @@ Reproduced on my own server at desktop width in Chrome with a real mouse. I coul
 
 ### 1.3 State ownership: who moves Rambo
 
-- **Position.** `pen_pos` is one `RwSignal<(f64, f64)>` written from three modules: `rambo.rs` (drag, home, skitter), `capture.rs` (caret) and `tasks/write.rs` (writing). Nobody owns "where is he", so each writer has to know the others' rules. The bugs above are what happens when one writer forgets the page can move.
+- **Position.** `pen_pos` is one `RwSignal<(f64, f64)>` written from three modules: `rambo.rs` (drag, home, skitter), `capture.rs` (caret) and `tasks/write.rs` (writing). Nobody owns "where is he", so each writer has to know the others' rules. The bugs above are what happens when one writer forgets the page can move. Fixed by FE-8.
 - **Mood state.** `mascot::transition` is the documented way to change state, but nine call sites set a `State` directly (`set_state.set(mascot::State::Home)` and similar) in `rambo.rs`, `tasks/mod.rs` and `capture.rs`, so the machine's tests do not cover every path the page takes.
 - **Timing.** Animations run on a mix of `setInterval(16ms)`, chained `Timeout`s with ticket counters, CSS transitions and CSS keyframes. Background tabs throttle all of them differently. The writing loop and the skitter each keep their own clock.
 
 ### 1.4 The Rambo/nest layering and positioning model
 
-Rambo is one `position: fixed` button at `top: 0; left: 0`, moved only by `transform: translate(calc(var(--pen-x) - 50%), calc(var(--pen-y) - 50%))`. The model is right (it is the standing rule: Rambo independent of the fixed nest), but it is fragile in CSS. 24 `.rambo…` rules each restate the whole translate before adding a rotate or scale, and any rule that sets `transform` without it teleports him to the corner. A test now guards this (`mascot::tests::every_state_of_the_button_keeps_him_where_he_is`). The lasting fix is two elements: an outer one that is only placed, and an inner one that is only posed (step 3).
+Rambo is one `position: fixed` button at `top: 0; left: 0`, moved only by `transform: translate(calc(var(--pen-x) - 50%), calc(var(--pen-y) - 50%))`. The model is right (it is the standing rule: Rambo independent of the fixed nest), but it is fragile in CSS. 24 `.rambo…` rules each restate the whole translate before adding a rotate or scale, and any rule that sets `transform` without it teleports him to the corner. A test now guards this (`mascot::tests::every_state_of_the_button_keeps_him_where_he_is`). The lasting fix is two elements: an outer one that is only placed, and an inner one that is only posed (FE-7).
 
 ### 1.5 CSS layering and z-index
 
@@ -57,40 +57,164 @@ Raw numbers, no scale. What they say today:
 - At 905px wide the To do column is about 100px: the tack board takes 160px and the planner the rest, so titles wrap word by word ("Send / — / 30 min · / Wed 8:30 / am"). The desktop grid needs a minimum for the list.
 - When writing ends, the pen does not fly home: `FlyHome` keeps `pen_pos` at the end of the row, then he jumps when the state turns `Home`.
 
-## 2. Plan
+## 2. Plan: tickets for GLM agents
 
-Each step is one PR, gated in full, small enough to review in one sitting, and leaves the app working. "Core" means Rust or behaviour and the front-end owner does it. "CSS" means an isolated stylesheet change a GLM agent can take, with before/after screenshots at 1366x800 and 390x844, light and dark, in the PR.
+The human wants the restructure built by GLM agents, from a spec written by us and reviewed carefully by a Claude agent. So each step below is a self-contained ticket that one GLM agent can finish in one PR without reading anything else. Emilio (front-end owner) is the architect and reviewer, not the builder: he reviews every PR against its ticket before god merges. Tickets wait for the human's answers to section 4 where marked.
 
-| # | Step | Owner | Size |
-|---|---|---|---|
-| 0 | **Rambo/nest fix** (the five causes in 1.1): dish on the nest, no transform transition except a flight, the `:active` rule gone, follow the nest on any scroll/resize/page-size change/font load, aim the skitter at the nest's current place, no flight to off-screen rows. Tests for both CSS rules and for `pen::on_screen`. | Core (Emilio) | PR #267 |
-| 1 | **One owner for his place.** A `Place` enum in `mascot.rs` (`Nest`, `At(x, y)`, `Nib(x, y)`); `rambo.rs` turns it into `--pen-x/--pen-y`, measuring the nest live for `Nest`. Writers say where he should be, never compute pixels for him. Fixes the jump at the end of writing (1.7). | Core | M |
-| 2 | **Every state change through `transition`.** Remove the nine direct `set_state(State::…)` calls; add the missing events; one test per path. | Core | S |
-| 3 | **Two-element Rambo.** An outer element that is only placed (translate) and an inner one that is only posed (rotate, scale, keyframes). The 24 restated translates go; a pose can no longer move him. | Core view + CSS | M |
-| 4 | **z-index scale.** Tokens in `:root`: page 0, sheet 2, capture 3, ink 4, Rambo 20, bubble 21, drag 30, menu 40, dialog 50, note 60. Rambo goes under menus and dialogs; the tack pin and bin go under Rambo. One table in `docs/THEME.md`. | CSS (GLM) | S |
-| 5 | **Split `theme.css`.** `tokens.css`, `layout.css`, `rambo.css`, `rows.css`, `planner.css`, `dialogs.css`, each linked by trunk; fold the appended one-liners into their sections; one breakpoint (700/701) everywhere. No visual change: screenshots must match. One file per PR. | CSS (GLM) | S each |
-| 6 | **Desktop desk widths.** Give the list a minimum (`minmax(18rem, 1fr)`) and let the tack board shrink first, so titles never wrap word by word at 905–1366px. | CSS (GLM), checked by Core | S |
-| 7 | **One animation clock.** A small `ticker` module on `requestAnimationFrame` that the skitter, the writing loop and the tack physics share, replacing `setInterval(16)` and ticket counters. Pauses cleanly in a background tab. | Core | M |
-| 8 | **One pointer-gesture module.** Rambo drag, row swipe, planner drag and tack drag each repeat slop, pointer capture, cancel and Esc. Share it as `gesture.rs` with pure tests, as `row::advance` already is. | Core | M |
-| 9 | **Split the three big files** the way `lib.rs` was split: `tack.rs` (physics / drag / view), `week.rs` (layout maths / drag / view), `tasks/mod.rs` (list view / writing queue). No behaviour change. | Core | M each |
-| 10 | **A browser check list in the office QA baseline (hive `QA-BASELINE.md`)** for every front-end PR: cold load, first drag, dazed drag, put back, skitter home, page turn, resize, scroll, at desktop and phone width with touch. QA (Antonio) runs it on the test site. | QA | S |
+### Rules for every ticket
 
-Order: 0 now; then 2 and 4 (small, independent); then 1 and 3 together, since they touch the same code; 5 and 6 can run in parallel with GLM agents any time after 4; 7, 8 and 9 last. The design backlog (UI-BUGS #8–#11) stays with the human and fits after step 5, when each look lives in its own file.
+- Read `AGENTS.md`, then only the files the ticket lists. Touch only those files. If the work needs another file, stop and ask god.
+- Own worktree and branch: `git worktree add ../ai-todo-wt/<you>-<ticket> origin/main -b <you>/<ticket>`.
+- One PR per ticket. The title starts with the ticket id, for example `FE-4: z-index scale`.
+- Run the full gate once at the end and paste the results (fmt, clippy `-D warnings`, `cargo test --workspace`, the wasm32 check, `trunk build --release`).
+- **Visual tickets** (any CSS change): attach screenshots before and after at 1366x800 and 390x844, in light and dark. State "no visual change" or list each change on purpose.
+- **Behaviour tickets**: add a test that fails without the change, and say in the PR that you checked it fails.
+- Never edit `docs/DESIGN-DIRECTION.md`. Never add a crate. Never change server code.
+- Respect the standing rules: Rambo stays a separate fixed layer, independent of the nest. No blue focus or tap highlight. No native browser controls or scrollbars.
+- The reviewer (Emilio) checks each acceptance item one by one. A PR that misses one goes back.
+
+### Tickets
+
+**FE-0: Rambo/nest fix.** Done by Emilio in PR #267; it is the base for everything below.
+
+---
+
+**FE-1: z-index scale** · CSS · small · waits for question 5
+- Files: `web/theme.css`, `web/tack.css`, `docs/THEME.md`.
+- Do: add z-index tokens to `:root` in `theme.css`: `--z-sheet: 2; --z-capture: 3; --z-ink: 4; --z-rambo: 20; --z-bubble: 21; --z-drag: 30; --z-menu: 40; --z-dialog: 50; --z-note: 60`. Replace every raw `z-index` number in both files with a token, using the table in section 1.5 to map each layer. `z-index: -1` inside a single element may stay. Add the scale as a table to `docs/THEME.md`.
+- Accept:
+  - `grep -n "z-index: [0-9]" web/*.css` finds nothing.
+  - With the gear menu open, the menu covers Rambo.
+  - With a task dialog open, the dialog covers Rambo.
+  - The tack pin and bin draw under Rambo when he is dragged over them.
+  - Screenshots show no other change.
+- Do not touch: any `.rs` file, and any property other than `z-index`.
+
+**FE-2: one phone breakpoint** · CSS · small
+- Files: `web/theme.css`.
+- Do: change `@media (max-width: 720px)` (the delete mark) to `@media (max-width: 700px)`, so every phone rule switches at the same width as the layout.
+- Accept:
+  - `grep -n "@media (max-width" web/*.css` shows only `700px`.
+  - At 710px the desktop layout shows the desktop delete control, not the phone one.
+- Do not touch: anything else.
+
+**FE-3: fold the appended rules** · CSS · small
+- Files: `web/theme.css`.
+- Do: move the one-line rules appended at the end of the file (swipe, delete mark, lifted row, about 14 lines after the reduced-motion block) into the sections they belong to, written in the file's normal multi-line style. Delete any rule that an earlier rule already fully repeats.
+- Accept:
+  - Screenshots show no visual change.
+  - Every rule's selector still appears exactly once per media block.
+  - The file ends with its last section, not with loose rules.
+- Do not touch: values. This is a move, not a redesign.
+
+**FE-4: split `theme.css`** · CSS · medium (one PR per new file) · after FE-1 to FE-3
+- Files: `web/theme.css`, `web/index.html`, and the new files.
+- Do: move whole sections, unchanged, into `web/css/tokens.css` (`:root`, dark-mode tokens, fonts), `layout.css` (body, header, main, panes, capture bar), `rambo.css` (nest, Rambo, bubbles), `rows.css` (task list and rows), `planner.css` (week grid, slips), `dialogs.css` (task dialog, gear menu, notes). Link each with `<link data-trunk rel="css" href="css/<name>.css">` in this order, before `tack.css`. `theme.css` disappears in the last PR.
+  - The CSS tests in `web/src/mascot.rs` read `../theme.css`. In the PR that moves Rambo's rules, change their `include_str!` path to `../css/rambo.css`.
+  - Update `docs/ARCHITECTURE.md` §8, which names `theme.css`.
+- Accept:
+  - Screenshots show no visual change.
+  - `trunk build --release` passes, and `web/dist` contains each file.
+  - `cargo test -p rambl-web` passes, with the CSS tests reading the new file.
+- Do not touch: any rule's content.
+
+**FE-5: desktop desk widths** · CSS · small · waits for question 6
+- Files: `web/theme.css` (or `layout.css` after FE-4), `web/tack.css`.
+- Do: in the `min-width: 701px` layout, give the list column a minimum of `18rem`, and let the tack board shrink first (to `8rem`), then the planner.
+- Accept:
+  - At 905, 1100 and 1366px a title like "Send the invoice to Bob" stays on one line, and its "30 min · Wed 8:30" line stays below it.
+  - Nothing scrolls sideways at any width from 701 to 1920px.
+  - Screenshots at those three widths are attached.
+- Do not touch: the phone layout (`max-width: 700px`).
+
+**FE-6: every Rambo state change through `transition`** · Rust · small
+- Files: `web/src/mascot.rs`, `web/src/rambo.rs`, `web/src/tasks/mod.rs`.
+- Do: `grep -rn "\.set(mascot::State::" web/src` finds the nine places that set a `State` directly. Replace each with `set_state.set(mascot::transition(&before, mascot::Event::X))`. Where no event fits, add one to `mascot::Event` with a doc comment and its arms in `transition`. Behaviour must not change.
+- Accept:
+  - The grep finds nothing.
+  - Each new event or arm has a test in `mascot.rs` (input state and event, then the expected state).
+  - The drag, drop, put-back, skitter-home and capture-then-write flows behave as before on the test site.
+- Do not touch: CSS, `pen_pos`, timers.
+
+**FE-7: two-element Rambo** · Rust + CSS · medium · Emilio pairs on review · after FE-6
+- Files: `web/src/rambo.rs`, `web/theme.css` (or `rambo.css`), `web/src/mascot.rs` (tests only).
+- Do: wrap Rambo's inside in one new element, `<span class="rambo-pose">`. The outer `.rambo` button keeps only `transform: translate(calc(var(--pen-x) - 50%), calc(var(--pen-y) - 50%))` and nothing else that moves. Every state rule and keyframe that adds a rotate or scale moves to `.rambo.is-X .rambo-pose`, and its `translate(...)` part is deleted. The splat burst `::after` moves to the pose element too.
+- Accept:
+  - `grep -c "pen-x" web/theme.css` (or `rambo.css`) is 1.
+  - Extend the test in `mascot.rs` to read `.rambo-pose` rules too: no `.rambo-pose` rule may mention `--pen-x`, and the `.rambo` button rules may not use `rotate` or `scale`.
+  - Every pose still looks the same: held, dazed, splat, writing, asking, skittering. Screenshots of each are attached.
+  - Drag follows the pointer exactly.
+- Do not touch: `pen_pos` maths and the state machine.
+
+**FE-8: one owner for Rambo's place** · Rust · medium · Emilio pairs on review · after FE-7
+- Files: `web/src/mascot.rs`, `web/src/rambo.rs`, `web/src/capture.rs`, `web/src/tasks/write.rs`, `web/src/tasks/mod.rs`, `web/src/lib.rs`.
+- Do: replace the shared `pen_pos: RwSignal<(f64, f64)>` with `place: RwSignal<mascot::Place>`, where `enum Place { Nest, At(f64, f64), Nib(f64, f64) }`. `At` is his centre; `Nib` is where his nib should touch, and `pen::writing_pen_center` does the conversion. Only `rambo.rs` turns a `Place` into `--pen-x/--pen-y`; for `Nest` it measures the nest live, as `follow_nest` does today. The others set a `Place`. When writing ends, set `Place::Nest`, so he really flies home instead of jumping.
+- Accept:
+  - `grep -rn "pen_pos" web/src` finds nothing.
+  - Unit tests for the `Place` to centre conversion, given a nest rectangle.
+  - After writing a row, he flies to the nest. Record a GIF.
+- Do not touch: CSS.
+
+**FE-9: one animation clock** · Rust · medium · after FE-8
+- Files: new `web/src/ticker.rs`, plus `web/src/rambo.rs` (skitter), `web/src/tasks/write.rs` (writing loop), `web/src/tack.rs` (its own rAF loop), `web/src/lib.rs` (module line).
+- Do: one `requestAnimationFrame` loop. Callers register a closure that gets the elapsed milliseconds and returns whether to keep going. It replaces the skitter's `set_interval_with_handle(16ms)`, the writing loop's `TimeoutFuture(INK_TICK_MS)` steps, and tack's own `request_animation_frame` loop. Timing comes from the rAF timestamp, never the wall clock.
+- Accept:
+  - `grep -rn "set_interval_with_handle\|request_animation_frame" web/src` finds only `ticker.rs`.
+  - A pure test for the registry (run, finish, two at once).
+  - Skitter, writing and tack swing look the same.
+- Do not touch: `week.rs`'s one-minute clock, which stays an interval.
+
+**FE-10: one pointer-gesture module** · Rust · medium · after FE-9
+- Files: new `web/src/gesture.rs`, plus `web/src/row.rs`, `web/src/rambo.rs`, `web/src/week.rs`, `web/src/tack.rs`.
+- Do: lift the shared parts into `gesture.rs`: the slop distance, pointer capture, `pointercancel`, Esc to cancel and drop velocity. Keep `row::advance` as the model: a pure state machine with tests, plus thin DOM glue. Move one caller per commit.
+- Accept:
+  - Each drag behaves as before with mouse and touch: Rambo, row swipe, planner slip, tack strip.
+  - `gesture.rs` has pure tests for slop, cancel and velocity.
+- Do not touch: CSS.
+
+**FE-11: split the big files** · Rust · medium each (three PRs) · last
+- Files: `web/src/tack.rs` into `tack/{physics,drag,view}.rs`; `web/src/week.rs` into `week/{layout,drag,view}.rs`; `web/src/tasks/mod.rs` with the writing queue moved to `tasks/queue.rs`.
+- Do: move code only, the way #255 split `lib.rs`.
+- Accept:
+  - No file over 600 lines.
+  - Every test still passes, unchanged.
+  - `git diff --stat` shows moves, not rewrites.
+- Do not touch: behaviour.
+
+**FE-12: front-end QA check list** · QA (Antonio) · small
+- Files: hive `QA-BASELINE.md`.
+- Do: a check list run on the test site for every front-end PR, at 1366x800 with a mouse and at 390x844 with touch:
+  - cold load: Rambo on the nest
+  - first drag listens
+  - release: no jump
+  - dazed drag writes
+  - put back in the nest
+  - skitter home after 8s
+  - page turn
+  - resize
+  - scroll
+  - capture, then he writes the row
+  - capture made on the planner page
+- Accept: Antonio runs it once on main after #267 and records the result.
+
+### Order
+
+FE-0 (now) → FE-12, FE-2, FE-3 and FE-6 (independent) → FE-1 and FE-5 (after the human's answers) → FE-4 → FE-7 → FE-8 → FE-9 → FE-10 → FE-11. GLM agents can run FE-1 to FE-5 in parallel, one file each. FE-7 and FE-8 touch Rambo's core, so they go one at a time with Emilio pairing on the review. The design backlog (UI-BUGS #8–#11) stays with the human and fits after FE-4, when each look lives in its own file.
 
 ## 3. Not checked
 
-- Phone width and touch were not reproduced in a browser (the window would not shrink below 905px here); the off-pane flight is read from code and layout. QA should confirm step 0 on a phone.
+- Phone width and touch were not reproduced in a browser (the window would not shrink below 905px here); the off-pane flight is read from code and layout. QA should confirm FE-0 on a phone.
 - Dark mode was not looked at for the nest drawing; `nest.svg` restates its own dark colours.
 
 ## 4. Open spec questions for the human
 
-God will settle these with the human before the restructure (steps 1 to 9) is built. Step 0 does not depend on them.
+God will settle these with the human before the restructure (FE-1 to FE-11) is built. FE-0 does not depend on them.
 
 1. **Rambo at rest.** DESIGN-DIRECTION §2 says his lower third hides behind the dish's rim. That needs a rim drawn above him, a third layer. Still wanted, or is "standing in the dish" enough?
 2. **Desktop capture line.** On desktop the capture line and nest sit in the masthead and scroll away with the page, and Rambo goes with them. Should they stay pinned on screen as they do on a phone, so he is always within reach?
 3. **Dazed.** Dropped on the page he stays dazed for 8 seconds, then runs home. Is 8 seconds right? Should scrolling or turning the page send him home early?
 4. **Writing a row that is off screen.** After a capture made on the planner page (phone), or while scrolled down, the new row is off screen. Today he skips the flight and the row just appears. Should the page turn or scroll to the row so he can write it?
-5. **Layers.** Should Rambo sit under the gear menu and dialogs (proposed in step 4), or stay above everything? Should the tack pin and bin go under him?
+5. **Layers.** Should Rambo sit under the gear menu and dialogs (proposed in FE-1), or stay above everything? Should the tack pin and bin go under him?
 6. **Desktop widths.** Between 905 and 1366px, which gives way first: the tack board, the planner or the list? What is the narrowest the list may get?
 7. **Breakpoint.** The phone layout ends at 700px, so a tablet held upright (768px) gets the desktop layout. Is that right?
 8. **Phone pages.** Which page opens first? Should the capture bar show on the planner page too?
