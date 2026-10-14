@@ -1,4 +1,4 @@
-//! The done-task tack board (docs/DESIGN-DECISIONS.md, "Done tasks: the tack board").
+//! The done-task tack board (docs/DESIGN-DIRECTION.md, "Done tasks: the tack board").
 //!
 //! Ticking a task done cuts its line out as a paper strip that hangs from a pin,
 //! swings and settles. Dragging a strip restores the task (drop on the list),

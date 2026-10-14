@@ -9,7 +9,7 @@ use web_sys::{SpeechRecognition, Window};
 
 /// The one calm note for a page that cannot listen at all — no speech API, or the
 /// page is not secure (a phone on plain-http LAN). Shown instead of an error, while
-/// Rambo keeps his listening pose (docs/REDESIGN.md: no scary errors).
+/// Rambo keeps his listening pose (docs/DESIGN-DIRECTION.md: no scary errors).
 pub const UNAVAILABLE_NOTE: &str =
     "Rambl can't listen in this browser. Keep typing and Rambo will write it down.";
 

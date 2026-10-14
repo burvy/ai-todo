@@ -1,6 +1,6 @@
 # Self-hosted handwriting fonts (OFL)
 
-Per `docs/DESIGN-DECISIONS.md`: every word handwritten, ~3 self-hosted OFL
+Per `docs/DESIGN-DIRECTION.md`: every word handwritten, ~3 self-hosted OFL
 fonts, no CDN. Two tiers:
 
 | Tier | Font | File | Notes |

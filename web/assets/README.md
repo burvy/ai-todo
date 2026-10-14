@@ -69,14 +69,11 @@ backgrounds, paper palette, they render inside fixed boxes and scale.
 
 | File | What | Where used |
 |---|---|---|
-| `pen.svg` | single-pose Rambo (same classes as above) | send/talk button, mascot rig (`web/src/lib.rs`, `web/src/mascot.rs`) |
 | `pen-underline.svg` | wobbly golden-brown underline, viewBox `0 0 200 8`, stretched (`preserveAspectRatio="none"`) | under a freshly written task title |
-| `tick.svg` | check mark, single open path, coffee ink | task checkbox (drawn in by stroke animation — keep it one open path) |
-| `delete-x.svg`, `gear.svg`, `paperclip.svg`, `calendar-mask.svg`, `favicon.svg`, `overdue-zigzag.svg`, `paper-grain.svg` | icons | see `art/GUIDE.md` inventory |
 
 ## Fonts — `fonts/`
 
-Self-hosted OFL handwriting fonts (no CDN), per `docs/DESIGN-DECISIONS.md`:
+Self-hosted OFL handwriting fonts (no CDN), per `docs/DESIGN-DIRECTION.md`:
 Patrick Hand (neat UI hand), Caveat variable (expressive titles), Kalam in
 three weights (ballpoint / fountain / marker tool writing). Paste-ready
 `@font-face` rules and replacement steps: `fonts/README.md`.
@@ -87,15 +84,13 @@ three weights (ballpoint / fountain / marker tool writing). Paste-ready
 |---|---|---|
 | `paper.svg` | light parchment grain tile, 512×512, seamless (`stitchTiles`) | use as repeating `background-image`; faint on purpose |
 | `paper-dark.svg` | dark parchment grain tile | same, for night mode |
-| `icon-settings.svg` | line gear, viewBox `0 0 24 24`, `currentColor` | top-right settings button; crisp at 20–24 px |
-| `icon-list.svg`, `icon-calendar.svg`, `icon-mic.svg` | line icons, `currentColor` | view switcher |
 | `stain.svg`, `edge.svg` | cup stain / torn edge | currently unused (the brief calls them dirt — keep them out) |
 
 ## Sounds — `sounds/`
 
 Mono 44.1 kHz MP3, 0.12–0.98 s, 2–13 KB each, peak-normalized quiet (−10 to
 −14 dBFS). Sources and licences: `CREDITS.md`. Per
-`docs/DESIGN-DECISIONS.md` sounds are **on by default**, gentle; the mute
+`docs/DESIGN-DIRECTION.md` sounds are **on by default**, gentle; the mute
 toggle lives in the gear menu (wired in the app, not in these files).
 
 | File | Plays when |

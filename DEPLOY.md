@@ -25,6 +25,9 @@ and `rambl.env.example` there. Copy `rambl.env.example` to `rambl.env` and fill 
   and walk past the per-address limits and blocks, which is the one thing the list
   exists to prevent.
 - `RAMBL_DEFAULT_TZ=America/New_York`.
+- `RAMBL_SIGNINS_PER_IP`, optional, default `60`. Google sign-in attempts one client
+  address may make per day; past it the server answers 429. Raise it only for a shared
+  address such as an office network.
 - `GOOGLE_CLIENT_ID=138340425604-qagdhrfblj66i5s9i9icq07lb32sd2g2.apps.googleusercontent.com`,
   the public Google OAuth web client (its authorized origins are https://rambl.burvy.dev
   and http://localhost:3160). Leave it empty to turn sign-in off.
@@ -61,13 +64,11 @@ can be deleted once the new server runs and the page loads.
 
 ## Every release
 
-The step-by-step version, with the RustDesk copy and the rollback, is
-[docs/SHIP.md](docs/SHIP.md).
-
-On the development machine, run `deploy\build-release.ps1`. Close the old server
-window, rename `rambl-server.exe` in the Rambl folder to `rambl-server.old.exe`,
-send the new `rambl-server.exe` from `deploy\dist\rambl-release` over RustDesk, and
-double-click it. Open <https://rambl.burvy.dev> to verify the deployment.
+Follow [docs/SHIP.md](docs/SHIP.md): it is the one ordered procedure (build from a
+clean `origin/main` checkout, smoke the exe, send it over RustDesk, swap, smoke the
+site, roll back). The checklist below holds the settings and the checks it refers to.
+`deploy\build-release.ps1` stages the same exe and `rambl.env.example` in
+`deploy\dist\rambl-release` when you build from this repo alone, without burvy-dev.
 
 The notes for what changed, and the PR behind each item, are in
 [docs/RELEASE-NOTES.md](docs/RELEASE-NOTES.md).
@@ -78,7 +79,7 @@ The notes for what changed, and the PR behind each item, are in
    burvy-dev the full command:
 
    ```powershell
-   .build.ps1 -Deploy -Modules primer-wasm -Servers rambl,primer
+   .uild.ps1 -Deploy -Modules primer-wasm -Servers rambl,primer
    ```
 
    Either leaves `rambl-server.exe` and `rambl.env.example` in

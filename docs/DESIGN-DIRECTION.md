@@ -1,6 +1,6 @@
-# Design direction (Fable, 2026-10-14)
+# Design direction
 
-What the front end must look and feel like, from the owner's test of main `02ff51e`. Builders follow this file together with `docs/DESIGN-DECISIONS.md`; on settled behaviour (gestures, the tack board, the order of work) DESIGN-DECISIONS wins, on look and motion this file wins. Token names here replace the ones in `docs/THEME.md` where they differ.
+The one design document for the front end: what Rambl looks like, how it moves, and the settled behaviour. It merges the owner's redesign brief (2026-10-13), the owner's design decisions (2026-10-13) and Fable's direction (2026-10-14). Where parts differ, later wins; on look and motion sections 0 to 6 win, on settled behaviour (gestures, tack board, order of work) sections 7 and 8 win. Token names here replace the ones in `docs/THEME.md` where they differ.
 
 ## 0. The principle: a near-physical list you can handle
 
@@ -79,3 +79,94 @@ Light stays the owner's six. Dark is the same desk at night. New: the five Rambo
 | `--ink-quill` | `#6b4a2a` | `#d9a45c` | a row written with the quill |
 
 The fountain pen writes in `--ink`, the pencil in `--ink` at 70% opacity with the grain texture, the marker in `--ink` bold. The three `--rambo*` tokens appear nowhere but on Rambo and his bubble; that exclusivity is what makes him pop.
+
+## 7. Owner brief (2026-10-13), the original redesign
+
+The current web app looks amateur: "just buttons and sections". It must look
+**integrated, authentic and unique**, like writing on paper, not a stack of panels.
+The v1 prototype was decent; read it for feel and behaviour (not code to copy):
+`git show 679f669^:static/index.html`, `679f669^:static/app.js`, `679f669^:static/styles.css`.
+
+### 1. Theme
+- **Light is the default and is parchment.** Dark mode exists too (v1 had both), toggled in the gear menu. It never follows the OS — dark only when the user picks it (owner QA, 2026-10-13).
+- Light palette (use as `:root` tokens in `web/theme.css`):
+  - parchment `#F2E8CF` (page) · wheat `#ECD7AF` · ecru `#E1C38C`
+  - chamoisee `#A7865D` (lines, muted text) · coffee `#5D4732` (ink) · golden brown `#9F682E` (accent)
+- No hard-edged boxes, borders and card stacks. Use space, rules like a notebook, ink colour and paper texture. Few or no visible "buttons".
+- The torn-edge strip and the cup stain currently read as a glitch and dirt: make them subtle or drop them.
+
+### 2. Layout
+- **Settings = a small gear, top right.** Everything currently in "View settings" goes in its menu, **including Import .ics** (a menu item that opens the file picker; never a raw "Choose File" input on the page).
+- PC: task list left, planner right, both visible. Phone: list first, swipe sideways to the planner.
+- Planner opens at working hours (about 08:00, or scrolled to now), not 02:00, and shows **day names** on each column.
+
+### 3. Rambo (the pen mascot)
+- **Rambo replaces the Add button.** He rests in a small "nest" (bubble) at the end of the capture line, bottom right. **Tapping/clicking the nest submits** the text.
+- Rambo is **separate from the nest**: the user can **drag him out and toy with him**; he follows the finger/mouse **exactly**; on release he recovers and skitters back to the nest.
+  - BUG today: dragging sends him off-screen to the left. The drag maths is wrong (pointer vs element offset / transform origin). Fix it and test with mouse and touch.
+- **Picking Rambo up makes him listen** (speech capture). There is no mic button.
+  - BUG today: "Could not start speech recognition". Find out why (permissions, secure context, starting twice, `continuous`/`interimResults`, Edge vs Chrome) and fix it; show a calm message only when the browser truly lacks it.
+- A bit **bigger** than now. Recolour him to fit the paper palette (his blue clashes); he should look drawn on paper.
+- **Writing animation** (today: a scribble, then the words appear at once; or he just slides to the row and back): the task title must **appear gradually, letter by letter, under the nib** as he moves along the line, then he returns to the nest.
+- More life generally: small idle movements, the speech bubble for his lines, gentle transitions. Keep `prefers-reduced-motion` respected.
+
+### 4. Task rows
+- Desktop: a delete control **appears on the side on hover** (as in v1).
+- Phone: a barely visible `x`, and **swipe right on a task to delete** it.
+
+### Definition of done (every PR)
+Full gate green (incl. `cargo check -p rambl-web --target wasm32-unknown-unknown` and `trunk build --release`), works at 1366x800 and 390x844, light and dark, and the PR body says what to click to see it.
+
+### Owner decisions, round 2 (2026-10-13)
+
+1. **Phone gestures, settled:** swipe **right** on a task = delete (Rambo scribbles it out). Swipe **left** = turn the page (list → planner, with a page-flip); on the planner page, swipe **right** turns back. The two never conflict.
+2. **Task reordering on the planner must work:** drag a task to another time or day (keep the existing list drag-reorder too). Make it feel like moving a paper slip.
+3. **All suggestions approved, build them:**
+   - Rambo **dozes at night** and wakes when you type.
+   - Rambo **peeks at the text box** while you type.
+   - A **small celebration + hand-drawn strike-through** when a task is ticked done.
+   - A **sulky look** at overdue tasks.
+   - **Ink splat / wobble** when he is dropped hard.
+   - A **faint previous-page shadow** on the planner.
+   - **Pen-scratch sound** synced to the writing animation.
+
+## 8. Owner decisions (2026-10-13), settled
+
+These are settled.
+
+### Handwriting everywhere
+- Every word is handwritten. Self-host about 3 OFL handwriting fonts in `web/assets/fonts/` (no CDN).
+- Two tiers: a **neat, very legible hand** for small UI text (times, dates, settings, day names) and an **expressive hand** for task titles. Check legibility at 390px.
+
+### Rambo styles (writing tools)
+- Gear menu > "Rambo": fountain pen (default), pencil, ballpoint, quill, marker. Remembered per device.
+- Each tool has its own art (Ping) and its own writing: font from the 3, plus ink colour, weight and texture (pencil grey and grainy, marker thick, quill brown with the odd blot, ballpoint thin blue-black within the palette).
+- All styles share the same states/animations (Stanley): idle, peeking while you type, dozing at night (wakes when you type), held/listening, writing, scribbling out, celebrating, sulking at overdue, dropped hard (ink splat/wobble), annoyed (tidying the tack board), returning to the nest.
+
+### Sound
+- **On by default**, gentle. Mute toggle in the gear menu. Pen scratch synced to writing; pick-up/drop; tick on done; scribble on delete; page turn; paper crumple; tape/pin.
+
+### Done tasks: the tack board
+- Ticking a task done: hand-drawn strike-through, a moment's pause, then **Rambo cuts the line out as a paper strip and tacks it** onto the tack board.
+- Tack board: **PC = the right edge of the list page; phone = a strip along the bottom you pull up.**
+- Strips hang with simple **simulated physics** (hang from the pin, swing, settle, flutter when dropped). Hand-written small integrator in Rust/wasm, no physics library. Cap about 30 visible strips; older ones stack under the pin.
+- The user can drag a strip and:
+  - **restore** it (drop it back on the list: task becomes not done),
+  - **set it aside** (drop it anywhere on the board/desk: it lies there loose),
+  - **crumple and throw it away** (fling it off the page, or drop on the bin: deletes the task, with a crumple animation and sound).
+- "Tidy up" (ask Rambo, e.g. tap the board's pin): Rambo grumpily puts all the set-aside strips back on the tack.
+- Data: done stays done on the server; tacked/set-aside/positions are presentation only, saved per device in localStorage. Restore = undo done. Crumple = delete.
+
+### Gestures (phone)
+- Swipe **right** on a task = delete (Rambo scribbles it out). Swipe **left** = flip the page to the planner (parchment page flip); swipe right on the planner flips back.
+
+### Planner
+- Opens at working hours or now; handwritten day names, today underlined; drag a task to another time/day like moving a paper slip; long-press an empty hour pre-fills the capture line with that slot.
+
+### Order of work (ship in this order; each step must leave the app working)
+1. Theme + layout + gear menu + fonts + planner hours/day names.
+2. Rambo fixed: drag follows pointer, nest = send, listening pose, letter-by-letter writing, bigger, paper colours.
+3. Swipe-right delete with scribble-out; page flip; planner drag reorder; sounds on.
+4. Tack board with physics.
+5. Rambo styles + all moods; Zhipu's extras (rotating placeholder, long-press hour, fading pencil, nib gear).
+Deploy candidate = whatever is merged and passes god's end-to-end check of add, write, done, delete, planner.

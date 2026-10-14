@@ -2,11 +2,11 @@
 
 The spec for how Rambl looks. Code lives in `web/theme.css` (linked from `web/index.html` with `<link data-trunk rel="css" href="theme.css">`, so trunk copies it into `web/dist`, which the server embeds). Components must use the tokens below rather than raw colours.
 
-The look is **one page of parchment, written on in ink** (owner brief, `docs/REDESIGN.md`): space and ruled lines divide the page — no boxes, borders or stacked cards. Controls are words on the page until hover or focus underlines them; inputs are written on a rule. Only two things may look like objects: the edit dialog (a loose sheet laid over the page) and Rambo's speech (a paper bubble — his ask menu and his spoken lines share it, anchored beside his nest).
+The look is **one page of parchment, written on in ink** (owner brief, `docs/DESIGN-DIRECTION.md`): space and ruled lines divide the page — no boxes, borders or stacked cards. Controls are words on the page until hover or focus underlines them; inputs are written on a rule. Only two things may look like objects: the edit dialog (a loose sheet laid over the page) and Rambo's speech (a paper bubble — his ask menu and his spoken lines share it, anchored beside his nest).
 
 ## Palette
 
-**Light** (the owner's parchment palette, `docs/REDESIGN.md`):
+**Light** (the owner's parchment palette, `docs/DESIGN-DIRECTION.md`):
 
 | Token | Hex | Use |
 |---|---|---|
@@ -48,7 +48,7 @@ The look is **one page of parchment, written on in ink** (owner brief, `docs/RED
 
 ## Type
 
-Every word is handwritten (`docs/DESIGN-DECISIONS.md`), in the three self-hosted OFL faces in `web/assets/fonts/` (Ping's woff2 set; sources, licences and the tool mapping live in that folder's README):
+Every word is handwritten (`docs/DESIGN-DIRECTION.md`), in the three self-hosted OFL faces in `web/assets/fonts/` (Ping's woff2 set; sources, licences and the tool mapping live in that folder's README):
 
 - **The neat, very legible hand** (`--font-hand-neat`): Patrick Hand, 400. Writes all UI text — buttons, tabs, labels, hour labels, settings, day names. `--font-body` and `--font-heading` resolve to it.
 - **The expressive hand** (`--font-hand`): Caveat, variable 400-700. Task titles (`.task-open > strong`, `.dialog-task-title`, `.placement strong`) and the masthead signature (`h1`).

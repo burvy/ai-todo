@@ -8,16 +8,6 @@ This folder is the source of art for the v2 front end (Leptos, see `docs/ARCHITE
 
 | File | What it is | Where used today (v2 / Leptos) | Format and size | Current origin |
 |------|------------|-----------------------|-------------------------------|----------------|
-| `icons/favicon.svg` | browser tab icon: the ✎ pen glyph as text | `<link rel="icon">` in `static/index.html` | SVG, viewBox 0 0 64 64, legible at 16×16 | placeholder, code (a Unicode glyph) |
-| `icons/gear.svg` | settings gear | gear button by "To do", `index.html` | SVG, viewBox 0 0 24 24, shown at 20×20, `currentColor` fill | placeholder, AI |
-| `icons/tick.svg` | done tick (check mark) | task checkbox, `index.html` template | SVG, viewBox 0 0 24 24, one stroke path (drawn in by animation, so it must stay a single open path) | placeholder, AI |
-| `icons/delete-x.svg` | red-pencil cross | task delete button, `index.html` template | SVG, viewBox 0 0 24 24, strokes only | placeholder, AI |
-| `icons/paperclip.svg` | paperclip | "Import email / PDF" button | SVG, viewBox 0 0 24 24, shown at 16×16, `currentColor` stroke | placeholder, AI |
-| `icons/calendar-mask.svg` | calendar outline, used as a mask (a stencil filled with the text colour) | "Add to my calendar" link, `styles.css` ~146 | SVG, viewBox 0 0 24 24, shown at 14×14; only its shape counts, colour is ignored | placeholder, AI |
-| `illustrations/pen.svg` | the pen mascot (barrel, cap, nib, eyes, brows) | send/talk button, `index.html` ~79 | SVG, viewBox 0 0 64 112. **Keep the class names** (`pen-barrel`, `pen-cap`, `pen-nib`, `pen-lead`, `pen-gloss`, `eye-white`, `eye-black`, `brow`): the app animates blinking, looking and brows by class | placeholder, AI |
-| `illustrations/pen-underline.svg` | wobbly blue pen underline under a new task title | `styles.css` ~404 | SVG, viewBox 0 0 200 8, stretched to the title width (`preserveAspectRatio="none"`) | placeholder, AI |
-| `illustrations/overdue-zigzag.svg` | red zigzag mark beside an overdue task | `styles.css` ~493 | SVG, viewBox 0 0 10 18 | placeholder, AI |
-| `illustrations/paper-grain.svg` | paper grain texture (generated noise) | background of the list and planner sheets, `styles.css` ~912 | SVG 180×180, tiled. A real scan replaces it as `paper.jpg` (see Paper below) | placeholder, code (SVG noise filter) |
 | `brand/rambl.png` | brand card: ruled page with "Rambl" and three sample tasks | burvy.dev project card (burvy-dev repo, `assets/images/rambl.png`) | PNG 2000×1000 | placeholder, code (`brand/rambl_card.py`, Pillow) |
 | `brand/rambl_card.py` | script that drew `rambl.png` | run by hand: `python rambl_card.py out.png` (needs Windows fonts Segoe Script and Ink Free) | — | AI-written code |
 | `web/assets/sounds/` (`write`, `tick`, `page`, `listen`, `drop`, `send`, `delete`) | UI sounds | v2 wires them from `web/assets/sounds/`; v1 `play()` in `static/app.js` | mp3, mono, 44.1 kHz, 0.16–0.98 s, 3–13 KB | placeholder: real foley cut from CC0/public-domain recordings (`web/assets/CREDITS.md`), `listen.mp3` synthesized |
