@@ -236,6 +236,15 @@ pub fn asking_dismissed_by(
     matches!(state, State::Asking { .. }) && *gesture == crate::gesture::Gesture::Tap && !on_bubble
 }
 
+/// What a finger elsewhere on the page does to him: dazed, a hold anywhere draws
+/// him to the finger and he writes there (`Grab`, so he is `Inking` as if picked
+/// up). Only a hold: a finger that slides first is the page's scroll or a row's
+/// swipe, and a tap is still the row's.
+pub fn drawn_over(state: &State, gesture: &crate::gesture::Gesture) -> Option<Event> {
+    (*state == State::Dazed && matches!(gesture, crate::gesture::Gesture::Hold))
+        .then_some(Event::Grab)
+}
+
 /// Whether going from `before` to `after` is the user putting a dazed Rambo
 /// back in his nest, which he forgives them a little for.
 pub fn put_back(before: &State, after: &State) -> bool {
@@ -1448,5 +1457,47 @@ mod tests {
         }
         // Never mind sends him home.
         assert_eq!(transition(&asking, Event::Return), State::Home);
+    }
+
+    #[test]
+    fn only_a_hold_while_dazed_draws_him_over_to_write() {
+        use crate::gesture::Gesture;
+        let gestures = [
+            Gesture::Tap,
+            Gesture::Hold,
+            Gesture::Drag {
+                pos: (40.0, 60.0),
+                vel: (0.2, 0.0),
+            },
+            Gesture::Drop { pos: (40.0, 60.0) },
+            Gesture::Cancel,
+        ];
+        let states = [
+            State::Home,
+            State::Dragging,
+            State::Dazed,
+            State::Inking,
+            State::Splatting,
+            State::Skittering,
+            State::Flying,
+            State::WritingCaret,
+            State::WritingRow,
+            State::Asking {
+                task_id: "t1".into(),
+                title: "Lab report".into(),
+            },
+        ];
+        for state in &states {
+            for gesture in &gestures {
+                let drawn = drawn_over(state, gesture);
+                let expected = *state == State::Dazed && matches!(gesture, Gesture::Hold);
+                assert_eq!(drawn.is_some(), expected, "{state:?} {gesture:?}");
+                // What draws him over is a gesture he wants, and it leaves him writing.
+                if let Some(event) = drawn {
+                    assert!(wants(state, gesture));
+                    assert_eq!(transition(state, event), State::Inking);
+                }
+            }
+        }
     }
 }

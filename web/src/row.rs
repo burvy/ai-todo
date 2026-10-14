@@ -214,6 +214,8 @@ pub mod dom {
         gesture: Gesture,
         /// The row's width when the press began: how far the scribble can go.
         width: f64,
+        /// Whether holding it lifts it: not while a dazed Rambo takes every hold.
+        lifts: bool,
     }
 
     impl Press {
@@ -414,7 +416,9 @@ pub mod dom {
 
     /// Start following a pointer on a row. Returns whether this press is ours,
     /// so the caller knows not to start anything else on top of it.
-    pub fn down(presses: &Presses, ev: &leptos::ev::PointerEvent) -> bool {
+    /// With `lifts` false, holding the press never lifts the row: that hold is
+    /// someone else's.
+    pub fn down(presses: &Presses, ev: &leptos::ev::PointerEvent, lifts: bool) -> bool {
         if presses.borrow().is_some() {
             return false;
         }
@@ -430,6 +434,7 @@ pub mod dom {
             started_ms: crate::engine::now(),
             gesture: Gesture::Pressed,
             width: row.get_bounding_client_rect().width(),
+            lifts,
         });
         // A finger that never moves still picks the row up when the hold runs
         // out, so the lift cannot depend on a pointermove arriving.
@@ -437,7 +442,7 @@ pub mod dom {
         wasm_bindgen_futures::spawn_local(async move {
             gloo_timers::future::TimeoutFuture::new(HOLD_MS).await;
             let lifted = match presses.borrow_mut().as_mut() {
-                Some(p) if p.gesture == Gesture::Pressed => {
+                Some(p) if p.gesture == Gesture::Pressed && p.lifts => {
                     p.gesture = Gesture::Lifted;
                     Some(p.row.clone())
                 }
@@ -463,7 +468,8 @@ pub mod dom {
                 return;
             }
             let (dx, dy) = p.travel(ev);
-            p.gesture = advance(p.gesture, dx, dy, p.held_ms());
+            let held_ms = if p.lifts { p.held_ms() } else { 0 };
+            p.gesture = advance(p.gesture, dx, dy, held_ms);
             (p.row.clone(), p.gesture, dx, dy, p.width)
         };
         match gesture {
