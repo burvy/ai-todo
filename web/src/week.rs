@@ -28,6 +28,36 @@ struct Slot {
     minutes: u16,
 }
 
+/// How far a phone finger must hold still before its slip lifts onto it, so
+/// a plain vertical drag still scrolls the paper (the mouse lifts at once).
+#[cfg(target_arch = "wasm32")]
+const PRESS_HOLD_MS: u32 = 250;
+
+/// How far a not-yet-lifted finger may slide before we call it a scroll and
+/// disarm the lift.
+#[cfg(target_arch = "wasm32")]
+const PRESS_SLOP_PX: f64 = 10.0;
+
+/// The band near a scroll-box edge where a held slip makes the paper slide
+/// along so slots beyond the edge can be reached without letting go.
+#[cfg(any(target_arch = "wasm32", test))]
+const EDGE_ZONE_PX: f32 = 48.0;
+
+/// The loudest the paper slides per auto-scroll tick, right at an edge.
+#[cfg(any(target_arch = "wasm32", test))]
+const EDGE_MAX_PX: f32 = 6.0;
+
+/// Pixels per auto-scroll tick while a held slip is `distance_to_edge` from
+/// the edge: zero outside the band, fastest right at it.
+#[cfg(any(target_arch = "wasm32", test))]
+fn edge_nudge(distance_to_edge: f32) -> f32 {
+    if distance_to_edge >= EDGE_ZONE_PX {
+        0.0
+    } else {
+        ((EDGE_ZONE_PX - distance_to_edge) / EDGE_ZONE_PX) * EDGE_MAX_PX
+    }
+}
+
 #[component]
 pub fn WeekGrid(
     snapshot: ReadSignal<Snapshot>,
@@ -65,6 +95,76 @@ pub fn WeekGrid(
     let drag = RwSignal::new(None::<Drag>);
     // Where it would land: day + minutes, drawn as a faint slot outline.
     let landing = RwSignal::new(None::<Slot>);
+    // Esc puts a slip in hand back down: cancel, never commit.
+    #[cfg(target_arch = "wasm32")]
+    {
+        use wasm_bindgen::JsCast as _;
+        let esc_key = std::rc::Rc::new(std::cell::RefCell::new(
+            None::<wasm_bindgen::closure::Closure<dyn Fn(leptos::ev::KeyboardEvent)>>,
+        ));
+        Effect::new(move |_| {
+            if drag.get().is_none() {
+                if let Some(key) = esc_key.borrow_mut().take() {
+                    let _ = leptos::prelude::document().remove_event_listener_with_callback(
+                        "keydown",
+                        key.as_ref().unchecked_ref(),
+                    );
+                }
+                return;
+            }
+            if esc_key.borrow().is_some() {
+                return;
+            }
+            let key = wasm_bindgen::closure::Closure::<dyn Fn(leptos::ev::KeyboardEvent)>::wrap(
+                Box::new(move |ev: leptos::ev::KeyboardEvent| {
+                    if ev.key() != "Escape" {
+                        return;
+                    }
+                    // Cancel, never commit: no change is written anywhere.
+                    drag.set(None);
+                    landing.set(None);
+                }),
+            );
+            let _ = leptos::prelude::document()
+                .add_event_listener_with_callback("keydown", key.as_ref().unchecked_ref());
+            *esc_key.borrow_mut() = Some(key);
+        });
+    }
+    // While a slip is held near an edge, the paper keeps sliding along under
+    // the finger, so a slot beyond the edge can be reached without letting go.
+    set_interval(
+        move || {
+            #[cfg(target_arch = "wasm32")]
+            {
+                let Some(d) = drag.get_untracked() else {
+                    return;
+                };
+                let Some(scroller) = grid_ref.get() else {
+                    return;
+                };
+                let rect = scroller.get_bounding_client_rect();
+                let down = edge_nudge(rect.bottom() as f32 - d.y as f32);
+                let up = edge_nudge(d.y as f32 - rect.top() as f32);
+                let right = edge_nudge(rect.right() as f32 - d.x as f32);
+                let left = edge_nudge(d.x as f32 - rect.left() as f32);
+                let (dx, dy) = (right - left, down - up);
+                if dx == 0.0 && dy == 0.0 {
+                    return;
+                }
+                // scroll_left/top clamp inside the bounds themselves.
+                if dy != 0.0 {
+                    scroller.set_scroll_top(scroller.scroll_top() - dy as i32);
+                }
+                if dx != 0.0 {
+                    scroller.set_scroll_left(scroller.scroll_left() - dx as i32);
+                }
+                // The paper under the finger has moved: re-find its slot.
+                landing.set(landing_at(d.x, d.y, &settings.get_untracked()));
+            }
+        },
+        50,
+    )
+    .forget();
     #[cfg(not(target_arch = "wasm32"))]
     let _ = capture_text;
     let days = move || (0..settings.get().days).collect::<Vec<_>>();
@@ -158,6 +258,18 @@ pub fn WeekGrid(
                     aria-hidden="true"
                 >
                     <strong>{d.title.clone()}</strong>
+                    // The time the slip would get, live as the finger moves it.
+                    <span class="ghost-time">
+                        {move || {
+                            landing.get().map(|slot| {
+                                let ctx = planner_context(&snapshot.get().tz);
+                                let weekday = (ctx.today() + chrono::Duration::days(slot.day))
+                                    .format("%a")
+                                    .to_string();
+                                clock::format_day_time(&weekday, slot.minutes, settings.get().clock)
+                            })
+                        }}
+                    </span>
                 </div>
             })}
         </section>
@@ -395,11 +507,11 @@ fn placements_on_day(placements: &[Placement], day: i64, ctx: &LocalContext) -> 
         .collect()
 }
 /// The minute a drop lands on, from a pixel offset inside a day column.
-/// Round to the half hour, and never land at the very end of the day:
+/// Round to the quarter hour, and never land at the very end of the day:
 /// a zero-length task at 24:00 cannot start.
 #[cfg(any(target_arch = "wasm32", test))]
 fn drop_minute(offset_px: f32, planner_start_hour: u8, planner_end_hour: u8, hour_px: f32) -> u16 {
-    const SNAP: f32 = 30.0;
+    const SNAP: f32 = 15.0;
     let start_min = f32::from(planner_start_hour) * 60.0;
     let end_min = f32::from(planner_end_hour) * 60.0;
     let raw = start_min + offset_px.max(0.0) / hour_px * 60.0;
@@ -453,6 +565,19 @@ fn set_interval(callback: impl FnMut() + 'static, millis: u32) -> Interval {
     Interval::new(millis, callback)
 }
 
+/// A touch that has gone down on a slip but the slip has not lifted yet: the
+/// armed hold, and how far the finger has slid since it went down.
+#[cfg(target_arch = "wasm32")]
+struct Press {
+    /// The hold that will lift the slip; taken and cancelled on a real slide.
+    lift: Option<gloo_timers::callback::Timeout>,
+    /// Total distance the finger has slid since it went down, in pixels.
+    slide: f64,
+    /// Where the finger was last seen, client coordinates.
+    x: f64,
+    y: f64,
+}
+
 #[component]
 fn PlacementBlock(
     placement: Placement,
@@ -486,13 +611,35 @@ fn PlacementBlock(
         )
     };
 
+    // A phone finger's press state for this slip, shared by the handlers: the
+    // armed lift, and how far the finger has slid since it went down.
+    #[cfg(target_arch = "wasm32")]
+    let press = std::rc::Rc::new(std::cell::RefCell::new(None::<Press>));
+
+    // Lift a slip onto its finger at a point: the title comes from the
+    // snapshot. The pointer is usually captured already, at pointer-down.
+    #[cfg(target_arch = "wasm32")]
+    let lift = move |x: f64, y: f64| {
+        let snap = snapshot.get_untracked();
+        let Some(task) = snap.tasks.iter().find(|task| task.id == down_id) else {
+            return;
+        };
+        let title = task.title.clone();
+        drop(snap);
+        drag.set(Some(Drag {
+            id: down_id.clone(),
+            title,
+            x,
+            y,
+        }));
+    };
+
     #[cfg(target_arch = "wasm32")]
     let grip_down = {
+        // Each handler owns its own press handle: no closure steals another's.
+        let press = press.clone();
         move |event: leptos::ev::PointerEvent| {
             use wasm_bindgen::JsCast;
-            // This is a drag, not a scroll: `main` is a scroll-snap row, so a
-            // touch that is allowed to pan turns the page under the slip.
-            event.prevent_default();
             if event.pointer_type() == "mouse" && event.buttons() != 1 {
                 return;
             }
@@ -500,124 +647,173 @@ fn PlacementBlock(
             if drag.get_untracked().is_some() {
                 return;
             }
-            let snap = snapshot.get_untracked();
-            let Some(task) = snap.tasks.iter().find(|task| task.id == down_id) else {
-                return;
-            };
-            let title = task.title.clone();
-            drop(snap);
-            // Take the pointer so the move stays ours even over other elements.
-            if let Some(grip) = event
+            // Take the pointer at once, so both the hold and a later slide stay
+            // ours over other elements. No preventDefault: whether a touch may
+            // scroll is the slip's `touch-action`, which is none (below).
+            if let Some(slip) = event
                 .target()
                 .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
             {
-                let _ = grip.set_pointer_capture(event.pointer_id());
+                let _ = slip.set_pointer_capture(event.pointer_id());
             }
-            drag.set(Some(Drag {
-                id: down_id.clone(),
-                title,
-                x: f64::from(event.client_x()),
-                y: f64::from(event.client_y()),
-            }));
+            let x = f64::from(event.client_x());
+            let y = f64::from(event.client_y());
+            if event.pointer_type() == "mouse" {
+                // A mouse lifts a slip the moment it takes hold: no hold to mistime.
+                lift(x, y);
+                return;
+            }
+            // A touch lifts when its finger has held still a beat; until then a
+            // slide is a scroll, panned by hand under the finger, because a slip
+            // is touch-action: none and never lets the browser scroll itself.
+            *press.borrow_mut() = Some(Press {
+                lift: None,
+                slide: 0.0,
+                x,
+                y,
+            });
+            // The hold gets its own clones: the handlers stay Fn and reusable.
+            let hold = {
+                let press = press.clone();
+                let lift = lift.clone();
+                gloo_timers::callback::Timeout::new(PRESS_HOLD_MS, move || {
+                    press.borrow_mut().take();
+                    lift(x, y);
+                })
+            };
+            if let Some(p) = press.borrow_mut().as_mut() {
+                p.lift = Some(hold);
+            }
         }
     };
 
     #[cfg(target_arch = "wasm32")]
-    let grip_move = move |event: leptos::ev::PointerEvent| {
-        let Some(mut d) = drag.get_untracked() else {
-            return;
-        };
-        if d.id != move_id || event.buttons() == 0 {
-            return;
+    let grip_move = {
+        let press = press.clone();
+        move |event: leptos::ev::PointerEvent| {
+            use wasm_bindgen::JsCast;
+            let x = f64::from(event.client_x());
+            let y = f64::from(event.client_y());
+            // The slip is not up yet: a real slide is a scroll, panned by hand.
+            if drag.get_untracked().is_none() {
+                let mut state = press.borrow_mut();
+                let Some(p) = state.as_mut() else {
+                    return;
+                };
+                if event.buttons() == 0 {
+                    return;
+                }
+                let dx = x - p.x;
+                let dy = y - p.y;
+                p.slide += (dx.powi(2) + dy.powi(2)).sqrt();
+                p.x = x;
+                p.y = y;
+                if p.slide <= PRESS_SLOP_PX {
+                    // A tremble: the hold stays armed.
+                    return;
+                }
+                // A real slide: the hold is off and the paper pans with the finger.
+                p.lift.take();
+                drop(state);
+                if let Some(slip) = event
+                    .target()
+                    .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                {
+                    pan_under(dx, dy, &slip);
+                }
+                return;
+            }
+            let Some(mut d) = drag.get_untracked() else {
+                return;
+            };
+            if d.id != move_id || event.buttons() == 0 {
+                return;
+            }
+            d.x = x;
+            d.y = y;
+            drag.set(Some(d.clone()));
+            landing.set(landing_at(x, y, &settings.get_untracked()));
         }
-        d.x = f64::from(event.client_x());
-        d.y = f64::from(event.client_y());
-        drag.set(Some(d.clone()));
-        let Some(location) = drop_location(d.x, d.y) else {
+    };
+
+    #[cfg(target_arch = "wasm32")]
+    let grip_end = {
+        let press = press.clone();
+        move |_event: leptos::ev::PointerEvent| {
+            // Whatever else this release was, the hold is off.
+            press.borrow_mut().take();
+            let Some(d) = drag.get_untracked() else {
+                return;
+            };
+            if d.id != end_id {
+                return;
+            }
+            drag.set(None);
+            let landing_slot = landing.get_untracked();
             landing.set(None);
-            return;
-        };
-        let s = settings.get_untracked();
-        let minutes = drop_minute(
-            event.client_y() as f32 - location.1,
-            s.start_hour,
-            s.end_hour,
-            HOUR_PX,
-        );
-        landing.set(Some(Slot {
-            day: location.0,
-            minutes,
-        }));
-    };
-
-    #[cfg(target_arch = "wasm32")]
-    let grip_end = move |_event: leptos::ev::PointerEvent| {
-        let Some(d) = drag.get_untracked() else {
-            return;
-        };
-        if d.id != end_id {
-            return;
-        }
-        drag.set(None);
-        let landing_slot = landing.get_untracked();
-        landing.set(None);
-        let Some(slot) = landing_slot else {
-            return;
-        };
-        // Dropped where it already sat: nothing to change.
-        let ctx = planner_context(&snapshot.get_untracked().tz);
-        let local_start = ctx.local(placement.start);
-        let current = Slot {
-            day: day_index(placement.start, &ctx),
-            minutes: local_start.hour() as u16 * 60 + local_start.minute() as u16,
-        };
-        if slot == current {
-            return;
-        }
-        let Some(instant) = drop_start(&ctx, slot.day, slot.minutes) else {
-            set_error.set(Some(
+            let Some(slot) = landing_slot else {
+                return;
+            };
+            // Dropped where it already sat: nothing to change.
+            let ctx = planner_context(&snapshot.get_untracked().tz);
+            let local_start = ctx.local(placement.start);
+            let current = Slot {
+                day: day_index(placement.start, &ctx),
+                minutes: local_start.hour() as u16 * 60 + local_start.minute() as u16,
+            };
+            if slot == current {
+                return;
+            }
+            let Some(instant) = drop_start(&ctx, slot.day, slot.minutes) else {
+                set_error.set(Some(
                 "The clock skips that time that day (daylight change), so it cannot start then."
                     .into(),
             ));
-            return;
-        };
-        // The guard stays fresh from the last snapshot the page saw: if the
-        // task changed elsewhere meanwhile, the server refuses the move.
-        let snap = snapshot.get_untracked();
-        let Some(task) = snap.tasks.iter().find(|task| task.id == end_id) else {
-            return;
-        };
-        // One day of a repeating series is a 'moved' exception on the series,
-        // never a task PATCH: the row here is one expanded occurrence of the
-        // whole rule, and its id names the original local date.
-        let occurrence = occurrence_of(&task.id);
-        let updated_at = task.updated_at;
-        drop(snap);
-        let id = end_id.clone();
-        wasm_bindgen_futures::spawn_local(async move {
-            let result = match occurrence {
-                Some((series_id, date)) => {
-                    crate::api::move_series_occurrence(&series_id, date, When::At(instant)).await
-                }
-                None => {
-                    let body = crate::api::PatchTaskBody::new()
-                        .when(When::At(instant))
-                        .updated_at(updated_at);
-                    crate::api::patch_task(&id, body).await
-                }
+                return;
             };
-            match result {
-                Ok(new_snapshot) => set_snapshot.set(new_snapshot),
-                Err(e) => set_error.set(Some(format!("Move failed: {e}"))),
-            }
-        });
+            // The guard stays fresh from the last snapshot the page saw: if the
+            // task changed elsewhere meanwhile, the server refuses the move.
+            let snap = snapshot.get_untracked();
+            let Some(task) = snap.tasks.iter().find(|task| task.id == end_id) else {
+                return;
+            };
+            // One day of a repeating series is a 'moved' exception on the series,
+            // never a task PATCH: the row here is one expanded occurrence of the
+            // whole rule, and its id names the original local date.
+            let occurrence = occurrence_of(&task.id);
+            let updated_at = task.updated_at;
+            drop(snap);
+            let id = end_id.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = match occurrence {
+                    Some((series_id, date)) => {
+                        crate::api::move_series_occurrence(&series_id, date, When::At(instant))
+                            .await
+                    }
+                    None => {
+                        let body = crate::api::PatchTaskBody::new()
+                            .when(When::At(instant))
+                            .updated_at(updated_at);
+                        crate::api::patch_task(&id, body).await
+                    }
+                };
+                match result {
+                    Ok(new_snapshot) => set_snapshot.set(new_snapshot),
+                    Err(e) => set_error.set(Some(format!("Move failed: {e}"))),
+                }
+            });
+        }
     };
 
     #[cfg(target_arch = "wasm32")]
-    let grip_cancel = move |_| {
-        if drag.get_untracked().is_some_and(|d| d.id == cancel_id) {
-            drag.set(None);
-            landing.set(None);
+    let grip_cancel = {
+        let press = press.clone();
+        move |_| {
+            press.borrow_mut().take();
+            if drag.get_untracked().is_some_and(|d| d.id == cancel_id) {
+                drag.set(None);
+                landing.set(None);
+            }
         }
     };
     // On a native build the patch paths never run; keep the unused-shelf silent.
@@ -659,14 +855,18 @@ fn PlacementBlock(
                 }
             })
             on:dragover=|event| event.prevent_default()
+            // The whole slip is the grab area: pointer handlers sit on the
+            // block itself. On a phone they lift only after the hold (so a
+            // slide stays a scroll), and touching a slip is touch-action:
+            // none, so it can never start the page flip.
+            on:pointerdown=grip_down
+            on:pointermove=grip_move
+            on:pointerup=grip_end
+            on:pointercancel=grip_cancel
         >
             <span
                 class="placement-grip"
                 aria-label=format!("Drag {} to another slot", placement_label(&snapshot.get_untracked(), &task_id))
-                on:pointerdown=grip_down
-                on:pointermove=grip_move
-                on:pointerup=grip_end
-                on:pointercancel=grip_cancel
             ></span>
             <span class="slip-text">
                 {move || view! { <strong>{placement_label(&snapshot.get(), &label_task_id)}</strong> }}
@@ -696,6 +896,49 @@ fn drop_location(x: f64, y: f64) -> Option<(i64, f32)> {
         .flatten()
         .and_then(|hours| hours.dyn_into::<web_sys::HtmlElement>().ok())?;
     Some((day, hours.get_bounding_client_rect().top() as f32))
+}
+
+/// The slot a point is over, day and snapped minute, or None when the point
+/// is off the planner. What the held slip's outline and its own drop use.
+#[cfg(target_arch = "wasm32")]
+fn landing_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
+    let location = drop_location(x, y)?;
+    let minutes = drop_minute(
+        y as f32 - location.1,
+        settings.start_hour,
+        settings.end_hour,
+        HOUR_PX,
+    );
+    Some(Slot {
+        day: location.0,
+        minutes,
+    })
+}
+
+/// The paper a not-yet-lifted finger slides over: `main` along its length,
+/// the planner's own scroll box down its hours, in the direction the finger
+/// drags them, because a slip itself never scrolls (it is touch-action: none).
+#[cfg(target_arch = "wasm32")]
+fn pan_under(dx: f64, dy: f64, under: &web_sys::Element) {
+    use wasm_bindgen::JsCast;
+    if dx != 0.0
+        && let Some(page) = under
+            .closest("main")
+            .ok()
+            .flatten()
+            .and_then(|page| page.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        page.set_scroll_left(page.scroll_left() - dx as i32);
+    }
+    if dy != 0.0
+        && let Some(scroller) = under
+            .closest(".week-scroll")
+            .ok()
+            .flatten()
+            .and_then(|scroller| scroller.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        scroller.set_scroll_top(scroller.scroll_top() - dy as i32);
+    }
 }
 /// What a placement block shows: the task's title, looked up in the snapshot. A
 /// placement always ships with its task, but a snapshot mid-swap may not, so an
@@ -865,21 +1108,38 @@ mod tests {
     }
 
     #[test]
-    fn a_drop_snaps_to_the_half_hour_and_never_lands_at_the_day_end() {
+    fn a_drop_snaps_to_the_quarter_hour_and_never_lands_at_the_day_end() {
         // 1.5 px past the 08:00 row = dead on 08:00.
         assert_eq!(drop_minute(1.5, 8, 18, HOUR_PX), 8 * 60);
+        // 16 px of 64 is a quarter hour.
+        assert_eq!(drop_minute(16.0, 8, 18, HOUR_PX), 8 * 60 + 15);
         // Half of 64px is 30 minutes.
         assert_eq!(drop_minute(32.0, 8, 18, HOUR_PX), 8 * 60 + 30);
         assert_eq!(
             drop_minute(49.0, 8, 18, HOUR_PX),
-            9 * 60,
-            "49px rounds to 45min→ the nearest half hour"
+            8 * 60 + 45,
+            "49px is 45.9min → the nearest quarter hour"
         );
         // Far past the bottom: pinned just inside the planner's last slot.
-        assert_eq!(drop_minute(10_000.0, 8, 18, HOUR_PX), 17 * 60 + 30);
+        assert_eq!(drop_minute(10_000.0, 8, 18, HOUR_PX), 17 * 60 + 45);
         assert_eq!(drop_minute(-5.0, 8, 18, HOUR_PX), 8 * 60);
         // An end at midnight never snaps to 24:00 as a start.
-        assert_eq!(drop_minute(10_000.0, 8, 24, HOUR_PX), 23 * 60 + 30);
+        assert_eq!(drop_minute(10_000.0, 8, 24, HOUR_PX), 23 * 60 + 45);
+    }
+
+    #[test]
+    fn the_paper_slides_faster_the_nearer_the_held_slip_gets_to_an_edge() {
+        // Nothing at all outside the edge band.
+        assert_eq!(edge_nudge(EDGE_ZONE_PX + 10.0), 0.0);
+        assert_eq!(
+            edge_nudge(EDGE_ZONE_PX),
+            0.0,
+            "the band's edge counts as out"
+        );
+        // Halfway into the band: half the page's fastest nudge.
+        assert!((edge_nudge(EDGE_ZONE_PX / 2.0) - EDGE_MAX_PX / 2.0).abs() < 0.01,);
+        // At the edge itself, the loudest nudge.
+        assert!((edge_nudge(0.0) - EDGE_MAX_PX).abs() < 0.01);
     }
 
     #[test]
