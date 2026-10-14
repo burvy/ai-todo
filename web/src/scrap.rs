@@ -12,11 +12,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use chrono::NaiveDate;
 use leptos::prelude::*;
 use todo_core::{Snapshot, Task, TaskId};
+use wasm_bindgen::JsCast;
 
 use crate::api;
 use crate::edits::series_note;
 use crate::tasks::occurrence_parts;
-use crate::tuning::{PIN_SHOWN, SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS};
+use crate::tuning::{
+    PIN_SHOWN, ROW_CLOSE_MS, SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS,
+};
 
 /// What taping a scrap back does.
 #[derive(Clone, Debug, PartialEq)]
@@ -260,6 +263,78 @@ fn fly(scrap: &web_sys::HtmlElement, from: Spot) {
     // Reading a layout value makes the browser settle the start before the release.
     let _ = scrap.offset_width();
     let _ = classes.remove_1("flying");
+}
+
+/// Where each list row sits, as its offset from the list's top in px, in list order.
+/// An offset ignores transforms, so a row still sliding reads where it will rest.
+pub fn row_tops() -> Vec<(String, i32)> {
+    let list = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|doc| doc.query_selector(".task-list").ok().flatten());
+    let Some(rows) = list.map(|list| list.children()) else {
+        return Vec::new();
+    };
+    (0..rows.length())
+        .filter_map(|n| rows.item(n)?.dyn_into::<web_sys::HtmlElement>().ok())
+        .filter_map(|row| Some((row.get_attribute("data-id")?, row.offset_top())))
+        .collect()
+}
+
+/// The rows that must slide to close the gap a removed row left: how far each one moved
+/// (old top minus new top), for rows in both lists that moved at all. Nothing slides when
+/// no row went, so an add or a reorder keeps its own motion.
+pub fn rows_to_slide(before: &[(String, i32)], after: &[(String, i32)]) -> Vec<(String, i32)> {
+    let one_went = before
+        .iter()
+        .any(|(id, _)| after.iter().all(|(kept, _)| kept != id));
+    if !one_went {
+        return Vec::new();
+    }
+    after
+        .iter()
+        .filter_map(|(id, top)| {
+            let (_, was) = before.iter().find(|(old, _)| old == id)?;
+            (was != top).then(|| (id.clone(), was - top))
+        })
+        .collect()
+}
+
+/// Slide the rows that rest `moved` px lower than they were back up into place: each
+/// starts where it stood, and a transition carries it home. With reduced motion they just
+/// sit in their new places.
+pub fn slide_rows(moved: &[(String, i32)]) {
+    if crate::mascot::prefers_reduced_motion() {
+        return;
+    }
+    let Some(doc) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let rows: Vec<web_sys::HtmlElement> = moved
+        .iter()
+        .filter_map(|(id, up)| {
+            let row = doc
+                .query_selector(&format!("li[data-id=\"{id}\"]"))
+                .ok()??
+                .dyn_into::<web_sys::HtmlElement>()
+                .ok()?;
+            let style = row.style();
+            let _ = style.set_property("transition", "none");
+            let _ = style.set_property("transform", &format!("translateY({up}px)"));
+            Some(row)
+        })
+        .collect();
+    if let Some(row) = rows.first() {
+        // Reading a layout value makes the browser settle the starts before the release.
+        let _ = row.offset_width();
+    }
+    for row in rows {
+        let style = row.style();
+        let _ = style.set_property(
+            "transition",
+            &format!("transform {ROW_CLOSE_MS}ms var(--ease-out, ease-out)"),
+        );
+        let _ = style.set_property("transform", "none");
+    }
 }
 
 /// A stable number for a task id, so the same strip always hangs the same way.
@@ -615,6 +690,27 @@ mod tests {
                 .all(|t| hung.iter().all(|h| h.id != t.id)),
             "only done tasks hang"
         );
+    }
+
+    #[test]
+    fn rows_below_a_removed_row_slide_up_by_its_height() {
+        let row = |id: &str, top| (id.to_owned(), top);
+        let before = [row("a", 0), row("b", 50), row("c", 100), row("d", 150)];
+        let after = [row("a", 0), row("c", 50), row("d", 100)];
+        assert_eq!(
+            rows_to_slide(&before, &after),
+            [row("c", 50), row("d", 50)],
+            "rows below slide up; the row above stays"
+        );
+    }
+
+    #[test]
+    fn nothing_slides_unless_a_row_went() {
+        let row = |id: &str, top| (id.to_owned(), top);
+        let before = [row("a", 0), row("b", 50)];
+        // A new row at the top pushes the others down: that is not a gap closing.
+        let after = [row("n", 0), row("a", 50), row("b", 100)];
+        assert!(rows_to_slide(&before, &after).is_empty());
     }
 
     #[test]

@@ -97,7 +97,8 @@ leaves a **paper scrap** flying from the row to the same pin, hanging for `SCRAP
 of time the page is in view; up to `SCRAP_MAX` (two quick deletes leave two, each taping
 back its own task; a third sends the oldest away). Tap one and the task is taped back as
 it was (`POST /api/v1/tasks/restore`; a repeat's day has its skip cleared), otherwise it
-slides away. Paper slides and never fades. Times and counts are in `web/src/tuning.rs`;
+slides away. Paper slides and never fades. The rows below a row that left slide up to close the
+gap (`ROW_CLOSE_MS`), never jump. Times and counts are in `web/src/tuning.rs`;
 the pin is `web/src/scrap.rs`.
 e. A finger that slides before the hold is a **scroll**, and the row keeps its
 hands off it. That is also what keeps the gestures apart from the page flip: a

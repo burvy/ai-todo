@@ -438,6 +438,21 @@ pub(crate) fn TaskList(
             .collect::<Vec<_>>()
     };
 
+    // When a row goes (done, deleted), the rows below it slide up to close the gap
+    // instead of jumping: each row's rest place is read after the list has changed,
+    // and compared with where it rested before.
+    let rested = StoredValue::new(Vec::<(String, i32)>::new());
+    Effect::new(move |_| {
+        snapshot.track();
+        selected_label.track();
+        request_animation_frame(move || {
+            let now = scrap::row_tops();
+            let slide = rested.with_value(|before| scrap::rows_to_slide(before, &now));
+            rested.set_value(now);
+            scrap::slide_rows(&slide);
+        });
+    });
+
     // Process pen queue: only write rows for tasks the client just created,
     // not every task on reload.
     #[cfg(target_arch = "wasm32")]

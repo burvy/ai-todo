@@ -100,6 +100,9 @@ pub const SCRAP_SLIDE_MS: u32 = 240;
 /// The most scraps lying in the corner at once; a new delete beyond it sends the oldest
 /// away. Safe range 1 to 5: two quick deletes keep two, but the pile never fills the page.
 pub const SCRAP_MAX: usize = 3;
+/// How long the rows below a removed row take to slide up and close the gap, in ms. Safe
+/// range 120 to 400.
+pub const ROW_CLOSE_MS: u32 = 220;
 /// The most done tasks hanging at the pin at once, newest first; the older ones stay done
 /// (and in the planner's history) but are not drawn, so the column never runs past the page.
 /// Safe range 3 to 10.
