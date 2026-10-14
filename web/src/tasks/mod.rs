@@ -14,9 +14,10 @@ use crate::clock::Clock;
 use crate::edits::{EditSink, confirmed, held, patch_and_show, series_note, toggle_done_body};
 #[cfg(target_arch = "wasm32")]
 use crate::pen;
-use crate::{api, clock, mascot, row, settings, week};
+use crate::pickers::{PaperDate, PaperDateTime, PaperTime};
+use crate::{api, mascot, row, settings, week};
 use fields::{
-    EditWhen, WEEKDAY_CHOICES, due_display, local_input_value, parse_hhmm, series_from_dialog,
+    EditWhen, WEEKDAY_CHOICES, due_display, local_input_value, series_from_dialog,
     series_patch_from_dialog, toggled_day, typed_when,
 };
 
@@ -332,6 +333,12 @@ pub(crate) fn TaskList(
     let edit_weekdays = RwSignal::new(Vec::<Weekday>::new());
     let edit_until = RwSignal::new(String::new());
     let edit_time = RwSignal::new(String::new());
+    // What the paper pickers in the sheet need: the paper's clock, and today for
+    // the day grid to open on.
+    let picker_clock = Signal::derive(move || view_settings.get().clock);
+    let picker_today = Signal::derive(|| {
+        NaiveDate::parse_from_str(&api::today_date(), "%Y-%m-%d").unwrap_or_default()
+    });
     // Open the edit sheet on a row: from a click on it, or from Rambo's "Edit".
     // What the sheet was last filled with: a refill after Rambo's heard change keeps
     // any field the user has typed in since.
@@ -798,38 +805,24 @@ pub(crate) fn TaskList(
                                         >{*name}</button>
                                     }).collect_view()}
                                 </div>
-                                <label>
+                                <div class="dialog-row">
                                     "Until (optional) "
-                                    <input
-                                        type="date"
-                                        prop:value=edit_until
-                                        on:input=move |event| edit_until.set(event_target_value(&event))
+                                    <PaperDate
+                                        label="Until"
+                                        value=edit_until
+                                        set=move |day: String| edit_until.set(day)
+                                        start=picker_today
                                     />
-                                </label>
-                                <label>
+                                </div>
+                                <div class="dialog-row">
                                     "At (optional) "
-                                    <input
-                                        type="time"
-                                        prop:value=edit_time
-                                        on:input=move |event| edit_time.set(event_target_value(&event))
+                                    <PaperTime
+                                        label="At"
+                                        value=edit_time
+                                        set=move |time: String| edit_time.set(time)
+                                        clock=picker_clock
                                     />
-                                    // The native field's rendering follows the browser's
-                                    // locale, not the paper's clock, so the chosen time is
-                                    // also written out in it beside the field.
-                                    <span class="dialog-time-written">
-                                        {move || {
-                                            let clock = view_settings.get().clock;
-                                            parse_hhmm(&edit_time.get()).map(|value| {
-                                                let (hour, minute) = value.split_once(':').unwrap_or(("0", "0"));
-                                                clock::format_time(
-                                                    hour.parse::<u16>().unwrap_or(0) * 60
-                                                        + minute.parse::<u16>().unwrap_or(0),
-                                                    clock,
-                                                )
-                                            })
-                                        }}
-                                    </span>
-                                </label>
+                                </div>
                                 {(!recurring).then(|| view! {
                                     <p class="dialog-hint">
                                         "Pick days and save: this task becomes a weekly series, and its one-off row goes away."
@@ -842,13 +835,14 @@ pub(crate) fn TaskList(
                                 <label><input type="radio" name="when" checked=move || edit_when.get() == EditWhen::Anytime on:change=move |_| set_edit_when.set(EditWhen::Anytime) /> "Anytime"</label>
                                 <label><input type="radio" name="when" checked=move || edit_when.get() == EditWhen::DueBy on:change=move |_| set_edit_when.set(EditWhen::DueBy) /> "Due by"</label>
                                 <label><input type="radio" name="when" checked=move || edit_when.get() == EditWhen::At on:change=move |_| set_edit_when.set(EditWhen::At) /> "Scheduled at"</label>
-                                <input
-                                    type="datetime-local"
-                                    prop:value=edit_datetime
-                                    on:input=move |event| {
-                                        set_edit_datetime.set(event_target_value(&event));
+                                <PaperDateTime
+                                    value=edit_datetime
+                                    set=move |value: String| {
+                                        set_edit_datetime.set(value);
                                         set_edit_time_error.set(None);
                                     }
+                                    clock=picker_clock
+                                    start=picker_today
                                 />
                                 {move || match due_zone.as_deref() {
                                     Some(zone) if edit_when.get() == EditWhen::DueBy => Some(view! {

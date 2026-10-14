@@ -1644,13 +1644,81 @@ li.task-row:focus-within .delete-mark {
 .day-picker button.active { color: var(--accent); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 .dialog-hint { color: var(--ink-soft); }
 
-/* The chosen time written out beside the dialog's time field, in the paper's
-   clock — the native field's own rendering follows the browser's locale. */
-.dialog-time-written {
-  margin-left: var(--space-2);
+/* The paper date and time pickers (web/src/pickers.rs): a handwritten field that
+   opens a small page of numbers beneath it, in the flow of the sheet so the
+   sheet's own scroll never clips it. No native chrome, no boxes: ink on paper. */
+.dialog-row { display: flex; align-items: flex-start; gap: var(--space-2); }
+.dialog-row > .paper-picker { margin-top: 0; }
+.paper-datetime { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); align-items: flex-start; }
+.paper-picker { display: inline-block; vertical-align: top; }
+.paper-field,
+.paper-page button {
+  font: inherit;
   font-family: var(--font-hand-neat);
-  color: var(--ink-soft);
-  white-space: nowrap;
+  color: var(--ink);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.paper-field {
+  min-height: var(--tap);
+  padding: 0 var(--space-1);
+  border-bottom: 1px dashed var(--rule-strong);
+}
+.paper-field.empty { color: var(--ink-faint); }
+.paper-field:active,
+.paper-page button:active { transform: scale(0.96); }
+.paper-field:focus-visible,
+.paper-page button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.paper-page {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+  padding: var(--space-3);
+  background: var(--paper-sunken);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow);
+  transform-origin: top left;
+  animation: paper-page-in var(--dur-fast) ease-out both;
+}
+@keyframes paper-page-in {
+  from { opacity: 0; transform: translateY(calc(-1 * var(--space-1))) scale(0.97); }
+}
+.paper-month { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.paper-month-name { font-family: var(--font-hand); font-size: var(--text-xl); }
+.paper-step { min-width: var(--tap); min-height: var(--tap); font-size: var(--text-xl); }
+.paper-weekdays,
+.paper-days { display: grid; grid-template-columns: repeat(7, minmax(var(--tap), 1fr)); text-align: center; }
+.paper-weekdays { color: var(--ink-faint); font-size: var(--text-sm); }
+.paper-day,
+.paper-tick { min-height: var(--tap); min-width: var(--tap); font-family: var(--font-hand); font-size: var(--text-lg); }
+.paper-day.weekend { color: var(--ink-soft); }
+.paper-day.today { text-decoration: underline wavy var(--ink-faint); text-underline-offset: 4px; }
+/* The picked number is ringed in the pen's ink, the way a person circles a date. */
+.paper-day.picked,
+.paper-tick.picked,
+.paper-meridiem .picked {
+  color: var(--accent);
+  font-weight: 700;
+  border: 2px solid var(--accent);
+  border-radius: 55% 45% 50% 50% / 50% 55% 45% 50%;
+}
+.paper-hours,
+.paper-minutes { display: grid; grid-template-columns: repeat(6, minmax(var(--tap), 1fr)); }
+.paper-minutes { border-top: 1px dashed var(--rule); padding-top: var(--space-2); }
+.paper-meridiem,
+.paper-actions { display: flex; gap: var(--space-3); }
+.paper-actions { justify-content: flex-end; color: var(--ink-soft); }
+.paper-actions button { text-decoration: underline; text-underline-offset: 3px; min-height: var(--tap); padding: 0 var(--space-1); }
+@media (hover: hover) and (pointer: fine) {
+  .paper-day:hover,
+  .paper-tick:hover { color: var(--accent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .paper-page { animation: none; }
+  .paper-field,
+  .paper-page button { transition: none; }
 }
 
 /* Rambo's whisper (capture placeholder): the prompt fades out, the text swaps
