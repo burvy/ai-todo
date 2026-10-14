@@ -9,4 +9,9 @@ pub const MINUTE_STEP: u16 = 5;
 /// day (9:00): the first tap on any hour then names a whole time.
 pub const TIME_PAGE_START: u16 = 9 * 60;
 
+/// The least room, in CSS pixels, between Rambo's ask bubble and either side of the
+/// screen: near an edge the bubble slides in rather than run off it. Safe range 4 to
+/// 24; it matches the page's `--space-2` gutter.
+pub const BUBBLE_EDGE_PX: f64 = 8.0;
+
 const _: () = assert!(60 % MINUTE_STEP == 0);
