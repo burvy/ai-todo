@@ -96,9 +96,18 @@ pub(crate) fn PlacingNote(
         });
         Some((task.title.clone(), offer))
     };
+    // The note stays on the page and keeps its last words, so it can slide away with
+    // them once the task has its place instead of vanishing.
+    let shown = RwSignal::new(None);
+    Effect::new(move |_| {
+        if let Some(words) = waiting() {
+            shown.set(Some(words));
+        }
+    });
+    let open = move || move_request.with(Option::is_some);
     view! {
-        {move || waiting().map(|(title, offer)| view! {
-            <div class="placing-note" role="status">
+        <div class="placing-note" class:open=open inert=move || !open() role="status">
+            {move || shown.get().map(|(title, offer)| view! {
                 <span class="ask-question">"Where does "<q>{title}</q>" go? Tap an hour."</span>
                 <span class="ask-choices">
                     {offer.map(|(slot, when)| view! {
@@ -110,8 +119,8 @@ pub(crate) fn PlacingNote(
                         "Leave it"
                     </button>
                 </span>
-            </div>
-        })}
+            })}
+        </div>
     }
 }
 

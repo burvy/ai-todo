@@ -319,7 +319,9 @@ task waits to be placed. A note at the planner's top asks where it goes: tap an 
 to start it there (snapped to the quarter hour; a mouse outlines the slot first), or
 tap Rambo's offer of the next free time, the earliest quarter hour from now inside
 working hours where the task's length fits without overlapping another slip. **Leave
-it**, Esc or turning back to the list leaves the task where it was. One day of a
+it**, Esc or turning back to the list leaves the task where it was; the page stays
+on the planner. The note floats over the planner's foot (the grid never moves for it)
+and slides in and out rather than popping. One day of a
 repeating series moves as that day only, as a dragged slip does. Choices for a slip
 Rambo is dropped on in the planner (move, longer or shorter, take it off) are
 (planned).

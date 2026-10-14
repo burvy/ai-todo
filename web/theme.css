@@ -1767,11 +1767,19 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   margin: 0;
 }
 
-/* A task waiting to be placed (the ask bubble's Move, web/src/placing.rs): a note at the
-   planner's top in the bubble's hand, with the same torn scraps for its choices. It keeps
-   clear of the gear in the corner. */
+/* A task waiting to be placed (the ask bubble's Move, web/src/placing.rs): a note in the
+   bubble's hand, with the same torn scraps for its choices. It floats over the foot of the
+   planner, so the grid never moves for it, and it slides up into place and back down out
+   of it rather than popping; closed, it is still there, hidden and inert. */
 .placing-note {
-  margin: 0 5.5rem var(--space-2) 0;
+  position: fixed;
+  left: var(--space-3);
+  right: var(--space-3);
+  bottom: var(--space-4);
+  z-index: var(--layer-note);
+  width: fit-content;
+  max-width: 24rem;
+  margin-inline: auto;
   padding: var(--space-2) var(--space-3);
   font-family: var(--font-heading);
   font-size: var(--text-sm);
@@ -1779,6 +1787,42 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   border: 1px solid var(--rule);
   border-radius: 12px;
   box-shadow: var(--shadow);
+  opacity: 0;
+  translate: 0 var(--space-4);
+  scale: 0.97;
+  visibility: hidden;
+  transition:
+    opacity var(--dur) var(--leave-ease),
+    translate var(--dur) var(--leave-ease),
+    scale var(--dur) var(--leave-ease),
+    visibility 0s linear var(--dur);
+}
+
+.placing-note.open {
+  opacity: 1;
+  translate: 0 0;
+  scale: 1;
+  visibility: visible;
+  transition:
+    opacity var(--dur) var(--arrive-ease),
+    translate var(--dur) var(--arrive-ease),
+    scale var(--dur) var(--arrive-ease),
+    visibility 0s;
+}
+
+/* On a phone the capture bar is at the foot of the screen: the note sits above it. */
+@media (max-width: 700px) {
+  .placing-note {
+    bottom: calc(var(--capture-clear) + var(--space-2));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .placing-note,
+  .placing-note.open {
+    translate: 0 0;
+    scale: 1;
+  }
 }
 
 /* Every hour is somewhere to put it. */
