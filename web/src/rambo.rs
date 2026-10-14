@@ -123,6 +123,8 @@ pub(crate) fn Rambo(
         if folding.get() {
             return;
         }
+        // A line he starts or stops saying moves what the bubble sits on.
+        brain_speech.track();
         let shown_bubble = asked.with(Option::is_some);
         let (shift, below) = bubble_ref
             .get()
@@ -134,10 +136,14 @@ pub(crate) fn Rambo(
                 let width = f64::from(bubble.offset_width());
                 let his_h = rambo_height();
                 let his_top = shown.get().1 - his_h / 2.0;
+                // It sits on his status line, which is taller while he says something.
+                let line_h = bubble
+                    .parent_element()
+                    .map_or(0.0, |line| line.get_bounding_client_rect().height());
                 (
                     bubble_offset(shown.get().0, width, screen, tuning::BUBBLE_EDGE_PX),
                     opens_below(
-                        his_top,
+                        his_top - line_h,
                         f64::from(bubble.offset_height()),
                         tuning::BUBBLE_EDGE_PX,
                     ),
@@ -1206,11 +1212,11 @@ fn rambo_height() -> f64 {
         .map_or(0.0, |rambo| f64::from(rambo.offset_height()))
 }
 
-/// Whether a bubble `height` tall would run off the top of the screen above a
-/// Rambo whose top is at `his_top`, keeping `edge` pixels clear: then it opens
-/// below him instead.
-fn opens_below(his_top: f64, height: f64, edge: f64) -> bool {
-    his_top - height < edge
+/// Whether a bubble `height` tall would run off the top of the screen sitting on
+/// something whose top is at `sits_on` (his status line, above him), keeping
+/// `edge` pixels clear: then it opens below him instead.
+fn opens_below(sits_on: f64, height: f64, edge: f64) -> bool {
+    sits_on - height < edge
 }
 
 /// The page's width without its scrollbar, which the bubble must stay inside.
@@ -1243,6 +1249,10 @@ mod tests {
         assert!(!opens_below(128.0, 120.0, 8.0));
         assert!(opens_below(127.0, 120.0, 8.0));
         assert!(opens_below(-20.0, 120.0, 8.0));
+        // Room above him, but not above the line he is saying: it opens below.
+        let (his_top, line_h) = (150.0, 39.0);
+        assert!(!opens_below(his_top, 120.0, 8.0));
+        assert!(opens_below(his_top - line_h, 120.0, 8.0));
     }
 
     // Rambo at x, a 200px bubble, a 1000px screen, 16px from each edge.
