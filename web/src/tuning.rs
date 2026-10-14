@@ -85,14 +85,47 @@ pub const BEND_SPRING_MS: u32 = 300;
 /// unhurried. Safe range 400 to 700.
 pub const BEND_BUTTON_MS: u32 = 520;
 /// How high a button's turn lifts the corner on its way, as a share of the page's
-/// height, so the fold crosses the page on a slant. Safe range 0 to 0.3.
-pub const BEND_BUTTON_ARC: f64 = 0.12;
+/// height, on top of `BEND_LIFT`. Safe range 0 to 0.3.
+pub const BEND_BUTTON_ARC: f64 = 0.1;
+/// How far the corner rises for each px it travels sideways, so the fold leans (about
+/// 27 degrees at 0.5) and the flap grows out of the corner like a page turning, not a
+/// sheet folded in half. Safe range 0.3 to 0.8.
+pub const BEND_LIFT: f64 = 0.5;
+/// The most the corner rises, as a share of the page's height. Safe range 0.3 to 0.5.
+pub const BEND_LIFT_CAP: f64 = 0.4;
+/// How far the page rebounds after it falls flat on a spring-back, as a share of the
+/// distance it was held. Safe range 0.03 to 0.1.
+pub const BEND_BOUNCE: f64 = 0.06;
+/// The share of a spring-back at which the page first lies flat, before it rebounds.
+/// Safe range 0.6 to 0.8.
+pub const BEND_BOUNCE_AT: f64 = 0.7;
+/// The lift for a button's turn, which has no finger to set the path: far lower than
+/// `BEND_LIFT`, so the fold stays steep (never more than about 40 degrees off vertical)
+/// and the page leaves to the side instead of rolling up from the bottom.
+pub const BEND_BUTTON_LIFT: f64 = 0.15;
+/// The most a button's turn lifts the corner, as a share of the page's height.
+pub const BEND_BUTTON_LIFT_CAP: f64 = 0.15;
+/// How wide the curl at the fold is, in px, for each px the corner has been dragged: a
+/// tight roll at the start of a turn, a looser one past halfway. Safe range 0.08 to 0.2.
+pub const BEND_ROLL_PER_PX: f64 = 0.12;
+/// The tightest and the loosest the curl gets, in px. Safe range 8 to 16 and 30 to 48.
+pub const BEND_ROLL_MIN_PX: f64 = 12.0;
+pub const BEND_ROLL_MAX_PX: f64 = 40.0;
+/// How far, in px, the flap's soft shadow is cast onto the page below: a near and a far
+/// copy of the flap, drawn instead of a per-frame blur. Safe range 2 to 10 and 8 to 20.
+pub const BEND_SHADOW_NEAR_PX: f64 = 4.0;
+pub const BEND_SHADOW_FAR_PX: f64 = 11.0;
 /// With reduced motion the page does not bend: it slides, and this is how long the slide
 /// takes to finish, in ms. Safe range 100 to 200.
 pub const BEND_SLIDE_MS: u32 = 150;
 
-const _: () =
-    assert!(BEND_FLICK_MIN_PX < 100.0 && BEND_COMMIT_SHARE < 1.0 && BEND_FULL_TURN >= 2.0);
+const _: () = assert!(
+    BEND_FLICK_MIN_PX < 100.0
+        && BEND_COMMIT_SHARE < 1.0
+        && BEND_FULL_TURN >= 2.0
+        && BEND_BOUNCE_AT < 1.0
+        && BEND_SHADOW_NEAR_PX < BEND_SHADOW_FAR_PX
+);
 
 // ---- Rambo writing a new row (UI-BUGS #11, v1's writing)
 
