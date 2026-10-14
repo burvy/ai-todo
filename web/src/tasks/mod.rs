@@ -448,6 +448,10 @@ pub(crate) fn TaskList(
         Effect::new(move |_| {
             let mode = view_settings.get().mode;
             if mascot::prefers_reduced_motion() || mode == settings::RamblMode::Lobotomized {
+                // Nothing is written: drop the queue, so his lines are not held for it.
+                if pen_queue.with(|queue| !queue.is_empty()) {
+                    pen_queue.set(Vec::new());
+                }
                 return;
             }
             if pen_queue.with(Vec::is_empty) || writing.get_value() {

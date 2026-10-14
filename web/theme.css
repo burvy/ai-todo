@@ -969,6 +969,17 @@ li.task-row:focus-within .delete-mark {
     ) rotate(34deg) scale(0.78);
 }
 
+/* Writing a row: not a flight, so nothing eases and the nib is where the ink is on
+   every frame. He leans and shrinks about his nib, the bottom of his box, so the
+   lean never moves it (pen::row_nib_center). */
+.rambo.is-writing:not(.is-caret) {
+  transform-origin: 50% 100%;
+  transform: translate(
+      calc(var(--pen-x) - 50%),
+      calc(var(--pen-y) - 50%)
+    ) rotate(34deg) scale(0.78);
+}
+
 /* Writing at caret (same as writing, but marked for future differentiation) */
 .rambo.is-flying.is-writing.is-caret {
   transform: translate(

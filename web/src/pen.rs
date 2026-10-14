@@ -237,6 +237,15 @@ pub fn on_screen(
     right > 0.0 && bottom > 0.0 && left < width && top < height
 }
 
+/// Where his centre sits so his nib lands on `(x, y)` while he writes a row, his
+/// box `box_h` px tall (it is larger on a desktop than on a phone). He leans and
+/// shrinks about his nib (`transform-origin: 50% 100%` on `.rambo.is-writing`), so
+/// the nib is always the bottom of his upright box, half a box below the centre,
+/// whatever the lean.
+pub fn row_nib_center(x: f64, y: f64, box_h: f64) -> (f64, f64) {
+    (x, y - box_h / 2.0)
+}
+
 /// Where the pen's centre sits so its nib lands on `(caret_x, caret_y)`:
 /// the nib hangs half a scaled pen below the centre while writing.
 pub fn writing_pen_center(caret_x: f64, caret_y: f64) -> (f64, f64) {
@@ -507,6 +516,13 @@ mod tests {
             beat(&State::Dragging, true, true, WRITE_HOLD_MAX_MS),
             Beat::Finish
         );
+    }
+
+    #[test]
+    fn a_row_s_nib_is_the_bottom_of_his_box() {
+        // Phone and desktop boxes: the lean never enters into it.
+        assert_eq!(row_nib_center(100.0, 200.0, 64.0), (100.0, 168.0));
+        assert_eq!(row_nib_center(100.0, 200.0, 80.0), (100.0, 160.0));
     }
 
     #[test]

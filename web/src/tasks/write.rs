@@ -114,8 +114,14 @@ fn held_tool() -> Option<String> {
 /// Put the pen so its nib sits at `(x, y)`. `pen_pos` is absolute page
 /// coordinates (Rambo is a fixed layer), so no offset conversion needed.
 pub fn place_nib(pen_pos: RwSignal<(f64, f64)>, x: f64, y: f64) {
-    let center = pen::writing_pen_center(x, y);
-    pen_pos.set(center);
+    // His box as laid out, before his lean and scale: its size is the theme's, and
+    // differs by screen.
+    let box_h = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|doc| doc.query_selector(".rambo").ok().flatten())
+        .and_then(|rambo| rambo.dyn_into::<web_sys::HtmlElement>().ok())
+        .map_or(0.0, |rambo| f64::from(rambo.offset_height()));
+    pen_pos.set(pen::row_nib_center(x, y, box_h));
 }
 
 /// Whether `row` shows on screen, so the pen can fly to it.

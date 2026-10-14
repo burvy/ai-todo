@@ -153,7 +153,7 @@ pub fn App() -> impl IntoView {
         {move || error.get().map(|e| view! {
             <div class="error page-note" aria-live="polite">{e}</div>
         })}
-        <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event audible=Signal::derive(move || voice::audible(view_settings.get().sounds, view_settings.get().rambo_talks)) set_speech=set_brain_speech set_pose=set_brain_pose />
+        <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event audible=Signal::derive(move || voice::audible(view_settings.get().sounds, view_settings.get().rambo_talks)) quiet=Signal::derive(move || mascot::speaks_later(&mascot_state.get()) || pen_queue.with(|queue| !queue.is_empty())) set_speech=set_brain_speech set_pose=set_brain_pose />
         <nav class="pane-switch" aria-label="Show">
             <button
                 type="button"

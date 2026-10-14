@@ -229,6 +229,13 @@ pub fn pen_busy(state: &State) -> bool {
     matches!(state, State::Flying | State::WritingCaret)
 }
 
+/// Whether a line he says now waits until he is home: he is out writing a row, or
+/// flying to or from one (DESIGN-DIRECTION §4 beat 4). Speaking mid-row puts his
+/// bubble over the page he is writing on.
+pub fn speaks_later(state: &State) -> bool {
+    matches!(state, State::Flying | State::WritingRow)
+}
+
 /// Where a hop of the skitter run is at `progress` (0..=1): straight line from
 /// `start` to `home`, with little bounces above it. Pure, so the DOM layer
 /// only reads points off it.
@@ -277,7 +284,9 @@ pub fn rambo_class(state: &State, pose: &str) -> String {
         State::Asking { .. } => " is-asking",
         State::Flying => " is-flying",
         State::WritingCaret => " is-flying is-writing is-caret",
-        State::WritingRow => " is-flying is-writing",
+        // Not a flight: the flight's eased transition would trail the nib behind
+        // the ink, retargeted every frame.
+        State::WritingRow => " is-writing",
     };
     if pose.is_empty() {
         format!("{base}{extra}")
@@ -608,6 +617,25 @@ mod tests {
         let state = transition(&state, Event::FlyHome);
         assert_eq!(state, State::Flying);
         assert_eq!(transition(&state, Event::FlyHome), State::Home);
+    }
+
+    #[test]
+    fn writing_a_row_never_eases_him() {
+        // Only a flight eases (`only_a_flight_eases_him_from_place_to_place`), so a
+        // row written without the flight's class follows the ink frame by frame.
+        assert!(!rambo_class(&State::WritingRow, "").contains("is-flying"));
+        assert!(rambo_class(&State::Flying, "").contains("is-flying"));
+    }
+
+    #[test]
+    fn he_speaks_once_he_is_home() {
+        assert!(speaks_later(&State::WritingRow));
+        assert!(speaks_later(&State::Flying));
+        assert!(!speaks_later(&State::Home));
+        assert!(
+            !speaks_later(&State::Dragging),
+            "picked up, he answers at once"
+        );
     }
 
     #[test]

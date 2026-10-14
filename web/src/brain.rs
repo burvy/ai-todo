@@ -54,12 +54,50 @@ fn task_added(current: &Snapshot, previous: Option<&Snapshot>) -> bool {
         .any(|t| !t.id.0.contains(':') && !known.contains(t.id.0.as_str()))
 }
 
+/// Say `line`: the bubble and the voice are one thing. With a voice it goes when
+/// the voice is done, plus a beat. Without one there is nothing to wait for, so it
+/// holds on its own; it is then the only channel the line has. Exactly one timer,
+/// either way.
+fn say(line: String, audible: Signal<bool>, set_speech: WriteSignal<Option<String>>) {
+    set_speech.set(Some(line.clone()));
+    let clear_later = move |after_ms: u32| {
+        let clear = set_speech;
+        Timeout::new(after_ms, move || clear.set(None)).forget();
+    };
+    let spoke = audible.get_untracked()
+        && crate::voice::say(&line, {
+            let clear = clear_later;
+            move || clear(crate::voice::bubble_ms(true))
+        });
+    if !spoke {
+        clear_later(crate::voice::bubble_ms(false));
+    }
+}
+
+/// Where his lines go: said now, or kept (the latest one) while `quiet` and said
+/// when it ends.
+#[derive(Clone)]
+struct Mouth {
+    audible: Signal<bool>,
+    quiet: Signal<bool>,
+    set_speech: WriteSignal<Option<String>>,
+    held: Rc<RefCell<Option<String>>>,
+}
+
+impl Mouth {
+    fn speak(&self, line: String) {
+        match self.quiet.get_untracked() {
+            true => *self.held.borrow_mut() = Some(line),
+            false => say(line, self.audible, self.set_speech),
+        }
+    }
+}
+
 fn step(
     brain: &Rc<RefCell<Brain>>,
     rng: &Rc<RefCell<Seeded>>,
     event: Option<Event>,
-    audible: Signal<bool>,
-    set_speech: WriteSignal<Option<String>>,
+    mouth: &Mouth,
     set_pose: WriteSignal<String>,
 ) {
     let now = js_sys::Date::now();
@@ -82,24 +120,7 @@ fn step(
         match action {
             Action::Say(key) => {
                 if let Some(line) = rambl_brain::data::lines().resolve(&key) {
-                    let line = line.to_owned();
-                    set_speech.set(Some(line.clone()));
-                    // The bubble and the voice are one thing: with a voice it
-                    // goes when the voice is done, plus a beat. Without one there
-                    // is nothing to wait for, so it holds on its own — it is then
-                    // the only channel the line has. Exactly one timer, either way.
-                    let clear_later = move |after_ms: u32| {
-                        let clear = set_speech;
-                        Timeout::new(after_ms, move || clear.set(None)).forget();
-                    };
-                    let spoke = audible.get_untracked()
-                        && crate::voice::say(&line, {
-                            let clear = clear_later;
-                            move || clear(crate::voice::bubble_ms(true))
-                        });
-                    if !spoke {
-                        clear_later(crate::voice::bubble_ms(false));
-                    }
+                    mouth.speak(line.to_owned());
                 }
             }
             Action::Pose(pose) | Action::Animate(pose) => set_pose.set(pose.to_owned()),
@@ -117,9 +138,28 @@ pub fn Controller(
     /// Whether he may be heard at all: the gear menu's sound mute and his own
     /// `Rambo talks` toggle, already combined by the caller.
     audible: Signal<bool>,
+    /// True while he is out writing a row (`mascot::speaks_later`) or has rows
+    /// waiting to be written: what he says then waits until he is home.
+    quiet: Signal<bool>,
     set_speech: WriteSignal<Option<String>>,
     set_pose: WriteSignal<String>,
 ) -> impl IntoView {
+    let mouth = Mouth {
+        audible,
+        quiet,
+        set_speech,
+        held: Rc::new(RefCell::new(None)),
+    };
+    Effect::new({
+        let mouth = mouth.clone();
+        move |_| {
+            if !quiet.get()
+                && let Some(line) = mouth.held.borrow_mut().take()
+            {
+                say(line, audible, set_speech);
+            }
+        }
+    });
     let brain = Rc::new(RefCell::new(Brain::new(brain_mode(mode.get_untracked()))));
     let rng = Rc::new(RefCell::new(Seeded::new(js_sys::Date::now() as u64)));
     // The page hands every brain the snapshot it shows before the server
@@ -143,9 +183,10 @@ pub fn Controller(
     Effect::new({
         let brain = brain.clone();
         let rng = rng.clone();
+        let mouth = mouth.clone();
         move |_| {
             if let Some(event) = event.get() {
-                step(&brain, &rng, Some(event), audible, set_speech, set_pose);
+                step(&brain, &rng, Some(event), &mouth, set_pose);
                 set_event.set(None);
             }
         }
@@ -157,6 +198,7 @@ pub fn Controller(
         let previous = previous.clone();
         let loaded = loaded.clone();
         let teased = teased.clone();
+        let mouth = mouth.clone();
         move |_| {
             let current = snapshot.get();
             let old = previous.replace(current.clone());
@@ -194,7 +236,7 @@ pub fn Controller(
                 None
             };
             if event.is_some() {
-                step(&brain, &rng, event, audible, set_speech, set_pose);
+                step(&brain, &rng, event, &mouth, set_pose);
             }
         }
     });
@@ -229,7 +271,7 @@ pub fn Controller(
                 } else {
                     Some(Event::Tick)
                 };
-                step(&brain, &rng, event, audible, set_speech, set_pose);
+                step(&brain, &rng, event, &mouth, set_pose);
             }
         })
     };
