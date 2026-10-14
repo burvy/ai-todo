@@ -73,7 +73,7 @@ Each step is one PR, gated in full, small enough to review in one sitting, and l
 | 7 | **One animation clock.** A small `ticker` module on `requestAnimationFrame` that the skitter, the writing loop and the tack physics share, replacing `setInterval(16)` and ticket counters. Pauses cleanly in a background tab. | Core | M |
 | 8 | **One pointer-gesture module.** Rambo drag, row swipe, planner drag and tack drag each repeat slop, pointer capture, cancel and Esc. Share it as `gesture.rs` with pure tests, as `row::advance` already is. | Core | M |
 | 9 | **Split the three big files** the way `lib.rs` was split: `tack.rs` (physics / drag / view), `week.rs` (layout maths / drag / view), `tasks/mod.rs` (list view / writing queue). No behaviour change. | Core | M each |
-| 10 | **A browser check list in `QA-BASELINE.md`** for every front-end PR: cold load, first drag, dazed drag, put back, skitter home, page turn, resize, scroll, at desktop and phone width with touch. QA (Antonio) runs it on the test site. | QA | S |
+| 10 | **A browser check list in the office QA baseline (hive `QA-BASELINE.md`)** for every front-end PR: cold load, first drag, dazed drag, put back, skitter home, page turn, resize, scroll, at desktop and phone width with touch. QA (Antonio) runs it on the test site. | QA | S |
 
 Order: 0 now; then 2 and 4 (small, independent); then 1 and 3 together, since they touch the same code; 5 and 6 can run in parallel with GLM agents any time after 4; 7, 8 and 9 last. The design backlog (UI-BUGS #8–#11) stays with the human and fits after step 5, when each look lives in its own file.
 
