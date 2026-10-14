@@ -1,0 +1,24 @@
+<!-- PLACEHOLDER: replace me, see ABOUT.md beside this file -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 170 100" aria-hidden="true">
+  <style>
+    svg{--nest-paper:#E1C38C;--nest-line:#5D4732;--nest-strip:#A7865D}
+    @media (prefers-color-scheme:dark){svg{--nest-paper:#E8D9B0;--nest-line:#C9AE85;--nest-strip:#B5976D}}
+    .lip{fill:var(--nest-paper);stroke:var(--nest-line);stroke-width:2;stroke-linejoin:round}
+    .weave{stroke:var(--nest-strip);stroke-width:1.6;stroke-linecap:round;fill:none}
+    .stitch{stroke:var(--nest-line);stroke-width:1.4;stroke-linecap:round;fill:none;opacity:.55}
+    .dot{fill:var(--nest-line)}
+  </style>
+  <!-- The front of the bowl, in front of Rambo: its top edge dips to y 62 in the
+       middle, low enough that his tip sits inside it. -->
+  <path class="lip" d="M3 44 Q85 80 167 44 Q170 70 150 82 Q85 104 20 82 Q0 70 3 44 Z"/>
+  <!-- Woven paper strips round the bowl. -->
+  <path class="weave" d="M8 60 Q85 90 162 60"/>
+  <path class="weave" d="M14 70 Q85 96 156 70"/>
+  <path class="weave" d="M26 79 Q85 96 144 79"/>
+  <!-- Where the strips are sewn together. -->
+  <path class="stitch" d="M42 58 L46 66 M50 60 L54 68"/>
+  <path class="stitch" d="M116 68 L120 60 M124 66 L128 58"/>
+  <path class="stitch" d="M80 82 L84 74 M88 82 L92 74"/>
+  <circle class="dot" cx="10" cy="48" r="1.3"/>
+  <circle class="dot" cx="160" cy="50" r="1.2"/>
+</svg>
