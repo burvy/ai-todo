@@ -458,10 +458,13 @@ pub(crate) fn TaskList(
                             row.class_list().add_1("pen-pending").ok();
                         }
                         write::wait_for_fonts().await;
-                        if let Some(row) = row.as_ref() {
-                            write::park_nib(row, pen_pos);
-                        }
+                        // He flies to the row where it is on each frame, not where
+                        // it was when he set off.
+                        let following = row.clone().map(|row| write::follow_row(row, pen_pos));
                         gloo_timers::future::TimeoutFuture::new(crate::tuning::FLY_MS).await;
+                        if let Some(following) = following {
+                            following.stop();
+                        }
                         set_state.set(mascot::transition(
                             &mascot_state.get_untracked(),
                             mascot::Event::WriteRow,
