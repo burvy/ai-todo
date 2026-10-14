@@ -48,6 +48,8 @@ Raw numbers, no scale. What they say today:
 | drag ghost, tack pin | 60 | the pin is above Rambo; he slides under it |
 | tack bin | 70 | above everything, including dialogs |
 
+**Done:** every z-index now reads the `--layer-*` scale in `web/theme.css` `:root` (guarded by `mascot::tests::every_z_index_reads_the_layer_scale`). Rambo and his bubbles sit under the edit sheet and the gear menu; the tack bin and drag ghost still ride above Rambo. A tack strip's own pile order (`strip.z`) is a local stacking index inside the board, not a rung.
+
 ### 1.6 CSS files
 
 `theme.css` is 1769 lines and `tack.css` 308. The end of `theme.css` has about 14 one-line rules appended by different PRs (swipe, delete mark, lifted row) outside their sections. There are two phone breakpoints, `max-width: 700px` / `min-width: 701px` and `max-width: 720px` (the delete mark), so between 701 and 720px the desktop layout shows the phone's delete mark.
