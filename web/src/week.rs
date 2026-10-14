@@ -426,6 +426,9 @@ fn PlacementBlock(
     let grip_down = {
         move |event: leptos::ev::PointerEvent| {
             use wasm_bindgen::JsCast;
+            // This is a drag, not a scroll: `main` is a scroll-snap row, so a
+            // touch that is allowed to pan turns the page under the slip.
+            event.prevent_default();
             if event.pointer_type() == "mouse" && event.buttons() != 1 {
                 return;
             }
