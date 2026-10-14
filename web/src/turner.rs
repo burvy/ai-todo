@@ -74,6 +74,13 @@ mod imp {
         Settling,
     }
 
+    /// What holds the corner: a finger, or nobody (a button turned the page).
+    #[derive(Clone, Copy)]
+    enum Grip {
+        Finger(Pt),
+        Button,
+    }
+
     /// One turn's page, in px, and how it is drawn.
     #[derive(Clone, Copy)]
     struct Stage {
@@ -83,6 +90,18 @@ mod imp {
         turn: Turn,
         /// Reduced motion: slide the page instead of bending it.
         slide: bool,
+    }
+
+    /// One animated flight of the corner from `from` to `to`.
+    #[derive(Clone, Copy)]
+    struct Flight {
+        stage: Stage,
+        from: Pt,
+        to: Pt,
+        ms: f64,
+        outcome: Settle,
+        arc: f64,
+        started: f64,
     }
 
     struct Drag {
@@ -184,7 +203,7 @@ mod imp {
                             *phase = Phase::Idle;
                             return;
                         }
-                        match self.begin(turn, Pt::new(x, y)) {
+                        match self.begin(turn, Grip::Finger(Pt::new(x, y))) {
                             Some(mut drag) => {
                                 drag.id = id;
                                 if let Some(main) = self.0.main.get() {
@@ -241,7 +260,7 @@ mod imp {
             } else {
                 Turn::Back
             };
-            let Some(drag) = self.begin(turn, Pt::new(0.0, 0.0)) else {
+            let Some(drag) = self.begin(turn, Grip::Button) else {
                 show_pane(self.0.main, index, self.0.set_pane);
                 return;
             };
@@ -306,7 +325,7 @@ mod imp {
         }
 
         /// Stacks the panes for a turn and takes hold of the corner nearest `finger`.
-        fn begin(&self, turn: Turn, finger: Pt) -> Option<Drag> {
+        fn begin(&self, turn: Turn, grip: Grip) -> Option<Drag> {
             let main = self.0.main.get()?;
             let fx = self.0.fx.get()?;
             let panes = main.children();
@@ -329,7 +348,12 @@ mod imp {
             let _ = front.class_list().add_1("bend-front");
             let _ = under.class_list().add_1("bend-under");
             let (w, h) = (f64::from(fx.client_width()), f64::from(fx.client_height()));
-            let low = finger.y - rect.top() > (top + bottom) / 2.0 || finger == Pt::new(0.0, 0.0);
+            let finger = match grip {
+                Grip::Finger(at) => at,
+                Grip::Button => Pt::new(0.0, 0.0),
+            };
+            let low = matches!(grip, Grip::Button)
+                || finger.y - rect.top() > (top + bottom) / 2.0;
             let corner = Pt::new(
                 if turn == Turn::Forward { w } else { 0.0 },
                 if low { bottom.min(h) } else { top },
@@ -391,21 +415,28 @@ mod imp {
 
         /// Animates the corner from `from` to `to` and then ends the turn.
         fn run(&self, stage: Stage, from: Pt, to: Pt, ms: u32, outcome: Settle, arc: f64) {
-            let started = now();
-            self.frame(stage, from, to, f64::from(ms), outcome, arc, started);
+            let flight = Flight {
+                stage,
+                from,
+                to,
+                ms: f64::from(ms),
+                outcome,
+                arc,
+                started: now(),
+            };
+            self.frame(flight);
         }
 
-        #[allow(clippy::too_many_arguments)]
-        fn frame(
-            &self,
-            stage: Stage,
-            from: Pt,
-            to: Pt,
-            ms: f64,
-            outcome: Settle,
-            arc: f64,
-            started: f64,
-        ) {
+        fn frame(&self, flight: Flight) {
+            let Flight {
+                stage,
+                from,
+                to,
+                ms,
+                outcome,
+                arc,
+                started,
+            } = flight;
             let t = ((now() - started) / ms).clamp(0.0, 1.0);
             let mut at = bend::eased(from, to, t);
             // A button's turn lifts the corner on the way and sets it down at the end.
@@ -413,9 +444,7 @@ mod imp {
             self.draw(&stage, at);
             if t < 1.0 {
                 let this = self.clone();
-                request_animation_frame(move || {
-                    this.frame(stage, from, to, ms, outcome, arc, started);
-                });
+                request_animation_frame(move || this.frame(flight));
             } else {
                 self.end(&stage, outcome);
             }

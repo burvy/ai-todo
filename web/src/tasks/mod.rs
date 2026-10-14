@@ -700,8 +700,9 @@ pub(crate) fn TaskList(
                         };
                         let handle_pointer_cancel = {
                             let presses = presses.clone();
-                            move |_| row::dom::cancel(&presses)
+                            move |_: leptos::ev::PointerEvent| row::dom::cancel(&presses)
                         };
+                        let handle_pointer_lost = handle_pointer_cancel.clone();
                         view! {
                     <li
                         class="task-row"
@@ -711,6 +712,8 @@ pub(crate) fn TaskList(
                         on:pointermove=handle_pointer_move
                         on:pointerup=handle_pointer_up
                         on:pointercancel=handle_pointer_cancel
+                        // The page turn takes the pointer from the row; the row gets no pointerup then.
+                        on:lostpointercapture=handle_pointer_lost
                         // The row answers its own touch gestures and stops them here, so nothing
                         // above the row sees the same touch. This does NOT stop the page
                         // flip: that listens on pointer events, which are a separate
