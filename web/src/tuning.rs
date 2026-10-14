@@ -124,10 +124,10 @@ pub const SCRAP_TICK_MS: u32 = 100;
 
 const _: () = assert!(SCRIBBLE_BAND.0 < SCRIBBLE_BAND.1 && SCRAP_MAX >= 1);
 
-// ---- the page turn (web/src/bend.rs)
+// ---- the page turn (web/src/fold.rs, flip.rs)
 
 /// The phone layout's media query, the one `web/theme.css` switches the two panes into
-/// a row on: the page bends only where the panes are pages. Keep it equal to the CSS.
+/// stacked pages on: the page turns only where the panes are pages. Keep it equal to the CSS.
 pub const PHONE_MEDIA: &str = "(max-width: 700px)";
 /// How far a press must travel before it is a swipe and not a tap, in px. Safe range 6
 /// to 16: the same slop a task row uses (`row::SLOP_PX`), a little wider.
@@ -182,6 +182,19 @@ pub const BEND_ROLL_MAX_PX: f64 = 40.0;
 /// copy of the flap, drawn instead of a per-frame blur. Safe range 2 to 10 and 8 to 20.
 pub const BEND_SHADOW_NEAR_PX: f64 = 4.0;
 pub const BEND_SHADOW_FAR_PX: f64 = 11.0;
+/// How far in front of the spine the viewer is for the book flip, in page widths: the
+/// nearer the eye, the more the free edge grows as it swings toward it. Safe range 2 to 6.
+pub const FLIP_PERSPECTIVE: f64 = 5.0;
+/// How quickly a released flip finishes, in radians per second (the spring's natural
+/// frequency): the system finishing what a finger started, so quick. Safe range 10 to 20.
+pub const FLIP_FINISH_OMEGA: f64 = 14.0;
+/// How quickly a page dropped short of the turn falls back, and how loosely (damping 1 is
+/// no rebound; lower swings). Safe range 12 to 20, and 0.4 to 0.8.
+pub const FLIP_FALL_OMEGA: f64 = 16.0;
+pub const FLIP_FALL_DAMPING: f64 = 0.55;
+/// How much of its speed the leaf keeps when it meets the table or the spine. Safe range
+/// 0.4 to 0.8.
+pub const FLIP_WALL_BOUNCE: f64 = 0.65;
 /// With reduced motion the page does not bend: it slides, and this is how long the slide
 /// takes to finish, in ms. Safe range 100 to 200.
 pub const BEND_SLIDE_MS: u32 = 150;

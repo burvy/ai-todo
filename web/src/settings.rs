@@ -65,6 +65,24 @@ impl Theme {
     }
 }
 
+/// How a page turns on a phone: the whole page swinging like a book's (`Realistic`, the
+/// default) or the corner-fold bend (`Fast`), which is cheaper to draw.
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PageTurn {
+    #[default]
+    Realistic,
+    Fast,
+}
+
+impl PageTurn {
+    pub fn label(self) -> &'static str {
+        match self {
+            PageTurn::Realistic => "Realistic",
+            PageTurn::Fast => "Fast",
+        }
+    }
+}
+
 fn sounds_on() -> bool {
     true
 }
@@ -81,6 +99,7 @@ const DEFAULTS: Settings = Settings {
     rambo_talks: true,
     pen: Pen::FountainPen,
     clock: Clock::Twelve,
+    page_turn: PageTurn::Realistic,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,6 +125,10 @@ pub struct Settings {
     /// either way; this only decides whether there is a voice with it.
     #[serde(default = "rambo_talks_on")]
     pub rambo_talks: bool,
+    /// How a page turns on a phone (`PageTurn`); a stored setting from before this
+    /// existed gets the book flip.
+    #[serde(default)]
+    pub page_turn: PageTurn,
 }
 
 fn rambo_talks_on() -> bool {
@@ -136,6 +159,7 @@ impl Settings {
             sounds: self.sounds,
             clock: self.clock,
             rambo_talks: self.rambo_talks,
+            page_turn: self.page_turn,
         }
     }
 
@@ -210,6 +234,13 @@ pub fn GearMenu(
         })
     };
 
+    let set_page_turn = move |page_turn: PageTurn| {
+        update(Settings {
+            page_turn,
+            ..settings.get()
+        })
+    };
+
     let close = move |_| set_open.set(false);
 
     // Escape closes the sheet from wherever the focus sits; a press on the
@@ -265,6 +296,18 @@ pub fn GearMenu(
                                     class:active=move || settings.get().clock == clock
                                     on:click=move |_| set_clock(clock)
                                 >{clock.label()}</button>
+                            </For>
+                        </div>
+                        <h3>"Page turn"</h3>
+                        <div class="gear-choices" role="group" aria-label="Page turn">
+                            <For each=|| [PageTurn::Realistic, PageTurn::Fast] key=|t| *t let:page_turn>
+                                <button
+                                    type="button"
+                                    role="radio"
+                                    aria-checked=move || (settings.get().page_turn == page_turn).to_string()
+                                    class:active=move || settings.get().page_turn == page_turn
+                                    on:click=move |_| set_page_turn(page_turn)
+                                >{page_turn.label()}</button>
                             </For>
                         </div>
                         <h3>"Sounds"</h3>
@@ -550,6 +593,18 @@ mod tests {
         assert_eq!(Settings::default().theme, Theme::Light);
         assert!(Settings::default().sounds);
         assert_eq!(Settings::default().pen, Pen::FountainPen);
+    }
+
+    #[test]
+    fn a_stored_setting_from_before_the_page_turn_choice_gets_the_book_flip() {
+        let stored = Settings::parse_or_default(r#"{"start_hour":8,"end_hour":18,"days":7}"#);
+        assert_eq!(stored.page_turn, PageTurn::Realistic);
+        let fast = Settings {
+            page_turn: PageTurn::Fast,
+            ..Settings::default()
+        };
+        let round_trip = Settings::parse_or_default(&serde_json::to_string(&fast).unwrap());
+        assert_eq!(round_trip.page_turn, PageTurn::Fast, "a choice is kept");
     }
 
     #[test]

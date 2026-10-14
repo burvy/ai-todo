@@ -169,6 +169,17 @@ pub fn WeekGrid(
     .forget();
     #[cfg(not(target_arch = "wasm32"))]
     let _ = capture_text;
+    // On the earliest day a right swipe has no days left to scroll, so the page takes it
+    // (turner.rs turns back to the list); the class tells the browser to let it through.
+    let (at_earliest, set_at_earliest) = signal(true);
+    let on_scroll = move |_: leptos::ev::Event| {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(grid) = grid_ref.get() {
+            set_at_earliest.set(grid.scroll_left() <= 1);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = set_at_earliest;
+    };
     let days = move || (0..settings.get().days).collect::<Vec<_>>();
     let hours = move || (settings.get().start_hour..settings.get().end_hour).collect::<Vec<_>>();
     view! {
@@ -180,7 +191,12 @@ pub fn WeekGrid(
             </div>
             <h2 id="week-heading">"Planner"</h2>
             <crate::PageFoot page=1 turn=turn_back />
-            <div class="week-scroll" node_ref=grid_ref>
+            <div
+                class="week-scroll"
+                class:at-earliest=at_earliest
+                node_ref=grid_ref
+                on:scroll=on_scroll
+            >
                 <div class="week" style=move || format!("--days: {}", settings.get().days)>
                     <For each=days key=|day| *day let:day>
                         <div class="day" data-day=day>
