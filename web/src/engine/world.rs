@@ -111,9 +111,9 @@ pub(crate) struct Rambo {
     /// and sets his spot a moment later, so the beat waits for the first run that sets
     /// off. A change that ends in a step leaves it owed; the next change replaces it.
     owed: Option<Pose>,
-    /// Whether he is still catching up with his spot after a change of state: a new
-    /// spot (the first letter of a row he has flown to) is reached by the ride spring,
-    /// never by a jump.
+    /// Whether he is still catching up with the first letter of a row he has flown to:
+    /// that new spot is reached by the ride spring, never by a jump. Every other state
+    /// he follows is exact (inking, his nib stays on the finger).
     settling: bool,
     /// Whether he has come to rest in his nest, so the nest moving is the page
     /// scrolling under him and not a reason to hop.
@@ -161,24 +161,33 @@ impl World {
     }
 
     /// His brain is now `next`, decided outside the world. On a change his timers start
-    /// again, he owes the notice beat for it, and he catches up with his new spot.
+    /// again and he owes the notice beat for it; from flying to writing he catches up
+    /// with the row's first letter.
     pub(crate) fn adopt(&mut self, next: State) {
         let rambo = &mut self.rambo;
         if next == rambo.brain {
             return;
         }
         rambo.owed = mascot::notice(&rambo.brain, &next);
+        rambo.settling = rambo.brain == State::Flying && next == State::WritingRow;
         rambo.brain = next;
         rambo.since = self.now;
         rambo.settled_home = false;
-        rambo.settling = true;
     }
 
-    /// Whether nothing in the world will change until something outside does: he is
-    /// settled in his nest. The loop may sleep.
+    /// Whether nothing in the world will change until something outside does (his
+    /// state, his spot or the nest): he stands exactly on what his state tracks, with no
+    /// run and no catching up, and no timer of his is running. The loop may sleep; the
+    /// splat and the daze keep it awake until their timers end them, and a finger
+    /// holding him keeps it awake while he rides after it.
     pub(crate) fn at_rest(&self) -> bool {
         let rambo = &self.rambo;
-        rambo.brain == State::Home && rambo.settled_home && rambo.run.is_none()
+        let timed = matches!(rambo.brain, State::Splatting | State::Dazed);
+        !timed
+            && rambo.brain != State::Dragging
+            && !mascot::hops_there(&rambo.brain, rambo.settled_home)
+            && !rambo.settling
+            && rambo.run.is_none()
     }
 
     /// `steps` fixed engine steps with the page as `anchors` measured it.
@@ -203,16 +212,21 @@ impl World {
         let (pos, vel) = match drive {
             Drive::HopTo(to) if anchors.reduced_motion => return self.land(to),
             Drive::HopTo(to) => return self.hop_towards(to),
-            Drive::Follow(at) if rambo.settling && distance(rambo.pos, at) > CAUGHT_UP_PX => {
+            Drive::Follow(at)
+                if rambo.settling
+                    && !anchors.reduced_motion
+                    && distance(rambo.pos, at) > CAUGHT_UP_PX =>
+            {
                 ride(rambo.pos, rambo.vel, at)
             }
+            Drive::Ride(at) if !anchors.reduced_motion => ride(rambo.pos, rambo.vel, at),
             // Carried along by the page (a scroll, the nest moving) is not his own speed:
-            // a grab right after must not fling him past the finger.
-            Drive::Follow(at) => {
+            // a grab right after must not fling him past the finger. With reduced motion
+            // he is simply on the finger.
+            Drive::Follow(at) | Drive::Ride(at) => {
                 rambo.settling = false;
                 (at, (0.0, 0.0))
             }
-            Drive::Ride(at) => ride(rambo.pos, rambo.vel, at),
         };
         rambo.pos = pos;
         rambo.vel = vel;
@@ -352,6 +366,111 @@ mod tests {
         world.advance(1, &scrolled);
         assert_eq!(world.draw(), Draw::at(scrolled.nest));
         assert!(world.at_rest(), "the loop may sleep");
+    }
+
+    fn asking() -> State {
+        State::Asking {
+            task_id: "t1".into(),
+            title: "buy eggs".into(),
+        }
+    }
+
+    #[test]
+    fn asking_on_his_spot_he_is_at_rest_for_as_long_as_he_asks() {
+        let spot = (120.0, 300.0);
+        let mut world = World::new(NEST);
+        world.adopt(asking());
+        world.advance(steps(1000.0), &anchors(spot));
+        assert_eq!(
+            world.draw(),
+            Draw::at(spot),
+            "he has caught up with his spot"
+        );
+        for _ in 0..steps(10_000.0) {
+            world.advance(1, &anchors(spot));
+            assert!(world.at_rest(), "nothing changes, so the loop may sleep");
+        }
+        assert_eq!(world.rambo.brain, asking());
+    }
+
+    #[test]
+    fn dazed_he_is_never_at_rest_until_the_daze_ends_and_he_is_home() {
+        let fell = (120.0, 300.0);
+        let mut world = dropped_at(fell);
+        while world.rambo.brain == State::Dazed {
+            assert!(!world.at_rest(), "his daze timer must keep the loop awake");
+            world.advance(1, &anchors(fell));
+        }
+        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + 2000.0) {
+            if world.at_rest() {
+                break;
+            }
+            world.advance(1, &anchors(fell));
+        }
+        assert!(world.at_rest(), "home and asleep");
+        assert_eq!(world.rambo.brain, State::Home);
+        assert_eq!(world.draw(), Draw::at(NEST));
+    }
+
+    #[test]
+    fn a_state_set_from_outside_mid_run_ends_the_run_and_he_rests_on_the_new_spot() {
+        let fell = (120.0, 300.0);
+        let mut world = dropped_at(fell);
+        world.advance(steps(f64::from(mascot::DAZED_MS)), &anchors(fell));
+        assert_eq!(world.rambo.brain, State::Skittering);
+        world.advance(steps(f64::from(NOTICE_BEAT_MS) + 100.0), &anchors(fell));
+        assert!(world.rambo.run.is_some(), "mid-hop home");
+        let spot = (200.0, 500.0);
+        world.adopt(asking());
+        world.advance(1, &anchors(spot));
+        assert!(world.at_rest(), "on his spot at once, the run gone");
+        world.advance(steps(10_000.0), &anchors(spot));
+        assert!(world.at_rest());
+        assert_eq!(world.rambo.brain, asking(), "nothing in the world undid it");
+        assert_eq!(world.draw(), Draw::at(spot));
+    }
+
+    #[test]
+    fn inking_his_nib_is_on_the_finger_every_frame_from_the_first_move() {
+        let fell = (120.0, 300.0);
+        let mut world = dropped_at(fell);
+        world.adopt(State::Inking);
+        // The finger is 20 px off his middle when it grabs, then draws at 600 px/s.
+        let mut finger = (fell.0 + 20.0, fell.1);
+        for _ in 0..steps(1000.0) {
+            finger.0 += 600.0 * ENGINE_DT_S;
+            world.advance(1, &anchors(finger));
+            assert_eq!(world.draw(), Draw::at(finger));
+        }
+    }
+
+    #[test]
+    fn with_reduced_motion_a_held_or_settling_rambo_is_on_his_spot() {
+        let spot = (100.0, 200.0);
+        let still = Anchors {
+            reduced_motion: true,
+            ..anchors(spot)
+        };
+        let mut world = World::new(NEST);
+        world.tell(Event::Grab);
+        world.advance(1, &still);
+        assert_eq!(world.draw(), Draw::at(spot), "held, he is on the finger");
+        world.adopt(State::Flying);
+        world.advance(1, &still);
+        world.adopt(State::WritingRow);
+        let letter = (60.0, 420.0);
+        world.advance(
+            1,
+            &Anchors {
+                reduced_motion: true,
+                ..anchors(letter)
+            },
+        );
+        assert_eq!(
+            world.draw(),
+            Draw::at(letter),
+            "no ride to the first letter"
+        );
     }
 
     #[test]
