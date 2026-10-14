@@ -115,6 +115,7 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
 
 ### Rules for every ticket
 
+- **Design PRs carry pictures.** Any PR that changes what the page looks like gets before and after screenshots from the test site attached to it. GLM builders cannot take them, so Emilio or Antonio adds them during review. After the merge, god lists the PR in the hive's `REVIEW-QUEUE.md` for the owner.
 - Read `AGENTS.md`, then only the files the ticket lists. Touch only those files. If the work needs another file, stop and ask god.
 - Own worktree and branch: `git worktree add ../ai-todo-wt/<you>-<ticket> origin/main -b <you>/<ticket>`.
 - One PR per ticket. The title starts with the ticket id, for example `FE-3: one breakpoint, folded rules`.
@@ -239,6 +240,7 @@ Each becomes a ticket when the steps before it have landed, written with what th
 - **Phone:** list page first, capture bar on the planner page, a + button.
 - **The notebook look** (with Ping's art): one notebook page per page, the gear in the paper's corner, handwriting-style wrapping, tiny symbolic tags. These replace the "desktop widths" step: wrapping fixes the squeezed column.
 - **Capture box: tap Rambo to submit, and the paper cut-out × to clear it.** Tapping him with text in the box submits it. The × slides out beside the box; tapping it makes him scribble the text out and lays down fresh paper.
+- **The capture box as pinned scratch paper** (DESIGN-DIRECTION §9): pinned on desktop as on the phone, drawn as a ripped scrap (Ping's art), with Rambo writing on it as you type and a fresh scrap laid down on submit. Fits with the tap-to-submit and x step.
 - **A real page turn:** the paper bends and curls (a CSS 3D fold, or a mesh of strips driven by the ticker), with no gradient popping in and out.
 - **A physical dark-mode switch:** the day page is swapped for a night page.
 - **Sound engine and presets A, B and C** (DESIGN-DIRECTION §9): one module that plays named sounds, a preset choice in the settings, the mute in the gear menu.
@@ -361,7 +363,7 @@ Not planned; for god to put to the owner when the time is right.
 
 The owner answered the twelve questions on 2026-10-14. The answers are in DESIGN-DIRECTION §9 and win over this plan. Two are open.
 
-1. **Re-asked in plain words:** "On a computer, should the box you type tasks into stay visible at the bottom while you scroll, like on a phone?"
+1. **Desktop capture box: decided.** Pinned, as a ripped scrap of scratch paper that Rambo writes on (DESIGN-DIRECTION §9).
 2. **Motion and sound: decided.** The owner chose all three, as presets in the settings (DESIGN-DIRECTION §9); C became the most immersive, with music and dancing. The options as first put: All keep every motion; reduced motion still makes them instant. Sound stays on by default with a mute in the gear menu (§8).
    - **A. Quiet desk.** Sound only where paper or ink really makes a noise: the scratch while the nib moves, the page turn, the crumple, the pin, the smack and the flatten. Flights, hops, idle breathing and the daze are silent. Calm, and never tiring after a hundred tasks.
    - **B. Every touch answers.** Each motion has its own soft sound: pick-up, the flight's whoosh, the landing tap, the scratch, the flick at the end, the splat, the smack, the page turn, the pin, the crumple. The most alive, and the most to tune and to tire of.

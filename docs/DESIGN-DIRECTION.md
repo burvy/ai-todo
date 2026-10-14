@@ -217,5 +217,6 @@ Three presets in the settings; the mute stays in the gear menu:
 - **B. Every touch answers.** Every motion has its own soft sound.
 - **C. The most immersive.** Every sound, plus calm classical background music that fits the parchment, and Rambo dances to it. Recordings must be CC0 or public domain.
 
-### Still open
-- On a computer, whether the capture box stays visible at the bottom while you scroll, as on a phone (being re-asked).
+### The desktop capture box (interview 2, Q1)
+- **Pinned on desktop too**: it stays on screen while the page scrolls, as on a phone.
+- **It is a piece of ripped scratch paper** laid on the desk, and Rambo really writes on it: as you type, his nib follows the words on that scrap. On submit the scrap's words go to the list, and a fresh scrap is laid down (see the paper cut-out x above).
