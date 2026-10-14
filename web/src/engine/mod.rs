@@ -9,7 +9,7 @@ mod world;
 pub(crate) use run::{every, next_frame, now, on_tick};
 pub(crate) use sched::Flow;
 #[cfg(target_arch = "wasm32")]
-pub(crate) use sched::{ENGINE_DT_S, Tick};
+pub(crate) use sched::{ENGINE_DT_S, Handle, Tick};
 pub(crate) use world::{Anchors, World};
 
 #[cfg(test)]
