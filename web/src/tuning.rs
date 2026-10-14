@@ -176,6 +176,41 @@ const _: () = assert!(
         && BEND_SHADOW_NEAR_PX < BEND_SHADOW_FAR_PX
 );
 
+// ---- How Rambo moves (Interview 4: he hops, never glides; held, he rides above
+// the finger). The hops are `hop`'s, drawn by `rambo.rs` until the engine drives
+// them.
+
+/// One hop: crouch, spring, land and settle, in ms. Brisk: a longer way is more
+/// hops, never slower ones. Safe range 110 to 200.
+pub const HOP_MS: u32 = 150;
+/// How far one hop carries him, in px; the way is split into this many-px hops,
+/// rounded up. Safe range 100 to 300.
+pub const HOP_SPAN_PX: f64 = 180.0;
+/// The most hops one move takes, however far: the whole run fits in `FLY_MS`.
+/// Safe range 1 to 4.
+pub const HOP_MAX: u32 = 3;
+/// Moves shorter than this, in px, are a step, not a hop: the caret moving a
+/// letter, a nudge. Safe range 4 to 30.
+pub const HOP_MIN_PX: f64 = 12.0;
+/// The highest a hop rises above the straight way, in px. Safe range 8 to 40.
+pub const HOP_HEIGHT_PX: f64 = 22.0;
+/// How high a short hop rises, as a share of its length: a small hop is a small
+/// arc. Safe range 0.15 to 0.6.
+pub const HOP_RISE: f64 = 0.35;
+/// How much he squashes crouching and landing, and stretches in the air, as a
+/// share of his size. Safe range 0 to 0.25.
+pub const HOP_SQUASH: f64 = 0.14;
+
+/// How far above a finger he rides while held, in px between the finger and his
+/// bottom edge: a fingertip covers more than its point. Safe range 8 to 48.
+pub const HELD_GAP_TOUCH_PX: f64 = 20.0;
+/// The same above a mouse or pen cursor: the grabbing hand covers a little around
+/// its point. Safe range 0 to 24.
+pub const HELD_GAP_POINTER_PX: f64 = 12.0;
+
+const _: () = assert!(HOP_MS * HOP_MAX <= FLY_MS);
+const _: () = assert!(HOP_MIN_PX < HOP_SPAN_PX);
+
 // ---- Rambo writing a new row (UI-BUGS #11, v1's writing)
 
 /// How often the ink and the nib move while a title is written, in ms: one frame,

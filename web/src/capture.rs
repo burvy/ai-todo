@@ -149,6 +149,16 @@ pub(crate) fn CaptureBox(
                 set_state.update(|s| {
                     *s = mascot::transition(s, mascot::Event::FlyHome);
                 });
+                // He sets off for the nest now, not when the flight is over.
+                if state.get_untracked() == mascot::State::Flying
+                    && let Some(nest) = nest_ref.get_untracked()
+                {
+                    let rect = nest.get_bounding_client_rect();
+                    pen_pos.set((
+                        rect.left() + rect.width() / 2.0,
+                        rect.top() + rect.height() / 2.0,
+                    ));
+                }
                 let set_state = set_state;
                 let timer = Timeout::new(crate::tuning::FLY_MS, move || {
                     // Use transition() so a grab during flight is not overridden.

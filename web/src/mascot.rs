@@ -91,8 +91,6 @@ pub enum Event {
 
 /// Milliseconds he stays dazed, untouched, before he skitters home on his own.
 pub const DAZED_MS: u32 = 8000;
-/// Milliseconds his hop home takes.
-pub const SKITTER_MS: u32 = 900;
 /// Milliseconds the splat wobble lasts on a hard drop.
 pub const SPLAT_MS: u32 = 400;
 /// Milliseconds Rambo keeps peeking over at you after your last keystroke.
@@ -236,24 +234,33 @@ pub fn speaks_later(state: &State) -> bool {
     matches!(state, State::Flying | State::WritingRow)
 }
 
-/// Where a hop of the skitter run is at `progress` (0..=1): straight line from
-/// `start` to `home`, with little bounces above it. Pure, so the DOM layer
-/// only reads points off it.
-pub fn skitter_point(
-    start: (f64, f64),
-    home: (f64, f64),
-    hops: u32,
-    hop_height: f64,
-    progress: f32,
-) -> (f64, f64) {
-    let progress = f64::from(progress.clamp(0.0, 1.0));
-    let x = start.0 + (home.0 - start.0) * progress;
-    let y = start.1 + (home.1 - start.1) * progress
-        - (progress * f64::from(hops) * std::f64::consts::PI)
-            .sin()
-            .abs()
-            * hop_height;
-    (x, y)
+/// Whether he hops to a new spot (`crate::hop`) rather than simply being there.
+/// He is wherever his spot is, every frame, while he follows something exactly:
+/// your finger, his nib on a row, the place he fell or the row he asks about. At
+/// home he follows the nest as the page scrolls, once he has `settled_home`;
+/// getting there is a hop like any other move.
+pub fn hops_there(state: &State, settled_home: bool) -> bool {
+    match state {
+        State::Dragging
+        | State::Inking
+        | State::WritingRow
+        | State::Dazed
+        | State::Splatting
+        | State::Asking { .. } => false,
+        State::Home => !settled_home,
+        State::Flying | State::WritingCaret | State::Skittering => true,
+    }
+}
+
+/// Where his centre rides while you hold him at `pointer`: just above it, so your
+/// finger or cursor never covers him. `box_h` is his height on this screen; a
+/// fingertip covers more than a cursor, so a `touch` holds him higher.
+pub fn held_at(pointer: (f64, f64), box_h: f64, touch: bool) -> (f64, f64) {
+    let gap = match touch {
+        true => crate::tuning::HELD_GAP_TOUCH_PX,
+        false => crate::tuning::HELD_GAP_POINTER_PX,
+    };
+    (pointer.0, pointer.1 - box_h / 2.0 - gap)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -588,15 +595,40 @@ mod tests {
     }
 
     #[test]
-    fn the_skitter_hops_above_the_straight_line() {
-        let (x, y) = skitter_point((0.0, 100.0), (100.0, 100.0), 3, 20.0, 0.5);
-        assert_eq!(x, 50.0);
-        // Half way through 3 hops: 1.5 hops in, so the bounce is at its peak.
-        assert!((y - 80.0).abs() < 1e-9, "{y}");
-        let (x, y) = skitter_point((0.0, 100.0), (100.0, 100.0), 3, 20.0, 0.0);
-        assert_eq!((x, y), (0.0, 100.0));
-        let (_, y) = skitter_point((0.0, 100.0), (100.0, 100.0), 3, 20.0, 1.0);
-        assert!((y - 100.0).abs() < 1e-9, "{y}");
+    fn he_hops_between_spots_and_follows_what_he_tracks() {
+        for moving in [State::Flying, State::WritingCaret, State::Skittering] {
+            assert!(hops_there(&moving, true), "{moving:?}");
+        }
+        for tracking in [
+            State::Dragging,
+            State::Inking,
+            State::WritingRow,
+            State::Dazed,
+            State::Splatting,
+        ] {
+            assert!(!hops_there(&tracking, false), "{tracking:?}");
+        }
+        assert!(hops_there(&State::Home, false), "the way home is hops");
+        assert!(
+            !hops_there(&State::Home, true),
+            "home, he rides the scrolling nest"
+        );
+    }
+
+    #[test]
+    fn held_he_rides_above_the_finger() {
+        let finger = (100.0, 300.0);
+        let (x, y) = held_at(finger, 64.0, true);
+        assert_eq!(x, 100.0);
+        assert!(
+            y + 32.0 < finger.1,
+            "his bottom edge is above the finger: {y}"
+        );
+        let (_, cursor_y) = held_at(finger, 64.0, false);
+        assert!(
+            cursor_y + 32.0 < finger.1 && cursor_y > y,
+            "a cursor holds him lower"
+        );
     }
 
     #[test]
@@ -1093,18 +1125,16 @@ mod tests {
     }
 
     #[test]
-    fn only_a_flight_eases_him_from_place_to_place() {
-        // A transform transition on the button also runs when a state's
-        // animation ends, and Chrome starts it near the window's corner: every
-        // drop sent him to the top-left and back. Only a flight may ease.
+    fn nothing_glides_him_from_place_to_place() {
+        // He hops (`crate::hop`), drawn frame by frame. A transform transition on
+        // the button would glide him instead, and also runs when a state's
+        // animation ends, where Chrome starts it near the window's corner: every
+        // drop sent him to the top-left and back.
         let eased: Vec<_> = rambo_rules(include_str!("../theme.css"), "transition")
             .into_iter()
-            .filter(|(selector, value)| {
-                (value.contains("transform") || value.contains("all"))
-                    && !selector.contains(".is-flying")
-            })
+            .filter(|(_, value)| value.contains("transform") || value.contains("all"))
             .collect();
-        assert!(eased.is_empty(), "eases outside a flight: {eased:?}");
+        assert!(eased.is_empty(), "glides: {eased:?}");
     }
 
     /// docs/FRONTEND-PLAN.md 1.5: every z-index in the style sheets names a rung of the
