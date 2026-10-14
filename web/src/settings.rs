@@ -1,3 +1,4 @@
+use crate::clock::Clock;
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -77,6 +78,7 @@ const DEFAULTS: Settings = Settings {
     theme: Theme::Light,
     sounds: true,
     pen: Pen::FountainPen,
+    clock: Clock::Twelve,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +97,9 @@ pub struct Settings {
     /// Sounds are on by default (DESIGN-DECISIONS); the gear menu mutes.
     #[serde(default = "sounds_on")]
     pub sounds: bool,
+    /// Times are written as `9 am` by default; `24:00` style is a gear choice.
+    #[serde(default)]
+    pub clock: Clock,
 }
 
 impl Default for Settings {
@@ -115,6 +120,7 @@ impl Settings {
             pen: self.pen,
             theme: self.theme,
             sounds: self.sounds,
+            clock: self.clock,
         }
     }
 
@@ -166,6 +172,12 @@ pub fn GearMenu(
             ..settings.get()
         })
     };
+    let set_clock = move |clock: Clock| {
+        update(Settings {
+            clock,
+            ..settings.get()
+        })
+    };
 
     let close = move |_| set_open.set(false);
 
@@ -210,6 +222,18 @@ pub fn GearMenu(
                                     class:active=move || settings.get().theme == theme
                                     on:click=move |_| set_theme(theme)
                                 >{theme.label()}</button>
+                            </For>
+                        </div>
+                        <h3>"Clock"</h3>
+                        <div class="gear-choices" role="group" aria-label="Clock">
+                            <For each=|| [Clock::Twelve, Clock::TwentyFour] key=|c| *c let:clock>
+                                <button
+                                    type="button"
+                                    role="radio"
+                                    aria-checked=move || (settings.get().clock == clock).to_string()
+                                    class:active=move || settings.get().clock == clock
+                                    on:click=move |_| set_clock(clock)
+                                >{clock.label()}</button>
                             </For>
                         </div>
                         <h3>"Sounds"</h3>

@@ -1676,6 +1676,15 @@ li.task-row:hover .delete-mark, li.task-row:focus-within .delete-mark { opacity:
 .day-picker button.active { color: var(--accent); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 .dialog-hint { color: var(--ink-soft); }
 
+/* The chosen time written out beside the dialog's time field, in the paper's
+   clock — the native field's own rendering follows the browser's locale. */
+.dialog-time-written {
+  margin-left: var(--space-2);
+  font-family: var(--font-hand-neat);
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
 /* Rambo's whisper (capture placeholder): the prompt fades out, the text swaps
    at the bottom of the dip, and the colour returns. Reduced motion: no fade,
    and schedule_whisper stops rotating. */
