@@ -74,7 +74,20 @@ async fn embedded_web(uri: axum::http::Uri) -> Response {
     match file {
         Some(file) => {
             let content_type = content_type(file.path());
-            ([(header::CONTENT_TYPE, content_type)], file.contents()).into_response()
+            let mut response =
+                ([(header::CONTENT_TYPE, content_type)], file.contents()).into_response();
+            // Only a page runs scripts, so only a page needs a policy.
+            if let Some(html) = content_type
+                .starts_with("text/html")
+                .then(|| std::str::from_utf8(file.contents()).ok())
+                .flatten()
+                && let Ok(policy) = HeaderValue::from_str(&v2::csp::for_html(html))
+            {
+                response
+                    .headers_mut()
+                    .insert(header::CONTENT_SECURITY_POLICY, policy);
+            }
+            response
         }
         None => StatusCode::NOT_FOUND.into_response(),
     }
@@ -340,6 +353,18 @@ mod tests {
             assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY", "{path}");
             assert!(headers.contains_key(header::REFERRER_POLICY), "{path}");
         }
+    }
+
+    #[tokio::test]
+    async fn the_page_carries_a_policy_that_lets_wasm_load() {
+        let response = test_app()
+            .oneshot(Request::get("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let policy = response.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .unwrap();
+        assert!(policy.contains("'wasm-unsafe-eval'"), "{policy}");
     }
 
     #[test]

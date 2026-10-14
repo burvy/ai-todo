@@ -153,8 +153,10 @@ fn delete_old_backups(backup_dir: &Path, today: chrono::NaiveDate) -> Result<(),
             && filename.starts_with("rambl-")
             && filename.ends_with(".db")
         {
-            let date_str = &filename[6..16];
-            if let Ok(backup_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+            // By character, not byte: a name with a multi-byte character in that range
+            // would make a byte slice panic.
+            let date_str: String = filename.chars().skip(6).take(10).collect();
+            if let Ok(backup_date) = chrono::NaiveDate::parse_from_str(&date_str, "%Y-%m-%d")
                 && backup_date < cutoff
             {
                 std::fs::remove_file(&path)
@@ -223,6 +225,22 @@ mod tests {
 
         assert!(!old_backup.exists(), "old backup should be deleted");
         assert!(recent_backup.exists(), "recent backup should be kept");
+    }
+
+    /// A stray file whose name has a multi-byte character where the date would end must
+    /// be left alone, not panic the cleanup.
+    #[test]
+    fn delete_old_backups_ignores_non_ascii_names() {
+        let dir = tempdir().unwrap();
+        let backup_dir = dir.path().join("backups");
+        fs::create_dir_all(&backup_dir).unwrap();
+        let odd = backup_dir.join("rambl-123456789é.db");
+        fs::write(&odd, b"x").unwrap();
+
+        let today = NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        delete_old_backups(&backup_dir, today).unwrap();
+
+        assert!(odd.exists());
     }
 
     #[test]
