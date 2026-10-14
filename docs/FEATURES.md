@@ -222,18 +222,30 @@ c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:transition, listens_on_gra
 put_back, over_nest, DAZED_MS`; `web/src/inklayer.rs:InkLayer`; `web/src/ink.rs`;
 `crates/rambl-brain/src/lib.rs:Event::PutBack`.
 
-### 3. Drop actions
+### 3. Writing a new row
+a. When a task is added, Rambo flies to its empty line and writes the title under
+his nib, letter by letter at his own pace, line after line when it wraps; only the
+ink appears, the row is already there. Anything you do interrupts him (picking him
+up, typing a new capture, turning the page or scrolling the row away): the ink
+waits at the letter he reached, and once he is home and can see the row he flies
+back and carries on. A row left waiting `WRITE_HOLD_MAX_MS` simply shows its title,
+and a reload always shows titles whole.
+b. Type a long task and press Enter; pick him up halfway through, then let go.
+c. Code: `web/src/tasks/write.rs:write_row_title`; `web/src/pen.rs:schedule, inked,
+ink_edge, ink_clip, beat`; pace in `web/src/tuning.rs` (`WRITE_*`).
+
+### 4. Drop actions
 a. Dropping Rambo on a task opens a prompt with Edit, Move, Done, Delete and
 Never mind actions. Edit opens the task dialog (`<dialog class="task-dialog">` in `web/src/tasks/mod.rs`).
 b. Drag the pen onto a task row and choose an action.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/api.rs:patch_task, delete_task`.
 
-### 4. Reduced motion
+### 5. Reduced motion
 a. With reduced motion enabled, Rambo returns immediately instead of animating.
 b. Enable reduced motion in the operating system and drag Rambo away from home.
 c. Code: `web/src/mascot.rs:prefers_reduced_motion`; `web/src/rambo.rs:Rambo`.
 
-### 5. Mascot brain
+### 6. Mascot brain
 a. The mascot crate provides deterministic, seeded behaviour without web code; it is
 wired into the web mascot by `web/src/brain.rs:Controller`, which turns a brain event
 into a pose and a line of Rambo's own dialogue.
@@ -241,7 +253,7 @@ b. Not visible; covered by tests in `crates/rambl-brain/src/lib.rs`.
 c. Code: `crates/rambl-brain/src/lib.rs:Brain, step, step_with`;
 `crates/rambl-brain/src/rng.rs:Seeded`.
 
-### 6. Rambo's voice
+### 7. Rambo's voice
 a. A line Rambo shows in his speech bubble is also spoken, in one friendly English
 voice, a little brisker and a little higher than the browser default. The bubble and
 the voice are one thing: the bubble appears when the voice starts and goes 800ms after

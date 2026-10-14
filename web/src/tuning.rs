@@ -90,3 +90,30 @@ pub const BEND_SLIDE_MS: u32 = 150;
 
 const _: () =
     assert!(BEND_FLICK_MIN_PX < 100.0 && BEND_COMMIT_SHARE < 1.0 && BEND_FULL_TURN >= 2.0);
+
+// ---- Rambo writing a new row (UI-BUGS #11, v1's writing)
+
+/// Stroke time per glyph: the pace of his hand. Safe range 70 to 160 ms; v1 wrote at
+/// about this pace, slower than typing so it reads as considered writing.
+pub const WRITE_PER_GLYPH_MS: u32 = 110;
+/// The shortest a title takes to write, so a short one still reads as writing.
+/// Safe range 400 to 1200 ms.
+pub const WRITE_MIN_MS: u32 = 700;
+/// The longest a title takes to write, so a long one still finishes. Safe range
+/// 1800 to 5000 ms.
+pub const WRITE_MAX_MS: u32 = 3200;
+/// The beat the nib rests on the line after landing, before the first stroke.
+/// Safe range 0 to 300 ms.
+pub const WRITE_SETTLE_MS: u32 = 140;
+/// The hold after the last letter closes, before he flies home. Safe range 0 to
+/// 500 ms.
+pub const WRITE_FINISH_MS: u32 = 250;
+/// How long a half-written row waits for him (held, typing elsewhere, or the row
+/// scrolled away) before its rest of the title simply appears. Safe range 5000 to
+/// 60000 ms.
+pub const WRITE_HOLD_MAX_MS: u32 = 15_000;
+/// How far past its edges the ink may show, in px, so a letter's flourish above
+/// the line or past the last stroke is not cut. Safe range 0 to 4.
+pub const INK_BLEED_PX: f64 = 2.0;
+
+const _: () = assert!(WRITE_MIN_MS < WRITE_MAX_MS);

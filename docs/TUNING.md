@@ -13,7 +13,7 @@ convention, and the index of where each kind of value lives.
 | Set per deployment | an environment variable; its default is a `DEFAULT_*` constant in `tuning.rs` | `RAMBL_JEV_DAILY_CAP` → `DEFAULT_JEV_DAILY_CAP` |
 | Chosen by each user | a stored user setting; its default is a constant in `tuning.rs` | `DEFAULT_DAY_DEADLINE`, the default for each user's day-only deadline |
 | Content and personality a non-programmer edits | a TOML file in the crate's `content/` folder, compiled in | `crates/rambl-brain/content/personality.toml` |
-| Web behaviour (timings, thresholds) | `web/src/tuning.rs` (started: the time picker's minute step and resting hour; the rest is planned with the front-end restructure) | `MINUTE_STEP` |
+| Web behaviour (timings, thresholds) | `web/src/tuning.rs` (started: the time picker's minute step and resting hour, Rambo's writing pace; the rest is planned with the front-end restructure) | `MINUTE_STEP` |
 | Web look (colours, spacing, radii, animation lengths) | CSS custom properties on `:root` in `web/theme.css`; colours are there today, the rest is planned with the front-end restructure | `--ink`, `--accent` |
 
 A value is never written twice. When a second crate needs it, it moves down to

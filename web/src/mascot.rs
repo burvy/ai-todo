@@ -154,8 +154,12 @@ pub fn transition(state: &State, event: Event) -> State {
         // Flying to a row: arrive and write.
         (State::Flying, Event::WriteRow) => State::WritingRow,
 
-        // Writing row: fly home when done.
+        // Writing row: fly home when done. Picked up mid-row he listens, and
+        // typing a new capture calls him to the caret; either way the ink waits
+        // and he goes back to finish once he is home (`pen::beat`).
         (State::WritingRow, Event::FlyHome) => State::Flying,
+        (State::WritingRow, Event::Grab) => State::Dragging,
+        (State::WritingRow, Event::WriteCaret) => State::WritingCaret,
 
         // Flying home: arrive.
         (State::Flying, Event::FlyHome) => State::Home,
@@ -218,12 +222,11 @@ pub fn is_off_nest(state: &State) -> bool {
     )
 }
 
-/// Is he writing or flying for writing (so typing must not yank him)?
+/// Is he flying, or writing at the caret, so a grab or typing must not yank him?
+/// A row he is writing is not busy: anything the user does interrupts it, and he
+/// goes back to finish it (`pen::beat`).
 pub fn pen_busy(state: &State) -> bool {
-    matches!(
-        state,
-        State::Flying | State::WritingCaret | State::WritingRow
-    )
+    matches!(state, State::Flying | State::WritingCaret)
 }
 
 /// Where a hop of the skitter run is at `progress` (0..=1): straight line from
@@ -608,12 +611,21 @@ mod tests {
     }
 
     #[test]
+    fn anything_the_user_does_interrupts_a_row() {
+        assert!(!pen_busy(&State::WritingRow));
+        assert_eq!(transition(&State::WritingRow, Event::Grab), State::Dragging);
+        assert_eq!(
+            transition(&State::WritingRow, Event::WriteCaret),
+            State::WritingCaret
+        );
+    }
+
+    #[test]
     fn pen_busy_during_writing_flight() {
         assert!(!pen_busy(&State::Home));
         assert!(!pen_busy(&State::Dragging));
         assert!(pen_busy(&State::Flying));
         assert!(pen_busy(&State::WritingCaret));
-        assert!(pen_busy(&State::WritingRow));
     }
 
     #[test]

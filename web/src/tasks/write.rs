@@ -2,8 +2,10 @@
 //! helpers measure the real rendered text so the nib traces what the user
 //! actually sees. All wasm-only: no DOM on the test path.
 
-use crate::{pen, sound};
-use leptos::prelude::{RwSignal, Set};
+use crate::pen::{Beat, LineBox};
+use crate::tuning::{WRITE_FINISH_MS, WRITE_SETTLE_MS};
+use crate::{mascot, pen, sound};
+use leptos::prelude::{GetUntracked, ReadSignal, RwSignal, Set, WriteSignal};
 use std::collections::HashMap;
 use wasm_bindgen::JsCast;
 
@@ -133,57 +135,70 @@ pub fn in_view(row: &web_sys::Element) -> bool {
     )
 }
 
-/// Park the nib at the left edge of `row`'s line, before the flight, so
-/// the pen arrives exactly where it is about to start writing.
+/// Park the nib at the start of `row`'s title, before the flight, so the pen
+/// arrives exactly where it is about to start writing.
 pub fn park_nib(row: &web_sys::Element, pen_pos: RwSignal<(f64, f64)>) {
     let Some(title) = row.query_selector(".pen-title").ok().flatten() else {
         return;
     };
-    let Some(line) = one_line(&title) else {
+    let Some(writing) = measure(&title, &title.text_content().unwrap_or_default()) else {
         return;
     };
-    place_nib(pen_pos, line.left, line.baseline);
-}
-
-/// The title's one line box, when it is only one: a long title wraps onto
-/// the next ruled line and the pen has no single edge to trace, so those
-/// are left to the CSS wipe.
-fn one_line(title: &web_sys::Element) -> Option<Line> {
-    let rects = title.get_client_rects();
-    // Zero rects means nothing is laid out yet (a title still hidden from
-    // the flight); two or more means the title wrapped.
-    if rects.length() != 1 {
-        return None;
+    if let Some(first) = lines_of(&title).first() {
+        place_nib(pen_pos, first.left, baseline(first, &writing));
     }
-    let rect = rects.get(0)?;
-    let writing = measure(title, &title.text_content().unwrap_or_default())?;
-    Some(Line {
-        left: rect.left(),
-        width: rect.width(),
-        baseline: pen::baseline_y(rect.top(), rect.height(), writing.ascent, writing.descent),
-    })
 }
 
-/// One ruled line of a title: where it starts, how wide it is, and the
-/// baseline the nib rides on.
-struct Line {
-    left: f64,
-    width: f64,
-    baseline: f64,
+/// The title's line boxes as laid out now, in reading order. Measured again on
+/// every frame: the page may scroll under the pen while he writes.
+fn lines_of(title: &web_sys::Element) -> Vec<LineBox> {
+    let rects = title.get_client_rects();
+    (0..rects.length())
+        .filter_map(|index| rects.get(index))
+        .map(|rect| LineBox {
+            left: rect.left(),
+            top: rect.top(),
+            width: rect.width(),
+            height: rect.height(),
+        })
+        .collect()
+}
+
+fn baseline(line: &LineBox, writing: &Writing) -> f64 {
+    pen::baseline_y(line.top, line.height, writing.ascent, writing.descent)
+}
+
+/// Fly him from where he is and land him, `event` taking him off and on again.
+async fn fly(
+    state: ReadSignal<mascot::State>,
+    set_state: WriteSignal<mascot::State>,
+    event: mascot::Event,
+) {
+    set_state.set(mascot::transition(&state.get_untracked(), event.clone()));
+    gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
+    set_state.set(mascot::transition(&state.get_untracked(), event));
 }
 
 /// Write `row`'s title under the nib.
 ///
-/// The whole title is laid out from the start and only the ink is
-/// clipped, so the line never reflows under the pen. Each frame moves the
-/// clip and the nib together — the nib is always exactly at the edge of
-/// the ink — and the pen scratches for as long as it is moving. A title
-/// too long for one ruled line keeps the CSS wipe: the sound still runs
-/// for as long as the wipe takes, but there is no single edge to follow.
+/// The whole title is laid out from the start and only the ink is clipped, so
+/// it never reflows under the pen. Each frame moves the clip and the nib
+/// together, line after line: the nib is always at the edge of the ink, on the
+/// baseline of the line it is writing, and the pen scratches while it moves.
 ///
-/// Takes the row from `pen-pending` to written, so the caller only marks
-/// the row pending, awaits the fonts and parks the nib.
-pub async fn write_row_title(row: &web_sys::Element, pen_pos: RwSignal<(f64, f64)>) {
+/// Interrupted (picked up, called to the caret, the row scrolled away), the ink
+/// waits at the letter he reached; once he is home and can see the row he flies
+/// back and carries on ([`pen::beat`]). A row that is gone, or has waited
+/// [`WRITE_HOLD_MAX_MS`](crate::tuning::WRITE_HOLD_MAX_MS), is shown whole.
+///
+/// Takes the row from `pen-pending` to written, so the caller only marks the
+/// row pending, awaits the fonts and parks the nib.
+pub async fn write_row_title(
+    row: &web_sys::Element,
+    pen_pos: RwSignal<(f64, f64)>,
+    state: ReadSignal<mascot::State>,
+    set_state: WriteSignal<mascot::State>,
+) {
     let unhide = || {
         row.class_list().remove_1("pen-pending").ok();
         row.class_list().remove_1("pen-writing").ok();
@@ -193,7 +208,11 @@ pub async fn write_row_title(row: &web_sys::Element, pen_pos: RwSignal<(f64, f64
         return;
     };
     let text = title.text_content().unwrap_or_default();
-    if text.trim().is_empty() {
+    let (Some(style), Some(writing)) = (inline_style(&title), measure(&title, &text)) else {
+        unhide();
+        return;
+    };
+    if text.trim().is_empty() || lines_of(&title).is_empty() {
         unhide();
         return;
     }
@@ -204,55 +223,85 @@ pub async fn write_row_title(row: &web_sys::Element, pen_pos: RwSignal<(f64, f64
     let ink = pen::ink_for_pen(held_tool().as_deref());
     row.class_list().add_1(ink).ok();
     row.class_list().add_1("pen-writing").ok();
-    // A traced title starts with no ink at all, so the finished title is
-    // never on screen before the pen begins writing it. Reaching here is
-    // one task: the row leaves `pen-pending`'s full clip and gains an
-    // empty one of its own before the browser paints either.
-    let traced = one_line(&title);
-    let style = inline_style(&title);
-    if let (Some(style), Some(traced)) = (&style, &traced) {
+    // The title starts with no ink at all, so the finished title is never on
+    // screen before the pen begins writing it: the row leaves `pen-pending`'s
+    // full clip and gains an empty one of its own before the browser paints.
+    let glyphs = pen::schedule(&text, |c| (writing.width_of)(c));
+    let total_ms = glyphs.last().map(|glyph| glyph.ends_ms).unwrap_or(0);
+    // Ink the title up to `elapsed` into the schedule, and put the nib at the
+    // edge of that ink.
+    let ink_to = |lines: &[LineBox], elapsed: u32| {
+        let width: f64 = lines.iter().map(|line| line.width).sum();
+        let (line, x) = pen::ink_edge(lines, f64::from(pen::inked(&glyphs, elapsed)) * width);
         style
-            .set_property("clip-path", &format!("inset(0 {:.1}px 0 0)", traced.width))
+            .set_property("clip-path", &pen::ink_clip(lines, line, x))
             .ok();
-    }
+        if let Some(at) = lines.get(line) {
+            place_nib(pen_pos, at.left + x, baseline(at, &writing));
+        }
+    };
+    ink_to(&lines_of(&title), 0);
     row.class_list().remove_1("pen-pending").ok();
 
-    let scratch = sound::looping(sound::Cue::Write);
-    if let (Some(style), Some(writing)) = (&style, measure(&title, &text)) {
-        let line = pen::schedule(&text, |c| (writing.width_of)(c));
-        let total = line.last().map(|glyph| glyph.ends_ms).unwrap_or(0);
-        match traced {
-            // Wrapped: theme.css is already transitioning the clip, so all
-            // that is left is to scratch for as long as it will take.
-            None => gloo_timers::future::TimeoutFuture::new(total).await,
-            Some(traced) => {
-                let mut elapsed = 0;
-                loop {
-                    let drawn = f64::from(pen::inked(&line, elapsed)) * traced.width;
-                    style
-                        .set_property(
-                            "clip-path",
-                            &format!("inset(0 {:.1}px 0 0)", traced.width - drawn),
-                        )
-                        .ok();
-                    place_nib(pen_pos, traced.left + drawn, traced.baseline);
-                    if elapsed >= total {
-                        break;
-                    }
-                    gloo_timers::future::TimeoutFuture::new(pen::INK_TICK_MS).await;
-                    elapsed += pen::INK_TICK_MS;
-                }
-            }
+    // The nib touches down and rests a beat before the first stroke.
+    gloo_timers::future::TimeoutFuture::new(WRITE_SETTLE_MS).await;
+    let (mut elapsed, mut held) = (0, 0);
+    let mut scratch: Option<sound::Loop> = None;
+    loop {
+        let lines = lines_of(&title);
+        let on_page = row.is_connected() && !lines.is_empty();
+        let on_screen = on_page && in_view(row);
+        let beat = pen::beat(&state.get_untracked(), on_screen, on_page, held);
+        // He scratches only while the nib moves on the paper.
+        if beat != Beat::Write
+            && let Some(sound) = scratch.take()
+        {
+            sound.stop();
         }
+        match beat {
+            Beat::Write => {
+                held = 0;
+                scratch = scratch.or_else(|| sound::looping(sound::Cue::Write));
+                ink_to(&lines, elapsed);
+                if elapsed >= total_ms {
+                    if let Some(sound) = scratch.take() {
+                        sound.stop();
+                    }
+                    // The last letter closes; he holds a beat before leaving.
+                    gloo_timers::future::TimeoutFuture::new(WRITE_FINISH_MS).await;
+                    break;
+                }
+                elapsed += pen::INK_TICK_MS;
+            }
+            Beat::Hold => held += pen::INK_TICK_MS,
+            Beat::FlyHome => {
+                held += pen::FLY_MS;
+                fly(state, set_state, mascot::Event::FlyHome).await;
+            }
+            Beat::FlyBack => {
+                held += pen::FLY_MS;
+                set_state.set(mascot::transition(
+                    &state.get_untracked(),
+                    mascot::Event::WriteRow,
+                ));
+                // He lands on the letter he stopped at.
+                ink_to(&lines, elapsed);
+                gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
+                set_state.set(mascot::transition(
+                    &state.get_untracked(),
+                    mascot::Event::WriteRow,
+                ));
+            }
+            Beat::Finish => break,
+        }
+        gloo_timers::future::TimeoutFuture::new(pen::INK_TICK_MS).await;
     }
-    if let Some(scratch) = scratch {
-        scratch.stop();
+    if let Some(sound) = scratch {
+        sound.stop();
     }
     // The clip has done its job and the row is plain text again, so the
     // title keeps the ink it was written in only while Rambo is writing.
-    if let Some(style) = &style {
-        style.remove_property("clip-path").ok();
-    }
+    style.remove_property("clip-path").ok();
     row.class_list().remove_1(ink).ok();
     row.class_list().remove_1("pen-writing").ok();
 }

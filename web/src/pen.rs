@@ -5,14 +5,14 @@
 //!
 //! A fresh row's title is inked under the nib: each glyph is given time in
 //! proportion to the width it occupies on the page, and every word gap also
-//! pays for the pen's lift. The pen lingers [`LINGER_MS`] at the capture
+//! pays for the pen's lift. A title that wraps is written line after line, the
+//! nib riding each line's baseline. The pen lingers [`LINGER_MS`] at the capture
 //! caret after typing stops before flying home.
 
-/// Average stroke time per glyph; sets the overall pace of a line.
-pub const PER_GLYPH_MS: u32 = 90;
-/// Shortest and longest a single title may take to write.
-pub const MIN_WRITE_MS: u32 = 500;
-pub const MAX_WRITE_MS: u32 = 2400;
+use crate::mascot::State;
+use crate::tuning::{
+    INK_BLEED_PX, WRITE_HOLD_MAX_MS, WRITE_MAX_MS, WRITE_MIN_MS, WRITE_PER_GLYPH_MS,
+};
 /// Extra width, in the same units as glyph widths, that the pen lift over a
 /// space costs: the nib hops the gap and pauses before the next word.
 pub const WORD_GAP_W: f64 = 10.0;
@@ -56,7 +56,9 @@ pub struct Glyph {
 /// How long a title of `glyphs` glyphs takes to write: paced by length and
 /// clamped so short titles still read as writing and long ones finish.
 pub fn write_total_ms(glyphs: usize) -> u32 {
-    (glyphs as u32 * PER_GLYPH_MS).clamp(MIN_WRITE_MS, MAX_WRITE_MS)
+    (glyphs as u32)
+        .saturating_mul(WRITE_PER_GLYPH_MS)
+        .clamp(WRITE_MIN_MS, WRITE_MAX_MS)
 }
 
 /// The whole line's schedule: every glyph's width and the moment its stroke
@@ -147,6 +149,92 @@ pub fn inked(glyphs: &[Glyph], elapsed_ms: u32) -> f32 {
     ((written + in_flight) / total_width) as f32
 }
 
+/// One line box of a title as the page lays it out, in viewport pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LineBox {
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// Where the edge of the ink is once `drawn` pixels of the title's lines are
+/// written: which line, and how far along it. Lines fill in reading order, so the
+/// nib finishes one line before it starts the next.
+pub fn ink_edge(lines: &[LineBox], drawn: f64) -> (usize, f64) {
+    let last = lines.len().saturating_sub(1);
+    let mut left = drawn.max(0.0);
+    for (index, line) in lines.iter().enumerate() {
+        if left <= line.width || index == last {
+            return (index, left.min(line.width));
+        }
+        left -= line.width;
+    }
+    (0, 0.0)
+}
+
+/// The `clip-path` that shows a title written up to `x` along line `line`: every
+/// line before it whole, that line up to the nib, nothing after. The title is one
+/// inline element whose clip is laid on the box around all its lines, so the
+/// polygon is measured from that box's top-left corner.
+pub fn ink_clip(lines: &[LineBox], line: usize, x: f64) -> String {
+    let Some(current) = lines.get(line) else {
+        return "none".into();
+    };
+    let left = lines.iter().map(|l| l.left).fold(f64::INFINITY, f64::min);
+    let top = lines.iter().map(|l| l.top).fold(f64::INFINITY, f64::min);
+    let right = lines
+        .iter()
+        .map(|l| l.left + l.width)
+        .fold(f64::NEG_INFINITY, f64::max)
+        - left;
+    let bleed = INK_BLEED_PX;
+    // The lines above the nib's are whole; the nib's line is written up to `x`.
+    let above = match line {
+        0 => -bleed,
+        _ => current.top - top,
+    };
+    let below = current.top + current.height - top + bleed;
+    let nib = current.left - left + x;
+    format!(
+        "polygon(0px {t:.1}px, {r:.1}px {t:.1}px, {r:.1}px {a:.1}px, {n:.1}px {a:.1}px, \
+         {n:.1}px {b:.1}px, 0px {b:.1}px)",
+        t = -bleed,
+        r = right + bleed,
+        a = above,
+        n = nib,
+        b = below,
+    )
+}
+
+/// What the pen does with a half-written row on this frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Beat {
+    /// Keep writing.
+    Write,
+    /// He is busy elsewhere (in your hand, at the caret, dazed): the ink waits.
+    Hold,
+    /// The row went off the screen under him: he flies home and waits there.
+    FlyHome,
+    /// He is home and the row is on screen again: he flies back to finish it.
+    FlyBack,
+    /// The row is gone, or has waited long enough: the rest simply appears.
+    Finish,
+}
+
+/// The pen's next beat on a half-written row: interrupted, he stops; when he is
+/// home again and can see the row, he goes back and carries on from the letter he
+/// stopped at. `held_ms` is how long the ink has been waiting.
+pub fn beat(state: &State, on_screen: bool, on_page: bool, held_ms: u32) -> Beat {
+    match (state, on_screen) {
+        _ if !on_page || held_ms >= WRITE_HOLD_MAX_MS => Beat::Finish,
+        (State::WritingRow, true) => Beat::Write,
+        (State::WritingRow, false) => Beat::FlyHome,
+        (State::Home, true) => Beat::FlyBack,
+        _ => Beat::Hold,
+    }
+}
+
 /// Whether any of a box `(left, top, right, bottom)` shows in a `(width,
 /// height)` viewport. The pen only flies to a line he can reach on screen: a
 /// row on the other pane of a phone, or scrolled away, would send him off the
@@ -204,10 +292,11 @@ mod tests {
 
     #[test]
     fn write_total_scales_with_length_and_clamps() {
-        assert_eq!(write_total_ms(0), MIN_WRITE_MS);
-        assert_eq!(write_total_ms(3), MIN_WRITE_MS);
-        assert_eq!(write_total_ms(10), 900);
-        assert_eq!(write_total_ms(100), MAX_WRITE_MS);
+        assert_eq!(write_total_ms(0), WRITE_MIN_MS);
+        assert_eq!(write_total_ms(3), WRITE_MIN_MS);
+        assert_eq!(write_total_ms(10), 10 * WRITE_PER_GLYPH_MS);
+        assert_eq!(write_total_ms(100), WRITE_MAX_MS);
+        assert_eq!(write_total_ms(usize::MAX), WRITE_MAX_MS, "never overflows");
     }
 
     #[test]
@@ -276,7 +365,7 @@ mod tests {
         assert_eq!(
             glyphs,
             vec![Glyph {
-                ends_ms: MIN_WRITE_MS,
+                ends_ms: WRITE_MIN_MS,
                 width: 12.0
             }]
         );
@@ -353,6 +442,79 @@ mod tests {
         assert!(
             (written - 26.0).abs() < 1e-2,
             "the gap cost {written:.2}px of ink where the two letters are 20px and the space 6px"
+        );
+    }
+
+    /// A title wrapped onto two ruled lines: 100px, then 60px, 24px apart.
+    fn two_lines() -> [LineBox; 2] {
+        [
+            LineBox {
+                left: 40.0,
+                top: 200.0,
+                width: 100.0,
+                height: 20.0,
+            },
+            LineBox {
+                left: 40.0,
+                top: 224.0,
+                width: 60.0,
+                height: 20.0,
+            },
+        ]
+    }
+
+    #[test]
+    fn the_nib_finishes_a_line_before_it_starts_the_next() {
+        let lines = two_lines();
+        assert_eq!(ink_edge(&lines, 0.0), (0, 0.0));
+        assert_eq!(ink_edge(&lines, 60.0), (0, 60.0));
+        assert_eq!(ink_edge(&lines, 100.0), (0, 100.0), "the end of line one");
+        assert_eq!(ink_edge(&lines, 130.0), (1, 30.0));
+        assert_eq!(ink_edge(&lines, 999.0), (1, 60.0), "never past the end");
+        assert_eq!(ink_edge(&[], 10.0), (0, 0.0));
+    }
+
+    #[test]
+    fn the_clip_shows_finished_lines_whole_and_the_current_one_to_the_nib() {
+        let lines = two_lines();
+        // Halfway along line two: line one whole (0..24 down), line two to 30px.
+        let clip = ink_clip(&lines, 1, 30.0);
+        assert_eq!(
+            clip,
+            "polygon(0px -2.0px, 102.0px -2.0px, 102.0px 24.0px, 30.0px 24.0px, \
+             30.0px 46.0px, 0px 46.0px)"
+        );
+        // Nothing written yet: the polygon has no width at the nib's line.
+        assert!(ink_clip(&lines, 0, 0.0).contains("0.0px -2.0px, 0.0px 22.0px"));
+        assert_eq!(ink_clip(&[], 0, 0.0), "none");
+    }
+
+    #[test]
+    fn interrupted_he_stops_and_goes_back_when_he_can() {
+        // Writing, and the row on screen.
+        assert_eq!(beat(&State::WritingRow, true, true, 0), Beat::Write);
+        // Picked up, or typing at the caret, or dazed: the ink waits.
+        for busy in [
+            State::Dragging,
+            State::WritingCaret,
+            State::Dazed,
+            State::Flying,
+        ] {
+            assert_eq!(beat(&busy, true, true, 0), Beat::Hold, "{busy:?}");
+        }
+        // The row scrolled away under him: he goes home rather than off screen.
+        assert_eq!(beat(&State::WritingRow, false, true, 0), Beat::FlyHome);
+        // Home, and the row is back in view: he goes back to it.
+        assert_eq!(beat(&State::Home, true, true, 0), Beat::FlyBack);
+        assert_eq!(beat(&State::Home, false, true, 0), Beat::Hold);
+    }
+
+    #[test]
+    fn a_row_gone_or_waited_long_enough_simply_appears() {
+        assert_eq!(beat(&State::WritingRow, true, false, 0), Beat::Finish);
+        assert_eq!(
+            beat(&State::Dragging, true, true, WRITE_HOLD_MAX_MS),
+            Beat::Finish
         );
     }
 
