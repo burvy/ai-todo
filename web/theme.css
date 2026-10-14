@@ -192,6 +192,10 @@ body {
   background-color: var(--paper);
   background-image: var(--texture-paper);
   background-repeat: repeat;
+  /* Paper, not a web page: see the selection rules near the end of the file. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 h1,
@@ -426,11 +430,6 @@ input[type="radio"] {
 
 a {
   color: var(--accent);
-}
-
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 /* The active tab or filter: underlined in golden brown, like a marked word. */
@@ -1680,14 +1679,13 @@ a {
   }
 }
 /* Section 4 row delete (Angela): hover mark on desktop, faint x + swipe right on phone */
-li.task-row { position: relative; }
 /* The row answers three gestures from one finger - a tap, a hold that picks it
    up to reorder, and a swipe right that crosses it out - so the browser must
    not claim the pan itself. `pan-y` keeps a slide up or down scrolling the
    list, which is what a finger that slides is almost always doing, and leaves
    the row the horizontal travel it needs for a swipe. Once the hold has lifted
    the row the handlers call preventDefault, so a drag is a drag. */
-li.task-row { touch-action: pan-y; }
+li.task-row { position: relative; touch-action: pan-y; }
 li.task-row.row-lifted { z-index: 2; position: relative; box-shadow: 0 10px 22px -12px rgba(0,0,0,.45); background: var(--parchment, #f6efdd); touch-action: none; }
 li.task-row.row-swiping { transition: transform .18s ease-out; }
 .delete-mark { opacity: 0; pointer-events: none; transition: opacity .15s ease; position: absolute; right: .4em; top: 50%; transform: translateY(-50%); font-size: .7rem; line-height: 1; padding: .1em .25rem; border: none; background: transparent; color: var(--ink-soft, #5D4732); cursor: pointer; }
@@ -1737,11 +1735,6 @@ li.task-row:hover .delete-mark, li.task-row:focus-within .delete-mark { opacity:
    type into stays selectable. Keyboard focus keeps an ink ring. */
 html {
   -webkit-tap-highlight-color: transparent;
-}
-body {
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-touch-callout: none;
 }
 input,
 textarea,

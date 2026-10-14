@@ -12,14 +12,14 @@ b. Type text in the box labelled "Ramble" and tap the nest (Rambo's dish) at its
 c. While the box is empty, Rambo whispers a short prompt in it ("Ramble on…", "What's on
 today?", …); the line rotates every ~6 s with a soft fade, and with reduced motion it stays
 on one line with no fade.
-d. Code: `web/src/lib.rs:CaptureBox, WHISPER_PROMPTS, schedule_whisper`; `web/src/api.rs:capture_text, create_task`;
+d. Code: `web/src/capture.rs:CaptureBox, WHISPER_PROMPTS, schedule_whisper`; `web/src/api.rs:capture_text, create_task`;
 `crates/capture/src/pipeline.rs:capture_text, clean_title`.
 
 ### 2. Capture from speech
 a. Picking Rambo up starts speech recognition when the browser supports it; there is no mic button.
 b. Grab Rambo ("Grab Rambo to listen") and speak; the transcription appears in the capture box
 and can be submitted as a task.
-c. Code: `web/src/lib.rs:CaptureBox`; `web/src/speech.rs:Session, supported`;
+c. Code: `web/src/capture.rs:CaptureBox`; `web/src/speech.rs:Session, supported`;
 `web/src/api.rs:capture_text`.
 
 ### 3. Capture in the user's time zone
@@ -56,14 +56,14 @@ c. Code: `crates/judge/src/fake.rs:FakeJudge`;
 ### 1. Shared task list
 a. The page lists every task with its status, label, priority, duration and planned time.
 b. Open the **Tasks** panel.
-c. Code: `web/src/lib.rs:TaskList, load_snapshot_from_api`; `web/src/api.rs:fetch_snapshot`.
+c. Code: `web/src/tasks/mod.rs:TaskList`; `web/src/lib.rs:load_snapshot_from_api`; `web/src/api.rs:fetch_snapshot`.
 
 ### 2. Add, complete and delete
 a. Tasks can be added from the capture box, marked done, and deleted; each change
 refreshes the complete snapshot. An edit made from a stale copy of a task (it changed on another
 device since this page loaded it) is refused with `409 stale_update`; the page keeps what the server has.
 b. Type a task and press **Add**; use the task row's controls to finish or delete it.
-c. Code: `web/src/lib.rs:CaptureBox, TaskList`;
+c. Code: `web/src/capture.rs:CaptureBox`; `web/src/tasks/mod.rs:TaskList`;
 `web/src/api.rs:create_task, patch_task, delete_task`;
 `server/src/v2/http.rs:create, update, remove`.
 
@@ -90,7 +90,7 @@ on one does nothing (occurrences share the series' row, not a slot of their own 
 ARCHITECTURE.md 7.1 lists reordering them as out of scope). A slip dropped where
 no row is goes to the end.
 g. Code: `web/src/row.rs` (the gesture rules, unit-tested) and its `dom` module
-(pointer events); `web/src/lib.rs:reorder_ids`, the row's handlers;
+(pointer events); `web/src/tasks/mod.rs:reorder_ids`, the row's handlers;
 `web/src/api.rs:reorder_tasks`; `server/src/v2/http.rs:reorder`;
 `server/src/v2/app.rs:reorder`.
 
@@ -98,13 +98,13 @@ g. Code: `web/src/row.rs` (the gesture rules, unit-tested) and its `dom` module
 a. Dropping Rambo on a task offers actions; the built actions can change priority,
 toggle completion, or delete the task.
 b. Drag Rambo onto a task, then choose **Edit**, **Done**, or **Delete**.
-c. Code: `web/src/lib.rs:Rambo`; `web/src/api.rs:patch_task, delete_task`.
+c. Code: `web/src/rambo.rs:Rambo`; `web/src/api.rs:patch_task, delete_task`.
 
 ### 5. Labels and priorities
 a. Tasks carry one of six labels and one of four priorities.
 b. Inspect a task in the list or use the capture result. Use the label buttons above the
 list to filter tasks; the selected filter is remembered in the browser.
-c. Code: `web/src/lib.rs:TaskList, label_name, load_label_filter, save_label_filter`;
+c. Code: `web/src/tasks/mod.rs:TaskList, label_name, load_label_filter, save_label_filter`;
 `crates/core/src/lib.rs:Label, Priority, Task`;
 `crates/judge/src/fake.rs:label_for`; `server/src/v2/store.rs:label_to_stored, priority_to_stored`.
 
@@ -119,7 +119,7 @@ a. A `DueBy` deadline remembers the zone it was set in (`due_tz`), so a deadline
 b. Open a task whose due date was set in another zone: the edit box still shows the original zone's time, names the zone next to the date field, and saving keeps the same instant. A deadline typed into the dialog is read as that zone's wall clock; a repeated fall-back hour resolves to its first occurrence. A clock time inside a spring-forward gap names no instant, so saving shows a short inline message and leaves the dialog open instead of doing nothing.
 c. Code: `crates/core/src/lib.rs:Task::due_tz, When::DueBy`;
 `server/src/v2/app.rs:due_zone, set_when, patch, apply_revision`;
-`web/src/lib.rs:due_display, parse_edited_due, parse_due_input, typed_when`.
+`web/src/tasks/fields.rs:due_display, parse_edited_due, parse_due_input, typed_when`.
 
 ## III. WEEK PLANNER
 
@@ -168,24 +168,24 @@ c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics: `web/assets/theme/pap
 ### 1. Talk button
 a. The pen beside the capture box is Rambo's send and talk control.
 b. Click the pen to send or press and hold it to show the listening state.
-c. Code: `web/src/lib.rs:CaptureBox, Rambo`; `web/src/mascot.rs:State, Event, transition`.
+c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:State, Event, transition`.
 
 ### 2. Drag, fall and return
 a. Rambo can be dragged; when dropped away from a target he falls and returns home.
 b. Drag the pen to empty space and release it.
-c. Code: `web/src/lib.rs:Rambo`; `web/src/mascot.rs:transition`;
+c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:transition`;
 `web/index.html`.
 
 ### 3. Drop actions
 a. Dropping Rambo on a task opens a prompt with Edit, Move, Done, Delete and
-Never mind actions. Edit opens the task dialog (`<dialog class="task-dialog">` in `web/src/lib.rs`).
+Never mind actions. Edit opens the task dialog (`<dialog class="task-dialog">` in `web/src/tasks/mod.rs`).
 b. Drag the pen onto a task row and choose an action.
-c. Code: `web/src/lib.rs:Rambo`; `web/src/api.rs:patch_task, delete_task`.
+c. Code: `web/src/rambo.rs:Rambo`; `web/src/api.rs:patch_task, delete_task`.
 
 ### 4. Reduced motion
 a. With reduced motion enabled, Rambo returns immediately instead of animating.
 b. Enable reduced motion in the operating system and drag Rambo away from home.
-c. Code: `web/src/mascot.rs:prefers_reduced_motion`; `web/src/lib.rs:Rambo`.
+c. Code: `web/src/mascot.rs:prefers_reduced_motion`; `web/src/rambo.rs:Rambo`.
 
 ### 5. Mascot brain
 a. The mascot crate provides deterministic, seeded behaviour without web code; it is
@@ -232,7 +232,7 @@ c. Code: `server/src/v2/ics_import.rs`.
 ### 4. Edit imported-event tasks
 a. Imported calendar tasks can be edited locally without changing the source calendar.
 b. Choose **Edit** on an imported task; the editor warns that changes will not sync back.
-c. Code: `web/src/lib.rs:TaskList` and the `.calendar-notice` element in the edit
+c. Code: `web/src/tasks/mod.rs:TaskList` and the `.calendar-notice` element in the edit
 dialog; `crates/core/src/lib.rs:Source`.
 
 ### 5. Export the plan
@@ -280,7 +280,7 @@ b. Add tasks in sequence, then inspect the list and a task whose due time has pa
 c. Code: `server/src/v2/app.rs:create, import, add_drafts` (new task order, newest first),
 `server/src/v2/app.rs:sort_tasks`;
 `crates/scheduler/src/lib.rs:plan` (overdue detection and priority placement);
-`web/src/lib.rs:is_overdue, TaskList` (overdue badge);
+`web/src/tasks/mod.rs:is_overdue, TaskList` (overdue badge);
 `web/src/brain.rs:142` (emits `TaskOverdue`);
 `crates/rambl-brain/src/lib.rs:Event::TaskOverdue`;
 `crates/rambl-brain/content/lines.toml` (overdue teasing lines).

@@ -6,7 +6,7 @@
 //! a tap that becomes a drag throws the user's list around, a hold that stays
 //! a tap never reorders anything — so every decision is a pure function of the
 //! pointer's travel and how long it has been down, and all of it is unit
-//! tested. Only the DOM side that feeds these numbers in lives in `lib.rs`.
+//! tested. Only the DOM side that feeds these numbers in lives in `tasks/mod.rs`.
 
 /// How long a finger stays down before the row is picked up. Long enough that
 /// nobody picks a row up by accident while scrolling or by resting a thumb on
