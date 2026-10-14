@@ -83,9 +83,11 @@
   /* One hour of the week planner, in CSS pixels. week.rs places the now-line
      with the same number, so change both together. */
   --hour-h: 64px;
-  --capture-clear: calc(56px + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px)); /* what a phone's fixed capture bar covers at the bottom */
+  --nest-size: 56px; /* the nest, and so the capture bar's height on a phone (`.nest`) */
+  /* What a phone's fixed capture bar covers at the bottom: the nest, the bar's padding and rule, and the home-indicator inset. */
+  --capture-clear: calc(var(--nest-size) + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
   --page-foot-h: 2rem; /* the note at a phone page's foot */
-  --page-top: calc(var(--gutter) + var(--space-2) + var(--space-4)); /* what lies above a phone's pages */
+  --page-top: var(--gutter); /* what lies above a phone's pages: the body's own padding */
 
   /* Layers, lowest to highest: the one scale every z-index reads (docs/FRONTEND-PLAN.md
      1.5). Rambo and his bubbles sit under the gear menu and the edit sheet (which is a
@@ -227,8 +229,8 @@ body {
   max-width: 1100px;
   margin: 0 auto;
   padding: var(--gutter);
-  /* Room for the fixed capture bar (56px nest + 2× padding + border), plus the phone's home-indicator inset. */
-  padding-bottom: calc(56px + 2 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
+  /* Room for the fixed capture bar (nest + 2× padding + border), plus the phone's home-indicator inset. */
+  padding-bottom: calc(var(--nest-size) + 2 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
   color: var(--ink);
   font: var(--text-base) / 1.55 var(--font-body);
   background-color: var(--paper);
@@ -265,8 +267,6 @@ h3 {
 
 .capture-slot {
   position: relative;
-  margin-bottom: var(--space-4);
-  padding-top: var(--space-2);
 }
 
 /* --- Layout: the two panes sit side by side in a scroll-snap row on a phone --- */
@@ -750,10 +750,10 @@ li.task-row:focus-within .delete-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 56px;
-  height: 56px;
-  min-width: 56px;
-  min-height: 56px;
+  width: var(--nest-size);
+  height: var(--nest-size);
+  min-width: var(--nest-size);
+  min-height: var(--nest-size);
   padding: 0;
   background: transparent;
   border: none;
@@ -1512,9 +1512,9 @@ li.task-row:focus-within .delete-mark {
 }
 
 /* The note at the foot of a phone page, in the hand. It is part of the page, so it turns
-   with it; each page is as tall as the screen above the capture bar so the note sits at
-   that foot, and the page's own content stops short of it. A desk shows both pages and
-   hides it. */
+   with it.
+   Each page is as tall as the screen above the capture bar, so the note sits at that foot,
+   and the page's own content stops short of it. A desk shows both pages and hides it. */
 @media (max-width: 700px) {
   main > * {
     box-sizing: border-box;
@@ -1693,11 +1693,17 @@ li.task-row:focus-within .delete-mark {
   color: var(--ink-faint);
 }
 
-/* --- Wide screens: two panes, capture in the masthead --- */
+/* --- Wide screens: two panes, the capture bar at the top of the page --- */
 
 @media (min-width: 701px) {
   body {
     padding-bottom: var(--gutter);
+  }
+
+  /* The bar is in the page's flow on a desk; on a phone it is fixed and its slot is empty. */
+  .capture-slot {
+    margin-bottom: var(--space-4);
+    padding-top: var(--space-2);
   }
 
   main {
@@ -1727,7 +1733,7 @@ li.task-row:focus-within .delete-mark {
   }
 
   .capture {
-    /* The capture bar sits in the header on a wide desk, so it has to stay a
+    /* The capture bar sits at the top of the page on a wide desk, so it has to stay a
        positioning context for Rambo, who is anchored to its right edge. */
     position: relative;
     padding: 0;
