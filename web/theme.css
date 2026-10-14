@@ -21,6 +21,13 @@
   --ink-soft: #75604a;
   --ink-faint: #6e5a43;
 
+  /* Rambo's inks, one per tool in the gear menu: a row he writes with a
+     quill is brown, with a ballpoint blue, with a marker heavy black. */
+  --ink-pencil: #4a4034;
+  --ink-ballpoint: #2f4f7a;
+  --ink-quill: #6b4a2a;
+  --ink-marker: #1d1b18;
+
   --rule: color-mix(in srgb, var(--chamoisee) 42%, transparent);
   --rule-strong: color-mix(in srgb, var(--chamoisee) 62%, transparent);
   --margin-line: rgba(165, 52, 42, 0.24);
@@ -99,6 +106,11 @@
     --ink-soft: #c9b693;
     --ink-faint: #b3a17e;
 
+    --ink-pencil: #d8cbb4;
+    --ink-ballpoint: #9fc0e8;
+    --ink-quill: #d9a45c;
+    --ink-marker: #f6ecd8;
+
     --rule: rgba(167, 134, 93, 0.3);
     --rule-strong: rgba(167, 134, 93, 0.46);
     --margin-line: rgba(224, 112, 95, 0.26);
@@ -125,6 +137,11 @@
 
   --ink-soft: #c9b693;
   --ink-faint: #b3a17e;
+
+  --ink-pencil: #d8cbb4;
+  --ink-ballpoint: #9fc0e8;
+  --ink-quill: #d9a45c;
+  --ink-marker: #f6ecd8;
 
   --rule: rgba(167, 134, 93, 0.3);
   --rule-strong: rgba(167, 134, 93, 0.46);
@@ -1442,7 +1459,12 @@ a {
 
 /* Pen writing row animation: the title reveals left to right. The reveal is
    a clip-path wipe, not a shrinking box: a long title wraps onto the next
-   ruled line both while Rambo is writing and after he is done. */
+   ruled line both while Rambo is writing and after he is done.
+
+   On a title that fits one ruled line the view layer drives that clip itself,
+   one frame at a time, so the nib sits exactly at the edge of the ink. A
+   title that wraps is left to this transition: there is more than one line
+   box to wipe and the pen cannot trace across both. */
 .pen-title {
   clip-path: inset(0 0 0 0);
   transition: clip-path 0.6s linear;
@@ -1457,6 +1479,14 @@ a {
   clip-path: inset(0 0 0 0);
 }
 
+/* Per-tool ink: the gear menu's `data-pen` names the tool Rambo is holding and
+   the row he is writing carries it as a class, so a quill writes in a brown
+   ink and a marker in a heavy one. Anything unrecognised keeps --ink. */
+.pen-writing.pencil .pen-title { color: var(--ink-pencil); }
+.pen-writing.ballpoint .pen-title { color: var(--ink-ballpoint); }
+.pen-writing.quill .pen-title { color: var(--ink-quill); }
+.pen-writing.marker .pen-title { color: var(--ink-marker); font-weight: 700; }
+.pen-writing.fountain-pen .pen-title { color: var(--ink); }
 
 .pen-underline {
   display: none;
@@ -1464,6 +1494,47 @@ a {
 
 .pen-writing .pen-underline {
   display: inline-block;
+}
+
+/* Scribbling a row out: the title is struck through, then Ping's ink cloud
+   closes over it. The row sets `--scribble-ms` from pen::scribble_ms, so a
+   long title is crossed out for as long as the pen needs. */
+.scribbling {
+  position: relative;
+  pointer-events: none;
+}
+
+.scribbling .pen-title {
+  text-decoration: line-through;
+  text-decoration-color: var(--now);
+  text-decoration-thickness: 2px;
+  opacity: 0.6;
+  animation: scribble-out var(--scribble-ms, 420ms) ease-in forwards;
+}
+
+.scribbling .pen-underline {
+  display: inline-block;
+  animation: scribble-out var(--scribble-ms, 420ms) ease-in forwards;
+}
+
+.scribbling::after {
+  content: "";
+  position: absolute;
+  inset: -0.2em -0.4em;
+  background: url("assets/rambo/fx/scribble-cloud.svg") center / contain no-repeat;
+  animation: scribble-cloud var(--scribble-ms, 420ms) ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes scribble-out {
+  from { opacity: 1; }
+  to { opacity: 0.25; }
+}
+
+@keyframes scribble-cloud {
+  0% { opacity: 0; transform: scale(0.7) rotate(-4deg); }
+  70% { opacity: 0.95; transform: scale(1.02) rotate(1deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1486,6 +1557,14 @@ a {
 
   .pen-underline {
     display: none !important;
+  }
+
+  /* No cloud and no fade: the row is already on its way out, and Rambo does
+     not scribble when motion is off. */
+  .scribbling::after,
+  .scribbling .pen-title,
+  .scribbling .pen-underline {
+    animation: none;
   }
 }
 /* Section 4 row delete (Angela): hover mark on desktop, faint x + swipe right on phone */
