@@ -54,9 +54,6 @@ pub(crate) fn Rambo(
     let squash = RwSignal::new(0.0_f64);
     // The face he makes in the beat before he sets off (`mascot::notice`).
     let noticing = RwSignal::new(None::<mascot::Pose>);
-    // His pose on top of where he is: lean, size, sink, the writing pose
-    // (`engine::look`). With `shown`, his button's only transform.
-    let look = RwSignal::new(crate::engine::Look::PLAIN);
     // At home he sits on the nest wherever the page has carried it. He is a
     // fixed layer and the nest is not, so every time the page moves he
     // measures it again.
@@ -158,6 +155,9 @@ pub(crate) fn Rambo(
     let world = std::rc::Rc::new(std::cell::RefCell::new(crate::engine::World::new(
         pen_pos.get_untracked(),
     )));
+    // His pose on top of where he is: lean, size, sink, the writing pose
+    // (`engine::look`). With `shown`, his button's only transform.
+    let look = RwSignal::new(world.borrow().look());
     let ticking = std::rc::Rc::new(std::cell::Cell::new(false));
     let wake = move || {
         if ticking.replace(true) {

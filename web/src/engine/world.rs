@@ -199,8 +199,8 @@ impl World {
                 settling: false,
                 settled_home: true,
                 draw: Draw::at(home),
-                look_from: Look::PLAIN,
-                look: Look::PLAIN,
+                look_from: look::pose(&State::Home, (0.0, 0.0), 0.0, false),
+                look: look::pose(&State::Home, (0.0, 0.0), 0.0, false),
             },
             now: 0.0,
         }
@@ -469,6 +469,7 @@ mod tests {
     #[test]
     fn settled_at_home_he_moves_with_the_nest_exactly_and_never_hops() {
         let mut world = World::new(NEST);
+        assert_eq!(world.look().sink, 1.0, "sunk in the nest from the start");
         let scrolled = Anchors {
             nest: (340.0, 700.0),
             ..anchors((0.0, 0.0))
