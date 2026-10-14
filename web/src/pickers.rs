@@ -12,6 +12,7 @@
 //! dialog around it). On the time page Tab walks hours, minutes, am/pm.
 
 use chrono::{Datelike, Duration, Months, NaiveDate, NaiveTime, Weekday};
+use leptos::ev;
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;
 
@@ -142,6 +143,16 @@ fn closes_on_focus_leave(to_inside: bool, inside_is_busy: bool) -> bool {
     !to_inside && !inside_is_busy
 }
 
+/// Removes the window listeners that end a press, if the picker holds any.
+fn remove_release_listeners(
+    release: StoredValue<Option<(WindowListenerHandle, WindowListenerHandle)>>,
+) {
+    if let Some((up, cancel)) = release.try_update_value(Option::take).flatten() {
+        up.remove();
+        cancel.remove();
+    }
+}
+
 /// A handwritten field that opens `page` beneath it. Escape or leaving the field
 /// closes it; `on_open` runs as it opens (to place the cursor).
 #[component]
@@ -159,6 +170,18 @@ fn PaperField(
     // A press inside the picker is under way: some browsers (touch ones, Safari) do not
     // focus a tapped button, so the focus leaves for nothing and must not close it.
     let pressing = RwSignal::new(false);
+    // A press released outside the picker never reaches its own pointerup, so the window
+    // ends it instead. The listeners live only while the page is open.
+    let release = StoredValue::new(None::<(WindowListenerHandle, WindowListenerHandle)>);
+    Effect::new(move |_| {
+        remove_release_listeners(release);
+        if open.get() {
+            let up = window_event_listener(ev::pointerup, move |_| pressing.set(false));
+            let cancel = window_event_listener(ev::pointercancel, move |_| pressing.set(false));
+            release.set_value(Some((up, cancel)));
+        }
+    });
+    on_cleanup(move || remove_release_listeners(release));
     // Closing from the page (a pick, Done, Escape) drops the focus with the page it
     // sat on; hand it back to the field. Focus that already moved elsewhere stays.
     Effect::new(move |was_open: Option<bool>| {
