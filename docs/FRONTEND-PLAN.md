@@ -116,6 +116,7 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
 ### Rules for every ticket
 
 - **Design PRs carry pictures.** Any PR that changes what the page looks like gets before and after screenshots from the test site attached to it. GLM builders cannot take them, so Emilio or Antonio adds them during review. After the merge, god lists the PR in the hive's `REVIEW-QUEUE.md` for the owner.
+- **Claude agents use the design skills.** A Claude agent on an FE ticket invokes `/emil-design-eng` for motion, timing, easing and gestures, `/frontend-design` for anything visible, and `/color-expert` for paper and ink colours in light and dark. The reviewer uses the same skills.
 - Read `AGENTS.md`, then only the files the ticket lists. Touch only those files. If the work needs another file, stop and ask god.
 - Own worktree and branch: `git worktree add ../ai-todo-wt/<you>-<ticket> origin/main -b <you>/<ticket>`.
 - One PR per ticket. The title starts with the ticket id, for example `FE-3: one breakpoint, folded rules`.
