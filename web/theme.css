@@ -83,14 +83,14 @@
   /* One hour of the week planner, in CSS pixels. week.rs places the now-line
      with the same number, so change both together. */
   --hour-h: 64px;
-  --nest-size: 56px; /* the nest, and so the capture bar's height on a phone (`.nest`) */
-  /* The nest's drawing, two layers in one frame (web/assets/nest/ABOUT.md): its size,
-     and the point of the frame that sits on the nest's centre. */
-  --nest-art-w: 200px;
-  --nest-art-h: 118px;
-  --nest-anchor-x: 50%;
-  --nest-anchor-y: 40%;
-  --nest-sink: 4px; /* how far below the nest's centre he rests: down in the bowl */
+  --nest-size: 56px; /* the capture bar's height on a phone, inside its padding */
+  /* The nest is one box: the `.nest` button, square-ish, in the bottom-right corner of the
+     bar and wholly on screen. Its back layer, its front rim and Rambo's home are all read
+     from that box (web/assets/nest/ABOUT.md), so they cannot drift apart. The box is as
+     tall as the bar, rule to screen edge. */
+  --nest-w: 104px;
+  --nest-h: calc(var(--nest-size) + 2 * var(--space-2) + env(safe-area-inset-bottom, 0px));
+  --nest-sink: 4px; /* how far below his rest point he sits: down in the bowl */
   /* What a phone's fixed capture bar covers at the bottom: the nest, the bar's padding and rule, and the home-indicator inset. */
   --capture-clear: calc(var(--nest-size) + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
   --page-foot-h: 2rem; /* the note at a phone page's foot */
@@ -798,10 +798,12 @@ li.task-row:focus-within .delete-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--nest-size);
-  height: var(--nest-size);
-  min-width: var(--nest-size);
-  min-height: var(--nest-size);
+  width: var(--nest-w);
+  height: var(--nest-h);
+  min-width: var(--nest-w);
+  min-height: var(--nest-h);
+  /* The box fills the bar's padding at its right and bottom: it reaches the screen's corner. */
+  margin: calc(-1 * var(--space-2)) calc(-1 * var(--gutter)) calc(-1 * var(--space-2) - env(safe-area-inset-bottom, 0px)) 0;
   padding: 0;
   background: transparent;
   border: none;
@@ -810,14 +812,11 @@ li.task-row:focus-within .delete-mark {
   flex-shrink: 0;
 }
 
-/* Both layers share one frame, anchored on the nest's centre with `translate`, so
-   `transform` stays free to sag and rock them about their base. They are drawn on
-   the furniture, so they stay put when Rambo is carried off: he is only the pen. */
+/* Both layers fill the nest's box, and `transform` stays free to sag and rock them about
+   their base. They are drawn on the furniture, so they stay put when Rambo is carried off:
+   he is only the pen. */
 .nest::before,
 .nest-rim {
-  width: var(--nest-art-w);
-  height: var(--nest-art-h);
-  translate: calc(-1 * var(--nest-anchor-x)) calc(-1 * var(--nest-anchor-y));
   transform-origin: 50% 100%;
   background: center / 100% 100% no-repeat;
   pointer-events: none;
@@ -827,17 +826,15 @@ li.task-row:focus-within .delete-mark {
 .nest::before {
   content: "";
   position: absolute;
-  left: 50%;
-  top: 50%;
+  inset: 0;
   z-index: var(--layer-behind);
   background-image: url("assets/nest/back.svg");
 }
 
-/* A fixed layer like Rambo, placed on the nest's centre as he measures it. */
+/* A fixed layer like Rambo, set on the nest's box as he measures it (left, top, width,
+   height come from the same rectangle his home does). */
 .nest-rim {
   position: fixed;
-  left: var(--nest-x);
-  top: var(--nest-y);
   z-index: var(--layer-nest-rim);
   background-image: url("assets/nest/rim.svg");
 }
@@ -1626,37 +1623,56 @@ li.task-row:focus-within .delete-mark {
     --page-top: 0px;
   }
 
+  /* The screen is the page and the capture bar: the document never scrolls. Each page is
+     exactly the screen above the bar, and a long list scrolls inside its page. */
+  html,
   body {
-    padding-top: 0;
-    padding-left: 0;
-    padding-right: 0;
+    overflow: hidden;
+  }
+
+  body {
+    height: 100dvh;
+    padding: 0;
+  }
+
+  main {
+    height: calc(100dvh - var(--capture-clear));
   }
 
   main > * {
     position: relative;
     box-sizing: border-box;
-    align-content: start;
-    min-height: calc(100dvh - var(--page-top) - var(--capture-clear));
+    height: 100%;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
     padding-top: calc(var(--gutter) + env(safe-area-inset-top, 0px));
     padding-right: calc(var(--gutter) + env(safe-area-inset-right, 0px));
-    padding-bottom: var(--page-foot-h);
+    padding-bottom: 0;
     padding-left: calc(var(--gutter) + env(safe-area-inset-left, 0px));
+  }
+
+  /* A column, so the page's foot note can rest at the screen's foot when the list is short. */
+  main > .tasks-pane,
+  main > .planner-page {
+    display: flex;
+    flex-direction: column;
+  }
+
+  main > * > * {
+    flex: none;
   }
 }
 
-/* The note stays at the foot of the screen while the page is in view, and rests at the
-   page's own foot at its end: a rail as tall as the page, the note sticking inside it. */
+/* The note stays at the foot of the screen whatever the list's length: the last thing in the
+   page, sticking to the bottom of the page's own scroll. */
 .page-foot-rail {
-  position: absolute;
-  top: 0;
+  position: sticky;
   bottom: 0;
-  left: 0;
+  margin-top: auto;
   pointer-events: none;
 }
 
 .page-foot {
-  position: sticky;
-  top: calc(100dvh - var(--capture-clear) - var(--page-foot-h));
   pointer-events: auto;
   /* Paper under the words, so a row that runs behind the note does not show through. */
   background-color: color-mix(in srgb, var(--paper) 94%, transparent);
@@ -1892,17 +1908,19 @@ li.task-row:focus-within .delete-mark {
     min-height: 80dvh;
   }
 
-  /* Nest and Rambo are larger on desktop. Spec: docs/DESIGN-DIRECTION.md §2 */
+  /* Nest and Rambo are larger on desktop. Spec: docs/DESIGN-DIRECTION.md §2. The bar is a
+     line in the page there, so the nest's box sits at its right end, not in a corner. */
   :root {
-    --nest-art-w: 180px;
-    --nest-art-h: 106px;
+    --nest-w: 112px;
+    --nest-h: 96px;
+  }
+
+  .capture {
+    align-items: center;
   }
 
   .nest {
-    width: 64px;
-    height: 64px;
-    min-width: 64px;
-    min-height: 64px;
+    margin: 0;
   }
 
   .rambo {

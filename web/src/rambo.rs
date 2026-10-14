@@ -56,10 +56,11 @@ pub(crate) fn Rambo(
     // At home he sits on the nest wherever the page has carried it. He is a
     // fixed layer and the nest is not, so every time the page moves he
     // measures it again.
-    let nest_at = RwSignal::new(None::<(f64, f64)>);
+    let nest_at = RwSignal::new(None::<(f64, f64, f64, f64)>);
     let follow_nest = move || {
-        let nest = nest_centre(nest_ref);
+        let nest = nest_box(nest_ref);
         nest_at.set(nest);
+        let nest = nest.map(mascot::nest_home);
         if matches!(
             state.get_untracked(),
             mascot::State::Home | mascot::State::Skittering
@@ -98,9 +99,9 @@ pub(crate) fn Rambo(
     // (`mascot::hops_there`). Home and on the run home his spot is the nest, read
     // where it is now: the page may have carried it since anyone last looked.
     let spot = move |state: &mascot::State| match state {
-        mascot::State::Home | mascot::State::Skittering => {
-            nest_centre(nest_ref).unwrap_or_else(|| pen_pos.get_untracked())
-        }
+        mascot::State::Home | mascot::State::Skittering => nest_box(nest_ref)
+            .map(mascot::nest_home)
+            .unwrap_or_else(|| pen_pos.get_untracked()),
         _ => pen_pos.get_untracked(),
     };
     let run = std::rc::Rc::new(std::cell::RefCell::new(None::<IntervalHandle>));
@@ -170,7 +171,7 @@ pub(crate) fn Rambo(
             &state.get_untracked(),
             mascot::Event::Return,
         ));
-        if nest_centre(nest_ref).is_none() {
+        if nest_box(nest_ref).is_none() {
             set_state.set(mascot::transition(
                 &state.get_untracked(),
                 mascot::Event::Return,
@@ -691,13 +692,15 @@ pub(crate) fn Rambo(
             </span>
         </button>
         // The nest's front rim, over his tip: a layer of its own above him, on the
-        // nest wherever the page has carried it. Its back is drawn on the nest.
+        // nest's box wherever the page has carried it. Its back is drawn on the nest.
         <span
             class="nest-rim"
             aria-hidden="true"
             style:display=move || nest_at.get().is_none().then_some("none")
-            style:--nest-x=move || format!("{:.1}px", nest_at.get().unwrap_or_default().0)
-            style:--nest-y=move || format!("{:.1}px", nest_at.get().unwrap_or_default().1)
+            style:left=move || format!("{:.1}px", nest_at.get().unwrap_or_default().0)
+            style:top=move || format!("{:.1}px", nest_at.get().unwrap_or_default().1)
+            style:width=move || format!("{:.1}px", nest_at.get().unwrap_or_default().2)
+            style:height=move || format!("{:.1}px", nest_at.get().unwrap_or_default().3)
         ></span>
     }
 }
@@ -730,13 +733,11 @@ fn send_heard_edit(
     });
 }
 
-/// The middle of the nest on screen, where he sits at home.
-fn nest_centre(nest_ref: NodeRef<leptos::html::Button>) -> Option<(f64, f64)> {
+/// The nest's box on screen, `(left, top, width, height)`: the one measurement his home
+/// and the nest's front rim come from.
+pub(crate) fn nest_box(nest_ref: NodeRef<leptos::html::Button>) -> Option<(f64, f64, f64, f64)> {
     let rect = nest_ref.get()?.get_bounding_client_rect();
-    Some((
-        rect.left() + rect.width() / 2.0,
-        rect.top() + rect.height() / 2.0,
-    ))
+    Some((rect.left(), rect.top(), rect.width(), rect.height()))
 }
 
 /// Calls `moved` whenever the page may have shifted under a fixed layer: any

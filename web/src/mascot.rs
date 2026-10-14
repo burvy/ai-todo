@@ -188,6 +188,15 @@ pub fn put_back(before: &State, after: &State) -> bool {
     matches!(before, State::Dazed | State::Inking) && *after == State::Home
 }
 
+/// Where he rests in a nest whose box is `(left, top, width, height)`: the one point every
+/// place that sends him home agrees on.
+pub fn nest_home((left, top, width, height): (f64, f64, f64, f64)) -> (f64, f64) {
+    (
+        left + width * crate::tuning::NEST_HOME.0,
+        top + height * crate::tuning::NEST_HOME.1,
+    )
+}
+
 /// Whether a drop at `point` puts him back in the nest whose box is
 /// `(left, top, right, bottom)`: on the dish, or near enough that a hand
 /// aiming for it would call it in.
@@ -559,6 +568,27 @@ mod tests {
         assert!(over_nest((100.0 - NEST_SLACK_PX, 170.0), nest));
         assert!(!over_nest((100.0 - NEST_SLACK_PX - 1.0, 132.0), nest));
         assert!(!over_nest((132.0, 300.0), nest));
+    }
+
+    #[test]
+    fn he_rests_inside_the_nest_box_whatever_its_size_or_place() {
+        for (left, top, width, height) in [
+            (286.0, 771.0, 104.0, 73.0),
+            (1100.0, 24.0, 112.0, 96.0),
+            (0.0, 0.0, 60.0, 50.0),
+        ] {
+            let (x, y) = nest_home((left, top, width, height));
+            assert!((left..=left + width).contains(&x), "inside across");
+            assert!((top..=top + height).contains(&y), "inside down");
+            assert!(
+                (x - (left + width / 2.0)).abs() < 1e-9,
+                "in the middle across"
+            );
+            assert!(
+                y < top + height / 2.0,
+                "a little above the middle of the box"
+            );
+        }
     }
 
     #[test]
