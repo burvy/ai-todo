@@ -2862,6 +2862,168 @@ mod tests {
         assert_eq!(store.record_anon_issued("203.0.113.2", day).unwrap(), 1);
     }
 
+    /// Sessions, plans, account lookups, user blocks, spend rankings and account
+    /// deletion: the calls sign-in, the admin console and usage pages make.
+    fn accounts_sessions_and_rankings(store: &dyn Store) {
+        use super::super::auth::{Me, Plan};
+        let me = |id: &str, plan: Plan| Me {
+            id: id.to_owned(),
+            email: format!("{id}@example.com"),
+            name: id.to_owned(),
+            picture: None,
+            plan,
+        };
+        let expires = at(23);
+        store
+            .upsert_user_and_session(&me(USER, Plan::Free), "tok-alice", expires)
+            .unwrap();
+        store
+            .upsert_user_and_session(&me(USER, Plan::Free), "tok-alice-2", expires)
+            .unwrap();
+        store
+            .upsert_user_and_session(&me(OTHER, Plan::Paid), "tok-bob", expires)
+            .unwrap();
+
+        // -- a live session resolves to its user; an unknown or expired one to nobody
+        let owner = |token: &str, now| store.session_user(token, now).unwrap().map(|m| m.id);
+        assert_eq!(owner("tok-alice", at(12)), Some(USER.into()));
+        assert_eq!(owner("no-such-token", at(12)), None);
+        assert_eq!(owner("tok-bob", at(23) + chrono::Duration::hours(1)), None);
+
+        // -- signing out one session leaves the user's other sessions alone
+        store.delete_session("tok-alice").unwrap();
+        assert_eq!(
+            owner("tok-alice", at(12)),
+            None,
+            "signed-out token still works"
+        );
+        assert_eq!(owner("tok-alice-2", at(12)), Some(USER.into()));
+
+        // -- plans are per user
+        assert_eq!(store.user_plan(USER).unwrap(), Plan::Free);
+        store.set_user_plan(USER, Plan::Paid).unwrap();
+        assert_eq!(store.user_plan(USER).unwrap(), Plan::Paid);
+        assert_eq!(store.user_plan(OTHER).unwrap(), Plan::Paid);
+
+        // -- lookups: an account exists, and an email finds a signed-in user only
+        assert!(store.account_exists(USER).unwrap());
+        assert!(!store.account_exists("nobody").unwrap());
+        assert_eq!(
+            store.user_id_for_email("bob@example.com").unwrap(),
+            Some(OTHER.into())
+        );
+        assert_eq!(store.user_id_for_email("nobody@example.com").unwrap(), None);
+        store.ensure_anonymous(&anon_id(1), at(9)).unwrap();
+        assert_eq!(
+            store.user_id_for_email("").unwrap(),
+            None,
+            "an anonymous visitor has no email to find"
+        );
+
+        // -- a user block is not an address block
+        store.block(&Block::Ip("203.0.113.9".into())).unwrap();
+        assert!(!store.is_user_blocked(USER).unwrap());
+        store.block(&Block::User(USER.into())).unwrap();
+        assert!(store.is_user_blocked(USER).unwrap());
+        assert!(!store.is_user_blocked(OTHER).unwrap());
+
+        // -- rankings: all time, and today; ties go by id
+        let day = chrono::NaiveDate::from_ymd_opt(2026, 10, 12).unwrap();
+        let earlier = chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap();
+        for _ in 0..3 {
+            store.record_capture(USER, "203.0.113.1", day).unwrap();
+        }
+        store.record_capture(OTHER, "203.0.113.2", day).unwrap();
+        for _ in 0..3 {
+            store.record_capture(OTHER, "203.0.113.2", earlier).unwrap();
+        }
+        let ids = |rows: &[UsageRow]| rows.iter().map(|r| r.user.clone()).collect::<Vec<_>>();
+
+        let all_time = store.usage_ranking(UsageOrder::AllTime, 10).unwrap();
+        assert_eq!(
+            ids(&all_time),
+            vec![OTHER, USER],
+            "bob has 4 calls, alice 3"
+        );
+        assert_eq!(all_time[0].calls, 4);
+        assert_eq!(all_time[0].email, "bob@example.com");
+        assert_eq!(all_time[0].plan, Plan::Paid);
+
+        let today = store.usage_ranking(UsageOrder::Day(day), 10).unwrap();
+        assert_eq!(ids(&today), vec![USER, OTHER]);
+        assert_eq!(
+            today.iter().map(|r| r.calls).collect::<Vec<_>>(),
+            vec![3, 1]
+        );
+
+        assert_eq!(
+            store.usage_ranking(UsageOrder::AllTime, 1).unwrap().len(),
+            1,
+            "top limits the rows"
+        );
+
+        // -- deleting a user takes their sessions and tasks, and nobody else's
+        store.put(USER, task("alice-task", 0)).unwrap();
+        store.put(OTHER, task("bob-task", 0)).unwrap();
+        store.delete_user(USER).unwrap();
+        assert!(
+            !store.account_exists(USER).unwrap(),
+            "deleted user still exists"
+        );
+        assert_eq!(
+            owner("tok-alice-2", at(12)),
+            None,
+            "deleted user kept a session"
+        );
+        assert!(
+            store.tasks(USER).unwrap().is_empty(),
+            "deleted user kept tasks"
+        );
+        assert_eq!(
+            store.tasks(OTHER).unwrap().len(),
+            1,
+            "deleting alice touched bob"
+        );
+        assert_eq!(owner("tok-bob", at(12)), Some(OTHER.into()));
+    }
+
+    /// Runs one contract on a fresh SQLite database in a folder of its own. The folder
+    /// is deleted when the call returns, after the store is closed.
+    fn on_disk(run: impl Fn(&dyn Store)) {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let store = SqliteStore::open(&dir.path().join("rambl.db")).expect("open");
+        run(&store);
+    }
+
+    #[test]
+    fn memory_store_accounts_sessions_and_rankings() {
+        accounts_sessions_and_rankings(&MemoryStore::new());
+    }
+
+    #[test]
+    fn sqlite_store_accounts_sessions_and_rankings() {
+        on_disk(accounts_sessions_and_rankings);
+    }
+
+    /// Every shared contract, each on a fresh file-backed SQLite store, so the on-disk
+    /// path is tested as well as the in-memory one.
+    #[test]
+    fn sqlite_file_store_passes_every_contract() {
+        on_disk(users_are_isolated);
+        on_disk(store_contract);
+        on_disk(due_tz_round_trips);
+        on_disk(series_round_trip);
+        on_disk(series_are_isolated);
+        on_disk(adoption_moves_anonymous_tasks_and_ends_the_id);
+        on_disk(adoption_ignores_ids_that_are_not_anonymous);
+        on_disk(blocks_hold_until_lifted);
+        on_disk(captures_are_counted_per_user_and_address);
+        on_disk(anonymous_ids_are_counted_per_address_per_day);
+        on_disk(idle_anonymous_accounts_expire);
+        on_disk(visits_keep_anonymous_ids_alive_with_a_throttle);
+        on_disk(accounts_sessions_and_rankings);
+    }
+
     #[test]
     fn memory_store_adoption_and_scoping_rules() {
         adoption_moves_anonymous_tasks_and_ends_the_id(&MemoryStore::default());
