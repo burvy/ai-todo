@@ -18,8 +18,8 @@ pub const HOLD_MS: u32 = 280;
 /// doing.
 pub const SLOP_PX: f64 = 8.0;
 
-/// Rightward travel that turns a press into a delete, in either direction:
-/// this far right crosses the row out, back past half of it snaps the row home.
+/// Rightward travel that makes a swipe a delete when the pointer lets go:
+/// short of it, the row snaps home.
 pub const SWIPE_PX: f64 = 64.0;
 
 /// What a press on a row has turned into so far. Every state is decided, and
@@ -48,12 +48,15 @@ pub fn advance(g: Gesture, dx: f64, dy: f64, held_ms: u32) -> Gesture {
         Gesture::Pressed => {
             if held_ms >= HOLD_MS {
                 Gesture::Lifted
-            } else if dx >= SWIPE_PX && dx > dy.abs() {
-                Gesture::Swiping
-            } else if (dx * dx + dy * dy).sqrt() >= SLOP_PX {
-                Gesture::Scrolling
-            } else {
+            } else if (dx * dx + dy * dy).sqrt() < SLOP_PX {
                 Gesture::Pressed
+            } else if dx > dy.abs() {
+                // Decided as soon as the pointer leaves the slop: a pointer
+                // reports every few pixels, so waiting for a full swipe's
+                // travel would call every real swipe a scroll first.
+                Gesture::Swiping
+            } else {
+                Gesture::Scrolling
             }
         }
     }
@@ -374,13 +377,23 @@ mod tests {
     fn a_swipe_that_is_backed_out_snaps_home() {
         assert_eq!(held(Gesture::Pressed, 90.0, 0.0, 50), Gesture::Swiping);
         assert_eq!(release(Gesture::Swiping, 20.0), Release::SnapBack);
-        // Right, but not far enough to mean it and not held: the row is left
-        // alone rather than deleted, and letting go undoes nothing.
+        // Right, but not far enough to mean it: the row goes back unharmed.
         assert_eq!(
             held(Gesture::Pressed, SWIPE_PX - 1.0, 0.0, 50),
-            Gesture::Scrolling
+            Gesture::Swiping
         );
-        assert_eq!(release(Gesture::Scrolling, SWIPE_PX - 1.0), Release::Scroll);
+        assert_eq!(release(Gesture::Swiping, SWIPE_PX - 1.0), Release::SnapBack);
+    }
+
+    #[test]
+    fn a_swipe_reported_a_few_pixels_at_a_time_still_deletes() {
+        // A mouse or finger sends a move every few pixels, so the gesture
+        // passes the slop long before it has travelled a whole swipe.
+        let gesture = (1..=40).fold(Gesture::Pressed, |g, step| {
+            held(g, f64::from(step) * 2.0, 1.0, step * 4)
+        });
+        assert_eq!(gesture, Gesture::Swiping);
+        assert_eq!(release(gesture, 80.0), Release::Delete);
     }
 
     #[test]
