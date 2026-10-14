@@ -5,18 +5,17 @@
 
 #[cfg(target_arch = "wasm32")]
 use super::sched::{self, Wake};
-use super::sched::{Flow, Handle, Loop, Tick};
+use super::sched::{Flow, Loop, Tick};
 use std::cell::RefCell;
 
 thread_local! {
     static LOOP: RefCell<Loop> = RefCell::default();
 }
 
-/// Runs `body` on every frame until it returns [`Flow::Stop`] or is stopped.
-pub(crate) fn on_tick(body: impl FnMut(Tick) -> Flow + 'static) -> Handle {
-    let handle = LOOP.with(|lp| lp.borrow_mut().every_frame(body));
+/// Runs `body` on every frame until it returns [`Flow::Stop`].
+pub(crate) fn on_tick(body: impl FnMut(Tick) -> Flow + 'static) {
+    LOOP.with(|lp| lp.borrow_mut().every_frame(body));
     pump::poke();
-    handle
 }
 
 /// Runs `body` once, on the next frame: after the page has laid out what changed.
@@ -31,10 +30,9 @@ pub(crate) fn next_frame(body: impl FnOnce() + 'static) {
 }
 
 /// Runs `body` every `ms` from now while it returns [`Flow::Go`].
-pub(crate) fn every(ms: f64, mut body: impl FnMut() -> Flow + 'static) -> Handle {
-    let handle = LOOP.with(|lp| lp.borrow_mut().at(now() + ms, Some(ms), move |_| body()));
+pub(crate) fn every(ms: f64, mut body: impl FnMut() -> Flow + 'static) {
+    LOOP.with(|lp| lp.borrow_mut().at(now() + ms, Some(ms), move |_| body()));
     pump::poke();
-    handle
 }
 
 /// The loop's time in ms: the browser's animation clock, the one frames are stamped

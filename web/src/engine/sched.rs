@@ -52,20 +52,9 @@ enum When {
 }
 
 pub(crate) struct Job {
-    live: Rc<Cell<bool>>,
+    live: Cell<bool>,
     when: When,
     body: RefCell<Box<dyn FnMut(Tick) -> Flow>>,
-}
-
-/// A job's handle. `stop` ends it from anywhere, from inside the job itself too, and it
-/// never keeps the job's closure alive.
-#[derive(Clone, Debug)]
-pub(crate) struct Handle(Rc<Cell<bool>>);
-
-impl Handle {
-    pub(crate) fn stop(&self) {
-        self.0.set(false);
-    }
 }
 
 #[derive(Default)]
@@ -80,7 +69,7 @@ pub(crate) struct Loop {
 
 impl Loop {
     /// A job run on every frame until it returns [`Flow::Stop`].
-    pub(crate) fn every_frame(&mut self, body: impl FnMut(Tick) -> Flow + 'static) -> Handle {
+    pub(crate) fn every_frame(&mut self, body: impl FnMut(Tick) -> Flow + 'static) {
         self.add(When::EveryFrame, Box::new(body))
     }
 
@@ -90,7 +79,7 @@ impl Loop {
         due: f64,
         every: Option<f64>,
         body: impl FnMut(Tick) -> Flow + 'static,
-    ) -> Handle {
+    ) {
         let when = When::At {
             due: Cell::new(due),
             every,
@@ -98,14 +87,12 @@ impl Loop {
         self.add(when, Box::new(body))
     }
 
-    fn add(&mut self, when: When, body: Box<dyn FnMut(Tick) -> Flow>) -> Handle {
-        let live = Rc::new(Cell::new(true));
+    fn add(&mut self, when: When, body: Box<dyn FnMut(Tick) -> Flow>) {
         self.jobs.push(Rc::new(Job {
-            live: live.clone(),
+            live: Cell::new(true),
             when,
             body: RefCell::new(body),
         }));
-        Handle(live)
     }
 
     /// Opens a frame at `now`: the tick its jobs see and the jobs that are due. They are
@@ -347,27 +334,6 @@ mod tests {
         lp.at(900.0, None, |_| Flow::Stop);
         lp.at(300.0, Some(50.0), |_| Flow::Go);
         assert_eq!(lp.wake(), Wake::At(300.0));
-    }
-
-    #[test]
-    fn a_stopped_job_never_runs_even_if_stopped_earlier_in_the_same_frame() {
-        let lp = RefCell::new(Loop::default());
-        let ran = Rc::new(Cell::new(false));
-        let later: Rc<RefCell<Option<Handle>>> = Rc::default();
-        let l = later.clone();
-        lp.borrow_mut().every_frame(move |_| {
-            if let Some(handle) = l.borrow().as_ref() {
-                handle.stop();
-            }
-            Flow::Go
-        });
-        let r = ran.clone();
-        *later.borrow_mut() = Some(lp.borrow_mut().every_frame(move |_| {
-            r.set(true);
-            Flow::Go
-        }));
-        frame(&lp, 0.0);
-        assert!(!ran.get());
     }
 
     #[test]
