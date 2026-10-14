@@ -15,7 +15,8 @@ use super::LockExt;
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use todo_core::{
-    ExceptionKind, Label, Priority, Series, SeriesException, SeriesId, Source, Task, TaskId, When,
+    DaySettings, ExceptionKind, Label, Priority, Series, SeriesException, SeriesId, Source, Task,
+    TaskId, When,
 };
 
 fn parse_plan(value: &str) -> super::auth::Plan {
@@ -48,7 +49,7 @@ pub fn data_path_from_env() -> std::path::PathBuf {
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
@@ -63,6 +64,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_8,
     MIGRATION_9,
     MIGRATION_10,
+    MIGRATION_11,
 ];
 
 const MIGRATION_1: &str = "
@@ -215,6 +217,24 @@ CREATE TABLE IF NOT EXISTS v2_usage_totals (
 /// Session tokens are stored hashed. The rows already there are hashed in Rust, right
 /// after this runs (`hash_plain_sessions`), because SQLite has no SHA-256 of its own.
 const MIGRATION_10: &str = "SELECT 1;";
+
+/// The two times of day a day-only task depends on (`DaySettings`), as `HH:MM`. NULL
+/// means the default, so a row nobody has changed follows the default if it moves.
+const MIGRATION_11: &str = "
+ALTER TABLE v2_users ADD COLUMN day_deadline TEXT;
+ALTER TABLE v2_users ADD COLUMN day_placement TEXT;
+";
+
+/// How a day-setting time is written in the database and on the wire.
+const DAY_TIME_FORMAT: &str = "%H:%M";
+
+/// A stored day-setting time, or `fallback` when the column is NULL or unreadable
+/// (a hand-edited row should not take a user's planner down).
+fn stored_time(value: Option<String>, fallback: chrono::NaiveTime) -> chrono::NaiveTime {
+    value
+        .and_then(|text| chrono::NaiveTime::parse_from_str(&text, DAY_TIME_FORMAT).ok())
+        .unwrap_or(fallback)
+}
 
 /// What is stored for a session token: its SHA-256 in hex. A copy of the database, or of
 /// a backup, then holds nothing that works as a login.
@@ -402,6 +422,12 @@ pub trait Store: Send + Sync {
     fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError>;
     fn user_plan(&self, user: &str) -> Result<super::auth::Plan, StoreError>;
     fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError>;
+
+    /// This user's day-only times, or the defaults for one who never changed them
+    /// (or has no account row).
+    fn day_settings(&self, user: &str) -> Result<DaySettings, StoreError>;
+    /// Replace this user's day-only times. `NotFound` when the user has no account.
+    fn set_day_settings(&self, user: &str, settings: DaySettings) -> Result<(), StoreError>;
     fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError>;
     /// Create the anonymous user `user`, first seen at `now`, unless it exists.
     fn ensure_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError>;
@@ -510,6 +536,7 @@ pub struct MemoryStore {
     blocks: Mutex<Vec<Block>>,
     /// When each anonymous user was last seen.
     activity: Mutex<std::collections::HashMap<String, DateTime<Utc>>>,
+    day_settings: Mutex<std::collections::HashMap<String, DaySettings>>,
 }
 
 #[cfg(test)]
@@ -613,6 +640,12 @@ impl<S: Store + ?Sized> Store for Box<S> {
     }
     fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError> {
         (**self).set_user_plan(user, plan)
+    }
+    fn day_settings(&self, user: &str) -> Result<DaySettings, StoreError> {
+        (**self).day_settings(user)
+    }
+    fn set_day_settings(&self, user: &str, settings: DaySettings) -> Result<(), StoreError> {
+        (**self).set_day_settings(user, settings)
     }
     fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
         (**self).anonymous_exists(user)
@@ -729,6 +762,22 @@ impl Store for MemoryStore {
             .unwrap_or(super::auth::Plan::Anon))
     }
 
+    fn day_settings(&self, user: &str) -> Result<DaySettings, StoreError> {
+        Ok(self
+            .day_settings
+            .lock_recover()
+            .get(user)
+            .copied()
+            .unwrap_or_default())
+    }
+
+    fn set_day_settings(&self, user: &str, settings: DaySettings) -> Result<(), StoreError> {
+        self.day_settings
+            .lock_recover()
+            .insert(user.to_owned(), settings);
+        Ok(())
+    }
+
     fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError> {
         let mut users = self.users.lock_recover();
         let Some(found) = users.iter_mut().find(|held| held.id == user) else {
@@ -794,6 +843,9 @@ impl Store for MemoryStore {
         self.users
             .lock_recover()
             .retain(|held| !gone.contains(&held.id));
+        self.day_settings
+            .lock_recover()
+            .retain(|owner, _| !gone.contains(owner));
         Ok(gone.len())
     }
 
@@ -981,6 +1033,7 @@ impl Store for MemoryStore {
             .retain(|(owner, _, _)| owner != user);
         self.users.lock_recover().retain(|held| held.id != user);
         self.activity.lock_recover().remove(user);
+        self.day_settings.lock_recover().remove(user);
         self.sessions
             .lock_recover()
             .retain(|(_, owner, _)| owner != user);
@@ -1866,6 +1919,45 @@ impl Store for SqliteStore {
             .optional()
             .map_err(|e| backend(e, at!()))?;
         Ok(plan.map_or(super::auth::Plan::Anon, |plan| parse_plan(&plan)))
+    }
+
+    fn day_settings(&self, user: &str) -> Result<DaySettings, StoreError> {
+        let stored: Option<(Option<String>, Option<String>)> = self
+            .conn
+            .lock_recover()
+            .query_row(
+                "SELECT day_deadline, day_placement FROM v2_users WHERE id = ?1",
+                params![user],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| backend(e, at!()))?;
+        let defaults = DaySettings::default();
+        Ok(
+            stored.map_or(defaults, |(deadline, placement)| DaySettings {
+                deadline: stored_time(deadline, defaults.deadline),
+                placement: stored_time(placement, defaults.placement),
+            }),
+        )
+    }
+
+    fn set_day_settings(&self, user: &str, settings: DaySettings) -> Result<(), StoreError> {
+        let changed = self
+            .conn
+            .lock_recover()
+            .execute(
+                "UPDATE v2_users SET day_deadline = ?1, day_placement = ?2 WHERE id = ?3",
+                params![
+                    settings.deadline.format(DAY_TIME_FORMAT).to_string(),
+                    settings.placement.format(DAY_TIME_FORMAT).to_string(),
+                    user
+                ],
+            )
+            .map_err(|e| backend(e, at!()))?;
+        if changed == 0 {
+            return Err(StoreError::NotFound);
+        }
+        Ok(())
     }
 
     fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError> {
@@ -3042,6 +3134,17 @@ mod tests {
         assert_eq!(store.user_plan(USER).unwrap(), Plan::Paid);
         assert_eq!(store.user_plan(OTHER).unwrap(), Plan::Paid);
 
+        // -- day-only times are per user, and the defaults until someone changes them
+        let defaults = todo_core::DaySettings::default();
+        assert_eq!(store.day_settings(USER).unwrap(), defaults);
+        let mine = todo_core::DaySettings {
+            deadline: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+            placement: NaiveTime::from_hms_opt(9, 30, 0).unwrap(),
+        };
+        store.set_day_settings(USER, mine).unwrap();
+        assert_eq!(store.day_settings(USER).unwrap(), mine);
+        assert_eq!(store.day_settings(OTHER).unwrap(), defaults);
+
         // -- lookups: an account exists, and an email finds a signed-in user only
         assert!(store.account_exists(USER).unwrap());
         assert!(!store.account_exists("nobody").unwrap());
@@ -3666,6 +3769,64 @@ mod tests {
         conn.pragma_update(None, "user_version", version as i64)
             .unwrap();
         conn
+    }
+
+    fn deleting_an_account_takes_its_day_settings_with_it(store: &dyn Store) {
+        use super::super::auth::{Me, Plan};
+        let dana = Me {
+            id: "dana".into(),
+            email: "dana@example.com".into(),
+            name: "dana".into(),
+            picture: None,
+            plan: Plan::Free,
+        };
+        store
+            .upsert_user_and_session(&dana, "tok-dana", at(23))
+            .unwrap();
+        let mine = todo_core::DaySettings {
+            deadline: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+            ..todo_core::DaySettings::default()
+        };
+        store.set_day_settings("dana", mine).unwrap();
+        store.delete_user("dana").unwrap();
+        assert_eq!(
+            store.day_settings("dana").unwrap(),
+            todo_core::DaySettings::default()
+        );
+    }
+
+    #[test]
+    fn both_stores_forget_day_settings_with_the_account() {
+        deleting_an_account_takes_its_day_settings_with_it(&MemoryStore::new());
+        deleting_an_account_takes_its_day_settings_with_it(&SqliteStore::open_in_memory().unwrap());
+    }
+
+    #[test]
+    fn a_version_10_database_gains_day_settings_at_the_defaults() {
+        let path = unique_temp_dir().join("rambl.db");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        {
+            let conn = database_at(&path, 10);
+            conn.execute_batch(
+                "INSERT INTO v2_users (id, email, name, picture, created_at, plan)
+                     VALUES ('dana', 'd@example.com', 'Dana', NULL, '2026-01-01T00:00:00+00:00', 'free');",
+            )
+            .unwrap();
+        }
+        let store = SqliteStore::open(&path).expect("a v10 database must open and migrate");
+        assert_eq!(
+            store.day_settings("dana").unwrap(),
+            todo_core::DaySettings::default()
+        );
+        // Someone with no account row has the defaults too, but nothing to write to.
+        assert_eq!(
+            store.day_settings("nobody").unwrap(),
+            todo_core::DaySettings::default()
+        );
+        assert!(matches!(
+            store.set_day_settings("nobody", todo_core::DaySettings::default()),
+            Err(StoreError::NotFound)
+        ));
     }
 
     #[test]

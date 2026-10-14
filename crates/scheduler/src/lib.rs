@@ -1,6 +1,8 @@
 //! Deterministic scheduling over local working hours.
 
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeZone, Utc, Weekday};
+use chrono::{
+    DateTime, Datelike, Duration, NaiveDate, NaiveTime, TimeZone, Timelike, Utc, Weekday,
+};
 use chrono_tz::Tz;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -22,6 +24,9 @@ pub struct TimeWindow {
 pub struct WorkingHours {
     pub timezone: Tz,
     pub days: HashMap<Weekday, Vec<TimeWindow>>,
+    /// Where on its day a day-only task goes when the user has no timed tasks to
+    /// learn a usual time from (`DaySettings::placement`).
+    pub day_only_time: NaiveTime,
 }
 
 impl WorkingHours {
@@ -29,7 +34,11 @@ impl WorkingHours {
         let days = Weekday::iter()
             .map(|day| (day, vec![TimeWindow { start, end }]))
             .collect();
-        Self { timezone, days }
+        Self {
+            timezone,
+            days,
+            day_only_time: todo_core::DaySettings::default().placement,
+        }
     }
 }
 
@@ -48,6 +57,11 @@ impl Default for WorkingHours {
 ///
 /// Overdue tasks — `DueBy` whose deadline is now or in the past — are placed
 /// first from now, so the user gets a chance to catch up.
+///
+/// A `DueBy` that is not overdue is a day-only task: it goes on its deadline's day, in
+/// the free slot closest to the user's usual time ([`usual_time`], else
+/// `hours.day_only_time`). Only when that day has no room does it take the earliest
+/// free slot before the deadline.
 pub fn plan(
     tasks: &[todo_core::Task],
     hours: &WorkingHours,
@@ -86,6 +100,7 @@ pub fn plan(
     });
 
     let mut unplaced = Vec::new();
+    let usual = usual_time(tasks, hours.timezone).unwrap_or(hours.day_only_time);
 
     // Overdue tasks go first and lose their deadline constraint; flexible tasks
     // keep theirs. One ordered pass feeds the same next_slot/push loop.
@@ -96,7 +111,10 @@ pub fn plan(
     ) {
         let task = &tasks[index];
         let duration = effective_minutes(task);
-        let Some(start) = next_slot(ctx.now, duration, deadline, hours, &occupied) else {
+        let Some(start) = deadline
+            .and_then(|limit| slot_near(task, limit, usual, duration, hours, &occupied, ctx.now))
+            .or_else(|| next_slot(ctx.now, duration, deadline, hours, &occupied))
+        else {
             unplaced.push(task.id.clone());
             continue;
         };
@@ -173,6 +191,78 @@ fn deadline_of(task: &todo_core::Task) -> Option<DateTime<Utc>> {
         When::Anytime => None,
         When::At(_) => unreachable!("fixed tasks are placed exactly, never in this queue"),
     }
+}
+
+/// The average local time of day of the user's own timed tasks, which says when in the
+/// day they like to do things. Series occurrences and calendar imports are left out:
+/// the user did not choose a time for those one by one. Finished tasks still count,
+/// since they are history.
+pub fn usual_time(tasks: &[todo_core::Task], timezone: Tz) -> Option<NaiveTime> {
+    let (seconds, count) = tasks
+        .iter()
+        .filter(|task| {
+            !matches!(
+                task.source,
+                todo_core::Source::Series | todo_core::Source::Calendar
+            )
+        })
+        .filter_map(|task| match task.when {
+            When::At(start) => Some(start.with_timezone(&timezone).time()),
+            When::Anytime | When::DueBy(_) => None,
+        })
+        .fold((0, 0), |(sum, count), time| {
+            (sum + time.num_seconds_from_midnight(), count + 1)
+        });
+    NaiveTime::from_num_seconds_from_midnight_opt(seconds.checked_div(count)?, 0)
+}
+
+/// The free slot on the day of `deadline` whose start is closest to `usual` that day,
+/// ending by the deadline and not before `now`. `None` when the day has no room.
+///
+/// The free starts form intervals, so the closest one to `usual` is either `usual`
+/// itself or an interval's edge: the window or `now` at the front, the deadline or
+/// window end at the back, or just after / just before a busy block.
+fn slot_near(
+    task: &todo_core::Task,
+    deadline: DateTime<Utc>,
+    usual: NaiveTime,
+    minutes: i64,
+    hours: &WorkingHours,
+    occupied: &[(DateTime<Utc>, DateTime<Utc>)],
+    now: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    let zone = task
+        .due_tz
+        .as_deref()
+        .and_then(|name| Tz::from_str(name).ok())
+        .unwrap_or(hours.timezone);
+    let date = deadline.with_timezone(&zone).date_naive();
+    let target = local_to_utc(hours.timezone, date, usual)?;
+    let length = Duration::minutes(minutes);
+    hours
+        .days
+        .get(&date.weekday())
+        .into_iter()
+        .flatten()
+        .filter_map(|window| {
+            let open = local_to_utc(hours.timezone, date, window.start)?.max(now);
+            let close = local_to_utc(hours.timezone, date, window.end)?.min(deadline);
+            Some((open, close))
+        })
+        .flat_map(|(open, close)| {
+            let edges = occupied
+                .iter()
+                .flat_map(|(start, end)| [*end, *start - length])
+                .chain([target, open, close - length]);
+            edges.filter(move |start| {
+                *start >= open
+                    && *start + length <= close
+                    && !occupied.iter().any(|(busy_start, busy_end)| {
+                        *busy_start < *start + length && *busy_end > *start
+                    })
+            })
+        })
+        .min_by_key(|start| ((*start - target).abs(), *start))
 }
 
 fn next_slot(
@@ -1140,5 +1230,203 @@ mod tests {
                 .any(|p| p.task == todo_core::TaskId("big".into()))
                 || plan.unplaced.contains(&todo_core::TaskId("big".into()))
         );
+    }
+
+    // ---- day-only tasks: placed on their day near the user's usual time ----
+
+    fn utc(day: u32, hour: u32, minute: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2026, 10, day, hour, minute, 0)
+            .unwrap()
+    }
+
+    fn all_day() -> WorkingHours {
+        WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(23, 59, 59).unwrap(),
+        )
+    }
+
+    /// Monday 06:00, before the day starts.
+    fn monday() -> todo_core::LocalContext {
+        ctx(utc(12, 6, 0), chrono_tz::UTC)
+    }
+
+    fn typed(id: &str, minutes: u16, when: When, source: todo_core::Source) -> todo_core::Task {
+        todo_core::Task {
+            source,
+            ..task(id, minutes, when, 0)
+        }
+    }
+
+    /// A day-only task due Friday the 16th at 23:59, the way capture makes one.
+    fn friday_task() -> todo_core::Task {
+        task("call mom", 60, When::DueBy(utc(16, 23, 59)), 1)
+    }
+
+    fn start_of(plan: &todo_core::Plan, id: &str) -> DateTime<Utc> {
+        plan.placements
+            .iter()
+            .find(|placement| placement.task.0 == id)
+            .unwrap_or_else(|| panic!("{id} is placed: {plan:?}"))
+            .start
+    }
+
+    #[test]
+    fn with_no_history_a_day_only_task_goes_at_noon_on_its_day() {
+        let planned = plan(&[friday_task()], &all_day(), &monday());
+        assert_eq!(start_of(&planned, "call mom"), utc(16, 12, 0));
+    }
+
+    #[test]
+    fn the_usual_time_is_the_average_of_the_users_timed_tasks() {
+        let tasks = [
+            typed("a", 30, When::At(utc(13, 15, 0)), todo_core::Source::Text),
+            typed("b", 30, When::At(utc(14, 17, 0)), todo_core::Source::Voice),
+            friday_task(),
+        ];
+        assert_eq!(
+            usual_time(&tasks, chrono_tz::UTC),
+            NaiveTime::from_hms_opt(16, 0, 0)
+        );
+        let planned = plan(&tasks, &all_day(), &monday());
+        assert_eq!(start_of(&planned, "call mom"), utc(16, 16, 0));
+    }
+
+    #[test]
+    fn finished_tasks_still_count_as_history() {
+        let mut finished = typed("old", 30, When::At(utc(9, 18, 0)), todo_core::Source::Text);
+        finished.done = true;
+        assert_eq!(
+            usual_time(&[finished], chrono_tz::UTC),
+            NaiveTime::from_hms_opt(18, 0, 0)
+        );
+    }
+
+    #[test]
+    fn series_and_calendar_times_are_not_history() {
+        let tasks = [
+            typed(
+                "gym",
+                60,
+                When::At(utc(13, 6, 0)),
+                todo_core::Source::Series,
+            ),
+            typed(
+                "class",
+                60,
+                When::At(utc(13, 9, 0)),
+                todo_core::Source::Calendar,
+            ),
+            task("no time", 30, When::Anytime, 0),
+            task("by friday", 30, When::DueBy(utc(16, 23, 59)), 0),
+        ];
+        assert_eq!(usual_time(&tasks, chrono_tz::UTC), None);
+    }
+
+    #[test]
+    fn the_usual_time_is_read_in_the_users_zone() {
+        // 22:00 UTC is 18:00 in New York in October.
+        let task = typed("a", 30, When::At(utc(13, 22, 0)), todo_core::Source::Text);
+        assert_eq!(
+            usual_time(&[task], chrono_tz::America::New_York),
+            NaiveTime::from_hms_opt(18, 0, 0)
+        );
+    }
+
+    #[test]
+    fn the_setting_moves_the_no_history_time() {
+        let mut hours = all_day();
+        hours.day_only_time = NaiveTime::from_hms_opt(9, 0, 0).unwrap();
+        let planned = plan(&[friday_task()], &hours, &monday());
+        assert_eq!(start_of(&planned, "call mom"), utc(16, 9, 0));
+    }
+
+    #[test]
+    fn a_busy_usual_time_takes_the_nearest_free_slot_on_that_day() {
+        // Something fixed 11:30-12:30 holds noon. Just after it (12:30, 30 min away)
+        // beats just before it (10:30, 90 min away).
+        let tasks = [
+            typed(
+                "meeting",
+                60,
+                When::At(utc(16, 11, 30)),
+                todo_core::Source::Series,
+            ),
+            friday_task(),
+        ];
+        let planned = plan(&tasks, &all_day(), &monday());
+        assert_eq!(start_of(&planned, "call mom"), utc(16, 12, 30));
+    }
+
+    #[test]
+    fn the_nearest_slot_can_be_before_a_busy_block() {
+        // Busy 12:00-15:00: before it (11:00) is 60 min from noon, after it (15:00) is 180.
+        let tasks = [
+            typed(
+                "workshop",
+                180,
+                When::At(utc(16, 12, 0)),
+                todo_core::Source::Series,
+            ),
+            friday_task(),
+        ];
+        let planned = plan(&tasks, &all_day(), &monday());
+        assert_eq!(start_of(&planned, "call mom"), utc(16, 11, 0));
+    }
+
+    #[test]
+    fn the_task_still_ends_by_a_23_59_deadline() {
+        // Busy 08:00-22:00, so only the evening is free. 90 minutes from 22:00 ends 23:30;
+        // a slot may not run on past the 23:59 deadline.
+        let tasks = [
+            typed(
+                "day",
+                840,
+                When::At(utc(16, 8, 0)),
+                todo_core::Source::Series,
+            ),
+            task("late", 90, When::DueBy(utc(16, 23, 59)), 1),
+        ];
+        let planned = plan(&tasks, &all_day(), &monday());
+        let late = planned
+            .placements
+            .iter()
+            .find(|placement| placement.task.0 == "late")
+            .expect("late is placed");
+        assert_eq!(late.start, utc(16, 22, 0));
+        assert!(late.end <= utc(16, 23, 59));
+    }
+
+    #[test]
+    fn a_full_day_falls_back_to_the_earliest_free_slot_before_the_deadline() {
+        let tasks = [
+            typed(
+                "all day",
+                960,
+                When::At(utc(16, 8, 0)),
+                todo_core::Source::Series,
+            ),
+            friday_task(),
+        ];
+        let planned = plan(&tasks, &all_day(), &monday());
+        assert_eq!(start_of(&planned, "call mom"), utc(12, 8, 0));
+    }
+
+    #[test]
+    fn on_the_day_itself_a_usual_time_already_gone_starts_now() {
+        let friday_afternoon = ctx(utc(16, 14, 0), chrono_tz::UTC);
+        let planned = plan(&[friday_task()], &all_day(), &friday_afternoon);
+        assert_eq!(start_of(&planned, "call mom"), utc(16, 14, 0));
+    }
+
+    #[test]
+    fn an_anytime_task_still_takes_the_earliest_slot() {
+        let planned = plan(
+            &[task("floating", 30, When::Anytime, 0)],
+            &all_day(),
+            &monday(),
+        );
+        assert_eq!(start_of(&planned, "floating"), utc(12, 8, 0));
     }
 }

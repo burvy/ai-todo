@@ -54,7 +54,9 @@ pub struct Snapshot { tasks: Vec<Task>, plan: Plan, tz: String, generated: DateT
 pub struct ApiError { code: ErrorCode, message: String }
 ```
 
-`When::At` always places at that instant; `DueBy` places before it; `Anytime` places in the first free slot. One task has at most one placement in v2 (no splitting).
+`When::At` always places at that instant; `Anytime` places in the first free slot. One task has at most one placement in v2 (no splitting).
+
+**A `DueBy` task is a day-only task** ("call mom Friday"): it is placed **on its deadline's day**, in the free slot whose start is closest to the user's *usual time*, ending by the deadline and not before now. The usual time is the average local time of day of the user's own timed (`At`) tasks, finished ones included (series occurrences and calendar imports do not count: the user did not pick those times one by one); with none, it is `DaySettings.placement`, noon by default. If that day has no room, the task takes the earliest free slot before the deadline, and only if there is none it is unplaced. Overdue tasks (deadline now or past) are placed from now, first. `DaySettings` is the one per-user pair of times behind this: `deadline` (23:59 by default: where a day-only capture's deadline lands on its day) and `placement` (12:00 by default), both local `HH:MM`, stored per user (`v2_users.day_deadline`, `day_placement`; NULL is the default) and read and changed with `GET`/`PATCH /api/v1/settings`. A deadline of 00:00 is refused. Changing the deadline does not move existing tasks; it applies to what is captured or revised afterwards.
 
 ### 4.1 Task order and time semantics
 
@@ -67,7 +69,7 @@ An unfinished task past its `DueBy` remains in the list marked **Overdue**. The 
 1. **Segment** (code): split text into clauses.
 2. **Candidates** (code, `dates`): per clause, title spans, date phrases ("tomorrow", "Wednesday", "Oct 30"), time phrases ("at 3", "10am"), duration phrases. Each candidate already carries its resolved value from `LocalContext`.
 3. **Judge** (one Jev request per capture, all questions in parallel): per clause `is_task` (Noul), `title` (Choice of spans), `day` (Choice of date candidates + none), `time` (Choice of time candidates + none), `duration` (Choice), `label` (Choice), `priority` (Score). Jev gets the local time as text for context only.
-4. **Resolve** (code): build `TaskDraft`. Day + time -> `When::At`; day only -> `DueBy(day 23:59:59 local)`; neither -> `Anytime`.
+4. **Resolve** (code): build `TaskDraft`. Day + time -> `When::At`; day only -> `DueBy(day at the user's deadline setting, 23:59 by default, local)`; neither -> `Anytime`.
 
 Without a Jev key, `FakeJudge`'s deterministic rules pick the first candidate. Tests use it, so the pipeline is tested end to end without the network.
 
@@ -87,6 +89,8 @@ Anonymous users do not sign in. Their account and tasks are deleted after 30 day
 | `POST /api/v1/auth/google` | `{credential}` (a Google ID token) | `{token, user}`. The token is checked against Google's `tokeninfo`; the audience must equal `GOOGLE_CLIENT_ID` and `email_verified` must be true. Sessions last 90 days. |
 | `POST /api/v1/auth/signout` | none | 204. Ends this session only. |
 | `GET /api/v1/me` | none | `{id, email, name, picture}` |
+| `GET /api/v1/settings` | none | `{deadline, placement}`, this user's day-only times as `HH:MM` (defaults `23:59` and `12:00`). |
+| `PATCH /api/v1/settings` | `{deadline?, placement?}`, each `HH:MM` | The settings that now hold. Absent fields stay; `deadline` `00:00` is a 400 and changes nothing. |
 | `DELETE /api/v1/me` | none | 204. Removes the account, its sessions and every task it owns. |
 | `GET /api/v1/snapshot?from=YYYY-MM-DD&days=7` | none | `Snapshot`. The window bounds the plan (today and 7 days by default); the task list is always the whole list, and pinned tasks keep their placement whatever the window is. |
 | `POST /api/v1/capture` | `{text}` or multipart `file` (pdf, eml, txt) | `{created: [id], snapshot, jev_fallback}`. `jev_fallback` is true once the user is past `RAMBL_JEV_DAILY_CAP` captures today (200 by default), when Jev is not called and `FakeJudge` judges instead. |
