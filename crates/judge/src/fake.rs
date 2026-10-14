@@ -111,7 +111,127 @@ fn has_obligation(lower: &str) -> bool {
             .iter()
             .any(|word| contains_word(lower, word.trim_end()))
     };
-    has(&ACTIONS) || has(&OBLIGATIONS)
+    has(&ACTIONS) || has(&OBLIGATIONS) || is_instruction(lower)
+}
+
+/// "Walk the dog", "fix the sink", "water plants": two or more words that open with a verb
+/// nobody listed. The word list above cannot hold every verb, so a clause that opens
+/// with a word that is not a pronoun, article, preposition, conjunction, question word or
+/// "-ing" or "-ed" form is taken for an instruction. The fragments a sentence splits into
+/// ("I think", "For biology", "Watching videos") all open with one of those.
+fn is_instruction(lower: &str) -> bool {
+    const NOT_A_VERB: &[&str] = &[
+        "i",
+        "you",
+        "he",
+        "she",
+        "it",
+        "we",
+        "they",
+        "me",
+        "my",
+        "your",
+        "his",
+        "her",
+        "our",
+        "their",
+        "this",
+        "that",
+        "these",
+        "those",
+        "the",
+        "a",
+        "an",
+        "some",
+        "any",
+        "no",
+        "not",
+        "and",
+        "but",
+        "or",
+        "so",
+        "if",
+        "although",
+        "though",
+        "because",
+        "since",
+        "while",
+        "when",
+        "then",
+        "also",
+        "just",
+        "for",
+        "of",
+        "in",
+        "on",
+        "at",
+        "to",
+        "with",
+        "from",
+        "by",
+        "about",
+        "as",
+        "which",
+        "who",
+        "what",
+        "where",
+        "why",
+        "how",
+        "there",
+        "here",
+        "is",
+        "are",
+        // Talk before the point: "Right, the design presentation is coming up".
+        "right",
+        "okay",
+        "ok",
+        "oh",
+        "well",
+        "yeah",
+        "yes",
+        "anyway",
+        "um",
+        "uh",
+        "hmm",
+        "like",
+        "still",
+        "really",
+        "maybe",
+        "probably",
+        "honestly",
+        "actually",
+        "basically",
+        // Talk before the point: "Right, the design presentation is coming up".
+        "right",
+        "okay",
+        "ok",
+        "oh",
+        "well",
+        "yeah",
+        "yes",
+        "anyway",
+        "um",
+        "uh",
+        "hmm",
+        "like",
+        "still",
+        "really",
+        "maybe",
+        "probably",
+        "honestly",
+        "actually",
+        "basically",
+    ];
+    let mut words = lower.split_whitespace();
+    let (Some(first), Some(_)) = (words.next(), words.next()) else {
+        return false;
+    };
+    let first = first.trim_matches(|c: char| !c.is_alphabetic());
+    first.len() > 2
+        && first.chars().all(char::is_alphabetic)
+        && !NOT_A_VERB.contains(&first)
+        && !first.ends_with("ing")
+        && !first.ends_with("ed")
 }
 
 /// Match a word on its own boundaries, so "pay" does not fire on "repayment" and
@@ -270,6 +390,12 @@ mod tests {
             "Book an appointment with advising",
             "Return the library book",
             "Schedule a meeting with Maya",
+            // Verbs the keyword list does not hold.
+            "Walk the dog",
+            "fix the sink",
+            "water plants",
+            "Take out the recycling",
+            "Pick up the parcel",
         ] {
             assert!(!is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
         }
