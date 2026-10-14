@@ -267,6 +267,7 @@ dependencies = [
  "dates",
  "judge",
  "pdf-extract",
+ "scheduler",
  "todo-core",
  "tokio",
 ]
