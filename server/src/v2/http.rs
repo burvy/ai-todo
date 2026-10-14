@@ -32,6 +32,11 @@ use todo_core::{LocalContext, Source, TaskId};
 const IMPORT_MAX_BODY: usize = 2 * 1024 * 1024;
 /// Maximum number of tasks in one JSON import.
 const IMPORT_MAX_TASKS: usize = 500;
+/// The longest text one capture may carry, in characters. Each clause of it is a Jev
+/// question, and the whole capture counts as one use of the daily cap.
+const CAPTURE_MAX_CHARS: usize = 20_000;
+/// The most clauses one capture may split into, for the same reason.
+const CAPTURE_MAX_CLAUSES: usize = 60;
 
 const TZ_HEADER: HeaderName = HeaderName::from_static("x-rambl-tz");
 const ANON_HEADER: HeaderName = HeaderName::from_static("x-rambl-anon");
@@ -1020,6 +1025,7 @@ async fn import(
     let app = shared.app.lock().unwrap();
     let now = app.now();
     let tasks = app.store().tasks(&user).map_err(store_failed)?;
+    app::check_room(tasks.len(), import_in.tasks.len())?;
     drop(app);
     let min_order = tasks.iter().map(|t| t.order).min().unwrap_or(0);
 
@@ -1111,6 +1117,7 @@ async fn capture(
     );
     let tz = zone(request.headers())?;
     let (text, source, anchor) = read_capture(request).await?;
+    check_capture_size(&text)?;
     let now = anchor.unwrap_or_else(|| shared.app.lock().unwrap().now());
     let ctx = LocalContext { now, tz };
     let plan = if headers.contains_key(axum::http::header::AUTHORIZATION) {
@@ -1149,6 +1156,22 @@ async fn capture(
         snapshot,
         jev_fallback,
     }))
+}
+
+/// Refuse a capture too big to judge fairly: the judge is asked once per clause, all at
+/// once, so one huge text would spend far more Jev than the daily cap counts.
+fn check_capture_size(text: &str) -> Result<(), HttpError> {
+    if text.chars().count() > CAPTURE_MAX_CHARS {
+        return Err(bad_request(format!(
+            "that is too long to capture at once (max {CAPTURE_MAX_CHARS} characters)"
+        )));
+    }
+    if capture::split_clauses(text).len() > CAPTURE_MAX_CLAUSES {
+        return Err(bad_request(format!(
+            "that has too many separate tasks to capture at once (max {CAPTURE_MAX_CLAUSES})"
+        )));
+    }
+    Ok(())
 }
 
 /// The capture text, its source, and an anchor time when the source has a send date.
@@ -2236,6 +2259,48 @@ mod tests {
         let snapshot: Snapshot = serde_json::from_value(json["snapshot"].clone()).unwrap();
         assert_eq!(snapshot.tasks[0].source, Source::Text);
         assert_invariant(&snapshot);
+    }
+
+    /// One capture is one use of the daily cap but one Jev question per clause, so a
+    /// huge text or a long run of clauses is refused before the judge hears of it.
+    #[tokio::test]
+    async fn an_oversized_capture_is_a_400() {
+        let router = router_at(sunday_night());
+        let too_long = serde_json::json!({ "text": "a".repeat(CAPTURE_MAX_CHARS + 1) });
+        let many = serde_json::json!({
+            "text": (0..=CAPTURE_MAX_CLAUSES).map(|n| format!("Task {n}.")).collect::<Vec<_>>().join(" ")
+        });
+        for body in [too_long, many] {
+            let (status, json, _) = send_raw(
+                &router,
+                "POST",
+                "/api/v1/capture",
+                "application/json",
+                &body.to_string(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+        }
+        let (status, _, _) = send_raw(
+            &router,
+            "POST",
+            "/api/v1/capture",
+            "application/json",
+            r#"{"text":"Buy milk"}"#,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "a normal capture still works");
+    }
+
+    #[tokio::test]
+    async fn a_task_title_past_the_limit_is_a_400() {
+        let router = router_at(sunday_night());
+        let title = "t".repeat(app::MAX_TITLE_CHARS + 1);
+        let draft = format!(
+            r#"{{"title":"{title}","duration_min":30,"when":{{"kind":"anytime"}},"label":"Other","priority":"low","source":"text"}}"#
+        );
+        let (status, _) = send(&router, "POST", "/api/v1/tasks", Some(&draft)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]
@@ -4771,9 +4836,9 @@ mod tests {
         assert_invariant(&snapshot);
     }
 
-    /// A 1 MB title is accepted whole: no truncation, no panic, no 500.
+    /// A 1 MB title is refused cleanly: a 400 that says why, never a panic or a 500.
     #[tokio::test]
-    async fn a_one_megabyte_title_is_stored_whole() {
+    async fn a_one_megabyte_title_is_refused_not_a_500() {
         let router = router_at(sunday_night());
         let title = "a".repeat(1024 * 1024);
         let draft = format!(
@@ -4785,10 +4850,13 @@ mod tests {
             StatusCode::INTERNAL_SERVER_ERROR,
             "a 1 MB title must never be a 500"
         );
-        assert_eq!(status, StatusCode::OK, "a 1 MB title was refused: {status}");
-        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
-        assert_eq!(snapshot.tasks[0].title.len(), 1024 * 1024);
-        assert_invariant(&snapshot);
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(
+            body["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("too long")
+        );
     }
 
     /// Durations outside 5 to 480 minutes are refused: a negative or out-of-range

@@ -312,6 +312,7 @@ impl<S: Store> App<S> {
         check_duration(draft.duration_min)?;
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
+        check_room(tasks.len(), 1)?;
         // Newest first (docs/ARCHITECTURE.md 4.1): a fresh task takes the
         // smallest order so sort_tasks puts it at the top of the list. After a
         // reorder orders are 0..n again, so this stays safe indefinitely.
@@ -418,6 +419,7 @@ impl<S: Store> App<S> {
                 self.store.put(user, task).map_err(Self::storage_error)?;
                 continue;
             }
+            check_room(tasks.len(), 1)?;
             let task = Task {
                 id: Self::fresh_id(),
                 title: event.title,
@@ -565,6 +567,7 @@ impl<S: Store> App<S> {
     ) -> Result<(Vec<TaskId>, Snapshot), ApiError> {
         let ctx = self.ctx(tz);
         let mut tasks = self.load(user)?;
+        check_room(tasks.len(), drafts.len())?;
         // The whole capture lands on top (newest first), still in capture order:
         // orders run from min - drafts.len() up to min - 1, so they never collide
         // with orders already held (a capture of several drafts would otherwise
@@ -976,11 +979,34 @@ fn check_fresh(task: &Task, seen: Option<DateTime<Utc>>) -> Result<(), ApiError>
     }
 }
 
+/// The longest title a task or series may have, in characters.
+pub const MAX_TITLE_CHARS: usize = 500;
+/// The most tasks one person may hold. Every call loads and plans the whole list under
+/// one lock, so an unbounded list lets one account slow everyone down.
+pub const MAX_TASKS_PER_USER: usize = 5000;
+
 fn check_title(title: &str) -> Result<(), ApiError> {
     if title.trim().is_empty() {
         return Err(ApiError {
             code: ErrorCode::BadRequest,
             message: "title is required".into(),
+        });
+    }
+    if title.chars().count() > MAX_TITLE_CHARS {
+        return Err(ApiError {
+            code: ErrorCode::BadRequest,
+            message: format!("title is too long (max {MAX_TITLE_CHARS} characters)"),
+        });
+    }
+    Ok(())
+}
+
+/// Refuse to grow a list of `held` tasks by `adding` past [`MAX_TASKS_PER_USER`].
+pub fn check_room(held: usize, adding: usize) -> Result<(), ApiError> {
+    if held.saturating_add(adding) > MAX_TASKS_PER_USER {
+        return Err(ApiError {
+            code: ErrorCode::BadRequest,
+            message: format!("too many tasks (max {MAX_TASKS_PER_USER}); finish or delete some"),
         });
     }
     Ok(())
@@ -1021,6 +1047,19 @@ fn occurrence_id_error() -> ApiError {
 /// time around pinned (`At`) tasks, which stay exactly where they are.
 pub fn plan(tasks: &[Task], ctx: &LocalContext) -> Plan {
     scheduler::plan(tasks, &working_hours(ctx.tz), ctx)
+}
+
+#[cfg(test)]
+mod room_tests {
+    use super::*;
+
+    #[test]
+    fn a_list_may_fill_to_the_limit_and_no_further() {
+        assert!(check_room(MAX_TASKS_PER_USER - 1, 1).is_ok());
+        assert!(check_room(MAX_TASKS_PER_USER, 1).is_err());
+        assert!(check_room(0, MAX_TASKS_PER_USER + 1).is_err());
+        assert!(check_room(usize::MAX, 1).is_err(), "no overflow");
+    }
 }
 
 #[cfg(test)]

@@ -5,7 +5,8 @@ use std::path::Path;
 
 use axum::{
     Router,
-    http::{StatusCode, header},
+    http::{HeaderValue, StatusCode, header},
+    middleware,
     response::{IntoResponse, Response},
 };
 use include_dir::{Dir, include_dir};
@@ -13,7 +14,46 @@ use include_dir::{Dir, include_dir};
 static WEB_DIST: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
 
 fn app(store: v2::app::App<Box<dyn v2::store::Store>>) -> Router {
-    v2::http::router(store, judge::AnyJudge::from_env()).fallback(embedded_web)
+    v2::http::router(store, judge::AnyJudge::from_env())
+        .fallback(embedded_web)
+        .layer(middleware::map_response(harden))
+}
+
+/// Headers every response carries: no guessing a file's type from its bytes, no framing
+/// the page inside another site, and no sending the full address to other sites.
+async fn harden(mut response: Response) -> Response {
+    let headers = response.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("strict-origin-when-cross-origin"),
+    );
+    response
+}
+
+/// The type a browser should treat an embedded file as. With `nosniff` on, a wrong type
+/// here is a broken font or sound, so every kind the page ships is named.
+fn content_type(path: &Path) -> &'static str {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        Some("wasm") => "application/wasm",
+        Some("json") => "application/json",
+        Some("png") => "image/png",
+        Some("webp") => "image/webp",
+        Some("ico") => "image/x-icon",
+        Some("woff2") => "font/woff2",
+        Some("mp3") => "audio/mpeg",
+        Some("ogg") => "audio/ogg",
+        Some("wav") => "audio/wav",
+        Some("txt" | "md") => "text/plain; charset=utf-8",
+        _ => "text/html; charset=utf-8",
+    }
 }
 
 /// The web page, compiled into the exe. Unknown paths get `index.html` so the
@@ -33,17 +73,7 @@ async fn embedded_web(uri: axum::http::Uri) -> Response {
     };
     match file {
         Some(file) => {
-            let content_type = match Path::new(file.path())
-                .extension()
-                .and_then(|ext| ext.to_str())
-            {
-                Some("js") => "text/javascript; charset=utf-8",
-                Some("css") => "text/css; charset=utf-8",
-                Some("svg") => "image/svg+xml",
-                Some("wasm") => "application/wasm",
-                Some("json") => "application/json",
-                _ => "text/html; charset=utf-8",
-            };
+            let content_type = content_type(file.path());
             ([(header::CONTENT_TYPE, content_type)], file.contents()).into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
@@ -296,5 +326,31 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn every_response_is_hardened() {
+        for path in ["/", "/api/nope"] {
+            let response = test_app()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let headers = response.headers();
+            assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff", "{path}");
+            assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY", "{path}");
+            assert!(headers.contains_key(header::REFERRER_POLICY), "{path}");
+        }
+    }
+
+    #[test]
+    fn shipped_file_types_get_their_own_content_type() {
+        for (file, want) in [
+            ("sounds/pen.mp3", "audio/mpeg"),
+            ("fonts/hand.woff2", "font/woff2"),
+            ("rambl_web_bg.wasm", "application/wasm"),
+            ("index.html", "text/html; charset=utf-8"),
+        ] {
+            assert_eq!(content_type(Path::new(file)), want, "{file}");
+        }
     }
 }
