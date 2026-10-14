@@ -81,4 +81,23 @@ mod tests {
             "the page not showing is left out of the layout at rest"
         );
     }
+
+    /// On a phone the document never scrolls: each page is the screen above the capture bar
+    /// and a long list scrolls inside it, so the bar is always in view.
+    #[test]
+    fn on_a_phone_the_page_fits_the_screen_and_the_list_scrolls_inside_it() {
+        let css = include_str!("../theme.css");
+        let phone = &css[css
+            .find("The pages and the turn fill the screen")
+            .expect("phone block")..];
+        assert!(
+            phone.contains("height: 100dvh;"),
+            "the body is one screen tall"
+        );
+        assert!(phone.contains("height: calc(100dvh - var(--capture-clear));"));
+        assert!(
+            phone.contains("overflow-y: auto;"),
+            "the page scrolls itself"
+        );
+    }
 }

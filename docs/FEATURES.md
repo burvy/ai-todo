@@ -245,11 +245,13 @@ is dazed: he stays where he landed, tipped over, and does not listen. Dragging a
 dazed Rambo writes on the page in his tool's ink. He hops home on his own
 after 8 seconds untouched, or comes home at once when dropped on his nest, and
 forgives you a little for putting him back (a small lift in the brain's cheer).
-Home again, his writing is tidied away and he listens again.
+His writing dries and fades on its own; home again, he listens again. Let go of him
+mid-flick and he splats before he is dazed.
 b. Drag the pen to empty space and release it; drag it again to write; drop it on
 the nest, or leave it 8 seconds.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:transition, listens_on_grab,
-put_back, over_nest, DAZED_MS, hops_there, held_at`; `web/src/hop.rs:Hop`;
+put_back, over_nest, DAZED_MS, hops_there, held_at, wants`; `web/src/hop.rs:Hop`;
+`web/src/gesture.rs:Recognizer, release_velocity, flung`;
 `web/src/inklayer.rs:InkLayer`; `web/src/ink.rs`;
 `crates/rambl-brain/src/lib.rs:Event::PutBack`.
 

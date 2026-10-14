@@ -6,6 +6,7 @@ pub mod account;
 pub mod api;
 pub mod brain;
 pub mod clock;
+pub mod gesture;
 pub mod hop;
 pub mod ink;
 pub mod inklayer;
