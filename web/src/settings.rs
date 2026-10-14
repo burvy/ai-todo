@@ -68,8 +68,10 @@ fn sounds_on() -> bool {
 }
 
 const DEFAULTS: Settings = Settings {
-    start_hour: 0,
-    end_hour: 24,
+    // The working day the paper is for: eight until six (DESIGN-DECISIONS,
+    // "Planner"). Opening on 08:00, not midnight, is what QA asked for.
+    start_hour: 8,
+    end_hour: 18,
     days: 7,
     mode: RamblMode::Interactive,
     theme: Theme::Light,
@@ -384,6 +386,13 @@ fn save(_settings: Settings) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_working_day_defaults_to_eight_until_six() {
+        let settings = Settings::default();
+        assert_eq!(settings.start_hour, 8);
+        assert_eq!(settings.end_hour, 18);
+    }
 
     #[test]
     fn clamps_hour_range_and_days() {
