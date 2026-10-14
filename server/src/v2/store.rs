@@ -772,6 +772,10 @@ impl Store for MemoryStore {
     }
 
     fn set_day_settings(&self, user: &str, settings: DaySettings) -> Result<(), StoreError> {
+        // As in SQLite, where the local user's row comes from a migration.
+        if user != super::auth::LOCAL_USER && !self.account_exists(user)? {
+            return Err(StoreError::NotFound);
+        }
         self.day_settings
             .lock_recover()
             .insert(user.to_owned(), settings);
@@ -1185,6 +1189,7 @@ impl Store for MemoryStore {
             .lock_recover()
             .retain(|held| held.id != anonymous);
         self.activity.lock_recover().remove(anonymous);
+        self.day_settings.lock_recover().remove(anonymous);
         let mut stored = self.tasks.lock_recover();
         let existing_uids: std::collections::HashSet<_> = stored
             .iter()
@@ -3792,6 +3797,40 @@ mod tests {
         assert_eq!(
             store.day_settings("dana").unwrap(),
             todo_core::DaySettings::default()
+        );
+    }
+
+    /// Settings need an account to belong to, and an anonymous id's settings end when
+    /// the id is adopted: the same id issued again starts from the defaults.
+    fn day_settings_need_an_account_and_end_with_an_adopted_id(store: &dyn Store) {
+        const ANON: &str = "anon_0123456789abcdef0123456789abcdef";
+        let mine = todo_core::DaySettings {
+            deadline: NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+            ..todo_core::DaySettings::default()
+        };
+        assert!(matches!(
+            store.set_day_settings("nobody", mine),
+            Err(StoreError::NotFound)
+        ));
+        store
+            .set_day_settings(super::super::auth::LOCAL_USER, mine)
+            .expect("the local user always has an account");
+
+        store.ensure_anonymous(ANON, at(9)).unwrap();
+        store.set_day_settings(ANON, mine).unwrap();
+        store.adopt_anonymous(ANON, USER).unwrap();
+        store.ensure_anonymous(ANON, at(10)).unwrap();
+        assert_eq!(
+            store.day_settings(ANON).unwrap(),
+            todo_core::DaySettings::default()
+        );
+    }
+
+    #[test]
+    fn both_stores_need_an_account_for_day_settings() {
+        day_settings_need_an_account_and_end_with_an_adopted_id(&MemoryStore::new());
+        day_settings_need_an_account_and_end_with_an_adopted_id(
+            &SqliteStore::open_in_memory().unwrap(),
         );
     }
 
