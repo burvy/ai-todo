@@ -30,7 +30,9 @@ and `rambl.env.example` there. Copy `rambl.env.example` to `rambl.env` and fill 
   address such as an office network.
 - `GOOGLE_CLIENT_ID=138340425604-qagdhrfblj66i5s9i9icq07lb32sd2g2.apps.googleusercontent.com`,
   the public Google OAuth web client (its authorized origins are https://rambl.burvy.dev
-  and http://localhost:3160). Leave it empty to turn sign-in off.
+  and http://localhost:3160). Leaving it empty (or unset) turns sign-in off and puts
+  the server in local mode: every visitor shares one local user's tasks, so never leave
+  it empty on a public site.
 - `RAMBL_LOCAL_LOGIN=1`, **test sites only, never in production.** Shows "Continue locally"
   in the settings panel, which signs in as one fixed local user with no Google account.
   Only a peer on this machine or the private LAN (10/8, 172.16/12, 192.168/16, `::1`,

@@ -121,12 +121,8 @@ impl CurrentUser {
         // A bearer token is the only identity a signed-in client can present. A bad one
         // is refused outright, never quietly replaced by the anonymous id.
         if headers.contains_key(axum::http::header::AUTHORIZATION) {
-            let token = auth::bearer(headers)
-                .ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
             let app = shared.app.lock_recover();
-            let user = auth::session_user(app.store(), &token, app.now())
-                .map_err(HttpError::from)?
-                .ok_or_else(|| unauthorized("that session has expired"))?;
+            let user = signed_in(headers, &app)?;
             return Self::unpaused(app.store(), user.id);
         }
         let anonymous = headers
@@ -247,6 +243,18 @@ fn zone_from_env(default_tz: Option<String>, tz_name: Option<String>) -> Tz {
         .unwrap_or(chrono_tz::America::New_York)
 }
 
+/// The Google client id from `GOOGLE_CLIENT_ID`. `None`, which is local mode, when the
+/// variable is unset or blank: `rambl.env` turns sign-in off by leaving the value empty.
+fn google_client_id_from_env() -> Option<String> {
+    client_id_setting(std::env::var("GOOGLE_CLIENT_ID").ok().as_deref())
+}
+
+fn client_id_setting(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+}
+
 /// The emails from `RAMBL_ADMIN_EMAILS` (a comma-separated list), lower-cased.
 /// `None` when the variable is unset or empty — an admin page nobody enabled is off.
 fn admin_emails_from_env() -> Option<Vec<String>> {
@@ -260,16 +268,14 @@ fn admin_emails_from_env() -> Option<Vec<String>> {
 }
 
 pub fn router(app: App<Box<dyn Store>>, judge: AnyJudge) -> Router {
-    let local = std::env::var("GOOGLE_CLIENT_ID").is_err();
-    let verifier: Box<dyn TokenVerifier> = if local {
+    let client_id = google_client_id_from_env();
+    let local = client_id.is_none();
+    let verifier: Box<dyn TokenVerifier> = match client_id {
+        Some(id) => Box::new(auth::GoogleVerifier::new(id)),
         // Never reached: in local mode every request is the local user.
-        Box::new(auth::FakeVerifier {
+        None => Box::new(auth::FakeVerifier {
             answer: Err("sign-in is disabled".into()),
-        })
-    } else {
-        Box::new(auth::GoogleVerifier::new(
-            std::env::var("GOOGLE_CLIENT_ID").expect("checked above"),
-        ))
+        }),
     };
     // `main` has already refused an unsafe setting; failing closed here keeps any other
     // caller of `router` safe too.
@@ -400,9 +406,7 @@ fn build_router_with(
         verifier,
         local,
         caps,
-        google_client_id: std::env::var("GOOGLE_CLIENT_ID")
-            .ok()
-            .filter(|id| !id.is_empty()),
+        google_client_id: google_client_id_from_env(),
         admin_emails,
         trusted_proxies,
         local_login,
@@ -779,13 +783,16 @@ async fn me(
             plan: auth::Plan::Free,
         }));
     }
-    let token =
-        auth::bearer(&headers).ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
     let app = shared.app.lock_recover();
-    let user = auth::session_user(app.store(), &token, app.now())
-        .map_err(HttpError::from)?
-        .ok_or_else(|| unauthorized("that session has expired"))?;
-    Ok(Json(user))
+    Ok(Json(signed_in(&headers, &app)?))
+}
+
+/// The user behind the request's bearer token, while their session lasts.
+fn signed_in(headers: &HeaderMap, app: &App<Box<dyn Store>>) -> Result<auth::Me, HttpError> {
+    let token =
+        auth::bearer(headers).ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
+    auth::session_user(app.store(), &token, app.now())?
+        .ok_or_else(|| unauthorized("that session has expired"))
 }
 
 /// `DELETE /api/v1/me`: forget this person, their sessions and all their tasks.
@@ -803,11 +810,12 @@ async fn delete_me(
 /// in `RAMBL_ADMIN_EMAILS`. Anyone else sees 404, so the admin surface does not
 /// announce itself.
 fn admin_of(headers: &HeaderMap, shared: &Shared) -> Result<auth::Me, HttpError> {
-    let token = auth::bearer(headers).ok_or_else(admin_404)?;
     let app = shared.app.lock_recover();
-    let user = auth::session_user(app.store(), &token, app.now())
-        .map_err(HttpError::from)?
-        .ok_or_else(admin_404)?;
+    // A missing or expired session is a 404 here; a failing store is still a failure.
+    let user = signed_in(headers, &app).map_err(|error| match error.0.code {
+        ErrorCode::Unauthorized => admin_404(),
+        _ => error,
+    })?;
     let allowed = shared.admin_emails.as_deref().is_some_and(|emails| {
         emails
             .iter()
@@ -3316,6 +3324,15 @@ mod tests {
         )
         .await;
         (status, body)
+    }
+
+    /// A blank `GOOGLE_CLIENT_ID` is the same as none: local mode, and `/config` null.
+    #[test]
+    fn a_blank_client_id_means_local_mode() {
+        for off in [None, Some(""), Some("  ")] {
+            assert_eq!(client_id_setting(off), None, "{off:?}");
+        }
+        assert_eq!(client_id_setting(Some(" abc ")).as_deref(), Some("abc"));
     }
 
     /// Startup refuses the bypass next to a configured proxy, and ignores anything but `1`.
