@@ -552,8 +552,7 @@ a {
   color: var(--accent);
 }
 
-/* The active tab or filter: underlined in golden brown, like a marked word. */
-.label-filters button.active,
+/* The active choice: underlined in golden brown, like a marked word. */
 .duration-chips button.active,
 .gear-choices button.active {
   font-weight: 700;
@@ -625,10 +624,11 @@ li.task-row.row-lifted {
   stroke-linejoin: round;
 }
 
-/* The pin at the top right of the list's page, and the strips hanging down the right edge
-   from it, always visible: each done task, and for a few seconds each deleted one, hangs
-   sideways so it fits (the title runs down it). The column sits in the page, so it turns
-   with it, and takes no taps itself. */
+/* The pin at the top right of the list's page. The done tasks hang from it as a stack:
+   the newest strip on top with its title, the older ones under it, each a few px
+   further down (`--depth`), so only their edges show. Deleted rows hang as scraps
+   below the stack. The column sits in the page, so it turns with it, and takes no
+   taps itself. */
 .scrap-pile {
   position: absolute;
   top: 0;
@@ -640,8 +640,8 @@ li.task-row.row-lifted {
   flex-direction: column;
   align-items: flex-end;
   gap: var(--strip-gap, 4px);
-  padding-top: var(--pin-room, 28px);
-  /* Not clipped: a strip pushed past the last that fits slides off the page's edge. */
+  /* The deleted scraps start below the stack, never on top of its top strip. */
+  padding-top: calc(var(--pin-room, 28px) + var(--stack-h, 110px) + var(--strip-gap, 4px));
   pointer-events: none;
 }
 
@@ -677,6 +677,58 @@ li.task-row.row-lifted {
   transform: rotate(var(--hang, 0deg));
   transition: transform var(--scrap-ms) cubic-bezier(0.23, 1, 0.32, 1);
   cursor: pointer;
+}
+
+/* A done strip hangs in the stack: all of them at the pin's place, each deeper one
+   a few px lower and further back. When the top one is taped back the next slides
+   forward into its place, because its `--depth` changes. */
+.scrap-undo.done {
+  position: absolute;
+  top: var(--pin-room, 28px);
+  right: calc(var(--pin-w) / 2 - 0.9em);
+  margin-right: 0;
+  /* Every strip of the stack is the same height, so promoting one only slides it. */
+  box-sizing: border-box;
+  height: var(--strip-h, 110px);
+  max-height: none;
+  /* The finger's drag offset, on top of the stack depth. Taps must not scroll, so a
+     drag on the strip is the strip's own. */
+  translate: var(--drag-x, 0px) calc(var(--depth, 0) * var(--edge-px, 4px) + var(--drag-y, 0px));
+  touch-action: none;
+  transition:
+    transform var(--scrap-ms) cubic-bezier(0.23, 1, 0.32, 1),
+    translate var(--scrap-ms) cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* The edges under the top strip keep their title in the layout, so promoting one to the
+   top does not change its size; the title only shows on the top strip. */
+.scrap-undo.done:not(.on-top) s {
+  visibility: hidden;
+}
+
+/* Dragged by the finger: it follows at once, with no lag. Over the bin corner it leans
+   toward the bin. Released there it crumples and drops off the page's bottom edge; released
+   anywhere else it swings back to the pin (the transition above). */
+.scrap-undo.done.dragging {
+  transition: none;
+  cursor: grabbing;
+}
+
+.scrap-undo.done.over-bin {
+  rotate: -12deg;
+  scale: 0.96;
+}
+
+/* The crumple lasts as long as BIN_CRUMPLE_MS in tuning.rs, the delete waits for it. */
+.scrap-undo.done.binned {
+  animation: bin-crumple 360ms cubic-bezier(0.55, 0, 1, 0.45) forwards;
+  pointer-events: none;
+}
+
+@keyframes bin-crumple {
+  0% { scale: 0.96; rotate: -12deg; }
+  45% { scale: 0.8 0.5; rotate: -4deg; }
+  100% { translate: var(--drag-x, 0px) calc(var(--drag-y, 0px) + 100vh); scale: 0.6; rotate: 24deg; }
 }
 
 /* The start of the flight: at the row, laid flat as its line was, with no transition so
@@ -722,14 +774,17 @@ li.task-row.row-lifted {
 /* No motion: the scrap simply hangs, and is simply gone. */
 @media (prefers-reduced-motion: reduce) {
   .scrap-undo,
+  .scrap-undo.done,
   .scrap-undo.leaving {
     transform: rotate(var(--hang, 0deg));
     transition: none;
   }
 
-  .scrap-undo.done.leaving {
-    visibility: hidden;
+  /* The crumple is motion: with it off the strip is simply deleted once it is dropped. */
+  .scrap-undo.done.binned {
+    animation: none;
   }
+
 }
 
 .delete-mark {
@@ -1421,23 +1476,6 @@ li.task-row:focus-within .delete-mark {
 
 /* --- Task list --- */
 
-.label-filters {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-  /* One scrollable strip: a wrapped row can strand a single tab ("Other")
-     whenever the data decides the break, which the owner banned. The padding
-     keeps focus outlines from being clipped by the scroll box. */
-  overflow-x: auto;
-  padding: var(--space-1) 0;
-  scrollbar-width: none;
-}
-
-.label-filters button {
-  min-width: var(--tap);
-}
-
 /* One text run: block layout, not flex, so the space in
    "Finish history paper — 60 min" survives between the inline children.
    A long title wraps onto the next ruled line; it is never cut short. */
@@ -1663,6 +1701,21 @@ li.task-row:focus-within .delete-mark {
 
   main > * > * {
     flex: none;
+  }
+
+  /* The pin's column stays at the top of the visible page while the list scrolls under it
+     (the page scrolls now, so an absolute column would scroll away with the rows): a sticky
+     first item, as tall as the visible page above the foot note, with a negative bottom
+     margin the size of its height so it takes no room in the column. */
+  .tasks-pane > .scrap-pile {
+    --pin-h: calc(100dvh - var(--capture-clear) - var(--page-foot-h));
+    order: -1;
+    position: sticky;
+    top: 0;
+    bottom: auto;
+    align-self: flex-end;
+    height: var(--pin-h);
+    margin: calc(-1 * (var(--gutter) + env(safe-area-inset-top, 0px))) 0 calc(-1 * var(--pin-h)) 0;
   }
 }
 
@@ -1935,13 +1988,38 @@ li.task-row:focus-within .delete-mark {
 /* The ink a dazed Rambo writes. A layer above the page and below Rambo, and
    never over the capture line or a dialog (see the layer scale in :root). It takes no
    pointer: Rambo is the thing you pull, and the trail is what follows him. */
-.ink-layer {
+/* Ink on no page lies on the floor, over the window. */
+.ink-floor {
   position: fixed;
   inset: 0;
   width: 100%;
   height: 100%;
   z-index: var(--layer-page);
   pointer-events: none;
+}
+
+/* Ink on the list is part of the page: it scrolls and turns with the paper. Its sheet
+   sticks to the window inside the page, so it is never taller than the screen. */
+.page-ink {
+  /* As tall as all the rows while ink lies on them (`inklayer::page_layer`): the page may
+     scroll inside itself, and a box at inset 0 would cover only its first screen. */
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 0;
+  z-index: var(--layer-page);
+  pointer-events: none;
+}
+
+.ink-sheet {
+  display: block;
+  position: sticky;
+  top: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100%;
 }
 
 @media (prefers-reduced-motion: no-preference) {

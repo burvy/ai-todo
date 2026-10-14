@@ -90,11 +90,13 @@ finishes across and the task is **done**: it tears off and flies to the pin; sho
 delete are different things: a done task is kept, a deleted one is gone after the undo.
 A **done task** (the swipe, Rambo's Done button) leaves its row, crossed out, and flies
 to the **pin** at the top right of the list's page, where it hangs as a vertical strip
-down the page's right edge, always in view: the newest nearest the pin. Only whole strips
-show: as many as fit the page's height (a strip is at most `STRIP_H_PX` tall, `STRIP_H_WIDE_PX`
-on a wide screen), up to `PIN_SHOWN`; when a newer one arrives the oldest slides off the page's
-edge and stays done. Tap a strip and it is taped back (not done): its row flies back from the
-strip and the rows below slide down to make room. (A repeat's done day is skipped, so it
+down the page's right edge, always in view, as a stack: the newest strip on top with its title,
+the older ones under it, each `PIN_EDGE_PX` further down (`PIN_EDGES` of them show), so only
+their edges show. Only the top strip can be tapped or dragged. Tap it and it is taped back (not
+done): its row flies back from the strip, the rows below slide down to make room, and the next
+strip slides up into the top place. Drag the top strip into the bottom-left corner (`BIN_CORNER_FRACTION`
+of the screen) and it crumples and drops off the page; the task is deleted for good (`DELETE`, no undo).
+Released anywhere else it swings back to the pin. (A repeat's done day is skipped, so it
 does not hang.)
 There is no checkbox and no board. Every delete (the row's x, Rambo's x, the sheet's x)
 leaves a **paper scrap** flying from the row to the same pin, hanging for `SCRAP_UNDO_MS`
@@ -102,7 +104,7 @@ of time the page is in view; up to `SCRAP_MAX` (two quick deletes leave two, eac
 back its own task; a third sends the oldest away). Tap one and the task is taped back as
 it was (`POST /api/v1/tasks/restore`; a repeat's day has its skip cleared), otherwise it
 slides away. Paper slides and never fades. The rows below a row that left slide up to close the
-gap (`ROW_CLOSE_MS`), never jump. Times and counts are in `web/src/tuning.rs`;
+gap (`ROW_CLOSE_MS`), never jump. A deleted scrap lands below the stack, never on it. Times and counts are in `web/src/tuning.rs`;
 the pin is `web/src/scrap.rs`.
 e. A finger that slides before the hold is a **scroll**, and the row keeps its
 hands off it. That is also what keeps the gestures apart from the page flip: a
@@ -155,9 +157,8 @@ numbers, keyboard reachable, the paper's 12- or 24-hour clock), never the browse
 
 ### 5. Labels and priorities
 a. Tasks carry one of six labels and one of four priorities.
-b. Inspect a task in the list or use the capture result. Use the label buttons above the
-list to filter tasks; the selected filter is remembered in the browser.
-c. Code: `web/src/tasks/mod.rs:TaskList, label_name, load_label_filter, save_label_filter`;
+b. The list has no label filter: the filter tabs were removed. Labels stay on the task data.
+c. Code: `web/src/tasks/mod.rs:TaskList`;
 `crates/core/src/lib.rs:Label, Priority, Task`;
 `crates/judge/src/fake.rs:label_for`; `server/src/v2/store.rs:label_to_stored, priority_to_stored`.
 
@@ -245,11 +246,13 @@ is dazed: he stays where he landed, tipped over, and does not listen. Dragging a
 dazed Rambo writes on the page in his tool's ink. He hops home on his own
 after 8 seconds untouched, or comes home at once when dropped on his nest, and
 forgives you a little for putting him back (a small lift in the brain's cheer).
-Home again, his writing is tidied away and he listens again.
+His writing dries and fades on its own; home again, he listens again. Let go of him
+mid-flick and he splats before he is dazed.
 b. Drag the pen to empty space and release it; drag it again to write; drop it on
 the nest, or leave it 8 seconds.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:transition, listens_on_grab,
-put_back, over_nest, DAZED_MS, hops_there, held_at`; `web/src/hop.rs:Hop`;
+put_back, over_nest, DAZED_MS, hops_there, held_at, wants`; `web/src/hop.rs:Hop`;
+`web/src/gesture.rs:Recognizer, release_velocity, flung`;
 `web/src/inklayer.rs:InkLayer`; `web/src/ink.rs`;
 `crates/rambl-brain/src/lib.rs:Event::PutBack`.
 

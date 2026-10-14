@@ -6,6 +6,7 @@ pub mod account;
 pub mod api;
 pub mod brain;
 pub mod clock;
+pub mod gesture;
 pub mod hop;
 pub mod ink;
 pub mod inklayer;
@@ -22,6 +23,7 @@ pub mod week;
 
 mod capture;
 mod edits;
+mod engine;
 #[cfg(any(target_arch = "wasm32", test))]
 mod flip;
 mod flip_turner;
@@ -153,6 +155,8 @@ pub fn App() -> impl IntoView {
             <div class="tasks-pane">
                 <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request open_sheet scraps />
                 <scrap::ScrapCorner snapshot scraps set_snapshot set_error />
+                // Ink laid on the list: part of the page, so it scrolls and turns with it.
+                <inklayer::InkLayer strokes on=ink::Surface::List />
                 <PageFoot
                     page=0
                     turn=std::rc::Rc::new({
@@ -187,8 +191,8 @@ pub fn App() -> impl IntoView {
                 <div class="bend-flap"><i class="bend-strip bend-ridge"></i></div>
             </div>
         </main>
-        // The ink a dazed Rambo leaves: above the page, below him.
-        <inklayer::InkLayer strokes />
+        // Ink laid on no page: above the paper, below him.
+        <inklayer::InkLayer strokes on=ink::Surface::Floor />
         // Rambo: independent fixed layer above everything, not part of the capture form
         <Rambo
             state=mascot_state
