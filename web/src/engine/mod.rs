@@ -5,6 +5,7 @@
 mod fling;
 mod link;
 mod look;
+mod nest;
 mod run;
 mod sched;
 mod world;

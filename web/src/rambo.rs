@@ -164,6 +164,10 @@ pub(crate) fn Rambo(
     // His pose on top of where he is: lean, size, sink, the writing pose
     // (`engine::look`). With `shown`, his button's only transform.
     let look = RwSignal::new(world.borrow().look());
+    // How the nest sags and rocks under him (`engine::Nest`): both its layers, the
+    // back on its button and the rim over him, move by it.
+    let nest_shift = StoredValue::new((0.0_f64, 0.0_f64));
+    let rim_ref = NodeRef::<leptos::html::Span>::new();
     let ticking = std::rc::Rc::new(std::cell::Cell::new(false));
     let thrower = world.clone();
     let wake = move || {
@@ -181,7 +185,7 @@ pub(crate) fn Rambo(
                 leaf: crate::engine::leaf(),
                 walls: screen_walls(),
             };
-            let (brain, draw, posed, at_rest, laid) = {
+            let (brain, draw, posed, at_rest, laid, nest_moved) = {
                 let mut world = world.borrow_mut();
                 world.adopt(state.get_untracked());
                 world.advance(tick.steps, &anchors);
@@ -192,6 +196,7 @@ pub(crate) fn Rambo(
                     world.look(),
                     world.at_rest(),
                     world.take_ink(),
+                    world.nest_offset(),
                 )
             };
             if !laid.is_empty() {
@@ -211,6 +216,22 @@ pub(crate) fn Rambo(
             }
             if squash.get_untracked() != draw.squash {
                 squash.set(draw.squash);
+            }
+            if nest_shift.get_value() != nest_moved {
+                nest_shift.set_value(nest_moved);
+                let (sag, rock) = nest_moved;
+                let layers = [
+                    nest_ref
+                        .get_untracked()
+                        .map(|nest| web_sys::HtmlElement::style(&nest)),
+                    rim_ref
+                        .get_untracked()
+                        .map(|rim| web_sys::HtmlElement::style(&rim)),
+                ];
+                for style in layers.into_iter().flatten() {
+                    let _ = style.set_property("--nest-sag", &format!("{sag:.2}px"));
+                    let _ = style.set_property("--nest-rock", &format!("{rock:.2}deg"));
+                }
             }
             if look.get_untracked() != posed {
                 look.set(posed);
@@ -1078,6 +1099,7 @@ pub(crate) fn Rambo(
         // nest's box wherever the page has carried it. Its back is drawn on the nest.
         <span
             class="nest-rim"
+            node_ref=rim_ref
             aria-hidden="true"
             style:display=move || nest_at.get().is_none().then_some("none")
             style:left=move || format!("{:.1}px", nest_at.get().unwrap_or_default().0)

@@ -152,7 +152,7 @@ pub fn transition(state: &State, event: Event) -> State {
         // Thrown: only a smack into an edge dazes him; a throw that just stops sends
         // him home. Caught mid-slide, he is held again.
         (State::Thrown, Event::Smack) => State::Splatting,
-        (State::Thrown, Event::Return) => State::Home,
+        (State::Thrown, Event::Return | Event::DropNest) => State::Home,
         (State::Thrown, Event::Grab) => State::Dragging,
         (State::Dragging, Event::DropTask { task_id, title }) => State::Asking { task_id, title },
 
