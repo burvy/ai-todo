@@ -6,3 +6,13 @@
 deploy/dist/
 data/
 web/dist/
+
+# Agent scratch files: never commit
+/*.py
+/*.txt
+/*.log
+/*.rs
+__pycache__/
+/w-*/
+/outbox/
+/hive/
