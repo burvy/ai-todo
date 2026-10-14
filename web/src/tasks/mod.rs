@@ -550,7 +550,14 @@ pub(crate) fn TaskList(
                         let handle_pointer_down = {
                             let presses = presses.clone();
                             move |ev: leptos::ev::PointerEvent| {
-                                row::dom::down(&presses, &ev);
+                                // Dazed, Rambo takes every hold on the page, so the
+                                // row does not lift for one.
+                                let lifts = mascot::drawn_over(
+                                    &mascot_state.get_untracked(),
+                                    &crate::gesture::Gesture::Hold,
+                                )
+                                .is_none();
+                                row::dom::down(&presses, &ev, lifts);
                             }
                         };
 

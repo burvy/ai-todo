@@ -221,8 +221,8 @@ on screen (`--nest-w` by `--nest-h`). Rambo sits in it, his tip behind the nest'
 which is a second layer drawn over him (`.nest::before` is the back, `.nest-rim` the front).
 Tapping the nest submits the box.
 d. Nothing pops in or out. The only thing on main that fades is ink (it appears over `INK_FADE_MS`
-and fades out over `INK_FADE_OUT_MS`); the one other thing allowed to fade,
-Rambo's tape patch on a page tear, is *(planned)*. Everything else moves: a done or
+and fades out over `INK_FADE_OUT_MS`); the one other thing allowed to fade is Rambo's
+tape patch and the tear it mends (item g). Everything else moves: a done or
 deleted row flies to the pin, a taped-back task flies back from it, the rows below slide up
 to close a gap (`ROW_CLOSE_MS`), a crumpled strip drops away, and Rambo's ask bubble grows
 out of him and folds back into him over `ASK_FOLD_MS` before it leaves the page, at full
@@ -232,6 +232,25 @@ the box stay put; swipe a row right and watch it travel to the pin.
 f. Code: `web/src/lib.rs:App, PageFoot`; `web/src/week.rs:WeekGrid` (the planner page, the
 gear); `web/src/scrap.rs` (the pin); `web/theme.css` (`.capture`, `.nest`, `.nest-rim`, the
 phone block with `100dvh`); numbers in `web/src/tuning.rs`.
+g. **The page rips.** On a phone, a swipe to the right on bare paper of the list page (not on
+a task, and mostly level: `RIP_MIN_PX`, `RIP_MAX_SLOPE`) tears the page along the swipe. The
+tear is a real hole, a ragged slit up to `RIP_GAP_PX` wide: the planner page, which lies
+under the list while a tear lasts, shows through it live (its own slips and lines, not a
+picture). It follows the finger, never goes back, stops short of the pin's column, and never
+touches a task's words: a press too near a row tears nothing (`rip::lane`). One tear at a
+time. When the finger lets go Rambo notices, hops to the tear and tapes it: a strip of tape
+every `TAPE_EVERY_PX` across it is laid from one end over `TAPE_LAY_MS`, `TAPE_AT_MS` after
+the finger lets go. After `TEAR_HOLD_MS` the tape and the tear fade away together over
+`TEAR_FADE_MS`, the one thing besides ink that fades; Rambo has hopped home by then. Only a
+resting Rambo (in his nest) goes; a busy one leaves the repair to the page. He is grumpy while he mends
+(`Pose::Sulking`). A desk (two pages side by
+side) has no rip: the planner is already beside the list. Try it: on a phone, swipe right
+across the empty part of the list page.
+Code: `web/src/rip.rs` (the rules: `is_rip`, `lane`, `Tear::outline`, `sheet_path`,
+`stage`; pure and tested), `web/src/rip_ui.rs:Ripper, TearLayer` (the pointer, the hole,
+the tape), `web/src/mascot.rs:State::Mending, Event::Mend`, `web/theme.css` (`main.torn`,
+`.tear-layer`, `.tape`); numbers in `web/src/tuning.rs` (`RIP_*`, `TAPE_*`, `TEAR_*`,
+`MEND_MS`).
 
 ## III. WEEK PLANNER
 
@@ -264,8 +283,14 @@ time of day of the times the user has given explicitly; with no timed tasks yet,
 12:00. If the day is full it falls back to the earliest free slot before the deadline.
 b. Both defaults, the deadline time and the no-history placement time, are per user and
 read and changed with `GET`/`PATCH /api/v1/settings` (`deadline`, `placement`, `HH:MM`).
-The settings controls in the gear menu are *(planned)*.
-c. Code: `crates/scheduler/src/lib.rs:plan, usual_time, slot_near`;
+The gear menu has them under **A day with no time**: **Due by** and **Placed near**, each a
+time on the paper's own picker (in the paper's clock, no Clear: a day always has both). A pick is
+saved at once with `PATCH /api/v1/settings` (only that field), the plan is read again so the
+planner moves its day-only tasks, and a refused one (a 00:00 deadline) puts the old time back
+and shows the reason. The picker keeps the minute it was on, so choosing 5 from 11:59 pm gives
+5:59 pm; pick the minute too.
+c. Code: `web/src/settings.rs:DayTimes, DayTime`; `web/src/api.rs:fetch_day_settings, patch_day_settings`;
+`crates/scheduler/src/lib.rs:plan, usual_time, slot_near`;
 `crates/core/src/lib.rs:DaySettings`; `crates/dates/src/lib.rs:when_from`;
 `server/src/v2/app.rs:patch_day_settings`; `server/src/v2/http.rs:get_settings`.
 
@@ -299,17 +324,29 @@ c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/src/mas
 ### 2. Drag, daze, write and return
 a. A drag carries him without listening (a still hold listens), riding just above
 your finger or cursor so it never covers him. Every move he makes from one spot to
-another is a few brisk hops, never a glide, and never instant: first he notices, his face reacts, then he goes. Dropped on the page (not on a task or his nest), Rambo
-is dazed: he stays where he landed, tipped over, and does not listen. Dragging a
-dazed Rambo writes on the page in his tool's ink. He hops home on his own
-after 8 seconds untouched, or comes home at once when dropped on his nest, and
-forgives you a little for putting him back (a small lift in the brain's cheer).
-His writing dries and fades on its own; home again, he listens again. Let go of him
-mid-flick and he splats before he is dazed.
-b. Drag the pen to empty space and release it; drag it again to write; drop it on
-the nest, or leave it 8 seconds.
-c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:transition, listens_on_grab,
-put_back, over_nest, DAZED_MS, hops_there, held_at, wants`; `web/src/hop.rs:Hop`;
+another is a few brisk hops, never a glide, and never instant: first he notices, his face reacts, then he goes. Dropped gently on the page (not on a task or his nest), he
+hops home. Let go of him mid-flick and he is thrown: he slides on with the flick's
+speed and bounces off the screen's edges. Only a smack into an edge hard enough
+dazes him: his ink splats off the edge and he lies tipped over where he hit, not
+listening. Dragging a dazed Rambo writes on the page in his tool's ink, and so does
+holding a finger anywhere on the page while he is dazed: he comes to the finger and
+writes where it goes. After 3
+seconds untouched he skitters home in small hops, each leaving a dot of ink, or
+he comes home at once when dropped on his nest, and forgives you a little for
+putting him back (a small lift in the brain's cheer). A softer throw just slides
+and stops, and he hops home undazed. A throw that comes into the bottom-right corner
+is caught by his nest, however hard: no daze and no ink, he hops in. The nest is
+soft: it sags under him as he lands (deeper the harder he was thrown), rocks as he
+leaves or lands to one side, and settles; with reduced motion it stays still. He leans into where he hops, and eases from
+one pose into the next, never snapping. His ink dries and fades on its own; home
+again, he listens again.
+b. Flick the pen hard at a side of the screen, or into the nest's corner; drag it again to write, or hold
+anywhere and drag; drop it on the nest, or leave it 3 seconds.
+c. Code: `web/src/rambo.rs:Rambo`; `web/src/engine/world.rs:World, behaviour`;
+`web/src/engine/look.rs:pose, blended, Look`;
+`web/src/engine/fling.rs:step, splat_strokes`; `web/src/engine/nest.rs:Nest`;
+`web/src/mascot.rs:transition, listens_on_grab,
+put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `web/src/hop.rs:Hop`;
 `web/src/gesture.rs:Recognizer, release_velocity, flung`;
 `web/src/inklayer.rs:InkLayer`; `web/src/ink.rs`;
 `crates/rambl-brain/src/lib.rs:Event::PutBack`.

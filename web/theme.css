@@ -873,12 +873,14 @@ li.task-row:focus-within .delete-mark {
   flex-shrink: 0;
 }
 
-/* Both layers fill the nest's box, and `transform` stays free to sag and rock them about
-   their base. They are drawn on the furniture, so they stay put when Rambo is carried off:
-   he is only the pen. */
+/* Both layers fill the nest's box and sag and rock together about their base, by what
+   the engine's nest says (rambo.rs sets --nest-sag and --nest-rock from engine/nest.rs). They are
+   drawn on the furniture, so they stay put when Rambo is carried off: he is only the
+   pen. */
 .nest::before,
 .nest-rim {
   transform-origin: 50% 100%;
+  transform: translateY(var(--nest-sag, 0px)) rotate(var(--nest-rock, 0deg));
   background: center / 100% 100% no-repeat;
   pointer-events: none;
 }
@@ -901,17 +903,13 @@ li.task-row:focus-within .delete-mark {
 }
 
 /* The single Rambo button: independent fixed layer above everything.
-   Not a child of the nest — positioned by measuring the nest's bounding box.
-   --pen-x and --pen-y are always the center of the button.
+   Not a child of the nest. The engine owns his transform: where he is and his pose
+   (engine/look.rs) are written on the button each frame, so no rule here moves it.
    Phone 64px, desktop 80px (1.4x the old size). Spec: docs/DESIGN-DIRECTION.md §2 */
 .rambo {
   position: fixed;
   top: 0;
   left: 0;
-  transform: translate(
-    calc(var(--pen-x) - 50%),
-    calc(var(--pen-y) - 50%)
-  );
   z-index: var(--layer-rambo);
   display: inline-flex;
   width: 64px;
@@ -921,9 +919,6 @@ li.task-row:focus-within .delete-mark {
   border: none;
   cursor: grab;
   touch-action: none;
-  /* CSS variables for position (set by JS measuring the nest) */
-  --pen-x: 0px;
-  --pen-y: 0px;
 }
 
 .rambo:hover {
@@ -938,8 +933,8 @@ li.task-row:focus-within .delete-mark {
   width: 100%;
   height: 100%;
   pointer-events: none;
-  /* Moods move the drawing, never the button: the button's transform belongs
-     to dragging, flying and splatting. */
+  /* Moods move the drawing, never the button: the button's transform is the
+     engine's. */
   transform-origin: 50% 88%;
   /* Idle breathe: slow 4s cycle — 1px rise, 1° tilt. He is alive before you touch him.
      Spec: docs/DESIGN-DIRECTION.md §2 */
@@ -1002,95 +997,12 @@ li.task-row:focus-within .delete-mark {
   }
 }
 
-/* Home: down in the nest, his tip behind its rim. */
-.rambo.is-home {
-  transform: translate(
-    calc(var(--pen-x) - 50%),
-    calc(var(--pen-y) - 50% + var(--nest-sink))
-  );
-}
-
-/* Dragging: held/listening pose — tilted like a pen in hand, subtle pulse
-   shows he is alive even where speech recognition is unavailable. */
 .rambo.is-dragging {
   cursor: grabbing;
-  transform: translate(
-      calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50%)
-    ) rotate(-15deg);
-  animation: rambo-held 0.8s ease-in-out infinite;
 }
-
-@keyframes rambo-held {
-  0%, 100% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(-15deg);
-  }
-  50% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(-12deg) scale(1.05);
-  }
-}
-
-/* Dazed: dropped on the page, he lies where he landed, tipped over. */
-.rambo.is-dazed {
-  transform: translate(
-      calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50%)
-    ) rotate(12deg);
-}
-
 /* Inking: a dazed Rambo dragged nib-down across the page, writing. */
 .rambo.is-inking {
   cursor: grabbing;
-}
-
-/* Splatting: hard-drop ink splat with wobble, then settle */
-.rambo.is-splatting {
-  animation: rambo-splat 400ms ease-out forwards;
-}
-
-@keyframes rambo-splat {
-  0% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(-15deg) scale(1.15);
-  }
-  20% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(10deg) scale(0.95);
-  }
-  40% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(-6deg) scale(1.02);
-  }
-  60% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(4deg) scale(0.98);
-  }
-  80% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(-2deg) scale(1.0);
-  }
-  100% {
-    transform: translate(
-        calc(var(--pen-x) - 50%),
-        calc(var(--pen-y) - 50%)
-      ) rotate(12deg);
-  }
 }
 
 /* Splat ink burst — ::after pseudo-element shows a small ink splat on hard drop */
@@ -1128,50 +1040,132 @@ li.task-row:focus-within .delete-mark {
   }
 }
 
-/* Skittering: the hops home are drawn frame by frame (hop.rs); the CSS only
-   leans him into the run. The nest never moves. */
-.rambo.is-skittering {
-  transform: translate(
-      calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50%)
-    ) rotate(6deg);
+/* Covered: the page turned over him; he stands where he was, upright, pushing at the
+   leaf (the page's own spring lifts its corner). He is not dazed; his pose is the
+   engine's (engine/look.rs). */
+.rambo.is-covered {
+  /* Beneath the leaf, above the page under it: the turn's layers are 0 (the page beneath)
+     and 1 (the page turning), and he comes after them in the tree. */
+  z-index: var(--layer-turn-under);
 }
 
-/* Writing: shrunk and rotated like a pen at work */
-.rambo.is-flying.is-writing {
-  transform: translate(
-      calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50%)
-    ) rotate(var(--write-lean)) scale(0.78);
+/* A torn list page (web/src/rip.rs, rip_ui.rs): the planner lies beneath the list on a phone,
+   hidden; while a tear lasts it shows, under the list, which is paper with the slit cut out of
+   it, so what shows through the hole is the live planner. The texture is fixed to the screen so
+   it does not shift where it was the body's. */
+main.torn > .tasks-pane {
+  z-index: var(--layer-turn-front);
+  background-color: var(--paper);
+  background-image: var(--texture-paper);
+  background-attachment: fixed;
 }
 
-/* Writing a row: not a flight, so nothing eases and the nib is where the ink is on
-   every frame. He leans and shrinks about his nib, the bottom of his box, so the
-   lean never moves it (pen::row_nib_center). */
-.rambo.is-writing:not(.is-caret) {
-  transform-origin: 50% 100%;
-  /* His hand: the nib's press or lift and the lean's wobble, set each frame from
-     the stroke he is on (pen::hand). */
-  transform: translate(
-      calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50% + var(--nib-dip, 0px))
-    ) rotate(calc(var(--write-lean) + var(--nib-tilt, 0deg))) scale(0.78);
+main.torn > .planner-page {
+  z-index: var(--layer-turn-under);
+  pointer-events: none;
 }
 
-/* Writing at caret (same as writing, but marked for future differentiation) */
-.rambo.is-flying.is-writing.is-caret {
-  transform: translate(
-      calc(var(--pen-x) - 50%),
-      calc(var(--pen-y) - 50%)
-    ) rotate(var(--write-lean)) scale(0.78);
+@media (max-width: 700px) {
+  main.torn[data-pane="0"] > .planner-page {
+    display: flex;
+  }
 }
 
-/* Asking: positioned at the task */
-.rambo.is-asking {
-  transform: translate(
-    calc(var(--pen-x) - 50%),
-    calc(var(--pen-y) - 50%)
-  );
+/* Over both pages, taking no pointer: the paper that heals the hole, and the tape. It is
+   in the list page's coordinates, moved with its scroll (`.tear-sheet`). */
+.tear-layer {
+  position: absolute;
+  inset: 0;
+  z-index: var(--layer-turn-fx);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.tear-sheet {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+}
+
+/* The torn edge reads as an edge: a dark line with a pale fibre line just inside, and a soft
+   shadow the planner is cast on. It goes with the tear. */
+.tear-heal {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+}
+
+.tear-edge {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  stroke-opacity: 0.45;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 35%));
+}
+
+/* The paper that heals the hole: fades in over the hole as the repair ends, so the tear
+   fades away (with the tape, the one thing besides ink that fades). */
+.tear-fill {
+  fill: var(--paper);
+  opacity: 0;
+}
+
+.tear-layer.released .tear-fill {
+  animation: tear-heal var(--tear-fade) linear calc(var(--tape-at) + var(--tape-lay) + var(--tear-hold)) forwards;
+}
+
+.tear-layer.released .tear-edge {
+  animation: tear-fade var(--tear-fade) linear calc(var(--tape-at) + var(--tape-lay) + var(--tear-hold)) forwards;
+}
+
+/* A strip of tape across the tear: laid from one end, then it fades with the tear. */
+.tape {
+  display: none;
+  position: absolute;
+  height: 22px;
+  translate: -50% -50%;
+  rotate: var(--tape-angle);
+  background: color-mix(in srgb, var(--tape-colour, #d9c27a) 70%, transparent);
+  box-shadow: 0 0 0 1px rgb(0 0 0 / 8%);
+  clip-path: inset(0 100% 0 0);
+}
+
+.tear-layer.released .tape {
+  display: block;
+  animation:
+    tape-lay var(--tape-lay) ease-out var(--tape-at) forwards,
+    tear-fade var(--tear-fade) linear calc(var(--tape-at) + var(--tape-lay) + var(--tear-hold)) forwards;
+}
+
+@keyframes tape-lay {
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes tear-fade {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes tear-heal {
+  to {
+    opacity: 1;
+  }
+}
+
+/* The list page lies over him while he is caught, at rest as well as while it turns, and
+   is paper all the way: he is only seen where his push lifts its corner. */
+main:has(~ .rambo.is-covered) > .tasks-pane {
+  position: relative;
+  z-index: var(--layer-turn-front);
+  background-color: var(--paper);
+  background-image: var(--texture-paper);
 }
 
 /* Status text: speech bubble anchored to Rambo, follows him everywhere.
@@ -1930,13 +1924,26 @@ li.task-row:focus-within .delete-mark {
   white-space: nowrap;
 }
 
-.gear-menu label {
+.gear-menu label,
+.gear-menu .gear-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
   min-height: var(--tap);
   font-size: var(--text-sm);
+}
+
+/* A row whose field opens a page beneath it: the name sits over the field, so the page
+   has the whole sheet's width and the name never wraps. */
+.gear-menu .gear-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+.gear-row-name {
+  color: var(--ink-soft);
 }
 
 .gear-menu input,
@@ -2247,11 +2254,6 @@ li.task-row:focus-within .delete-mark {
   *,
   *::before,
   *::after {
-    animation: none;
-    transition: none;
-  }
-
-  .rambo {
     animation: none;
     transition: none;
   }

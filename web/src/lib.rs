@@ -13,6 +13,7 @@ pub mod inklayer;
 pub mod mascot;
 pub mod pen;
 pub mod pickers;
+pub mod rip;
 pub mod row;
 pub mod settings;
 pub mod sound;
@@ -24,13 +25,13 @@ pub mod week;
 mod capture;
 mod edits;
 mod engine;
-#[cfg(any(target_arch = "wasm32", test))]
 mod flip;
 mod flip_turner;
 #[cfg(any(target_arch = "wasm32", test))]
 mod fold;
 mod fold_turner;
 mod rambo;
+mod rip_ui;
 mod scrap;
 mod tasks;
 #[cfg(target_arch = "wasm32")]
@@ -82,6 +83,17 @@ pub fn App() -> impl IntoView {
     let (talking, set_talking) = signal(false);
     let (typing, set_typing) = signal(false);
     let pen_pos = RwSignal::new((0.0_f64, 0.0));
+    // The page rips (rip.rs): a swipe right on bare paper tears the list page, the planner shows
+    // through, and Rambo tapes it.
+    let pane_ref = NodeRef::<leptos::html::Div>::new();
+    let ripper = rip_ui::Ripper::new(
+        main_ref,
+        pane_ref,
+        pane,
+        mascot_state,
+        set_mascot_state,
+        pen_pos,
+    );
     // What a dazed Rambo has written on the page, one path per drag.
     let strokes = RwSignal::new(Vec::<ink::Stroke>::new());
     // Transcript buffer: Rambo fills it while listening, CaptureBox reads it
@@ -151,7 +163,30 @@ pub fn App() -> impl IntoView {
                     move |ev| turner.cancel(&ev)
                 }
             >
-            <div class="tasks-pane">
+            <div
+                class="tasks-pane"
+                node_ref=pane_ref
+                on:pointerdown={
+                    let ripper = ripper.clone();
+                    move |ev| ripper.down(&ev)
+                }
+                on:pointermove={
+                    let ripper = ripper.clone();
+                    move |ev| ripper.moved(&ev)
+                }
+                on:pointerup={
+                    let ripper = ripper.clone();
+                    move |ev| ripper.up(&ev)
+                }
+                on:pointercancel={
+                    let ripper = ripper.clone();
+                    move |ev| ripper.up(&ev)
+                }
+                on:scroll={
+                    let ripper = ripper.clone();
+                    move |_| ripper.scrolled()
+                }
+            >
                 <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request open_sheet scraps />
                 <scrap::ScrapCorner snapshot scraps set_snapshot set_error />
                 // Ink laid on the list: part of the page, so it scrolls and turns with it.
@@ -171,6 +206,7 @@ pub fn App() -> impl IntoView {
                 set_snapshot=set_snapshot
                 set_error=set_error
                 capture_text
+                mascot_state
                 turn_back=std::rc::Rc::new({
                     let turner = turner.clone();
                     move || turner.turn_to(0)
@@ -189,6 +225,8 @@ pub fn App() -> impl IntoView {
                 <div class="bend-shadow bend-shadow-near"></div>
                 <div class="bend-flap"><i class="bend-strip bend-ridge"></i></div>
             </div>
+            // The tape and the paper that heals a torn page, above both pages.
+            <rip_ui::TearLayer ripper />
         </main>
         // Ink laid on no page: above the paper, below him.
         <inklayer::InkLayer strokes on=ink::Surface::Floor />

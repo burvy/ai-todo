@@ -237,6 +237,15 @@ pub const FLIP_FINISH_OMEGA: f64 = 14.0;
 /// no rebound; lower swings). Safe range 12 to 20, and 0.4 to 0.8.
 pub const FLIP_FALL_OMEGA: f64 = 16.0;
 pub const FLIP_FALL_DAMPING: f64 = 0.55;
+/// How hard a Rambo caught under the leaf pushes its corner up, in `open` per second
+/// squared: it must beat the leaf's own pull (`FLIP_FALL_OMEGA` squared, about 256 per
+/// unit of `open`) to lift it at all. Safe range 100 to 300: lower and he cannot lift it,
+/// higher and the leaf pops up like a lid.
+pub const COVERED_PUSH_ACCEL: f64 = 160.0;
+/// How far his push can open the leaf, in `open`: a corner lifted a little (about 28
+/// degrees), never a turn. A leaf closing from beyond it is what catches him; one falling
+/// back from a push is not. Safe range 0.05 to 0.3.
+pub const COVERED_LIFT_REACH: f64 = 0.15;
 /// How much of its speed the leaf keeps when it meets the table or the spine. Safe range
 /// 0.4 to 0.8.
 pub const FLIP_WALL_BOUNCE: f64 = 0.65;
@@ -271,13 +280,14 @@ pub const HOP_MIN_PX: f64 = 12.0;
 /// How high a short hop rises, as a share of its length: a small hop is a small
 /// arc. Safe range 0.15 to 0.6.
 pub const HOP_RISE: f64 = 0.35;
-/// The height, in px, where a hop stops rising at `HOP_RISE`: past it a hop rises
-/// only `HOP_LONG_RISE` of its length. Safe range 8 to 40.
+/// The height, in px, where a hop stops rising at `HOP_RISE`: past it a hop's
+/// height still grows, by `HOP_LONG_RISE` of each extra px, so a longer hop is
+/// always higher, never stuck at one height. Safe range 8 to 40.
 pub const HOP_HEIGHT_PX: f64 = 22.0;
-/// How high a long hop rises, as a share of its length: lower than a short hop's
-/// round arc, but still clearly a hop, never the glide Interview 4 removed. Safe
-/// range 0.08 to 0.2.
-pub const HOP_LONG_RISE: f64 = 0.12;
+/// How much taller a long hop gets per extra px of its length: lower than a short
+/// hop's round arc, but never nothing, so a long trip is a higher arc, never the
+/// glide Interview 4 removed. Safe range 0.05 to 0.12.
+pub const HOP_LONG_RISE: f64 = 0.072;
 /// The highest any hop rises above the straight way, in px, however long: two hops
 /// across a desk stay a pen's hops, not a ball's. Safe range 32 to 80.
 pub const HOP_HEIGHT_MAX_PX: f64 = 48.0;
@@ -300,6 +310,88 @@ pub const NOTICE_PERK: f64 = 0.06;
 /// past it. Safe range 25 to 70: lower and he drags behind like a balloon, higher and
 /// he is glued to the finger with no weight at all.
 pub const RIDE_OMEGA: f64 = 40.0;
+
+/// How long he takes to ease from one pose into the next when his state changes, in
+/// ms (`engine::look`), eased in and out so no frame jumps. Safe range 100 to 240:
+/// shorter and the change snaps, longer and he still leans the old way after he has
+/// set off.
+pub const POSE_BLEND_MS: f64 = 160.0;
+/// The same into or out of the writing pose, which turns him by the theme's whole
+/// `--write-lean` (34 degrees): longer, so no frame turns him by more than 2 or 3
+/// degrees. Safe range 300 to 600.
+pub const WRITE_BLEND_MS: f64 = 400.0;
+// The longest blend is the writing pose's: the loop sleeps once it has passed.
+const _: () = assert!(POSE_BLEND_MS < WRITE_BLEND_MS);
+/// How far he leans into where he is going, in degrees per px/s of sideways speed: a
+/// hop runs at up to about 6000 px/s. Safe range 0.0005 to 0.002: lower and a fast hop
+/// stays upright, higher and every hop pins him at `LEAN_MAX_DEG`.
+pub const LEAN_PER_PX_S: f64 = 0.001;
+/// How long his lean takes to follow his speed, in ms: a hop's speed rises and falls
+/// within it, and the lean eases after it instead of snapping. Safe range 50 to 200.
+pub const LEAN_EASE_MS: f64 = 100.0;
+/// The most he leans into a move, in degrees. Safe range 4 to 12: past that he reads
+/// as falling, not running.
+pub const LEAN_MAX_DEG: f64 = 8.0;
+// Rambo thrown (`engine/fling.rs`, SPEC-ANSWERS item 31). Speeds in px per ms, as the
+// finger's release speed is read (`gesture::release_velocity`), accelerations in px
+// per ms².
+
+/// How hard the paper slows him: a steady loss of speed against his motion. Safe range
+/// 0.002 to 0.008: a 2 px/ms throw slides about 500 px at 0.004.
+pub const FLING_FRICTION: f64 = 0.004;
+/// The pull toward the bottom of the screen while he slides, so a throw curves down.
+/// Safe range 0 to 0.003; it must stay below `FLING_FRICTION`, or he would creep down
+/// while lying still.
+pub const FLING_GRAVITY: f64 = 0.0015;
+/// The share of his speed an edge gives back. Safe range 0.2 to 0.7.
+pub const FLING_BOUNCE: f64 = 0.45;
+/// Below this speed he has stopped sliding. Safe range 0.01 to 0.1.
+pub const FLING_REST_SPEED: f64 = 0.03;
+/// How fast he must hit an edge to splat, and only then is he dazed. Safe range 0.8 to
+/// 2.5: lower and every bounce dazes him, higher and only a wild flick does.
+pub const FLING_SPLAT_SPEED: f64 = 1.2;
+/// The strokes in a splat, and how far the longest reaches at the least splatting
+/// speed, in px (a harder hit reaches up to twice as far). Safe ranges 4 to 12 and 12
+/// to 48.
+pub const FLING_SPLAT_STROKES: u8 = 7;
+pub const FLING_SPLAT_REACH_PX: f64 = 26.0;
+
+// The nest (`engine/nest.rs`, SPEC-ANSWERS items 15-17): a soft dish on two damped
+// springs, its sag in px and its rock in degrees.
+
+/// How stiff the dish is, in rad/s. Safe range 10 to 25: softer and it wallows,
+/// stiffer and it only twitches.
+pub const NEST_OMEGA: f64 = 16.0;
+/// How quickly its swing dies, as a share of critical damping. Safe range 0.2 to 0.6:
+/// lower and it wobbles on, higher and it never bounces.
+pub const NEST_DAMPING: f64 = 0.3;
+/// The deepest it sags, in px, and the most it rocks, in degrees, however hard he
+/// lands. Safe ranges 3 to 10 and 2 to 6.
+pub const NEST_SAG_MAX_PX: f64 = 6.0;
+pub const NEST_ROCK_MAX_DEG: f64 = 4.0;
+/// How hard he comes down in it at the end of a hop home, in px/s of sag. Safe range
+/// 30 to 90.
+pub const NEST_LAND_KICK: f64 = 60.0;
+/// The extra sag a caught throw adds per px/ms of its speed, in px/s. Safe range 10 to
+/// 40.
+pub const NEST_CATCH_KICK_PER_PX_MS: f64 = 20.0;
+/// How far a landing off its middle tips it, in degrees per px off. Safe range 0.02 to
+/// 0.1.
+pub const NEST_ROCK_PER_PX: f64 = 0.05;
+/// How hard it rocks as he leaves it or a throw comes in sideways, in degrees/s. Safe
+/// range 15 to 50.
+pub const NEST_LEAVE_KICK: f64 = 30.0;
+/// How far up and left of the nest's middle a throw is still caught by it, in px: the
+/// nest fills the bottom-right corner, and this is the reach of its catch there. Safe
+/// range 40 to 120.
+pub const NEST_CATCH_PX: f64 = 70.0;
+
+const _: () = assert!(
+    FLING_GRAVITY < FLING_FRICTION
+        && FLING_REST_SPEED < GESTURE_FLING_MIN_SPEED
+        && GESTURE_FLING_MIN_SPEED < FLING_SPLAT_SPEED
+        && FLING_SPLAT_SPEED < GESTURE_RELEASE_MAX_SPEED
+);
 
 /// How far above a finger he rides while held, in px between the finger and his
 /// bottom edge: a fingertip covers more than its point. Safe range 8 to 48.
@@ -373,3 +465,40 @@ const _: () = assert!(WRITE_MIN_MS < WRITE_MAX_MS);
 const _: () = assert!(WRITE_TOUCHDOWN_MS <= WRITE_SETTLE_MS);
 // A title that is merely slow to write is never cut short as "waited too long".
 const _: () = assert!(WRITE_MAX_MS < WRITE_HOLD_MAX_MS);
+
+// ---- The page rips (web/src/rip.rs)
+
+/// How far a swipe to the right must travel before it is a rip, in px. Safe range 16
+/// to 48: less and a sloppy tap tears the page, more and a rip feels ignored.
+pub const RIP_MIN_PX: f64 = 24.0;
+/// How far off level a rip may wander, as a share of its travel (rise over run). Safe
+/// range 0.2 to 0.8: it is what tells a rip from a scroll.
+pub const RIP_MAX_SLOPE: f64 = 0.5;
+/// How wide the hole opens in the middle of the tear, in px. Safe range 8 to 28: it
+/// has to be wide enough to see the planner through.
+pub const RIP_GAP_PX: f64 = 16.0;
+/// How far the ragged edge of each lip wanders, in px, and how far apart its corners
+/// are. Safe ranges 0 to 6 and 6 to 16.
+pub const RIP_JAG_PX: f64 = 3.5;
+pub const RIP_JAG_STEP_PX: f64 = 9.0;
+/// How near the screen's edge the tear may reach, in px. Safe range 8 to 32.
+pub const RIP_EDGE_PX: f64 = 12.0;
+/// The tape: its length across the tear and how often one is laid along it, in px,
+/// and how far off square a hand lays it, in degrees. Safe ranges 36 to 80, 60 to 140
+/// and 0 to 20.
+pub const TAPE_LEN_PX: f64 = 54.0;
+pub const TAPE_EVERY_PX: f64 = 90.0;
+pub const TAPE_SKEW_DEG: f64 = 12.0;
+/// The repair's clock, in ms. The tape goes on this long after the finger lets go (long
+/// enough for him to notice and hop over), takes `TAPE_LAY_MS` to lay, lies untouched
+/// `TEAR_HOLD_MS`, and then tape and tear fade together over `TEAR_FADE_MS`. Safe
+/// ranges 600 to 2000, 200 to 600, 1000 to 10000 and 600 to 3000.
+pub const TAPE_AT_MS: u32 = 1100;
+pub const TAPE_LAY_MS: u32 = 350;
+pub const TEAR_HOLD_MS: u32 = 4000;
+pub const TEAR_FADE_MS: u32 = 1500;
+/// How long he stays at the tear, in ms: until the tape is on, and a moment more to
+/// look it over, so he is never walking off with the tape half laid.
+pub const MEND_MS: u32 = TAPE_AT_MS + TAPE_LAY_MS + 300;
+
+const _: () = assert!(RIP_GAP_PX / 2.0 + RIP_JAG_PX < 20.0);
