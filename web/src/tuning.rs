@@ -356,6 +356,36 @@ pub const FLING_SPLAT_SPEED: f64 = 1.2;
 pub const FLING_SPLAT_STROKES: u8 = 7;
 pub const FLING_SPLAT_REACH_PX: f64 = 26.0;
 
+// The nest (`engine/nest.rs`, SPEC-ANSWERS items 15-17): a soft dish on two damped
+// springs, its sag in px and its rock in degrees.
+
+/// How stiff the dish is, in rad/s. Safe range 10 to 25: softer and it wallows,
+/// stiffer and it only twitches.
+pub const NEST_OMEGA: f64 = 16.0;
+/// How quickly its swing dies, as a share of critical damping. Safe range 0.2 to 0.6:
+/// lower and it wobbles on, higher and it never bounces.
+pub const NEST_DAMPING: f64 = 0.3;
+/// The deepest it sags, in px, and the most it rocks, in degrees, however hard he
+/// lands. Safe ranges 3 to 10 and 2 to 6.
+pub const NEST_SAG_MAX_PX: f64 = 6.0;
+pub const NEST_ROCK_MAX_DEG: f64 = 4.0;
+/// How hard he comes down in it at the end of a hop home, in px/s of sag. Safe range
+/// 30 to 90.
+pub const NEST_LAND_KICK: f64 = 60.0;
+/// The extra sag a caught throw adds per px/ms of its speed, in px/s. Safe range 10 to
+/// 40.
+pub const NEST_CATCH_KICK_PER_PX_MS: f64 = 20.0;
+/// How far a landing off its middle tips it, in degrees per px off. Safe range 0.02 to
+/// 0.1.
+pub const NEST_ROCK_PER_PX: f64 = 0.05;
+/// How hard it rocks as he leaves it or a throw comes in sideways, in degrees/s. Safe
+/// range 15 to 50.
+pub const NEST_LEAVE_KICK: f64 = 30.0;
+/// How far up and left of the nest's middle a throw is still caught by it, in px: the
+/// nest fills the bottom-right corner, and this is the reach of its catch there. Safe
+/// range 40 to 120.
+pub const NEST_CATCH_PX: f64 = 70.0;
+
 const _: () = assert!(
     FLING_GRAVITY < FLING_FRICTION
         && FLING_REST_SPEED < GESTURE_FLING_MIN_SPEED

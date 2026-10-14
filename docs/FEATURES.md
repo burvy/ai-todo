@@ -279,8 +279,14 @@ time of day of the times the user has given explicitly; with no timed tasks yet,
 12:00. If the day is full it falls back to the earliest free slot before the deadline.
 b. Both defaults, the deadline time and the no-history placement time, are per user and
 read and changed with `GET`/`PATCH /api/v1/settings` (`deadline`, `placement`, `HH:MM`).
-The settings controls in the gear menu are *(planned)*.
-c. Code: `crates/scheduler/src/lib.rs:plan, usual_time, slot_near`;
+The gear menu has them under **A day with no time**: **Due by** and **Placed near**, each a
+time on the paper's own picker (in the paper's clock, no Clear: a day always has both). A pick is
+saved at once with `PATCH /api/v1/settings` (only that field), the plan is read again so the
+planner moves its day-only tasks, and a refused one (a 00:00 deadline) puts the old time back
+and shows the reason. The picker keeps the minute it was on, so choosing 5 from 11:59 pm gives
+5:59 pm; pick the minute too.
+c. Code: `web/src/settings.rs:DayTimes, DayTime`; `web/src/api.rs:fetch_day_settings, patch_day_settings`;
+`crates/scheduler/src/lib.rs:plan, usual_time, slot_near`;
 `crates/core/src/lib.rs:DaySettings`; `crates/dates/src/lib.rs:when_from`;
 `server/src/v2/app.rs:patch_day_settings`; `server/src/v2/http.rs:get_settings`.
 
@@ -324,14 +330,17 @@ writes where it goes. After 3
 seconds untouched he skitters home in small hops, each leaving a dot of ink, or
 he comes home at once when dropped on his nest, and forgives you a little for
 putting him back (a small lift in the brain's cheer). A softer throw just slides
-and stops, and he hops home undazed. He leans into where he hops, and eases from
+and stops, and he hops home undazed. A throw that comes into the bottom-right corner
+is caught by his nest, however hard: no daze and no ink, he hops in. The nest is
+soft: it sags under him as he lands (deeper the harder he was thrown), rocks as he
+leaves or lands to one side, and settles; with reduced motion it stays still. He leans into where he hops, and eases from
 one pose into the next, never snapping. His ink dries and fades on its own; home
 again, he listens again.
-b. Flick the pen hard at a side of the screen; drag it again to write, or hold
+b. Flick the pen hard at a side of the screen, or into the nest's corner; drag it again to write, or hold
 anywhere and drag; drop it on the nest, or leave it 3 seconds.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/engine/world.rs:World, behaviour`;
 `web/src/engine/look.rs:pose, blended, Look`;
-`web/src/engine/fling.rs:step, splat_strokes`;
+`web/src/engine/fling.rs:step, splat_strokes`; `web/src/engine/nest.rs:Nest`;
 `web/src/mascot.rs:transition, listens_on_grab,
 put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `web/src/hop.rs:Hop`;
 `web/src/gesture.rs:Recognizer, release_velocity, flung`;

@@ -873,12 +873,14 @@ li.task-row:focus-within .delete-mark {
   flex-shrink: 0;
 }
 
-/* Both layers fill the nest's box, and `transform` stays free to sag and rock them about
-   their base. They are drawn on the furniture, so they stay put when Rambo is carried off:
-   he is only the pen. */
+/* Both layers fill the nest's box and sag and rock together about their base, by what
+   the engine's nest says (rambo.rs sets --nest-sag and --nest-rock from engine/nest.rs). They are
+   drawn on the furniture, so they stay put when Rambo is carried off: he is only the
+   pen. */
 .nest::before,
 .nest-rim {
   transform-origin: 50% 100%;
+  transform: translateY(var(--nest-sag, 0px)) rotate(var(--nest-rock, 0deg));
   background: center / 100% 100% no-repeat;
   pointer-events: none;
 }
@@ -1922,13 +1924,26 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   white-space: nowrap;
 }
 
-.gear-menu label {
+.gear-menu label,
+.gear-menu .gear-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2);
   min-height: var(--tap);
   font-size: var(--text-sm);
+}
+
+/* A row whose field opens a page beneath it: the name sits over the field, so the page
+   has the whole sheet's width and the name never wraps. */
+.gear-menu .gear-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+}
+
+.gear-row-name {
+  color: var(--ink-soft);
 }
 
 .gear-menu input,
