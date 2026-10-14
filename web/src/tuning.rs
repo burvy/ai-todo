@@ -13,6 +13,10 @@ pub const TIME_PAGE_START: u16 = 9 * 60;
 /// screen: near an edge the bubble slides in rather than run off it. Safe range 4 to
 /// 24; it matches the page's `--space-2` gutter.
 pub const BUBBLE_EDGE_PX: f64 = 8.0;
+/// How long his ask bubble takes to fold back into him once he has his answer, in
+/// ms; the page reads it as `--ask-fold-ms`. Safe range 120 to 300: shorter and it
+/// pops, longer and the page waits on it.
+pub const ASK_FOLD_MS: u32 = 180;
 
 const _: () = assert!(60 % MINUTE_STEP == 0);
 

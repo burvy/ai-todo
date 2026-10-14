@@ -39,6 +39,8 @@
   --margin-line: rgba(165, 52, 42, 0.24);
   --wash: rgba(159, 104, 46, 0.1);
   --shadow: 0 1px 2px rgba(93, 71, 50, 0.14);
+  /* The same shadow for a torn shape (filter: drop-shadow), which box-shadow cannot follow. */
+  --shadow-drop: 0 1px 1.5px rgba(93, 71, 50, 0.28);
   --sheet-shadow: 0 10px 24px -14px rgba(60, 44, 26, 0.5);
   /* The page under the spread, peeking out at the fold. */
   --fold-shadow: -8px 0 14px -10px rgba(60, 44, 26, 0.35);
@@ -187,6 +189,7 @@
   --margin-line: rgba(224, 112, 95, 0.26);
   --wash: rgba(217, 164, 92, 0.14);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-drop: 0 1px 1.5px rgba(0, 0, 0, 0.55);
   --sheet-shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.8);
   --fold-shadow: -8px 0 14px -10px rgba(0, 0, 0, 0.6);
   --backdrop: rgba(10, 8, 5, 0.55);
@@ -1205,32 +1208,150 @@ li.task-row:focus-within .delete-mark {
   box-shadow: var(--shadow);
 }
 
-/* Rambo's ask: a speech bubble above him. */
+/* Rambo's ask: a small speech bubble above him (Interview 4, item 8). Tapping
+   anywhere off it, or Esc, is never mind, so it has no button for that. */
 .ask {
   position: absolute;
   bottom: calc(100% + var(--space-2));
   left: 50%;
   transform: translateX(-50%);
+  transform-origin: 50% 100%;
   z-index: var(--layer-rambo-bubble);
   width: max-content;
   /* Never wider than the screen less its gutters: on a narrow phone the
-     choices wrap under the question instead of running off the edge. */
-  max-width: min(24rem, calc(100vw - 2 * var(--space-2)));
+     question wraps instead of running off the edge. */
+  max-width: min(16rem, calc(100vw - 2 * var(--space-2)));
   /* Not the nowrap and centring it would inherit from his button. */
   white-space: normal;
   text-align: start;
-  padding: var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-3);
   font-family: var(--font-heading);
-  font-style: italic;
+  font-size: var(--text-sm);
   background-color: var(--paper-raised);
   border: 1px solid var(--rule);
   border-radius: 12px;
   box-shadow: var(--shadow);
   pointer-events: auto;
+  /* It comes out of him and goes back into him, never fading (Interview 4, item 12):
+     tucked, it is small, behind him and moved to his middle (--ask-tuck); it grows
+     out to its place when he asks, and folds back in over --ask-fold-ms once he has
+     his answer, before it is taken away. */
+  --ask-tuck: calc(var(--space-1) + var(--space-2) + var(--ask-below-by, 0px) / 2);
+  transition:
+    scale var(--ask-fold-ms) var(--arrive-ease),
+    translate var(--ask-fold-ms) var(--arrive-ease),
+    z-index var(--ask-fold-ms) step-end;
 }
 
-.ask button {
-  margin: var(--space-1);
+.ask.tucked,
+.ask.folding {
+  scale: 0.25;
+  translate: 0 var(--ask-tuck);
+  z-index: var(--layer-behind);
+  pointer-events: none;
+}
+
+.ask.tucked {
+  transition: none;
+}
+
+.ask.folding {
+  transition:
+    scale var(--ask-fold-ms) var(--leave-ease),
+    translate var(--ask-fold-ms) var(--leave-ease),
+    z-index var(--ask-fold-ms) step-start;
+}
+
+/* The status line sits above him, so below him is past his own height
+   (--ask-below-by, measured). */
+.ask.below {
+  bottom: auto;
+  top: calc(100% + var(--space-1) + var(--ask-below-by, 0px) + var(--space-2));
+  transform-origin: 50% 0;
+}
+
+/* Below him, he is above it: tucked means moved up into him. */
+.ask.below.tucked,
+.ask.below.folding {
+  translate: 0 calc(-1 * var(--ask-tuck));
+}
+
+.ask-question {
+  display: block;
+  font-style: italic;
+  color: var(--ink-soft);
+}
+
+.ask-question q {
+  font-style: normal;
+  color: var(--ink);
+}
+
+/* The choices are scraps of paper, torn by hand: a little crooked, each its own
+   way, with a deckled edge. The shadow sits on the row, so the scraps' torn
+   shape casts it. */
+.ask-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+  filter: drop-shadow(var(--shadow-drop));
+}
+
+.ask-choice {
+  min-height: 2.75rem;
+  padding: 0 var(--space-3);
+  font: inherit;
+  font-size: var(--text-base);
+  color: var(--ink);
+  background-color: var(--paper);
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  clip-path: polygon(
+    1% 6%, 18% 0%, 41% 4%, 63% 1%, 86% 5%, 100% 2%,
+    98% 34%, 100% 67%, 97% 100%, 72% 96%, 49% 100%, 27% 95%, 4% 99%,
+    0% 70%, 2% 38%
+  );
+  rotate: -1.5deg;
+  transition: scale var(--dur-fast) var(--arrive-ease);
+}
+
+.ask-choice:nth-child(2) {
+  rotate: 1deg;
+  clip-path: polygon(
+    0% 3%, 22% 6%, 47% 0%, 70% 4%, 100% 1%,
+    97% 30%, 100% 62%, 98% 97%, 76% 100%, 52% 95%, 24% 99%, 2% 96%,
+    0% 64%, 3% 31%
+  );
+}
+
+.ask-choice:nth-child(3) {
+  rotate: -0.5deg;
+  clip-path: polygon(
+    2% 0%, 30% 5%, 55% 1%, 79% 6%, 99% 0%,
+    100% 36%, 97% 71%, 100% 98%, 70% 94%, 44% 100%, 19% 96%, 0% 100%,
+    3% 66%, 0% 33%
+  );
+}
+
+.ask-choice:active {
+  scale: 0.97;
+}
+
+/* The clip hides an outline, so the focused scrap is pressed into the page. */
+.ask-choice:focus-visible {
+  outline: none;
+  background-color: var(--paper-sunken);
+  text-decoration: underline wavy var(--ink-soft) 1px;
+  text-underline-offset: 0.2em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ask,
+  .ask-choice {
+    transition: none;
+  }
 }
 
 /* --- Week planner: days scroll inside their own box, never the page --- */

@@ -228,7 +228,7 @@ The bubble is the small speech bubble with choice buttons that shows when Rambo 
 - **Move:** the page turns to the planner and you tap an hour, and Rambo also offers the next free time. Not by carrying him to the planner.
 - **Dropped on a task's slip in the planner:** time choices: move, make it longer or shorter, take it off the planner.
 - **Dropped on an empty hour in the planner:** he starts a new task at that time and listens. Tapping or clicking anywhere else cancels it.
-- **The bubble's choices are final: Edit, Move, Done, Never mind.** No Delete: deleting is the scribble-out (below).
+- **The bubble's choices are final: Edit, Move, Done**, as drawn paper scraps (Interview 4). No Delete: deleting is the scribble-out (below). No Never mind button: tapping off the bubble, or on him, is never mind.
 
 ### Gestures, final (interview 3)
 This replaces the earlier interview 3 note that swiping left crosses a task out. "Swipe right" means the finger moves from left to right.

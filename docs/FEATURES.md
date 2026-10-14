@@ -144,13 +144,13 @@ g. Code: `web/src/row.rs` (the gesture rules, unit-tested) and its `dom` module
 
 ### 4. Edit through Rambo
 a. Dropping Rambo on a task offers actions: **Edit** opens that task's edit sheet,
-**Done** toggles completion, **×** deletes it, **Move** does nothing yet. On Edit
+**Done** toggles completion, **Move** does nothing yet. There is no delete in the bubble; tapping off it is never mind. On Edit
 Rambo also listens: say the change ("make it Friday at 3") and the server's revise
 call (Jev) applies it, then the sheet shows the result. A repeating task's sheet
 edits its series, which revise cannot, so he does not listen there.
-b. Drag Rambo onto a task, then choose **Edit**, **Move**, **Done**, or **×**.
+b. Drag Rambo onto a task, then choose **Edit**, **Move** or **Done**, or tap off the bubble.
 c. Code: `web/src/rambo.rs:Rambo`, which sets `edit_request` for
-`web/src/tasks/mod.rs:TaskList` to open its sheet; `web/src/api.rs:patch_task, delete_task`.
+`web/src/tasks/mod.rs:TaskList` to open its sheet; `web/src/mascot.rs:Choice, asking_dismissed_by`; `web/src/api.rs:patch_task`.
 d. The sheet's days and times are picked on the paper's own pickers (handwritten
 numbers, keyboard reachable, the paper's 12- or 24-hour clock), never the browser's:
 `web/src/pickers.rs:PaperDate, PaperTime, PaperDateTime`; numbers in `web/src/tuning.rs`.
@@ -270,10 +270,11 @@ glyphs_of, stroke_at, inked_count, hand, touch_down, flick, beat`; pace and hand
 `web/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`).
 
 ### 4. Drop actions
-a. Dropping Rambo on a task opens a prompt with Edit, Move, Done, Delete and
-Never mind actions. Edit opens the task dialog (`<dialog class="task-dialog">` in `web/src/tasks/mod.rs`).
+a. Dropping Rambo on a task opens a small bubble with Edit, Move and Done, drawn as
+paper scraps. Tapping anywhere off the bubble (him too) or pressing Esc is never mind. Edit opens the task dialog (`<dialog class="task-dialog">` in `web/src/tasks/mod.rs`).
 b. Drag the pen onto a task row and choose an action.
-c. Code: `web/src/rambo.rs:Rambo`; `web/src/api.rs:patch_task, delete_task`.
+c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:Choice, asking_dismissed_by`;
+`web/src/api.rs:patch_task`. Move is a stub until moving a task lands: he goes home.
 
 ### 5. Reduced motion
 a. With reduced motion enabled, Rambo returns immediately instead of animating.
