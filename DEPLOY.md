@@ -61,6 +61,9 @@ can be deleted once the new server runs and the page loads.
 
 ## Every release
 
+The step-by-step version, with the RustDesk copy and the rollback, is
+[docs/SHIP.md](docs/SHIP.md).
+
 On the development machine, run `deploy\build-release.ps1`. Close the old server
 window, rename `rambl-server.exe` in the Rambl folder to `rambl-server.old.exe`,
 send the new `rambl-server.exe` from `deploy\dist\rambl-release` over RustDesk, and
