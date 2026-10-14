@@ -279,8 +279,14 @@ time of day of the times the user has given explicitly; with no timed tasks yet,
 12:00. If the day is full it falls back to the earliest free slot before the deadline.
 b. Both defaults, the deadline time and the no-history placement time, are per user and
 read and changed with `GET`/`PATCH /api/v1/settings` (`deadline`, `placement`, `HH:MM`).
-The settings controls in the gear menu are *(planned)*.
-c. Code: `crates/scheduler/src/lib.rs:plan, usual_time, slot_near`;
+The gear menu has them under **A day with no time**: **Due by** and **Placed near**, each a
+time on the paper's own picker (in the paper's clock, no Clear: a day always has both). A pick is
+saved at once with `PATCH /api/v1/settings` (only that field), the plan is read again so the
+planner moves its day-only tasks, and a refused one (a 00:00 deadline) puts the old time back
+and shows the reason. The picker keeps the minute it was on, so choosing 5 from 11:59 pm gives
+5:59 pm; pick the minute too.
+c. Code: `web/src/settings.rs:DayTimes, DayTime`; `web/src/api.rs:fetch_day_settings, patch_day_settings`;
+`crates/scheduler/src/lib.rs:plan, usual_time, slot_near`;
 `crates/core/src/lib.rs:DaySettings`; `crates/dates/src/lib.rs:when_from`;
 `server/src/v2/app.rs:patch_day_settings`; `server/src/v2/http.rs:get_settings`.
 

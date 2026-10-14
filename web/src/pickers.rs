@@ -372,13 +372,14 @@ pub fn PaperDate(
 }
 
 /// A time picker over an `HH:MM` value, written in the paper's clock. Writing an
-/// empty string clears it.
+/// empty string clears it, unless the time is not `clearable` (a setting always has one).
 #[component]
 pub fn PaperTime(
     label: &'static str,
     #[prop(into)] value: Signal<String>,
     #[prop(into)] set: Callback<String>,
     #[prop(into)] clock: Signal<Clock>,
+    #[prop(default = true)] clearable: bool,
 ) -> impl IntoView {
     let open = RwSignal::new(false);
     let scope = NodeRef::new();
@@ -459,13 +460,15 @@ pub fn PaperTime(
                     })}
                     <div class="paper-actions">
                         <button type="button" on:click=move |_| open.set(false)>"Close"</button>
-                        <button
-                            type="button"
-                            on:click=move |_| {
-                                set.run(String::new());
-                                open.set(false);
-                            }
-                        >"Clear"</button>
+                        {clearable.then(|| view! {
+                            <button
+                                type="button"
+                                on:click=move |_| {
+                                    set.run(String::new());
+                                    open.set(false);
+                                }
+                            >"Clear"</button>
+                        })}
                     </div>
                 }
             }}
