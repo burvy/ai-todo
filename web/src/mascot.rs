@@ -108,8 +108,6 @@ pub const LISTEN_HOLD_MS: u32 = 450;
 /// How far the pointer may wander during that hold and still count as still.
 /// Safe range 4 to 16 px: a resting finger on a phone shakes a few pixels.
 pub const LISTEN_SLOP_PX: f64 = 8.0;
-/// Minimum drop velocity (px/ms) to trigger a hard-drop splat.
-pub const HARD_DROP_VELOCITY: f64 = 0.5;
 
 pub fn transition(state: &State, event: Event) -> State {
     match (state, event) {
@@ -180,6 +178,28 @@ pub fn listens_on_grab(state: &State) -> bool {
 /// holding him (a long press can listen) rather than dragging him.
 pub fn held_still(grab: (f64, f64), now: (f64, f64)) -> bool {
     (now.0 - grab.0).hypot(now.1 - grab.1) <= LISTEN_SLOP_PX
+}
+
+/// Whether Rambo takes `gesture` whatever is under the finger: the brain is asked
+/// before any target (ENGINE-PLAN §5). Dazed, a hold or a drag anywhere is his,
+/// drawing him to the finger (Interview 4, item 2), and while he is being drawn the
+/// gesture stays his until it ends. Home again, rows and slips get their holds
+/// back. A router asks at `Hold` and `Drag`; once he has taken a gesture it keeps
+/// it to the end (`Drop`, `Fling`, `Cancel`) whatever his state, and sends a
+/// `Cancel` to the target that had its `Down`. Nothing routes through it yet: the
+/// engine's router is the first caller (ENGINE-PLAN §5).
+pub fn wants(state: &State, gesture: &crate::gesture::Gesture) -> bool {
+    use crate::gesture::Gesture;
+    matches!(
+        (state, gesture),
+        (
+            State::Dazed | State::Inking,
+            Gesture::Hold | Gesture::Drag { .. }
+        ) | (
+            State::Inking,
+            Gesture::Drop { .. } | Gesture::Fling { .. } | Gesture::Cancel
+        )
+    )
 }
 
 /// Whether going from `before` to `after` is the user putting a dazed Rambo
@@ -1201,5 +1221,49 @@ mod tests {
         assert!(layer("note") < layer("rambo"));
         // The capture bar is above everything sticky: day names.
         assert!(layer("sticky") < layer("capture"));
+    }
+
+    #[test]
+    fn dazed_he_takes_every_hold_and_drag_whatever_is_under_the_finger() {
+        use crate::gesture::Gesture;
+        let tap = Gesture::Tap;
+        let hold = Gesture::Hold;
+        let drag = Gesture::Drag {
+            pos: (10.0, 10.0),
+            vel: (0.0, 0.0),
+        };
+        let drop = Gesture::Drop { pos: (10.0, 10.0) };
+        let fling = Gesture::Fling { vel: (2.0, 0.0) };
+        let row = Gesture::Down {
+            target: crate::gesture::Target::Row("t1".into()),
+            at: (10.0, 10.0),
+        };
+        let asking = State::Asking {
+            task_id: "t1".into(),
+            title: "Lab report".into(),
+        };
+        // (state, gesture, his whatever the target)
+        let table = [
+            (State::Dazed, &hold, true),
+            (State::Dazed, &drag, true),
+            (State::Dazed, &tap, false),
+            (State::Dazed, &row, false),
+            (State::Inking, &drag, true),
+            (State::Inking, &drop, true),
+            (State::Inking, &fling, true),
+            (State::Inking, &Gesture::Cancel, true),
+            (State::Home, &hold, false),
+            (State::Home, &drag, false),
+            (State::Dragging, &hold, false),
+            (State::Splatting, &hold, false),
+            (State::Skittering, &drag, false),
+            (asking, &hold, false),
+            (State::Flying, &drag, false),
+            (State::WritingCaret, &hold, false),
+            (State::WritingRow, &drag, false),
+        ];
+        for (state, gesture, his) in table {
+            assert_eq!(wants(&state, gesture), his, "{state:?} {gesture:?}");
+        }
     }
 }
