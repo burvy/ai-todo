@@ -191,7 +191,7 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
   - Each new event or arm has a test in `mascot.rs` (input state and event, then the expected state).
   - FE-1's check list passes for drag, drop, put-back, going home and capture-then-write.
 - Do not touch: CSS, `pen_pos`, timers, the daze time.
-- TODO (owner's rule, 2026-10-14; Tuning step): Rambo reacts visibly before he moves: a beat of notice and an expression, then the move. FE-4 adds no timers, so the beat is not here; its length goes into `web/src/tuning.rs` as `NOTICE_BEAT_MS` with the Tuning step below.
+- Done in #286. The owner's notice beat is its own later step (2.4, "The reaction beat").
 
 **FE-5: dead code and undefined colours** · CSS + Rust · small · after FE-3
 - Why: the cloud audit (1.8, items 21–24) found code nothing calls and colours nothing defines. Less code means less for every later ticket to read.
@@ -207,15 +207,14 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
   - Gate green, with the wasm32 check.
 - Do not touch: the planner drop behaviour (dropping Rambo on a planner block is a later fix), anything the audit did not name.
 
-### Queue: one GLM agent at a time
+### Queue
 
-Several GLM agents at once drain the usage budget, so only one builds at a time (owner, interview 2). God dispatches the next ticket when the last one is reviewed. Keep tickets small. Current order:
+Who has which ticket right now is in the hive's `STATUS.md`; this list is the order, as of 2026-10-14. While GLM agents build, only one builds at a time (owner, interview 2). They are out until 2026-10-20, so Claude and other agents take tickets in parallel meanwhile, each on its own files.
 
-1. FE-4: state changes through `transition` (Claudio, taking over Huang's work).
-2. Ping: paper and nest art (journal paper, DESIGN-DIRECTION §9). **Waits for the picked assets:** Dario is sourcing candidates (hive `ASSETS-PLAN.md`); Ping builds on the ones chosen, in asset slots.
-3. FE-3: CSS tidy (Chuan).
-4. FE-2: art follows the page theme (Zhipu).
-5. Then: BUG-9, BUG-1 to BUG-3 (one agent, in turn), FE-5 (Funny), BUG-4 to BUG-8, then the later steps.
+- Done: FE-0 (#267), FE-3 (#282), FE-4 (#286).
+- In review or building: FE-5 (#289), FE-2, BUG-1 to BUG-3 (one agent, in turn, as they share `tack.rs`), BUG-4, BUG-5, BUG-6, BUG-7 (#288), and on the cloud session (issue #259): BUG-9, the port of v1's writing, then the reaction beat.
+- Next: BUG-8, then the later steps in 2.4.
+- Waiting for the picked assets: the paper and nest art. Dario sources candidates (hive `ASSETS-PLAN.md`). Ping's concept is saved on `ping/paper-concept` (342c4e2, `art/previews/paper-concept.html`); the art step builds on the chosen assets, in asset slots.
 
 **BUG-9: the planner cannot scroll forward to every day** · Rust or CSS · small
 - The bug (owner's phone test, on b005174): on the phone the planner does not scroll right far enough to show Friday.
@@ -231,7 +230,7 @@ Several GLM agents at once drain the usage budget, so only one builds at a time 
 
 Each becomes a ticket when the steps before it have landed, written with what they taught us. The order is a guess, and so is the split into steps. Fable's review of #268 and the owner's answers (DESIGN-DIRECTION §9) are the guidance.
 
-- **Tuning.** Constants into `web/src/tuning.rs`, following `docs/TUNING.md` (#270, one `tuning.rs` per crate), then the CSS times as `--t-*`, each with a guard test. The daze becomes about 3s here. Where CSS and Rust disagree today (`FLY_MS = 450` against the CSS flight), Rust wins. Adds the owner's notice beat (see the TODO in FE-4): before any move he shows he noticed, for `NOTICE_BEAT_MS`.
+- **Tuning.** Constants into `web/src/tuning.rs`, following `docs/TUNING.md` (#270, one `tuning.rs` per crate), then the CSS times as `--t-*`, each with a guard test. The daze becomes about 3s here. Where CSS and Rust disagree today (`FLY_MS = 450` against the CSS flight), Rust wins. The reaction beat's length lives here too, as `NOTICE_BEAT_MS`.
 - **z-index tokens.** Name the stacking, a guard test that every `z-index` is a token, and put Rambo under dialogs (answered). Note in THEME.md that a `showModal()` dialog sits above every token.
 - **Cascade layers.** Wrap every rule in its layer, keeping today's order where rules compete; pixel diff identical.
 - **Two-element Rambo** at 1.4x, with the rim clip. Paired review with Emilio.
@@ -252,7 +251,7 @@ Each becomes a ticket when the steps before it have landed, written with what th
 - **Scribble-out delete** (DESIGN-DIRECTION §9, Gestures, final): swipe right on a row draws Rambo's scribble over the words, growing with the finger's travel; past `SWIPE_PX` (`row.rs`) the row is deleted, short of it the ink lifts away. It replaces today's slide-away (`.swipe-deleted`) and keeps `row.rs`'s gesture rules. Accept: a pure test of how much scribble shows for a given travel, and that the delete threshold is unchanged.
 - **Planner swipes** (with or after BUG-9): on the planner page, swipe left scrolls to later days; swipe right inside the grid scrolls back, and outside the grid turns the page back to the list. Accept: a pure test that maps the swipe's direction and where it started (inside or outside the grid) to scroll or turn.
 - **The page rips:** a left-to-right swipe on the list page that does not start on a task tears the page edge a little. Rambo walks over and tapes it, and his face stays grumpy for a while; the tape and tear fade after a while. Tear and tape art in asset slots; the times in the tuning file. Accept: a pure test that a swipe on a task deletes and one off a task rips; the tear never covers a row's words.
-- **The reaction beat:** every Rambo move (skitter home, fly to a row, go to write, tape the rip) starts with a beat: he notices, his expression changes, then he moves. One place in `mascot.rs` adds the beat in front of every move, with its times in the tuning file, and a guard test that no move starts without it. After FE-4, since every change of state goes through `transition` there. The interruption step (writing pauses and resumes) must keep the beat short enough that capture never feels slow.
+- **The reaction beat:** every Rambo move (skitter home, fly to a row, go to write, tape the rip) starts with a beat: he notices, his expression changes, then he moves. One place in `mascot.rs` adds the beat in front of every move, with its length in `web/src/tuning.rs` as `NOTICE_BEAT_MS`, and a guard test that no move starts without it. After FE-4, since every change of state goes through `transition` there. The interruption step (writing pauses and resumes) must keep the beat short enough that capture never feels slow.
 - **Scrap undo** (with the scribble-out): the deleted row's scrap lies in the page corner for a few seconds; a tap tapes it back and the task returns as it was. Accept: a test that undo restores the task unchanged, and that the scrap goes after its time.
 - **Ink dries:** a new row is glossy for a few seconds after Rambo writes it; a tap in that time smudges it. Accept: the gloss time is a tuning constant; the smudge is only a look and never changes the task.
 - **The nib runs dry:** after a long run of rows, Rambo taps his nib on the dish's rim before the next. Accept: a pure test of when the tap comes (a tuning count of rows); it never delays a capture by more than the tap.
