@@ -450,6 +450,7 @@ pub(crate) fn TaskList(
             let slide = rested.with_value(|before| scrap::rows_to_slide(before, &now));
             rested.set_value(now);
             scrap::slide_rows(&slide);
+            scrap::fly_rows_back();
         });
     });
 
@@ -681,6 +682,7 @@ pub(crate) fn TaskList(
                                             if let Some(action) = snapshot.with_untracked(|s| tick_action(s, &task_id.0)) {
                                                 apply_tick(&task_id, action, EditSink { set_snapshot, set_error }).await;
                                             }
+                                            scrap::forget_departure(&task_id.0);
                                             // Refused: the ink comes off and the row stays.
                                             if snapshot.with_untracked(|s| held(s, &task_id.0).is_some_and(|task| !task.done)) {
                                                 row::dom::clear_ink(&task_id.0);

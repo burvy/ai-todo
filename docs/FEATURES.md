@@ -90,8 +90,12 @@ finishes across and the task is **done**: it tears off and flies to the pin; sho
 delete are different things: a done task is kept, a deleted one is gone after the undo.
 A **done task** (the swipe, Rambo's Done button) leaves its row, crossed out, and flies
 to the **pin** at the top right of the list's page, where it hangs as a vertical strip
-down the page's right edge, always in view: the newest nearest the pin, at most
-`PIN_SHOWN`, the older ones staying done. Tap a strip and it is taped back (not done).
+down the page's right edge, always in view: the newest nearest the pin. Only whole strips
+show: as many as fit the page's height (a strip is at most `STRIP_H_PX` tall, `STRIP_H_WIDE_PX`
+on a wide screen), up to `PIN_SHOWN`; when a newer one arrives the oldest slides off the page's
+edge and stays done. Tap a strip and it is taped back (not done): its row flies back from the
+strip and the rows below slide down to make room. (A repeat's done day is skipped, so it
+does not hang.)
 There is no checkbox and no board. Every delete (the row's x, Rambo's x, the sheet's x)
 leaves a **paper scrap** flying from the row to the same pin, hanging for `SCRAP_UNDO_MS`
 of time the page is in view; up to `SCRAP_MAX` (two quick deletes leave two, each taping

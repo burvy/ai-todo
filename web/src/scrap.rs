@@ -18,7 +18,8 @@ use crate::api;
 use crate::edits::series_note;
 use crate::tasks::occurrence_parts;
 use crate::tuning::{
-    PIN_SHOWN, ROW_CLOSE_MS, SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS,
+    PIN_ROOM_PX, PIN_SHOWN, ROW_CLOSE_MS, SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS,
+    STRIP_GAP_PX, STRIP_H_PX, STRIP_H_WIDE_PX,
 };
 
 /// What taping a scrap back does.
@@ -70,6 +71,45 @@ fn take_departure(id: &str) -> Option<Spot> {
     DEPARTURES.with(|noted| noted.borrow_mut().remove(id))
 }
 
+/// Drop a noted departure once its request is answered: a refused one, or a strip that
+/// landed past what fits, never mounts a strip to take it.
+pub fn forget_departure(id: &str) {
+    take_departure(id);
+}
+
+thread_local! {
+    /// Where the strip of a task being taped back hung, so its row can fly back from there.
+    static RETURNS: std::cell::RefCell<std::collections::HashMap<String, Spot>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+fn note_return(id: &str, spot: Spot) {
+    RETURNS.with(|noted| noted.borrow_mut().insert(id.to_owned(), spot));
+}
+
+fn forget_return(id: &str) {
+    RETURNS.with(|noted| noted.borrow_mut().remove(id));
+}
+
+/// The strips that fit a pile `height` px tall, below the pin's room, each at most
+/// `strip` tall with `gap` between: whole strips only, at least one, at most [`PIN_SHOWN`].
+fn strips_that_fit(height: f64, strip: f64, gap: f64) -> usize {
+    let room = (height - PIN_ROOM_PX + gap).max(0.0);
+    ((room / (strip + gap)) as usize).clamp(1, PIN_SHOWN)
+}
+
+/// How tall a strip may grow and how many fit the pile `pile` now.
+fn measure(pile: &web_sys::HtmlElement) -> (f64, usize) {
+    let wide = web_sys::window()
+        .and_then(|window| window.inner_width().ok()?.as_f64())
+        .is_some_and(|width| width > 700.0);
+    let strip = if wide { STRIP_H_WIDE_PX } else { STRIP_H_PX };
+    (
+        strip,
+        strips_that_fit(f64::from(pile.client_height()), strip, STRIP_GAP_PX),
+    )
+}
+
 /// A done task hanging at the pin: plain data, drawn as a strip. Its look and flight
 /// come from the page's transform, so something else can drive them.
 #[derive(Clone, Debug, PartialEq)]
@@ -78,17 +118,32 @@ struct Hung {
     title: String,
 }
 
-/// The done tasks hanging at the pin, newest first, at most [`PIN_SHOWN`].
-fn hung_at_the_pin(snapshot: &Snapshot) -> Vec<Hung> {
+/// The done tasks in the order they hang: newest nearest the pin.
+fn done_newest_first(snapshot: &Snapshot) -> Vec<&Task> {
     let mut done: Vec<&Task> = snapshot.tasks.iter().filter(|task| task.done).collect();
     done.sort_by_key(|task| std::cmp::Reverse(task.updated_at));
-    done.into_iter()
-        .take(PIN_SHOWN)
+    done
+}
+
+/// The strips to keep mounted when `shown` fit: those, plus one more that is sliding off
+/// the bottom as a newer one arrives.
+fn hung_at_the_pin(snapshot: &Snapshot, shown: usize) -> Vec<Hung> {
+    done_newest_first(snapshot)
+        .into_iter()
+        .take(shown + 1)
         .map(|task| Hung {
             id: task.id.clone(),
             title: task.title.clone(),
         })
         .collect()
+}
+
+/// Whether the strip of task `id` has been pushed past the `shown` that fit.
+fn pushed_off(snapshot: &Snapshot, id: &TaskId, shown: usize) -> bool {
+    done_newest_first(snapshot)
+        .iter()
+        .position(|task| task.id == *id)
+        .is_some_and(|rank| rank >= shown)
 }
 
 /// The scraps lying in the corner, oldest first. A newer delete lays a new scrap
@@ -280,14 +335,16 @@ pub fn row_tops() -> Vec<(String, i32)> {
         .collect()
 }
 
-/// The rows that must slide to close the gap a removed row left: how far each one moved
-/// (old top minus new top), for rows in both lists that moved at all. Nothing slides when
-/// no row went, so an add or a reorder keeps its own motion.
+/// The rows that must slide to close the gap a removed row left, or open the room an
+/// arriving one needs: how far each one moved (old top minus new top), for rows in both
+/// lists that moved at all. Nothing slides when the same rows stand in a new order, so a
+/// reorder keeps its own motion.
 pub fn rows_to_slide(before: &[(String, i32)], after: &[(String, i32)]) -> Vec<(String, i32)> {
-    let one_went = before
-        .iter()
-        .any(|(id, _)| after.iter().all(|(kept, _)| kept != id));
-    if !one_went {
+    let ids_changed = before.len() != after.len()
+        || before
+            .iter()
+            .any(|(id, _)| after.iter().all(|(kept, _)| kept != id));
+    if !ids_changed {
         return Vec::new();
     }
     after
@@ -328,6 +385,54 @@ pub fn slide_rows(moved: &[(String, i32)]) {
         let _ = row.offset_width();
     }
     for row in rows {
+        let style = row.style();
+        let _ = style.set_property(
+            "transition",
+            &format!("transform {ROW_CLOSE_MS}ms var(--ease-out, ease-out)"),
+        );
+        let _ = style.set_property("transform", "none");
+    }
+}
+
+/// Fly each row that has just come back from the pin from where its strip hung. A strip
+/// not yet answered for (the row is not in the list) is kept for the next look.
+pub fn fly_rows_back() {
+    let Some(doc) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let motion = !crate::mascot::prefers_reduced_motion();
+    let noted: Vec<(String, Spot)> = RETURNS.with(|noted| noted.borrow_mut().drain().collect());
+    let mut flown = Vec::new();
+    for (id, strip) in noted {
+        let row = doc
+            .query_selector(&format!("li[data-id=\"{id}\"]"))
+            .ok()
+            .flatten()
+            .and_then(|row| row.dyn_into::<web_sys::HtmlElement>().ok());
+        let Some(row) = row else {
+            note_return(&id, strip);
+            continue;
+        };
+        if !motion {
+            continue;
+        }
+        let rect = row.get_bounding_client_rect();
+        let at = Spot {
+            x: rect.left(),
+            y: rect.top(),
+            w: rect.width(),
+            h: rect.height(),
+        };
+        let (dx, dy) = fly_offset(strip, at);
+        let style = row.style();
+        let _ = style.set_property("transition", "none");
+        let _ = style.set_property("transform", &format!("translate({dx:.1}px, {dy:.1}px)"));
+        flown.push(row);
+    }
+    if let Some(row) = flown.first() {
+        let _ = row.offset_width();
+    }
+    for row in flown {
         let style = row.style();
         let _ = style.set_property(
             "transition",
@@ -399,10 +504,31 @@ pub fn ScrapCorner(
     set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
 ) -> impl IntoView {
+    // How tall a strip may grow and how many fit: read from the pile once the page has
+    // laid out, and again when the window changes size or the list changes.
+    let pile = NodeRef::<leptos::html::Div>::new();
+    let fit = RwSignal::new((STRIP_H_PX, PIN_SHOWN));
+    let remeasure = move || {
+        if let Some(pile) = pile.get_untracked() {
+            fit.set(measure(&pile));
+        }
+    };
+    Effect::new(move |_| {
+        snapshot.track();
+        request_animation_frame(remeasure);
+    });
+    let _ = window_event_listener(leptos::ev::resize, move |_| remeasure());
+    let shown = move || fit.get().1;
     view! {
-        <div class="scrap-pile">
+        <div
+            class="scrap-pile"
+            node_ref=pile
+            style:--strip-h=move || format!("{}px", fit.get().0)
+            style:--strip-gap=format!("{STRIP_GAP_PX}px")
+            style:--pin-room=format!("{PIN_ROOM_PX}px")
+        >
             <For
-                each=move || snapshot.with(hung_at_the_pin)
+                each=move || snapshot.with(|held| hung_at_the_pin(held, shown()))
                 key=|hung| hung.id.clone()
                 children=move |hung| {
                     let hung_ref = NodeRef::<leptos::html::Button>::new();
@@ -417,12 +543,14 @@ pub fn ScrapCorner(
                         });
                         ready.is_some()
                     });
+                    let leaving_id = hung.id.clone();
                     let label = format!("Tape \"{}\" back: not done after all", hung.title);
                     let style = format!("{}deg", sway_deg(hash_ticket(&hung.id.0)));
                     view! {
                         <button
                             type="button"
                             class="scrap-undo done"
+                            class:leaving=move || snapshot.with(|held| pushed_off(held, &leaving_id, shown()))
                             node_ref=hung_ref
                             style:--hang=style
                             aria-label=label
@@ -433,8 +561,19 @@ pub fn ScrapCorner(
                                     return;
                                 };
                                 let sink = crate::edits::EditSink { set_snapshot, set_error };
+                                // The row flies back from where this strip hangs.
+                                if let Some(button) = hung_ref.get_untracked() {
+                                    let rect = button.get_bounding_client_rect();
+                                    note_return(&id.0, Spot {
+                                        x: rect.left(),
+                                        y: rect.top(),
+                                        w: rect.width(),
+                                        h: rect.height(),
+                                    });
+                                }
                                 wasm_bindgen_futures::spawn_local(async move {
                                     crate::tasks::apply_tick(&id, action, sink).await;
+                                    forget_return(&id.0);
                                 });
                             }
                         >
@@ -662,54 +801,72 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_pin_holds_the_newest_done_tasks_and_no_more() {
+    fn done_snapshot(count: i64) -> Snapshot {
         let mut snapshot = api::fixture_snapshot();
         let template = snapshot.tasks[0].clone();
-        snapshot.tasks.clear();
-        for n in 0..PIN_SHOWN as i64 + 3 {
-            let mut task = template.clone();
-            task.id = TaskId(format!("t{n}"));
-            task.title = format!("Task {n}");
-            task.done = n % 2 == 0 || n > 4;
-            task.updated_at = template.updated_at + chrono::Duration::minutes(n);
-            snapshot.tasks.push(task);
-        }
-        let hung = hung_at_the_pin(&snapshot);
-        assert_eq!(hung.len(), PIN_SHOWN);
-        assert!(
-            hung.windows(2)
-                .all(|pair| pair[0].id.0 > pair[1].id.0 || pair[0].id.0.len() > pair[1].id.0.len()),
-            "newest first"
-        );
-        assert!(
-            snapshot
-                .tasks
-                .iter()
-                .filter(|t| !t.done)
-                .all(|t| hung.iter().all(|h| h.id != t.id)),
-            "only done tasks hang"
-        );
+        snapshot.tasks = (0..count)
+            .map(|n| {
+                let mut task = template.clone();
+                task.id = TaskId(format!("t{n}"));
+                task.title = format!("Task {n}");
+                task.done = true;
+                task.updated_at = template.updated_at + chrono::Duration::minutes(n);
+                task
+            })
+            .collect();
+        snapshot
     }
 
     #[test]
-    fn rows_below_a_removed_row_slide_up_by_its_height() {
-        let row = |id: &str, top| (id.to_owned(), top);
-        let before = [row("a", 0), row("b", 50), row("c", 100), row("d", 150)];
-        let after = [row("a", 0), row("c", 50), row("d", 100)];
+    fn the_pin_keeps_what_fits_plus_one_sliding_off_newest_first() {
+        let snapshot = done_snapshot(10);
+        let hung = hung_at_the_pin(&snapshot, 4);
+        let ids: Vec<_> = hung.iter().map(|h| h.id.0.as_str()).collect();
         assert_eq!(
-            rows_to_slide(&before, &after),
-            [row("c", 50), row("d", 50)],
-            "rows below slide up; the row above stays"
+            ids,
+            ["t9", "t8", "t7", "t6", "t5"],
+            "four fit, the fifth leaves"
+        );
+        assert!(!pushed_off(&snapshot, &TaskId("t6".into()), 4));
+        assert!(pushed_off(&snapshot, &TaskId("t5".into()), 4));
+    }
+
+    #[test]
+    fn only_done_tasks_hang() {
+        let mut snapshot = done_snapshot(3);
+        snapshot.tasks[1].done = false;
+        let hung = hung_at_the_pin(&snapshot, 6);
+        assert!(hung.iter().all(|h| h.id.0 != "t1"));
+    }
+
+    #[test]
+    fn whole_strips_fit_the_page_and_at_least_one_shows() {
+        // A 390x844 phone's page under the foot note is about 786 px: six strips of 110 px.
+        assert_eq!(strips_that_fit(786.0, 110.0, 4.0), 6);
+        assert_eq!(strips_that_fit(20.0, 120.0, 4.0), 1, "never none");
+        assert_eq!(
+            strips_that_fit(5000.0, 120.0, 4.0),
+            PIN_SHOWN,
+            "never past the cap"
         );
     }
 
     #[test]
-    fn nothing_slides_unless_a_row_went() {
+    fn rows_below_an_arriving_row_slide_down_to_make_room() {
         let row = |id: &str, top| (id.to_owned(), top);
         let before = [row("a", 0), row("b", 50)];
-        // A new row at the top pushes the others down: that is not a gap closing.
         let after = [row("n", 0), row("a", 50), row("b", 100)];
+        assert_eq!(
+            rows_to_slide(&before, &after),
+            [row("a", -50), row("b", -50)]
+        );
+    }
+
+    #[test]
+    fn nothing_slides_when_the_same_rows_are_reordered() {
+        let row = |id: &str, top| (id.to_owned(), top);
+        let before = [row("a", 0), row("b", 50)];
+        let after = [row("b", 0), row("a", 50)];
         assert!(rows_to_slide(&before, &after).is_empty());
     }
 

@@ -598,9 +598,9 @@ li.task-row.row-lifted {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: var(--space-1);
-  padding-top: 26px;
-  overflow: hidden;
+  gap: var(--strip-gap, 4px);
+  padding-top: var(--pin-room, 28px);
+  /* Not clipped: a strip pushed past the last that fits slides off the page's edge. */
   pointer-events: none;
 }
 
@@ -623,7 +623,7 @@ li.task-row.row-lifted {
   position: relative;
   display: block;
   writing-mode: vertical-rl;
-  max-height: 9em;
+  max-height: var(--strip-h, 110px);
   margin-right: calc(var(--pin-w) / 2 - 0.9em);
   padding: 0.8em 0.4em 0.5em;
   border: 0;
@@ -659,6 +659,7 @@ li.task-row.row-lifted {
 
 .scrap-undo.leaving {
   transform: translateX(calc(100% + var(--gutter))) rotate(14deg);
+  pointer-events: none;
 }
 
 /* Tapped, waiting for the server: it stays put until the task is back. */
@@ -683,6 +684,10 @@ li.task-row.row-lifted {
   .scrap-undo.leaving {
     transform: rotate(var(--hang, 0deg));
     transition: none;
+  }
+
+  .scrap-undo.done.leaving {
+    visibility: hidden;
   }
 }
 

@@ -602,8 +602,9 @@ pub(crate) fn Rambo(
                                     let set_state_clone = set_state;
                                     wasm_bindgen_futures::spawn_local(async move {
                                         if let Some(action) = action {
-                                            apply_tick(&TaskId(task_id), action, sink).await;
+                                            apply_tick(&TaskId(task_id.clone()), action, sink).await;
                                         }
+                                        crate::scrap::forget_departure(&task_id);
                                         set_state_clone.set(mascot::transition(&state.get_untracked(), mascot::Event::Choose));
                                     });
                                 }
