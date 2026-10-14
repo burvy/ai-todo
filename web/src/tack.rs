@@ -13,7 +13,7 @@
 //! the mascot code; this board only reports [`Cue`]s on a signal it is handed.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use gloo_timers::callback::Timeout;
@@ -85,6 +85,7 @@ impl Phys {
     }
 
     /// Mechanical energy in units of `K`, for tests: it must never grow.
+    #[cfg(test)]
     fn energy(self, rest: f64) -> f64 {
         0.5 * self.vel * self.vel / K + (1.0 - (self.angle - rest).cos())
     }
@@ -304,9 +305,7 @@ fn load_stored() -> Option<Stored> {
 }
 
 fn save_stored(open: bool, strips: &[Strip]) {
-    let Some(storage) = web_sys::window()
-        .and_then(|w| w.local_storage().ok().flatten())
-    else {
+    let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) else {
         return;
     };
     let stored = Stored {
@@ -333,6 +332,194 @@ fn save_stored(open: bool, strips: &[Strip]) {
 
 // ---- the component ----
 
+// ---- the component ----
+
+/// The board's imperative half: everything the animation loop and the pointer
+/// gestures need. All `Copy` and Send, so the view's closures (which must be
+/// Send even in the browser) capture it freely. The swing state in `phys` is
+/// never read reactively — only `get_untracked` — so moving it a whole frame
+/// at a time costs the framework nothing.
+#[derive(Clone, Copy)]
+struct Board {
+    strips: RwSignal<Vec<Strip>>,
+    phys: RwSignal<HashMap<String, Phys>>,
+    board_w: RwSignal<f64>,
+    loop_alive: RwSignal<bool>,
+    board_ref: NodeRef<leptos::html::Section>,
+    reduced: bool,
+}
+
+/// Where a strip renders right now, as a transform string. Stacked strips
+/// place themselves in the pile; hanging ones swing by their physics.
+fn strip_transform(strip: &Strip, list: &[Strip], swing: Option<Phys>, board_w: f64) -> String {
+    if strip.stacked {
+        let index = list.iter().filter(|s| s.stacked && s.z < strip.z).count();
+        let (x, y, rest) = pile_at(board_w, index, &strip.id);
+        return format!(
+            "translate({x:.1}px, {y:.1}px) rotate({:.1}deg)",
+            rest.to_degrees()
+        );
+    }
+    let angle = swing.map(|p| p.angle).unwrap_or(strip.rest);
+    format!(
+        "translate({x:.1}px, {y:.1}px) rotate({angle:.2}deg)",
+        x = strip.x,
+        y = strip.y,
+        angle = angle.to_degrees()
+    )
+}
+
+/// Write every strip's current transform straight to the DOM: 30 strips at
+/// 60 fps must not go through fine-grained reactivity.
+fn sync_transforms(board: Board) {
+    let Some(el) = board.board_ref.get() else {
+        return;
+    };
+    let list = board.strips.get_untracked();
+    let phys = board.phys.get_untracked();
+    let nodes = strip_elements(el.unchecked_ref::<web_sys::Element>());
+    for strip in &list {
+        if let Some(el) = nodes.get(&strip.id) {
+            let swing = strip.tacked.then(|| phys.get(&strip.id).copied()).flatten();
+            let transform = strip_transform(strip, &list, swing, board.board_w.get_untracked());
+            let _ = el.set_attribute(
+                "style",
+                &format!("transform: {transform}; z-index: {};", strip.z),
+            );
+        }
+    }
+}
+
+/// The animation loop: accumulate frame time, step every strip a whole number
+/// of PHYS_DTs, write transforms, then sleep until an impulse wakes it again.
+fn wake_loop(board: Board) {
+    if board.reduced || board.loop_alive.get_untracked() {
+        return;
+    }
+    board.loop_alive.set(true);
+    // The tick keeps itself alive through this handle; dropping it (when every
+    // strip has settled) lets the closure be collected.
+    let tick: Rc<RefCell<Option<wasm_bindgen::prelude::Closure<dyn FnMut(f64)>>>> =
+        Rc::new(RefCell::new(None));
+    let next = tick.clone();
+    let mut last: Option<f64> = None;
+    let mut acc = 0.0_f64;
+    *tick.borrow_mut() = Some(wasm_bindgen::prelude::Closure::wrap(Box::new(
+        move |now: f64| {
+            let dt = last
+                .map(|l| ((now - l) / 1000.0).clamp(0.0, 0.1))
+                .unwrap_or(0.0);
+            last = Some(now);
+            acc += dt;
+            let list = board.strips.get_untracked();
+            while acc >= PHYS_DT {
+                acc -= PHYS_DT;
+                board.phys.update(|phys| {
+                    for strip in &list {
+                        let rest = if strip.tacked { 0.0 } else { strip.rest };
+                        let entry = phys.entry(strip.id.clone()).or_insert(Phys {
+                            angle: rest,
+                            vel: 0.0,
+                        });
+                        *entry = entry.step(PHYS_DT, rest);
+                    }
+                });
+            }
+            let phys = board.phys.get_untracked();
+            let nodes = board
+                .board_ref
+                .get()
+                .map(|el| strip_elements(el.unchecked_ref::<web_sys::Element>()));
+            let mut awake = false;
+            if let Some(nodes) = nodes.as_ref() {
+                for strip in &list {
+                    let rest = if strip.tacked { 0.0 } else { strip.rest };
+                    let swing = phys.get(&strip.id).copied();
+                    if swing.is_some_and(|p| !p.settled(rest)) {
+                        awake = true;
+                    }
+                    if let Some(el) = nodes.get(&strip.id) {
+                        let transform =
+                            strip_transform(strip, &list, swing, board.board_w.get_untracked());
+                        let _ = el.set_attribute(
+                            "style",
+                            &format!("transform: {transform}; z-index: {};", strip.z),
+                        );
+                    }
+                }
+            }
+            if awake && let (Some(tick), Some(window)) = (next.borrow().as_ref(), web_sys::window())
+            {
+                window
+                    .request_animation_frame(tick.as_ref().unchecked_ref())
+                    .ok();
+            } else {
+                board.loop_alive.set(false);
+                *next.borrow_mut() = None;
+            }
+        },
+    )));
+    if let (Some(start), Some(window)) = (tick.borrow().as_ref(), web_sys::window()) {
+        window
+            .request_animation_frame(start.as_ref().unchecked_ref())
+            .ok();
+    }
+}
+
+/// Read the board's on-screen width so strips can be placed in board-local
+/// pixels whatever the layout did to it.
+fn measure(board: Board) {
+    if let Some(el) = board.board_ref.get() {
+        let w = el.get_bounding_client_rect().width();
+        if w > 0.0 {
+            board.board_w.set(w);
+        }
+    }
+}
+
+/// A strip appears for a done task, either quietly (already done when the
+/// page opened) or after the pause, swinging in, with the cue for Rambo.
+fn add_strip(
+    board: Board,
+    set_cue: WriteSignal<Option<Cue>>,
+    id: &str,
+    title: &str,
+    swing_in: bool,
+) {
+    let (x, y) = attach_point(board.board_w.get_untracked(), id);
+    board.strips.update(|list| {
+        list.push(Strip {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            x,
+            y,
+            rest: hash_unit(id, 2) * 0.2,
+            tacked: true,
+            stacked: false,
+            z: 0,
+        });
+        apply_cap(list);
+        renumber(list);
+    });
+    if swing_in {
+        if !board.reduced {
+            let swing_in = Phys {
+                angle: -1.1,
+                vel: 0.35,
+            };
+            board.phys.update(|phys| {
+                phys.insert(id.to_owned(), swing_in);
+            });
+            wake_loop(board);
+        }
+        play_sound("pin");
+        set_cue.set(Some(Cue::CutAndTack {
+            task_id: id.to_owned(),
+        }));
+    }
+    sync_transforms(board);
+}
+
 #[component]
 pub fn TackBoard(
     snapshot: ReadSignal<Snapshot>,
@@ -344,8 +531,22 @@ pub fn TackBoard(
     let board_ref = NodeRef::<leptos::html::Section>::new();
     let bin_ref = NodeRef::<leptos::html::Div>::new();
     let strips = RwSignal::new(Vec::<Strip>::new());
+    let phys = RwSignal::new(HashMap::<String, Phys>::new());
+    let board_w = RwSignal::new(180.0_f64);
+    let loop_alive = RwSignal::new(false);
     let (open, set_open) = signal(false);
     let (dragging, set_dragging) = signal(None::<String>);
+    // Pointer samples for the release-velocity measurement (x, y, time-ms).
+    let samples = RwSignal::new(Vec::<(f64, f64, f64)>::new());
+    let reduced = crate::mascot::prefers_reduced_motion();
+    let board = Board {
+        strips,
+        phys,
+        board_w,
+        loop_alive,
+        board_ref,
+        reduced,
+    };
 
     if let Some(stored) = load_stored() {
         set_open.set(stored.open);
@@ -367,209 +568,11 @@ pub fn TackBoard(
         );
     }
 
-    // Runtime-only state the animation loop owns; never reactive, so per-frame
-    // physics costs the framework nothing. Strip nodes are cached by id so the
-    // loop writes transforms straight to the DOM.
-    let phys = Rc::new(RefCell::new(std::collections::HashMap::<String, Phys>::new()));
-    let nodes =
-        Rc::new(RefCell::new(std::collections::HashMap::<String, web_sys::HtmlElement>::new()));
-    let board_w = Rc::new(std::cell::Cell::new(180.0_f64));
-    let loop_alive = Rc::new(std::cell::Cell::new(false));
-
-    let reduced = crate::mascot::prefers_reduced_motion();
-
     // Tasks already done when the board first renders get strips without
     // ceremony; only ones that flip done while the page is open get the
     // pause, the swing-in and the cue for Rambo.
     let seen_done = Rc::new(RefCell::new(HashSet::<String>::new()));
     let first_run = Rc::new(std::cell::Cell::new(true));
-
-    let measure = {
-        let board_ref = board_ref;
-        let board_w = board_w.clone();
-        move || {
-            if let Some(el) = board_ref.get() {
-                let w = el.get_bounding_client_rect().width();
-                if w > 0.0 {
-                    board_w.set(w);
-                }
-            }
-        }
-    };
-
-    // Where a strip renders right now, as a transform string. Stacked strips
-    // place themselves in the pile; hanging ones swing by their physics.
-    let strip_transform = {
-        let board_w = board_w.clone();
-        move |strip: &Strip, list: &[Strip], swing: Option<Phys>| -> String {
-            if strip.stacked {
-                let index = list
-                    .iter()
-                    .filter(|s| s.stacked && s.z < strip.z)
-                    .count();
-                let (x, y, rest) = pile_at(board_w.get(), index, &strip.id);
-                return format!(
-                    "translate({x:.1}px, {y:.1}px) rotate({:.1}deg)",
-                    rest.to_degrees()
-                );
-            }
-            let angle = swing
-                .map(|p| p.angle)
-                .unwrap_or(strip.rest);
-            format!(
-                "translate({x:.1}px, {y:.1}px) rotate({angle:.2}deg)",
-                x = strip.x,
-                y = strip.y,
-                angle = angle.to_degrees()
-            )
-        }
-    };
-
-    // Write transforms straight to the DOM: 30 strips at 60 fps must not go
-    // through fine-grained reactivity.
-    let sync_transforms = {
-        let phys = phys.clone();
-        let nodes = nodes.clone();
-        let strip_transform = strip_transform.clone();
-        move || {
-            let list = strips.get_untracked();
-            let phys = phys.borrow();
-            let mut nodes = nodes.borrow_mut();
-            nodes.retain(|id, _| list.iter().any(|s| &s.id == id));
-            for strip in &list {
-                if let Some(el) = nodes.get(&strip.id) {
-                    let swing = strip
-                        .tacked
-                        .then(|| phys.get(&strip.id).copied())
-                        .flatten();
-                    let transform = strip_transform(strip, &list, swing);
-                    let _ = el.set_attribute(
-                        "style",
-                        &format!("transform: {transform}; z-index: {};", strip.z),
-                    );
-                }
-            }
-        }
-    };
-
-    // The animation loop: accumulate frame time, step every strip a whole
-    // number of PHYS_DTs, write transforms, then sleep until an impulse wakes
-    // it again.
-    let start_loop = {
-        let phys = phys.clone();
-        let nodes = nodes.clone();
-        let board_w = board_w.clone();
-        let loop_alive = loop_alive.clone();
-        Rc::new(move || {
-            if reduced || loop_alive.get() {
-                return;
-            }
-            loop_alive.set(true);
-            let phys = phys.clone();
-            let nodes = nodes.clone();
-            let board_w = board_w.clone();
-            let loop_alive = loop_alive.clone();
-            let closure: Rc<RefCell<Option<wasm_bindgen::prelude::Closure<dyn FnMut(f64)>>>> =
-                Rc::new(RefCell::new(None));
-            let tick = closure.clone();
-            let mut last: Option<f64> = None;
-            let mut acc = 0.0_f64;
-            *closure.borrow_mut() =
-                Some(wasm_bindgen::prelude::Closure::wrap(Box::new(move |now: f64| {
-                    let dt = last
-                        .map(|l| ((now - l) / 1000.0).clamp(0.0, 0.1))
-                        .unwrap_or(0.0);
-                    last = Some(now);
-                    acc += dt;
-                    let list = strips.get_untracked();
-                    while acc >= PHYS_DT {
-                        acc -= PHYS_DT;
-                        let mut phys = phys.borrow_mut();
-                        for strip in &list {
-                            let rest = if strip.tacked { 0.0 } else { strip.rest };
-                            let entry = phys
-                                .entry(strip.id.clone())
-                                .or_insert(Phys { angle: rest, vel: 0.0 });
-                            *entry = entry.step(PHYS_DT, rest);
-                        }
-                    }
-                    let phys = phys.borrow();
-                    let mut awake = false;
-                    let mut nodes = nodes.borrow_mut();
-                    nodes.retain(|id, _| list.iter().any(|s| &s.id == id));
-                    for strip in &list {
-                        let rest = if strip.tacked { 0.0 } else { strip.rest };
-                        let swing = phys.get(&strip.id).copied();
-                        if swing.is_some_and(|p| !p.settled(rest)) {
-                            awake = true;
-                        }
-                        if let Some(el) = nodes.get(&strip.id) {
-                            let transform = strip_transform(strip, &list, swing);
-                            let _ = el.set_attribute(
-                                "style",
-                                &format!(
-                                    "transform: {transform}; z-index: {};",
-                                    strip.z
-                                ),
-                            );
-                        }
-                    }
-                    if awake
-                        && let (Some(tick), Some(window)) =
-                            (tick.borrow().as_ref(), web_sys::window())
-                    {
-                        window
-                            .request_animation_frame(tick.as_ref().unchecked_ref())
-                            .ok();
-                    } else {
-                        loop_alive.set(false);
-                        *tick.borrow_mut() = None;
-                    }
-                })));
-            if let (Some(start), Some(window)) = (closure.borrow().as_ref(), web_sys::window()) {
-                window
-                    .request_animation_frame(start.as_ref().unchecked_ref())
-                    .ok();
-            }
-        })
-    };
-
-    // A strip appears for a done task, either quietly (already done when the
-    // page opened) or after the pause, swinging, with the cue for Rambo.
-    let add_strip = {
-        let phys = phys.clone();
-        let board_w = board_w.clone();
-        let set_cue = set_cue;
-        let start_loop = start_loop.clone();
-        let sync = sync_transforms.clone();
-        move |id: &str, title: &str, swing_in: bool| {
-            let (x, y) = attach_point(board_w.get(), id);
-            strips.update(|list| {
-                list.push(Strip {
-                    id: id.to_owned(),
-                    title: title.to_owned(),
-                    x,
-                    y,
-                    rest: hash_unit(id, 2) * 0.2,
-                    tacked: true,
-                    stacked: false,
-                    z: 0,
-                });
-                apply_cap(list);
-                renumber(list);
-            });
-            if swing_in {
-                if !reduced {
-                    phys.borrow_mut()
-                        .insert(id.to_owned(), Phys { angle: -1.1, vel: 0.35 });
-                    start_loop();
-                }
-                play_sound("pin");
-                set_cue.set(Some(Cue::CutAndTack { task_id: id.to_owned() }));
-            }
-            sync();
-        }
-    };
 
     // Follow the server: reconcile strips with the tasks that are done now,
     // and celebrate the ones that just became done.
@@ -591,9 +594,9 @@ pub fn TackBoard(
                 .borrow_mut()
                 .extend(missing.iter().map(|(id, _)| id.clone()));
             for (id, title) in &missing {
-                add_strip(id, title, false);
+                add_strip(board, set_cue, id, title, false);
             }
-            sync_transforms();
+            sync_transforms(board);
             return;
         }
 
@@ -602,26 +605,23 @@ pub fn TackBoard(
                 continue;
             }
             seen_done.borrow_mut().insert(id.clone());
-            let add_strip = add_strip.clone();
             // The spec's moment's pause, then Rambo cuts the strip out and
             // tacks it: the strip swings in and the cue goes out together.
             Timeout::new(PAUSE_MS, move || {
-                add_strip(&id, &title, true);
+                add_strip(board, set_cue, &id, &title, true);
             })
             .forget();
         }
-        sync_transforms();
+        sync_transforms(board);
     });
 
     // Measure the board once mounted and whenever the phone pull-up opens
     // (which changes its width), then re-place every strip.
     Effect::new(move |_| {
         let _ = open.get();
-        let measure = measure.clone();
-        let sync = sync_transforms.clone();
         after_render(move || {
-            measure();
-            sync();
+            measure(board);
+            sync_transforms(board);
         });
     });
 
@@ -634,257 +634,254 @@ pub fn TackBoard(
 
     // The tidy-up: every loose or stacked strip goes back on the tack, and
     // Rambo is asked to look put out about it.
-    let tidy = {
-        let phys = phys.clone();
-        let board_w = board_w.clone();
-        let set_cue = set_cue;
-        let start_loop = start_loop.clone();
-        let sync = sync_transforms.clone();
-        move |_| {
-            let width = board_w.get();
-            let mut any = false;
-            let mut re_tack: Vec<(String, u32)> = Vec::new();
-            strips.update(|list| {
-                for (i, strip) in list.iter_mut().enumerate() {
-                    if strip.tacked && !strip.stacked {
-                        continue;
-                    }
-                    let (x, y) = attach_point(width, &strip.id);
-                    strip.x = x;
-                    strip.y = y;
-                    strip.tacked = true;
-                    strip.stacked = false;
-                    any = true;
-                    re_tack.push((strip.id.clone(), i as u32));
+    let tidy = move |_| {
+        let width = board_w.get_untracked();
+        let mut re_tack: Vec<(String, u32)> = Vec::new();
+        strips.update(|list| {
+            for (i, strip) in list.iter_mut().enumerate() {
+                if strip.tacked && !strip.stacked {
+                    continue;
                 }
-                renumber(list);
-            });
-            if !any {
-                return;
+                let (x, y) = attach_point(width, &strip.id);
+                strip.x = x;
+                strip.y = y;
+                strip.tacked = true;
+                strip.stacked = false;
+                re_tack.push((strip.id.clone(), i as u32));
             }
-            if !reduced {
-                // Staggered re-tacking: one strip snaps on every 90 ms.
-                for (id, i) in re_tack {
-                    let phys = phys.clone();
-                    let start_loop = start_loop.clone();
-                    Timeout::new(i * 90, move || {
-                        phys.borrow_mut()
-                            .insert(id, Phys { angle: -0.8, vel: 0.2 });
-                        start_loop();
-                    })
-                    .forget();
-                }
-            }
-            set_cue.set(Some(Cue::TidyUp));
-            play_sound("pin");
-            sync();
+            renumber(list);
+        });
+        if re_tack.is_empty() {
+            return;
         }
+        if !reduced {
+            // Staggered re-tacking: one strip snaps on every 90 ms.
+            for (id, i) in re_tack {
+                Timeout::new(i * 90, move || {
+                    board.phys.update(|phys| {
+                        phys.insert(
+                            id,
+                            Phys {
+                                angle: -0.8,
+                                vel: 0.2,
+                            },
+                        );
+                    });
+                    wake_loop(board);
+                })
+                .forget();
+            }
+        }
+        set_cue.set(Some(Cue::TidyUp));
+        play_sound("pin");
+        sync_transforms(board);
     };
 
     // Dragging: the strip follows the pointer; the release decides. Velocity
     // is measured over the last ~120 ms of pointer samples.
-    let samples: Rc<RefCell<Vec<(f64, f64, f64)>>> = Rc::new(RefCell::new(Vec::new()));
+    let strip_pointer_down = move |ev: leptos::ev::PointerEvent| {
+        let Some(target) = ev
+            .current_target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        else {
+            return;
+        };
+        let Some(id) = target.get_attribute("data-strip-id") else {
+            return;
+        };
+        ev.prevent_default();
+        let _ = target.set_pointer_capture(ev.pointer_id());
+        samples.set(vec![(
+            js_sys::Date::now(),
+            f64::from(ev.client_x()),
+            f64::from(ev.client_y()),
+        )]);
+        phys.update(|phys| {
+            phys.remove(&id);
+        });
+        set_dragging.set(Some(id));
+    };
 
-    let strip_pointer_down = {
-        let samples = samples.clone();
-        let phys = phys.clone();
-        move |ev: leptos::ev::PointerEvent| {
-            let Some(target) = ev
-                .current_target()
-                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
-            else {
-                return;
-            };
-            let Some(id) = target.get_attribute("data-strip-id") else {
-                return;
-            };
-            ev.prevent_default();
-            let _ = target.set_pointer_capture(ev.pointer_id());
-            samples.borrow_mut().clear();
-            samples
-                .borrow_mut()
-                .push((js_sys::Date::now(), f64::from(ev.client_x()), f64::from(ev.client_y())));
-            phys.borrow_mut().remove(&id);
-            set_dragging.set(Some(id));
+    let strip_pointer_move = move |ev: leptos::ev::PointerEvent| {
+        let Some(id) = dragging.get_untracked() else {
+            return;
+        };
+        let (client_x, client_y) = (f64::from(ev.client_x()), f64::from(ev.client_y()));
+        samples.update(|samples| {
+            samples.push((js_sys::Date::now(), client_x, client_y));
+            while samples.len() > 2 && samples[1].0 - samples[0].0 > 120.0 {
+                samples.remove(0);
+            }
+        });
+        let Some(board_el) = board_ref.get() else {
+            return;
+        };
+        let rect = board_el.get_bounding_client_rect();
+        if let Some(el) = strip_el(board_el.unchecked_ref::<web_sys::Element>(), &id) {
+            let x = client_x - rect.left() - STRIP_W / 2.0;
+            let y = client_y - rect.top() - 6.0;
+            let _ = el.set_attribute(
+                "style",
+                &format!("transform: translate({x:.1}px, {y:.1}px) rotate(3deg); z-index: 99;"),
+            );
         }
     };
 
-    let strip_pointer_move = {
-        let samples = samples.clone();
-        let nodes = nodes.clone();
-        let board_ref = board_ref;
-        move |ev: leptos::ev::PointerEvent| {
-            if dragging.get_untracked().is_none() {
-                return;
-            }
-            let (client_x, client_y) = (f64::from(ev.client_x()), f64::from(ev.client_y()));
-            {
-                let mut samples = samples.borrow_mut();
-                samples.push((js_sys::Date::now(), client_x, client_y));
-                while samples.len() > 2 && samples[1].0 - samples[0].0 > 120.0 {
-                    samples.remove(0);
-                }
-            }
-            let origin = board_ref
-                .get()
-                .map(|el| {
-                    let r = el.get_bounding_client_rect();
-                    (r.left(), r.top())
-                })
-                .unwrap_or((0.0, 0.0));
-            let id = dragging.get_untracked();
-            if let Some(el) = id.as_deref().and_then(|id| nodes.borrow().get(id)) {
-                let x = client_x - origin.0 - STRIP_W / 2.0;
-                let y = client_y - origin.1 - 6.0;
-                let _ = el.set_attribute(
-                    "style",
-                    &format!("transform: translate({x:.1}px, {y:.1}px) rotate(3deg); z-index: 99;"),
-                );
-            }
-        }
-    };
+    let strip_pointer_up = move |ev: leptos::ev::PointerEvent| {
+        let Some(id) = dragging.get_untracked() else {
+            return;
+        };
+        let (client_x, client_y) = (f64::from(ev.client_x()), f64::from(ev.client_y()));
+        let samples = samples.get_untracked();
+        let (vx, vy) = match (samples.first(), samples.last()) {
+            (Some((t0, x0, y0)), Some((t1, x1, y1))) if t1 > t0 => (
+                (x1 - x0) * 1000.0 / (t1 - t0),
+                (y1 - y0) * 1000.0 / (t1 - t0),
+            ),
+            _ => (0.0, 0.0),
+        };
 
-    let strip_pointer_up = {
-        let snapshot = snapshot;
-        let set_snapshot = set_snapshot;
-        let set_error = set_error;
-        let view_settings = view_settings;
-        let set_cue = set_cue;
-        let phys = phys.clone();
-        let nodes = nodes.clone();
-        let board_ref = board_ref;
-        let bin_ref = bin_ref;
-        let board_w = board_w.clone();
-        let start_loop = start_loop.clone();
-        let sync = sync_transforms.clone();
-        move |ev: leptos::ev::PointerEvent| {
-            let Some(id) = dragging.get_untracked() else {
-                return;
-            };
-            let (client_x, client_y) = (f64::from(ev.client_x()), f64::from(ev.client_y()));
-            let samples = samples.borrow().clone();
-            let (vx, vy) = match (samples.first(), samples.last()) {
-                (Some((t0, x0, y0)), Some((t1, x1, y1))) if t1 > t0 => {
-                    ((x1 - x0) * 1000.0 / (t1 - t0), (y1 - y0) * 1000.0 / (t1 - t0))
-                }
-                _ => (0.0, 0.0),
-            };
+        let board_rect = board_ref
+            .get()
+            .map(|el| dom_rect(el.get_bounding_client_rect()))
+            .unwrap_or(Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 0.0,
+                h: 0.0,
+            });
+        let list_rect = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|doc| {
+                doc.query_selector(".tasks-pane")
+                    .ok()
+                    .flatten()
+                    .or_else(|| doc.query_selector("main").ok().flatten())
+            })
+            .map(|el| dom_rect(el.get_bounding_client_rect()))
+            .unwrap_or(Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 0.0,
+                h: 0.0,
+            });
+        // An impossible rect when the bin is not on screen.
+        let bin_rect = bin_ref
+            .get()
+            .map(|el| dom_rect(el.get_bounding_client_rect()))
+            .unwrap_or(Rect {
+                x: -10.0,
+                y: -10.0,
+                w: 0.0,
+                h: 0.0,
+            });
 
-            let board_rect = board_ref
-                .get()
-                .map(|el| dom_rect(el.get_bounding_client_rect()))
-                .unwrap_or(Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
-            let list_rect = web_sys::window()
-                .and_then(|w| w.document())
-                .and_then(|doc| {
-                    doc.query_selector(".tasks-pane")
-                        .ok()
-                        .flatten()
-                        .or_else(|| doc.query_selector("main").ok().flatten())
-                })
-                .map(|el| dom_rect(el.get_bounding_client_rect()))
-                .unwrap_or(Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
-            // An impossible rect when the bin is not on screen.
-            let bin_rect = bin_ref
-                .get()
-                .map(|el| dom_rect(el.get_bounding_client_rect()))
-                .unwrap_or(Rect { x: -10.0, y: -10.0, w: 0.0, h: 0.0 });
+        set_dragging.set(None);
 
-            set_dragging.set(None);
-
-            match drop_action(client_x, client_y, vx, vy, &list_rect, &board_rect, &bin_rect) {
-                DropAction::Restore => {
-                    let body = snapshot.with_untracked(|s| crate::toggle_done_body(s, &id));
-                    let sink = crate::EditSink { set_snapshot, set_error, view_settings };
-                    wasm_bindgen_futures::spawn_local(async move {
-                        if let Some(body) = body {
-                            // The snapshot effect reconciles the strip away
-                            // once the server says the task is not done.
-                            crate::patch_and_show(&TaskId(id), body, sink).await;
-                        }
-                    });
-                    // Until the PATCH answers, the strip goes back to where it
-                    // hung rather than hanging mid-air where it was dropped.
-                    sync();
-                }
-                DropAction::SetAside => {
-                    let x = (client_x - board_rect.x - STRIP_W / 2.0)
-                        .clamp(4.0, (board_w.get() - STRIP_W - 4.0).max(4.0));
-                    let y = (client_y - board_rect.y - 6.0).clamp(60.0, 520.0);
-                    let rest = hash_unit(&id, 2) * 0.28;
-                    strips.update(|list| {
-                        if let Some(strip) = list.iter_mut().find(|s| s.id == id) {
-                            strip.tacked = false;
-                            strip.stacked = false;
-                            strip.x = x;
-                            strip.y = y;
-                            strip.rest = rest;
-                        }
-                        renumber(list);
-                    });
-                    if !reduced {
-                        // A flutter proportional to how hard it was thrown.
-                        let impulse = (vx / 4000.0).clamp(-3.0, 3.0);
-                        phys.borrow_mut().insert(
-                            id,
-                            Phys { angle: rest + impulse * 0.15, vel: impulse },
-                        );
-                        start_loop();
+        match drop_action(
+            client_x,
+            client_y,
+            vx,
+            vy,
+            &list_rect,
+            &board_rect,
+            &bin_rect,
+        ) {
+            DropAction::Restore => {
+                let body = snapshot.with_untracked(|s| crate::toggle_done_body(s, &id));
+                let sink = crate::EditSink {
+                    set_snapshot,
+                    set_error,
+                    view_settings,
+                };
+                wasm_bindgen_futures::spawn_local(async move {
+                    if let Some(body) = body {
+                        // The snapshot effect reconciles the strip away once
+                        // the server says the task is not done.
+                        crate::patch_and_show(&TaskId(id), body, sink).await;
                     }
-                    sync();
+                });
+                // Until the PATCH answers, the strip goes back to where it
+                // hung rather than hanging mid-air where it was dropped.
+                sync_transforms(board);
+            }
+            DropAction::SetAside => {
+                let x = (client_x - board_rect.x - STRIP_W / 2.0)
+                    .clamp(4.0, (board_w.get_untracked() - STRIP_W - 4.0).max(4.0));
+                let y = (client_y - board_rect.y - 6.0).clamp(60.0, 520.0);
+                let rest = hash_unit(&id, 2) * 0.28;
+                strips.update(|list| {
+                    if let Some(strip) = list.iter_mut().find(|s| s.id == id) {
+                        strip.tacked = false;
+                        strip.stacked = false;
+                        strip.x = x;
+                        strip.y = y;
+                        strip.rest = rest;
+                    }
+                    renumber(list);
+                });
+                if !reduced {
+                    // A flutter proportional to how hard it was thrown.
+                    let impulse = (vx / 4000.0).clamp(-3.0, 3.0);
+                    phys.update(|phys| {
+                        phys.insert(
+                            id,
+                            Phys {
+                                angle: rest + impulse * 0.15,
+                                vel: impulse,
+                            },
+                        );
+                    });
+                    wake_loop(board);
                 }
-                DropAction::Crumple => {
-                    set_cue.set(Some(Cue::Crumpled));
-                    play_sound("crumple");
-                    // Crumple animation first, delete under it; the strip
-                    // leaves local state with the animation, and the server's
-                    // list once the DELETE lands.
-                    if let Some(el) = nodes.borrow().get(&id) {
+                sync_transforms(board);
+            }
+            DropAction::Crumple => {
+                set_cue.set(Some(Cue::Crumpled));
+                play_sound("crumple");
+                // Crumple animation first, delete under it; the strip leaves
+                // local state with the animation, and the server's list once
+                // the DELETE lands.
+                if let Some(board_el) = board_ref.get() {
+                    if let Some(el) = strip_el(board_el.unchecked_ref::<web_sys::Element>(), &id) {
                         let arr = js_sys::Array::new();
                         arr.push(&"crumpling".into());
                         let _ = el.class_list().add(&arr);
                     }
-                    let nodes = nodes.clone();
-                    let set_error = set_error;
-                    let set_snapshot = set_snapshot;
-                    Timeout::new(360, move || {
-                        let arr = js_sys::Array::new();
-                        arr.push(&"crumpling".into());
-                        if let Some(el) = nodes.borrow().get(&id) {
+                }
+                Timeout::new(360, move || {
+                    if let Some(board_el) = board_ref.get() {
+                        if let Some(el) =
+                            strip_el(board_el.unchecked_ref::<web_sys::Element>(), &id)
+                        {
+                            let arr = js_sys::Array::new();
+                            arr.push(&"crumpling".into());
                             let _ = el.class_list().remove(&arr);
                         }
-                        strips.update(|list| {
-                            list.retain(|s| s.id != id);
-                            renumber(list);
-                        });
-                        sync();
-                        let delete_id = id;
-                        wasm_bindgen_futures::spawn_local(async move {
-                            match api::delete_task(&TaskId(delete_id)).await {
-                                Ok(snap) => set_snapshot.set(snap),
-                                Err(_) => set_error.set(Some(
-                                    "Could not delete that task.".to_owned(),
-                                )),
-                            }
-                        });
-                    })
-                    .forget();
-                }
+                    }
+                    strips.update(|list| {
+                        list.retain(|s| s.id != id);
+                        renumber(list);
+                    });
+                    sync_transforms(board);
+                    wasm_bindgen_futures::spawn_local(async move {
+                        match api::delete_task(&TaskId(id)).await {
+                            Ok(snap) => set_snapshot.set(snap),
+                            Err(_) => set_error.set(Some("Could not delete that task.".to_owned())),
+                        }
+                    });
+                })
+                .forget();
             }
         }
     };
 
-    let toggle_open = {
-        let measure = measure.clone();
-        move |_| {
-            set_open.update(|o| *o = !*o);
-            let measure = measure.clone();
-            let sync = sync_transforms.clone();
-            after_render(move || {
-                measure();
-                sync();
-            });
-        }
+    let toggle_open = move |_| {
+        set_open.update(|o| *o = !*o);
+        after_render(move || {
+            measure(board);
+            sync_transforms(board);
+        });
     };
 
     let done_count = move || strips.get().iter().filter(|s| !s.stacked).count();
@@ -902,27 +899,13 @@ pub fn TackBoard(
             </button>
             <div class="tack-strips">
                 <For each=move || strips.get() key=|s| s.id.clone() let:strip>
-                    {let strip_id = strip.id.clone();
-                     let label = format!(
+                    {let label = format!(
                         "Done: {}. Drag back to the list to restore, onto the bin to delete.",
                         strip.title
                     );
                      let title = strip.title.clone();
-                     let nodes = nodes.clone();
-                     let r = NodeRef::<leptos::html::Div>::new();
-                     let track = move || {
-                         if let Some(el) = r.get() {
-                             // An HtmlDivElement upcast to HtmlElement: the
-                             // cache holds one type for every strip.
-                             let el: web_sys::HtmlElement = el.unchecked_into();
-                             nodes.borrow_mut().insert(strip_id.clone(), el);
-                         }
-                     };
-                     track();
-                     after_render(track.clone());
                      view! {
                         <div
-                            node_ref=r
                             class="tack-strip"
                             class:stacked=strip.stacked
                             class:aside=!strip.tacked && !strip.stacked
@@ -953,11 +936,41 @@ pub fn TackBoard(
     }
 }
 
-/// Run once the current render has flushed to the DOM.
 fn dom_rect(r: web_sys::DomRect) -> Rect {
-    Rect { x: r.left(), y: r.top(), w: r.width(), h: r.height() }
+    Rect {
+        x: r.left(),
+        y: r.top(),
+        w: r.width(),
+        h: r.height(),
+    }
 }
 
+/// Every strip element on the board right now, keyed by `data-strip-id`. The
+/// animation loop writes transforms straight to these, outside reactivity.
+fn strip_elements(board: &web_sys::Element) -> HashMap<String, web_sys::HtmlElement> {
+    let mut map = HashMap::new();
+    if let Ok(list) = board.query_selector_all(".tack-strip") {
+        for i in 0..list.length() {
+            let Some(node) = list.item(i) else { continue };
+            let el: web_sys::HtmlElement = node.unchecked_into();
+            if let Some(id) = el.get_attribute("data-strip-id") {
+                map.insert(id, el);
+            }
+        }
+    }
+    map
+}
+
+/// One strip element by id, for the drag and crumple paths.
+fn strip_el(board: &web_sys::Element, id: &str) -> Option<web_sys::HtmlElement> {
+    board
+        .query_selector(&format!(".tack-strip[data-strip-id=\"{id}\"]"))
+        .ok()
+        .flatten()
+        .map(|el| el.unchecked_into())
+}
+
+/// Run once the current render has flushed to the DOM.
 fn after_render(f: impl FnOnce() + 'static) {
     wasm_bindgen_futures::spawn_local(async move {
         gloo_timers::future::TimeoutFuture::new(0).await;
@@ -971,7 +984,10 @@ mod tests {
 
     #[test]
     fn a_swing_settles_and_never_gains_energy() {
-        let mut p = Phys { angle: 1.2, vel: 0.0 };
+        let mut p = Phys {
+            angle: 1.2,
+            vel: 0.0,
+        };
         let mut last_energy = p.energy(0.0);
         let mut steps = 0_u32;
         while !p.settled(0.0) {
@@ -991,9 +1007,15 @@ mod tests {
 
     #[test]
     fn a_strip_at_rest_stays_exactly_at_rest() {
-        let p = Phys { angle: 0.0, vel: 0.0 };
+        let p = Phys {
+            angle: 0.0,
+            vel: 0.0,
+        };
         assert_eq!(p.step(PHYS_DT, 0.0), p);
-        let aside = Phys { angle: 0.21, vel: 0.0 };
+        let aside = Phys {
+            angle: 0.21,
+            vel: 0.0,
+        };
         assert_eq!(aside.step(PHYS_DT, 0.21), aside);
     }
 
@@ -1002,7 +1024,10 @@ mod tests {
         // A big swing has a longer period than a small one (sin, not its
         // argument): after a quarter of the small-swing period, a strip
         // released from 90° is still well on its way down.
-        let mut big = Phys { angle: std::f64::consts::FRAC_PI_2, vel: 0.0 };
+        let mut big = Phys {
+            angle: std::f64::consts::FRAC_PI_2,
+            vel: 0.0,
+        };
         let quarter = (0.2 / PHYS_DT) as usize;
         for _ in 0..quarter {
             big = big.step(PHYS_DT, 0.0);
@@ -1012,9 +1037,24 @@ mod tests {
 
     #[test]
     fn the_bin_wins_the_list_restores_and_a_fling_is_a_throw() {
-        let list = Rect { x: 0.0, y: 0.0, w: 400.0, h: 700.0 };
-        let board = Rect { x: 1100.0, y: 0.0, w: 190.0, h: 700.0 };
-        let bin = Rect { x: 1130.0, y: 600.0, w: 60.0, h: 60.0 };
+        let list = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 400.0,
+            h: 700.0,
+        };
+        let board = Rect {
+            x: 1100.0,
+            y: 0.0,
+            w: 190.0,
+            h: 700.0,
+        };
+        let bin = Rect {
+            x: 1130.0,
+            y: 600.0,
+            w: 60.0,
+            h: 60.0,
+        };
         // On the bin.
         assert_eq!(
             drop_action(1160.0, 630.0, 0.0, 0.0, &list, &board, &bin),
@@ -1047,8 +1087,18 @@ mod tests {
         );
         // When board and list overlap (phone, board pulled up over the list),
         // the board wins so the strip can still be set aside onto it.
-        let overlapped_list = Rect { x: 0.0, y: 0.0, w: 390.0, h: 844.0 };
-        let phone_board = Rect { x: 0.0, y: 500.0, w: 390.0, h: 344.0 };
+        let overlapped_list = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 390.0,
+            h: 844.0,
+        };
+        let phone_board = Rect {
+            x: 0.0,
+            y: 500.0,
+            w: 390.0,
+            h: 344.0,
+        };
         assert_eq!(
             drop_action(100.0, 600.0, 0.0, 0.0, &overlapped_list, &phone_board, &bin),
             DropAction::SetAside
@@ -1070,11 +1120,15 @@ mod tests {
 
     #[test]
     fn beyond_thirty_strips_the_oldest_stack_under_the_pin() {
-        let mut strips: Vec<Strip> =
-            (0..32).map(|i| strip(&format!("t{i}"), i + 1, false)).collect();
+        let mut strips: Vec<Strip> = (0..32)
+            .map(|i| strip(&format!("t{i}"), i + 1, false))
+            .collect();
         apply_cap(&mut strips);
         assert_eq!(strips.iter().filter(|s| !s.stacked).count(), MAX_HANGING);
-        assert!(strips[0].stacked && strips[1].stacked, "oldest two stack first");
+        assert!(
+            strips[0].stacked && strips[1].stacked,
+            "oldest two stack first"
+        );
         assert!(!strips[31].stacked, "newest stays in view");
 
         let mut all = (0..35)
