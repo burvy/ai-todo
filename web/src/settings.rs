@@ -371,9 +371,21 @@ pub fn GearMenu(
                                 });
                             }
                         />
-                        <a class="gear-item" href="/api/v1/calendar.ics" download="rambl-calendar.ics">
-                            "Download calendar (.ics)"
-                        </a>
+                        // A plain link would fetch the file without this browser's
+                        // session or anonymous id, and so export someone else's (empty)
+                        // calendar; the API call carries both.
+                        <button
+                            type="button"
+                            class="gear-item"
+                            on:click=move |_| {
+                                wasm_bindgen_futures::spawn_local(async move {
+                                    match crate::api::export_calendar().await {
+                                        Ok(calendar) => save_calendar(&calendar),
+                                        Err(e) => set_error.set(Some(format!("Download failed: {e}"))),
+                                    }
+                                });
+                            }
+                        >"Download calendar (.ics)"</button>
                         <crate::account::AccountSection />
                         <p class="version">
                             "Rambl "
@@ -391,6 +403,34 @@ pub fn GearMenu(
 
 /// Light/Dark set `data-theme` on the page; the attribute is always present
 /// (index.html bakes in the light default), so the OS is never followed.
+/// Hands the exported calendar to the browser as a file download.
+#[cfg(target_arch = "wasm32")]
+fn save_calendar(calendar: &str) {
+    use wasm_bindgen::JsCast;
+    let parts = js_sys::Array::of1(&calendar.into());
+    let options = web_sys::BlobPropertyBag::new();
+    options.set_type("text/calendar");
+    let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(&parts, &options) else {
+        return;
+    };
+    let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
+        return;
+    };
+    if let Some(link) = document()
+        .create_element("a")
+        .ok()
+        .and_then(|element| element.dyn_into::<web_sys::HtmlAnchorElement>().ok())
+    {
+        link.set_href(&url);
+        link.set_download("rambl-calendar.ics");
+        link.click();
+    }
+    let _ = web_sys::Url::revoke_object_url(&url);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn save_calendar(_calendar: &str) {}
+
 fn apply_theme(theme: Theme) {
     #[cfg(target_arch = "wasm32")]
     {
