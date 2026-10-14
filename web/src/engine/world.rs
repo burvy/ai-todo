@@ -152,7 +152,9 @@ impl World {
             self.rambo.run = None;
         }
         let (pos, vel, squash) = match drive {
-            Drive::Follow(at) => (at, velocity(self.rambo.pos, at), 0.0),
+            // Carried along by the page (a scroll, the nest moving) is not his own speed:
+            // a grab right after must not fling him past the finger.
+            Drive::Follow(at) => (at, (0.0, 0.0), 0.0),
             Drive::Ride(at) => {
                 let (pos, vel) = ride(self.rambo.pos, self.rambo.vel, at);
                 (pos, vel, 0.0)
@@ -294,6 +296,30 @@ mod tests {
             last_gap = gap;
         }
         assert!(last_gap < 1.0, "he has caught up: {last_gap}");
+    }
+
+    #[test]
+    fn grabbed_just_as_the_page_scrolls_he_still_never_passes_the_finger() {
+        let mut world = World::new(NEST);
+        world.advance(1, &anchors((0.0, 0.0)));
+        // A quick flick scrolls the page 60 px in one step under him, settled in his nest.
+        let scrolled = Anchors {
+            nest: (NEST.0, NEST.1 - 60.0),
+            spot: (0.0, 0.0),
+        };
+        world.advance(1, &scrolled);
+        world.tell(Event::Grab);
+        // The finger just above him: 20 px is nothing to the ride spring, but 7200 px/s
+        // of borrowed speed would carry him past it.
+        let spot = (NEST.0, NEST.1 - 80.0);
+        for _ in 0..steps(400.0) {
+            world.advance(1, &anchors(spot));
+            assert!(
+                world.rambo.pos.1 >= spot.1 - 1e-9,
+                "past the finger: {:?}",
+                world.rambo.pos
+            );
+        }
     }
 
     #[test]
