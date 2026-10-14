@@ -118,6 +118,8 @@ pub fn App() -> impl IntoView {
     let capture_text = RwSignal::new(String::new());
     // Pen queue: task IDs the client just created, so the pen writes only those rows
     let pen_queue = RwSignal::new(Vec::<TaskId>::new());
+    // A row Rambo was asked to edit: the task list opens its edit sheet
+    let edit_request = RwSignal::new(None::<TaskId>);
     // Capture form ref so Rambo can requestSubmit on release
     let form_ref = NodeRef::<leptos::html::Form>::new();
     // Nest ref so Rambo (independent fixed layer) can measure where to sit at home
@@ -187,7 +189,7 @@ pub fn App() -> impl IntoView {
                 }
             >
             <div class="tasks-pane">
-                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos />
+                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request />
                 <tack::TackBoard snapshot set_snapshot set_error view_settings set_cue=set_tack_cue />
             </div>
             <week::WeekGrid
@@ -224,6 +226,7 @@ pub fn App() -> impl IntoView {
             pen_pos
             capture_text
             form_ref
+            edit_request
             nest_ref
             pen=Signal::derive(move || view_settings.get().pen)
             typing

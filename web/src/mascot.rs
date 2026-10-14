@@ -909,6 +909,25 @@ mod tests {
     }
 
     #[test]
+    fn edit_in_the_ask_bubble_opens_the_edit_sheet() {
+        // QA on 39eb0d9: "Edit" closed the bubble and bumped the task's priority
+        // instead of opening the sheet. The button must ask the list for its sheet.
+        let source = include_str!("rambo.rs");
+        let (before, _) = source
+            .split_once(">\"Edit\"</button>")
+            .expect("the bubble has an Edit button");
+        let handler = &before[before.rfind("<button").expect("Edit is a button")..];
+        assert!(
+            handler.contains("edit_request.set("),
+            "Edit must open the edit sheet: {handler}"
+        );
+        assert!(
+            !handler.contains("patch_and_show"),
+            "Edit must not change the task itself: {handler}"
+        );
+    }
+
+    #[test]
     fn every_state_change_goes_through_the_machine() {
         // The DOM layer never writes a `State` into the signal; it asks
         // `transition`, so the machine's tests cover every path the page can

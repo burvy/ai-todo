@@ -96,6 +96,46 @@ fn occurrence_parts(id: &str) -> Option<(&str, NaiveDate)> {
     Some((series_id, date))
 }
 
+/// What the edit sheet shows when it opens on the row `id`, or `None` when the
+/// list no longer holds it.
+#[derive(Clone, Debug, PartialEq)]
+struct EditForm {
+    title: String,
+    duration: String,
+    when: EditWhen,
+    datetime: String,
+    weekdays: Vec<Weekday>,
+    until: String,
+    time: String,
+}
+
+fn edit_form(snapshot: &Snapshot, id: &str) -> Option<EditForm> {
+    let task = held(snapshot, id)?;
+    let (when, datetime) = match task.when {
+        When::Anytime => (EditWhen::Anytime, String::new()),
+        When::DueBy(time) => (EditWhen::DueBy, due_display(task, time)),
+        When::At(time) => (EditWhen::At, local_input_value(time)),
+    };
+    // A series row edits the series: its fields come from the rule, not from the
+    // one occurrence row opened.
+    let series = series_of(snapshot, id);
+    Some(EditForm {
+        title: task.title.clone(),
+        duration: task.duration_min.to_string(),
+        when,
+        datetime,
+        weekdays: series.map(|s| s.rule.weekdays.clone()).unwrap_or_default(),
+        until: series
+            .and_then(|s| s.rule.until)
+            .map(|day| day.to_string())
+            .unwrap_or_default(),
+        time: series
+            .and_then(|s| s.time_of_day)
+            .map(|time| time.format("%H:%M").to_string())
+            .unwrap_or_default(),
+    })
+}
+
 /// The series a row belongs to, when the row is an occurrence of one.
 fn series_of<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a todo_core::Series> {
     let (series_id, _) = occurrence_parts(id)?;
@@ -256,6 +296,8 @@ pub(crate) fn TaskList(
     set_mascot_state: WriteSignal<mascot::State>,
     pen_queue: RwSignal<Vec<TaskId>>,
     pen_pos: RwSignal<(f64, f64)>,
+    /// A row to open the edit sheet on, set by Rambo's "Edit".
+    edit_request: RwSignal<Option<TaskId>>,
 ) -> impl IntoView {
     #[cfg(not(target_arch = "wasm32"))]
     let _ = pen_pos;
@@ -271,6 +313,27 @@ pub(crate) fn TaskList(
     let edit_weekdays = RwSignal::new(Vec::<Weekday>::new());
     let edit_until = RwSignal::new(String::new());
     let edit_time = RwSignal::new(String::new());
+    // Open the edit sheet on a row: from a click on it, or from Rambo's "Edit".
+    let open_editor = move |id: &TaskId| {
+        let Some(form) = snapshot.with_untracked(|s| edit_form(s, &id.0)) else {
+            return;
+        };
+        set_edit_title.set(form.title);
+        set_edit_duration.set(form.duration);
+        set_edit_when.set(form.when);
+        set_edit_datetime.set(form.datetime);
+        edit_weekdays.set(form.weekdays);
+        edit_until.set(form.until);
+        edit_time.set(form.time);
+        set_editing_task.set(Some(id.clone()));
+        set_edit_time_error.set(None);
+    };
+    Effect::new(move |_| {
+        if let Some(id) = edit_request.get() {
+            edit_request.set(None);
+            open_editor(&id);
+        }
+    });
     let labels = move || {
         let tasks = snapshot.get().tasks;
         [
@@ -595,50 +658,8 @@ pub(crate) fn TaskList(
                         <span
                             class="task-open"
                             on:click={
-                                let task = task.clone();
-                                move |_| {
-                                    set_edit_title.set(task.title.clone());
-                                    set_edit_duration.set(task.duration_min.to_string());
-                                    match task.when {
-                                        When::Anytime => {
-                                            set_edit_when.set(EditWhen::Anytime);
-                                            set_edit_datetime.set(String::new());
-                                        }
-                                        When::DueBy(time) => {
-                                            set_edit_when.set(EditWhen::DueBy);
-                                            set_edit_datetime.set(due_display(&task, time));
-                                        }
-                                        When::At(time) => {
-                                            set_edit_when.set(EditWhen::At);
-                                            set_edit_datetime.set(local_input_value(time));
-                                        }
-                                    }
-                                    // A series row edits the series: its fields come from
-                                    // the rule, not from the one occurrence row clicked.
-                                    match snapshot
-                                        .with_untracked(|s| series_of(s, &task.id.0).cloned())
-                                    {
-                                        Some(series) => {
-                                            edit_weekdays.set(series.rule.weekdays.clone());
-                                            edit_until.set(
-                                                series.rule.until.map(|day| day.to_string()).unwrap_or_default(),
-                                            );
-                                            edit_time.set(
-                                                series
-                                                    .time_of_day
-                                                    .map(|time| time.format("%H:%M").to_string())
-                                                    .unwrap_or_default(),
-                                            );
-                                        }
-                                        None => {
-                                            edit_weekdays.set(Vec::new());
-                                            edit_until.set(String::new());
-                                            edit_time.set(String::new());
-                                        }
-                                    }
-                                    set_editing_task.set(Some(task.id.clone()));
-                                    set_edit_time_error.set(None);
-                                }
+                                let id = task.id.clone();
+                                move |_| open_editor(&id)
                             }
                         >
                             <span class="pen-title-wrap">
@@ -1269,6 +1290,34 @@ mod tests {
             external_uid: None,
         });
         snapshot
+    }
+
+    #[test]
+    fn the_edit_sheet_opens_on_the_row_it_was_asked_for() {
+        // Rambo's "Edit" and a click on the row both open the sheet through
+        // `edit_form`: it must show that row, and a series row shows its rule.
+        let snapshot = snapshot_with_series(false);
+        let form = edit_form(&snapshot, "sgym:2026-10-15").expect("the row is listed");
+        assert_eq!(form.title, "Gym");
+        assert_eq!(form.duration, "30");
+        assert_eq!(form.when, EditWhen::At);
+        assert_eq!(form.weekdays, vec![Weekday::Mon, Weekday::Thu]);
+        assert_eq!(form.time, "07:00");
+        assert_eq!(form.until, "");
+
+        let plain = snapshot
+            .tasks
+            .iter()
+            .find(|task| occurrence_parts(&task.id.0).is_none())
+            .expect("the fixture holds a plain task");
+        let form = edit_form(&snapshot, &plain.id.0).expect("the row is listed");
+        assert_eq!(form.title, plain.title);
+        assert!(form.weekdays.is_empty() && form.time.is_empty());
+
+        assert!(
+            edit_form(&snapshot, "gone").is_none(),
+            "no sheet for a task that is gone"
+        );
     }
 
     #[test]
