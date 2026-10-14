@@ -254,7 +254,10 @@ fn fresh_sheet(
     // The sheet shows the part of its surface it is over: the page's canvas sticks to
     // the window as the page scrolls past it, so the ink is drawn shifted by where the
     // canvas has got to on the page. The floor's sits at the window's corner.
-    let (dx, dy) = (f64::from(canvas.offset_left()), f64::from(canvas.offset_top()));
+    let (dx, dy) = (
+        f64::from(canvas.offset_left()),
+        f64::from(canvas.offset_top()),
+    );
     let _ = context.set_transform(ratio, 0.0, 0.0, ratio, -dx * ratio, -dy * ratio);
 }
 

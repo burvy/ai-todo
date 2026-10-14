@@ -52,13 +52,13 @@ mod imp {
     use wasm_bindgen::JsCast;
     use web_sys::Element;
 
+    use crate::engine::now;
     use crate::fold::{self, Ease, Pt, Settle, Turn};
     use crate::tuning::{
         BEND_BUTTON_ARC, BEND_BUTTON_LIFT, BEND_BUTTON_LIFT_CAP, BEND_BUTTON_MS, BEND_COMPLETE_MS,
         BEND_FULL_TURN, BEND_LIFT, BEND_LIFT_CAP, BEND_SHADOW_FAR_PX, BEND_SHADOW_NEAR_PX,
         BEND_SLIDE_MS, BEND_SPRING_MS,
     };
-    use crate::engine::now;
     use crate::turn_util::{el_style, element_of, may_turn_from, phone, show_pane};
 
     /// Where the page turn is.
@@ -499,7 +499,12 @@ mod imp {
         fn frame(&self, flight: &Flight, now: f64) -> bool {
             let t = ((now - flight.started) / flight.ms).clamp(0.0, 1.0);
             let e = flight.ease.at(t);
-            let at = fold::arced(fold::along(flight.from, flight.to, e), e, flight.arc, flight.stage.h);
+            let at = fold::arced(
+                fold::along(flight.from, flight.to, e),
+                e,
+                flight.arc,
+                flight.stage.h,
+            );
             self.draw(&flight.stage, at);
             t >= 1.0
         }

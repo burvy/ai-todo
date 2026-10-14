@@ -52,11 +52,11 @@ mod imp {
 
     use leptos::prelude::*;
 
+    use crate::engine::now;
     use crate::flip::{self, Pull, Settle, Spring, Turn};
     use crate::tuning::{
         BEND_BUTTON_MS, FLIP_FALL_DAMPING, FLIP_FALL_OMEGA, FLIP_FINISH_OMEGA, FLIP_PERSPECTIVE,
     };
-    use crate::engine::now;
     use crate::turn_util::{el_style, element_of, may_turn_from, phone, show_pane};
 
     /// Reduced motion slides the page: a quick settle with no swing to it.

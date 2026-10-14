@@ -789,7 +789,9 @@ pub(crate) fn nest_box(nest_ref: NodeRef<leptos::html::Button>) -> Option<(f64, 
 /// with the paper. None while a turn runs or the planner is the page showing.
 fn list_page() -> Option<ink::PageBox> {
     let main = document().query_selector("main").ok().flatten()?;
-    if main.class_list().contains("bending") || main.get_attribute("data-pane").as_deref() != Some("0") {
+    if main.class_list().contains("bending")
+        || main.get_attribute("data-pane").as_deref() != Some("0")
+    {
         return None;
     }
     let page = main.query_selector(".tasks-pane").ok().flatten()?;

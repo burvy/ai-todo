@@ -832,19 +832,28 @@ mod tests {
     fn ink_begun_over_the_open_list_lies_on_it_in_its_own_coordinates() {
         assert_eq!(surface_at(100.0, 50.0, Some(PAGE)), Surface::List);
         // The page has scrolled 300 px up: a point 50 px down the window is 350 down it.
-        assert_eq!(on_surface(Surface::List, 100.0, 50.0, Some(PAGE)), (80.0, 350.0));
+        assert_eq!(
+            on_surface(Surface::List, 100.0, 50.0, Some(PAGE)),
+            (80.0, 350.0)
+        );
     }
 
     #[test]
     fn ink_begun_off_the_page_or_while_it_turns_lies_on_the_floor() {
         assert_eq!(surface_at(370.0, 50.0, Some(PAGE)), Surface::Floor);
         assert_eq!(surface_at(100.0, 50.0, None), Surface::Floor);
-        assert_eq!(on_surface(Surface::Floor, 370.0, 50.0, Some(PAGE)), (370.0, 50.0));
+        assert_eq!(
+            on_surface(Surface::Floor, 370.0, 50.0, Some(PAGE)),
+            (370.0, 50.0)
+        );
     }
 
     #[test]
     fn a_stroke_on_the_page_stays_on_it_past_the_edge() {
-        assert_eq!(on_surface(Surface::List, 370.0, 50.0, Some(PAGE)), (350.0, 350.0));
+        assert_eq!(
+            on_surface(Surface::List, 370.0, 50.0, Some(PAGE)),
+            (350.0, 350.0)
+        );
     }
 
     #[test]

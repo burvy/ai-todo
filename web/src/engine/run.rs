@@ -62,7 +62,7 @@ fn frame(at: f64) -> Wake {
 
 #[cfg(target_arch = "wasm32")]
 mod pump {
-    use super::{Wake, frame, now, LOOP};
+    use super::{LOOP, Wake, frame, now};
     use std::cell::Cell;
     use wasm_bindgen::JsCast;
     use wasm_bindgen::closure::Closure;

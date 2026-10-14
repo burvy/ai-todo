@@ -594,7 +594,6 @@ fn current_minutes() -> u16 {
     0
 }
 
-
 /// A touch that has gone down on a slip but the slip has not lifted yet: the
 /// armed hold, and how far the finger has slid since it went down.
 #[cfg(target_arch = "wasm32")]
