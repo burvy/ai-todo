@@ -103,7 +103,7 @@ Check 360px and 390px before a wide window. The layout behaviour comes from `web
 
 ## Motion
 
-- Durations: `--dur-fast` 120ms (colour changes on buttons and inputs), `--dur` 200ms (press of the talk button, general transitions), `--dur-slow` 450ms (Rambo's fall and skitter home). Easing `--ease` (`ease`), except Rambo's keyframes which keep their in/out easing.
+- Durations: `--dur-fast` 120ms (colour changes on buttons and inputs), `--dur` 200ms (press of the talk button, general transitions), `--dur-slow` 450ms (slow colour changes). Easing `--ease` (`ease`), except Rambo's keyframes which keep their in/out easing.
 - Animate transform, opacity and colour only — never layout-affecting properties, and nothing that moves text while it is being read.
 - Nothing loops except the mic's listening pulse (an opacity dip, not a glow).
 - `prefers-reduced-motion: reduce` turns every animation and transition off (`animation: none; transition: none`), including Rambo's fall, which then snaps home — matching section 8.1 of `docs/ARCHITECTURE.md`.

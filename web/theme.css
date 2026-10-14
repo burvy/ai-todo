@@ -906,6 +906,13 @@ li.task-row:focus-within .delete-mark {
   }
 }
 
+/* His hops squash and stretch him about his feet (hop.rs sets --hop-squash each
+   frame). The `scale` property, not `transform`, so it rides on top of whatever
+   his mood is doing to the drawing. */
+.rambo > img:not(.rambo-fx) {
+  scale: calc(1 + var(--hop-squash, 0)) calc(1 - var(--hop-squash, 0));
+}
+
 /* The mood picture beside him: a floating z, sparks, a grumpy scribble cloud.
    Drawn with currentColor, so it takes the page's ink in light and dark. */
 .rambo img.rambo-fx {
@@ -1057,18 +1064,13 @@ li.task-row:focus-within .delete-mark {
   }
 }
 
-/* Skittering: the hops home are drawn point by point (mascot::skitter_point);
-   the CSS only leans him into the run. The nest never moves. */
+/* Skittering: the hops home are drawn frame by frame (hop.rs); the CSS only
+   leans him into the run. The nest never moves. */
 .rambo.is-skittering {
   transform: translate(
       calc(var(--pen-x) - 50%),
       calc(var(--pen-y) - 50%)
     ) rotate(6deg);
-}
-
-/* Flying: smooth transition to new position (for writing) */
-.rambo.is-flying {
-  transition: transform var(--dur-slow) ease;
 }
 
 /* Writing: shrunk and rotated like a pen at work */

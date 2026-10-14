@@ -238,16 +238,19 @@ his nest listens: picked up while dazed (below), he writes instead.
 c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:State, Event, transition`.
 
 ### 2. Drag, daze, write and return
-a. A drag carries him without listening (a still hold listens). Dropped on the page (not on a task or his nest), Rambo
+a. A drag carries him without listening (a still hold listens), riding just above
+your finger or cursor so it never covers him. Every move he makes from one spot to
+another is a few brisk hops, never a glide. Dropped on the page (not on a task or his nest), Rambo
 is dazed: he stays where he landed, tipped over, and does not listen. Dragging a
-dazed Rambo writes on the page in his tool's ink. He skitters home on his own
+dazed Rambo writes on the page in his tool's ink. He hops home on his own
 after 8 seconds untouched, or comes home at once when dropped on his nest, and
 forgives you a little for putting him back (a small lift in the brain's cheer).
 Home again, his writing is tidied away and he listens again.
 b. Drag the pen to empty space and release it; drag it again to write; drop it on
 the nest, or leave it 8 seconds.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:transition, listens_on_grab,
-put_back, over_nest, DAZED_MS`; `web/src/inklayer.rs:InkLayer`; `web/src/ink.rs`;
+put_back, over_nest, DAZED_MS, hops_there, held_at`; `web/src/hop.rs:Hop`;
+`web/src/inklayer.rs:InkLayer`; `web/src/ink.rs`;
 `crates/rambl-brain/src/lib.rs:Event::PutBack`.
 
 ### 3. Writing a new row

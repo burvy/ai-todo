@@ -9,14 +9,14 @@ use crate::edits::{
     EditSink, heard_edit_applies, revisable, revise_and_show, revise_body, series_note, sheet_left,
 };
 use crate::tasks::{apply_tick, delete_with_scribble, tick_action};
-use crate::{ink, mascot, settings, speech, tuning, voice};
+use crate::{hop, ink, mascot, settings, speech, tuning, voice};
 
 /// The single Rambo element: independent fixed layer above everything.
 ///
 /// Rambo is not a child of the nest or the capture form. He sits at a
 /// `position: fixed` spot measured from the nest's bounding box. Drag moves
-/// only Rambo; he follows the pointer exactly. Dropped on the page he is dazed
-/// where he lands, writes when dragged again, and skitters back to the nest.
+/// only Rambo; he rides just above the pointer. Dropped on the page he is dazed
+/// where he lands, writes when dragged again, and hops back to the nest.
 #[component]
 pub(crate) fn Rambo(
     state: ReadSignal<mascot::State>,
@@ -50,6 +50,9 @@ pub(crate) fn Rambo(
     /// What a dazed Rambo has written on the page, one path per drag
     strokes: RwSignal<Vec<ink::Stroke>>,
 ) -> impl IntoView {
+    // Where he is drawn, and how squashed by a hop: see the hop mover below.
+    let shown = RwSignal::new(pen_pos.get_untracked());
+    let squash = RwSignal::new(0.0_f64);
     // At home he sits on the nest wherever the page has carried it. He is a
     // fixed layer and the nest is not, so every time the page moves he
     // measures it again.
@@ -57,8 +60,10 @@ pub(crate) fn Rambo(
     let follow_nest = move || {
         let nest = nest_centre(nest_ref);
         nest_at.set(nest);
-        if state.get_untracked() == mascot::State::Home
-            && let Some(home) = nest
+        if matches!(
+            state.get_untracked(),
+            mascot::State::Home | mascot::State::Skittering
+        ) && let Some(home) = nest
         {
             pen_pos.set(home);
         }
@@ -83,64 +88,94 @@ pub(crate) fn Rambo(
                 // From values that do not animate: the bubble is centred on him, and its
                 // drawn box is still riding his settle after the drop when this runs.
                 let width = f64::from(bubble.offset_width());
-                bubble_offset(pen_pos.get().0, width, screen, tuning::BUBBLE_EDGE_PX)
+                bubble_offset(shown.get().0, width, screen, tuning::BUBBLE_EDGE_PX)
             });
         bubble_shift.set(shift);
     });
 
-    // The run home: hops along `skitter_point` from where he sat dazed to the
-    // middle of the nest, then home.
+    // Where he is drawn. Everything that moves him sets his spot (`pen_pos`); he
+    // hops there (`hop`), or is simply there while he follows something exactly
+    // (`mascot::hops_there`). Home and on the run home his spot is the nest, read
+    // where it is now: the page may have carried it since anyone last looked.
+    let spot = move |state: &mascot::State| match state {
+        mascot::State::Home | mascot::State::Skittering => {
+            nest_centre(nest_ref).unwrap_or_else(|| pen_pos.get_untracked())
+        }
+        _ => pen_pos.get_untracked(),
+    };
+    let run = std::rc::Rc::new(std::cell::RefCell::new(None::<IntervalHandle>));
+    // Whether he has come to rest at home, so the nest moving is the page
+    // scrolling, not a way to hop. True at load: he starts on the nest.
+    let settled_home = std::rc::Rc::new(std::cell::Cell::new(true));
+    // He is where his spot is: the run home ends here, and a run under way stops.
+    let arrive = {
+        let (run, settled_home) = (run.clone(), settled_home.clone());
+        move |at: (f64, f64)| {
+            if let Some(handle) = run.borrow_mut().take() {
+                handle.clear();
+            }
+            shown.set(at);
+            squash.set(0.0);
+            let now = state.get_untracked();
+            settled_home.set(now == mascot::State::Home);
+            if now == mascot::State::Skittering {
+                set_state.set(mascot::transition(&now, mascot::Event::Return));
+            }
+        }
+    };
+    Effect::new({
+        let (run, settled_home, arrive) = (run.clone(), settled_home.clone(), arrive.clone());
+        move |_| {
+            pen_pos.track();
+            let now = state.get();
+            let to = spot(&now);
+            let hops =
+                mascot::hops_there(&now, settled_home.get()) && !mascot::prefers_reduced_motion();
+            if !hops {
+                arrive(to);
+                return;
+            }
+            // A run under way reads its far end every frame.
+            if run.borrow().is_some() {
+                return;
+            }
+            let Some(hop) = hop::Hop::plan(shown.get_untracked(), to) else {
+                arrive(to);
+                return;
+            };
+            settled_home.set(false);
+            let begun = js_sys::Date::now();
+            let arrive = arrive.clone();
+            let handle = set_interval_with_handle(
+                move || {
+                    let elapsed = (js_sys::Date::now() - begun) as u32;
+                    let to = spot(&state.get_untracked());
+                    if elapsed >= hop.ms() {
+                        arrive(to);
+                    } else {
+                        let frame = hop.at(to, elapsed);
+                        shown.set((frame.pos.0, frame.pos.1 - frame.lift));
+                        squash.set(frame.squash);
+                    }
+                },
+                std::time::Duration::from_millis(u64::from(tuning::INK_TICK_MS)),
+            );
+            *run.borrow_mut() = handle.ok();
+        }
+    });
+
+    // The run home: dazed no longer, he hops to the nest and is home when he lands.
     let skitter_home = move || {
         set_state.set(mascot::transition(
             &state.get_untracked(),
             mascot::Event::Return,
         ));
-        let Some(home) = nest_centre(nest_ref) else {
+        if nest_centre(nest_ref).is_none() {
             set_state.set(mascot::transition(
                 &state.get_untracked(),
                 mascot::Event::Return,
             ));
-            return;
-        };
-        if mascot::prefers_reduced_motion() {
-            set_state.set(mascot::transition(
-                &state.get_untracked(),
-                mascot::Event::Return,
-            ));
-            return;
         }
-        let start = pen_pos.get_untracked();
-        let begun = js_sys::Date::now();
-        // The nest can move while he runs (the page scrolls), so he aims at
-        // where it is now, not where it was when he set off.
-        let run = std::rc::Rc::new(std::cell::Cell::new(None::<IntervalHandle>));
-        let handle = set_interval_with_handle(
-            {
-                let run = run.clone();
-                move || {
-                    let progress =
-                        ((js_sys::Date::now() - begun) / f64::from(mascot::SKITTER_MS)) as f32;
-                    let running = state.get_untracked() == mascot::State::Skittering;
-                    if running {
-                        let home = nest_centre(nest_ref).unwrap_or(home);
-                        pen_pos.set(mascot::skitter_point(start, home, 3, 14.0, progress));
-                    }
-                    if !running || progress >= 1.0 {
-                        if let Some(handle) = run.take() {
-                            handle.clear();
-                        }
-                        if running {
-                            set_state.set(mascot::transition(
-                                &state.get_untracked(),
-                                mascot::Event::Return,
-                            ));
-                        }
-                    }
-                }
-            },
-            std::time::Duration::from_millis(16),
-        );
-        run.set(handle.ok());
     };
 
     // Each daze gets a ticket; a newer drop or a grab takes a new one, so an
@@ -197,8 +232,8 @@ pub(crate) fn Rambo(
     let moved_move = moved.clone();
     let moved_for_up = moved.clone();
 
-    // Grab state: track pointer position, pen offset, and timestamp at grab so drag
-    // follows the pointer exactly and we can compute drop velocity for hard-drop detection.
+    // Grab state: track pointer position, pen offset, and timestamp at grab so we
+    // can compute drop velocity for hard-drop detection.
     // (gx, gy, ox, oy, timestamp_ms)
     let grab_state = std::rc::Rc::new(std::cell::RefCell::new(None::<(f64, f64, f64, f64, u64)>));
     let grab_state_down = grab_state.clone();
@@ -341,6 +376,15 @@ pub(crate) fn Rambo(
         now
     });
 
+    // Where he rides while you hold him at `pointer`: above it, by his height on
+    // this screen.
+    let held_spot = move |ev: &leptos::ev::PointerEvent, pointer: (f64, f64)| {
+        let box_h = rambo_ref
+            .get_untracked()
+            .map_or(0.0, |rambo| f64::from(rambo.offset_height()));
+        mascot::held_at(pointer, box_h, ev.pointer_type() == "touch")
+    };
+
     // Clone closures for multiple event handlers
     let still_move = still.clone();
     let hold_up = hold.clone();
@@ -361,8 +405,9 @@ pub(crate) fn Rambo(
             aria-label="Grab Rambo to listen"
             // Which pen he writes with: the gear menu sets it, remembered per device.
             data-pen=move || view_settings.get().pen.slug()
-            style:--pen-x=move || format!("{:.1}px", pen_pos.get().0)
-            style:--pen-y=move || format!("{:.1}px", pen_pos.get().1)
+            style:--pen-x=move || format!("{:.1}px", shown.get().0)
+            style:--pen-y=move || format!("{:.1}px", shown.get().1)
+            style:--hop-squash=move || format!("{:.3}", squash.get())
             on:pointerdown={
                 let daze = daze.clone();
                 let nib_below = nib_below.clone();
@@ -382,12 +427,15 @@ pub(crate) fn Rambo(
                     // Save grab state: pointer position and pen position at grab
                     let gx = ev.client_x() as f64;
                     let gy = ev.client_y() as f64;
-                    let (ox, oy) = pen_pos.get_untracked();
+                    let (ox, oy) = shown.get_untracked();
                     let t = js_sys::Date::now() as u64;
                     *grab_state_down.borrow_mut() = Some((gx, gy, ox, oy, t));
                     // In hand he never skitters off on his own.
                     daze.set(daze.get().wrapping_add(1));
                     set_state.set(after.clone());
+                    if after == mascot::State::Dragging {
+                        pen_pos.set(held_spot(&ev, (gx, gy)));
+                    }
                     let ticket = hold.get().wrapping_add(1);
                     hold.set(ticket);
                     if mascot::listens_on_grab(&before) {
@@ -428,14 +476,17 @@ pub(crate) fn Rambo(
                         return;
                     }
                     *moved_move.borrow_mut() = true;
-                    // Rambo follows the pointer exactly — pen_pos is the pointer position
                     let (x, y) = (ev.client_x() as f64, ev.client_y() as f64);
                     if let Some((gx, gy, ..)) = *grab_state_move.borrow()
                         && !mascot::held_still((gx, gy), (x, y))
                     {
                         still_move.set(false);
                     }
-                    pen_pos.set((x, y));
+                    pen_pos.set(match held {
+                        // Writing, his nib is at the finger; carried, he rides above it.
+                        mascot::State::Inking => (x, y),
+                        _ => held_spot(&ev, (x, y)),
+                    });
                     if held == mascot::State::Inking {
                         let below = nib_below.get();
                         strokes.update(|strokes| {
@@ -477,7 +528,11 @@ pub(crate) fn Rambo(
                     let hard_drop = if let Some((gx, gy, _ox, _oy, grab_time)) = *grab_state_up.borrow() {
                         let px = ev.client_x() as f64;
                         let py = ev.client_y() as f64;
-                        pen_pos.set((px, py));
+                        // He lands where you saw him, above the finger.
+                        pen_pos.set(match before {
+                            mascot::State::Inking => (px, py),
+                            _ => held_spot(&ev, (px, py)),
+                        });
                         let elapsed = (js_sys::Date::now() as u64).saturating_sub(grab_time) as f64;
                         if elapsed > 0.0 {
                             let dx = px - gx;
