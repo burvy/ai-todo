@@ -201,6 +201,8 @@ pub(crate) fn edge_px(width: f64, angle: f64, distance: f64) -> f64 {
 /// Whether the leaf lies over `point` (px from the page's top left corner, the spine along
 /// its left edge) when it is `open`, for a page `width` by `height` px seen from `distance`
 /// px away: the leaf's footprint is the page's own, cut off at its free edge.
+/// `x` is measured from the spine; on the turn back the leaf lies the other way, so the caller
+/// mirrors `x` by `Turn`.
 #[allow(
     dead_code,
     reason = "asked for by Rambo being caught under the leaf, engine step 11"
