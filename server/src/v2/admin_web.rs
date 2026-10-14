@@ -52,7 +52,7 @@ pub struct BlockOut {
 
 /// `GET /api/v1/admin/usage`, for one day.
 pub fn usage(store: &dyn Store, day: NaiveDate) -> Result<UsageOut, StoreError> {
-    let today = store.usage_today(day, admin::TOP)?;
+    let today = store.usage_today(day, super::tuning::ADMIN_TOP_ROWS)?;
     let mut per_plan = PerPlan::default();
     let mut users = Vec::with_capacity(today.users.len());
     for (id, captures) in &today.users {

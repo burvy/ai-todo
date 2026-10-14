@@ -144,10 +144,8 @@ fn port_from(rambl_port: Option<String>, port: Option<String>) -> u16 {
         .into_iter()
         .flatten()
         .find_map(|value| value.trim().parse().ok())
-        .unwrap_or(DEFAULT_PORT)
+        .unwrap_or(v2::tuning::DEFAULT_PORT)
 }
-
-const DEFAULT_PORT: u16 = 3160;
 
 /// The address the server listens on: `RAMBL_BIND`, else loopback.
 ///

@@ -11,6 +11,8 @@ use chrono_tz::Tz;
 use icalendar::{CalendarDateTime, Component, DatePerhapsTime, Event};
 
 use crate::v2::app::{ImportedEvent, ImportedSeries};
+use crate::v2::tuning::{IMPORT_MAX_EVENT_LENGTH, IMPORT_MAX_RULE_COUNT};
+use todo_core::tuning::{TASK_DEFAULT_DURATION_MIN, TASK_MAX_DURATION_MIN, TASK_MIN_DURATION_MIN};
 
 /// A calendar we could not read. A malformed upload is the caller's doing, so
 /// the HTTP layer answers it with a 400.
@@ -59,11 +61,11 @@ pub fn parse_calendar(text: &str) -> Result<ParsedCalendar, ImportError> {
         };
         // `DTEND` is the norm, but `DURATION` is legal and Google uses it.
         // A missing `DTEND` must not drop the event, so no `?` here. With neither
-        // `DTEND` nor `DURATION`, the event gets 30 minutes, never zero length.
+        // `DTEND` nor `DURATION`, the event gets the default length, never zero.
         let end = date_of(event, "DTEND")
             .and_then(|value| to_utc(&value))
             .or_else(|| duration_after(event, start))
-            .unwrap_or(start + chrono::Duration::minutes(30));
+            .unwrap_or(start + chrono::Duration::minutes(TASK_DEFAULT_DURATION_MIN.into()));
         // An event that ends before it begins: nothing to import.
         if end < start {
             continue;
@@ -201,7 +203,7 @@ fn weekly_series(event: &Event, start: DateTime<Utc>) -> Result<Option<ImportedS
     Ok(Some(ImportedSeries {
         uid: uid_of(event),
         title: String::new(),
-        duration_min: 30,
+        duration_min: TASK_DEFAULT_DURATION_MIN,
         weekdays,
         until,
         start_day,
@@ -310,11 +312,11 @@ fn utc_instant(raw: &str) -> Option<DateTime<Utc>> {
 /// weeks instead of naming an end date is stored.
 ///
 /// Computes arithmetically so a huge COUNT does not walk day by day and overflow.
-/// Caps at 5 years of occurrences; a count that large is listed in `unmapped` instead.
+/// Caps at [`IMPORT_MAX_RULE_COUNT`] occurrences; a count that large is listed in
+/// `unmapped` instead.
 fn last_occurrence(start_day: NaiveDate, weekdays: &[Weekday], count: u32) -> NaiveDate {
-    // Cap at ~5 years of weekly occurrences (260 weeks × 7 days ≈ 1820).
-    // A count beyond that is almost certainly garbage.
-    let count = count.clamp(1, 1820);
+    // A count beyond the cap is almost certainly garbage.
+    let count = count.clamp(1, IMPORT_MAX_RULE_COUNT);
     let days_per_cycle = weekdays.len() as i64;
     // Whole cycles of the weekday pattern
     let full_cycles = (count as i64 - 1) / days_per_cycle;
@@ -371,7 +373,7 @@ fn uid_of(event: &Event) -> Option<String> {
 /// An event's length in minutes, inside the same limits as any task.
 fn minutes_between(start: DateTime<Utc>, end: DateTime<Utc>) -> u16 {
     let minutes = (end - start).num_minutes();
-    minutes.clamp(5, 480) as u16
+    minutes.clamp(TASK_MIN_DURATION_MIN.into(), TASK_MAX_DURATION_MIN.into()) as u16
 }
 
 /// Convert any of the three iCalendar date forms to UTC.
@@ -427,8 +429,8 @@ fn duration_after(event: &Event, start: DateTime<Utc>) -> Option<DateTime<Utc>> 
             _ => return None,
         }
     }
-    // Cap at 10 years of seconds; anything larger is garbage
-    if seconds.abs() > 315_360_000 {
+    // Anything longer than the cap is garbage.
+    if seconds.abs() > IMPORT_MAX_EVENT_LENGTH.num_seconds() {
         return None;
     }
     start.checked_add_signed(chrono::Duration::seconds(seconds))

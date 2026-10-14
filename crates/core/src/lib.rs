@@ -2,6 +2,7 @@
 //! only, so it builds for wasm.
 
 pub mod clock;
+pub mod tuning;
 
 pub use clock::{Clock, FixedClock, SystemClock};
 

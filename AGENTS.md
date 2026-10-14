@@ -9,6 +9,7 @@ Rambl is a speed-focused to-do list: you ramble, Jev (TypeSafe's model) helps tu
 - `docs/ARCHITECTURE.md` is the spec. Where code and spec disagree, the spec wins. If your change alters behaviour, update the spec in the same PR.
 - `docs/FEATURES.md` lists every feature and where it lives.
 - `docs/jev.md` describes the Jev API.
+- `docs/TUNING.md` says where every tunable number lives. Never write a limit, timeout or default inline.
 
 ## Where things are
 

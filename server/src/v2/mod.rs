@@ -10,6 +10,7 @@ pub mod http;
 pub mod ics_export;
 pub mod ics_import;
 pub mod store;
+pub mod tuning;
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 

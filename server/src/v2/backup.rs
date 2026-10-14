@@ -7,9 +7,8 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
-use chrono::{DateTime, Duration as Span, Local, Utc};
+use chrono::{DateTime, Local, Utc};
 use rusqlite::Connection;
 use tokio::sync::Mutex;
 use tokio::time;
@@ -17,6 +16,7 @@ use tokio::time;
 use todo_core::Clock;
 
 use super::store::Store;
+use super::tuning::{ANONYMOUS_IDLE_LIMIT, BACKUP_INTERVAL, BACKUP_RETENTION_DAYS};
 
 /// Where backups live, relative to the data directory.
 const BACKUP_DIR: &str = "backups";
@@ -25,9 +25,6 @@ const BACKUP_DIR: &str = "backups";
 fn backup_filename(date: chrono::NaiveDate) -> String {
     format!("rambl-{}.db", date.format("%Y-%m-%d"))
 }
-
-/// An anonymous account unused for this long is deleted with its tasks.
-const ANONYMOUS_IDLE_LIMIT: Span = Span::days(30);
 
 /// The backup service. Holds the database path, the store whose idle anonymous
 /// accounts it clears, and a clock for testing.
@@ -61,7 +58,7 @@ impl BackupService {
     fn spawn(service: Arc<Self>) {
         tokio::spawn(async move {
             Self::run_backup(&service).await;
-            let mut interval = time::interval(Duration::from_secs(24 * 60 * 60));
+            let mut interval = time::interval(BACKUP_INTERVAL);
             loop {
                 interval.tick().await;
                 Self::run_backup(&service).await;
@@ -138,9 +135,9 @@ fn run_backup_sync(db_path: &Path, now: DateTime<Local>) -> Result<(), String> {
     Ok(())
 }
 
-/// Delete backups older than 14 days from the backup directory.
+/// Delete backups older than [`BACKUP_RETENTION_DAYS`] from the backup directory.
 fn delete_old_backups(backup_dir: &Path, today: chrono::NaiveDate) -> Result<(), String> {
-    let cutoff = today - chrono::Duration::days(14);
+    let cutoff = today - chrono::Duration::days(BACKUP_RETENTION_DAYS);
 
     let entries = std::fs::read_dir(backup_dir)
         .map_err(|e| format!("reading backup dir for cleanup: {e}"))?;
@@ -178,7 +175,7 @@ pub fn db_path_from_env() -> PathBuf {
 mod tests {
     use super::*;
     use crate::v2::store::SqliteStore;
-    use chrono::NaiveDate;
+    use chrono::{Duration as Span, NaiveDate};
     use std::fs;
     use tempfile::tempdir;
 
