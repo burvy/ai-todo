@@ -30,7 +30,6 @@ mod flip_turner;
 #[cfg(any(target_arch = "wasm32", test))]
 mod fold;
 mod fold_turner;
-mod pane;
 mod rambo;
 mod scrap;
 mod tasks;
