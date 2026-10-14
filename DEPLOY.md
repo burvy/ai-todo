@@ -28,6 +28,12 @@ and `rambl.env.example` there. Copy `rambl.env.example` to `rambl.env` and fill 
 - `GOOGLE_CLIENT_ID=138340425604-qagdhrfblj66i5s9i9icq07lb32sd2g2.apps.googleusercontent.com`,
   the public Google OAuth web client (its authorized origins are https://rambl.burvy.dev
   and http://localhost:3160). Leave it empty to turn sign-in off.
+- `RAMBL_LOCAL_LOGIN=1`, **test sites only, never in production.** Shows "Continue locally"
+  in the settings panel, which signs in as one fixed local user with no Google account.
+  Only a peer on this machine or the private LAN (10/8, 172.16/12, 192.168/16, `::1`,
+  `fc00::/7`) may use it, and never a request carrying `CF-Connecting-IP` or
+  `X-Forwarded-For`, so the Cloudflare tunnel cannot reach it. The server refuses to start
+  with it while `RAMBL_TRUSTED_PROXIES` is set, and prints a warning at startup.
 - `RAMBL_ADMIN_EMAILS=you@example.com,someone@example.com`, optional. Comma-separated
   list of the emails allowed to open the `/admin` page (it shows today's usage and can
   block users or addresses and change plans). Leave it empty to turn the page off.

@@ -197,6 +197,19 @@ impl TokenVerifier for FakeVerifier {
 }
 
 impl TokenInfo {
+    /// The fixed identity behind `RAMBL_LOCAL_LOGIN`. Its own id, so it never collides
+    /// with a Google `sub` or with [`LOCAL_USER`].
+    pub fn local_login() -> Self {
+        Self {
+            aud: "local-login".into(),
+            sub: "local-login".into(),
+            email: "local-login@localhost".into(),
+            email_verified: "true".into(),
+            name: Some("Local user".into()),
+            picture: None,
+        }
+    }
+
     /// A tokeninfo answer a test can hand to [`FakeVerifier`].
     #[cfg(test)]
     pub fn for_test(sub: &str, email: &str) -> Self {
