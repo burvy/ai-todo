@@ -108,17 +108,26 @@ e. A finger that slides before the hold is a **scroll**, and the row keeps its
 hands off it. That is also what keeps the gestures apart from the page flip: a
 swipe left is never this row's to delete, so it reaches the panes and turns the
 page (DESIGN-DECISIONS 3).
-g. On a phone the page turns by **bending from the finger's corner**: swipe left on the
-list, or swipe right on the planner outside its grid, or press a pane button. The page
-folds along the line halfway between the corner and the finger and follows it. The
-corner rises as it travels (`BEND_LIFT`), so the fold leans and the flap grows out of
-the corner. Three strips along the fold make the curl (the kept paper darkens into it,
-a bright ridge, the underside with the page's grain), the flap's shadow is drawn as two
-offset copies, not a blur, and shadows are black in light and dark. Letting go past a
-share of the width or in a flick turns it; short of that it falls flat and rebounds a
-little. A button's turn is eased in and out. While a turn runs the pane tabs do not
-move. With reduced motion it slides. Geometry and decisions: `web/src/bend.rs` (tested); browser side:
-`web/src/turner.rs`; numbers in `web/src/tuning.rs`, looks in `web/theme.css` `--bend-*`.
+g. On a phone the whole page turns **like a book's, hinged on its left edge** (the default
+Page turn; `Fast` is the corner bend below): swipe left
+on the list, or swipe right on the planner (outside its grid, or on empty paper while the
+grid is at its earliest day), or press a pane button. The list is the leaf: forward, its
+right edge lifts toward you and swings over the spine, and the planner shows beneath;
+back, it swings in from the spine and lands on the planner. The edge keeps pace with the
+finger, the leaf darkens as it turns away, and it throws a shadow on the page under it
+(black in light and dark). Letting go past a share of the width or in a flick finishes
+the turn; short of that the leaf falls back and rebounds a little. A button's turn is
+eased in and out. While a turn runs the pane tabs do not move. With reduced motion it
+slides. Geometry, the leaf's spring and decisions: `web/src/flip.rs` (tested); browser
+side: `web/src/flip_turner.rs`; numbers in `web/src/tuning.rs` (`FLIP_*`), looks in
+`web/theme.css` `--flip-*` and `.flip-*`. The leaf moves on a spring with a speed of its own,
+so a flick carries on at the speed of the finger. The two pages lie stacked in one cell
+(the list over the planner, `main[data-pane]` names the one showing), so there is no scroll
+row between them. The gear's **Page turn** setting picks `Realistic` (this) or `Fast`, the
+older corner bend (`web/src/fold.rs`, `fold_turner.rs`, `--bend-*`): swipe the corner and
+the page folds along the line halfway to the finger. `web/src/turner.rs` picks one for each
+gesture. On the earliest day the grid takes `touch-action: pan-y pan-right`, so a
+swipe to the right is the page's and a swipe to the left still scrolls the days.
 f. Rows for series occurrences are not reorderable: a drag that starts or lands
 on one does nothing (occurrences share the series' row, not a slot of their own —
 ARCHITECTURE.md 7.1 lists reordering them as out of scope). A slip dropped where

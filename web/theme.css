@@ -1,6 +1,6 @@
 /* Rambl's paper theme: one sheet of parchment, ink, and rules — not a stack of cards.
    MOBILE FIRST: the base rules are written for a 360px phone; the wide layout starts
-   at @media (min-width: 701px). Layout behaviour (panes, scroll-snap, 64px hour rows)
+   at @media (min-width: 701px). Layout behaviour (stacked pages, 64px hour rows)
    comes from Ryan's PR #135 and is kept as it is. Design spec: docs/THEME.md. */
 
 :root {
@@ -116,7 +116,7 @@
   --layer-sheet: 90; /* the edit sheet and the pickers inside it */
   --layer-turn-under: 0; /* inside main while a page turns: the page beneath, */
   --layer-turn-front: 1; /* the page turning, */
-  --layer-turn-fx: 2; /* and the flap and shadows between them */
+  --layer-turn-fx: 2; /* and what the turn throws: flap and shadows, or light and shadow */
   --layer-lifted: 99; /* a strip being carried, above its neighbours */
 
   /* The page turn (docs/FRONTEND-PLAN.md; web/src/bend.rs). Looks only: the numbers
@@ -133,6 +133,10 @@
   /* The curl's width is set by the turner as --bend-roll (tight at first, looser later):
      the kept paper darkens over twice that into the fold, the ridge is as wide as it. */
   --bend-roll: 16px;
+  /* The book flip: the leaf darkens as it turns away, and throws a shadow on the page
+     under it. Black in both modes, for the same reason. */
+  --flip-shade: color-mix(in srgb, black 34%, transparent);
+  --flip-cast-w: 4rem; /* how far the leaf's shadow reaches onto the page under it */
 
   /* Motion. */
   --dur-fast: 120ms;
@@ -278,56 +282,41 @@ h3 {
   position: relative;
 }
 
-/* --- Layout: the two panes sit side by side in a scroll-snap row on a phone --- */
+/* --- Layout: on a phone the two pages lie stacked in one cell, the list over the planner,
+   and one shows (main[data-pane], set by the page turn). The pages turn like a book's, so
+   there is no row to scroll or snap between them. --- */
 
 main {
   position: relative;
   display: grid;
-  gap: var(--space-4);
-  grid-template-columns: none;
-  grid-auto-flow: column;
-  grid-auto-columns: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scroll-snap-type: x mandatory;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
+  grid-template-columns: 100%;
   align-items: start;
 }
 
-main::-webkit-scrollbar {
-  display: none;
-}
-
 main > * {
-  scroll-snap-align: start;
-  scroll-snap-stop: always;
+  grid-area: 1 / 1;
   min-width: 0;
 }
 
-/* The page turn (web/src/bend.rs, turner.rs). A swipe turns the page by bending it
-   from the finger's corner: for the length of a turn the two panes are stacked in one
-   cell, the turning one clipped to what stays flat of it, the next one beneath, and
-   .bend-fx draws between them the shadow the lifted page casts and the flap itself,
-   paper underside up. The pointer decides everything sideways, so the row does not
-   pan sideways on its own; up and down still scrolls. */
+@media (max-width: 700px) {
+  main:not(.bending)[data-pane="0"] > .planner-page,
+  main:not(.bending)[data-pane="1"] > .tasks-pane {
+    display: none;
+  }
+}
+
+/* The page turn (web/src/fold.rs and flip.rs, with fold_turner.rs and flip_turner.rs). For
+   the length of a turn both pages show, still in one cell: the turning one on top, the next
+   beneath, and .bend-fx draws between or over them what the turn throws (the corner bend's
+   flap and shadows, or the book flip's light and shadow). The pointer decides everything
+   sideways, so the page does not pan sideways on its own; up and down still scrolls. */
 main {
   touch-action: pan-y;
 }
 
 main.bending {
-  display: grid;
-  grid-template-columns: 100%;
-  grid-auto-flow: row;
-  grid-auto-columns: auto;
   overflow: hidden;
-  scroll-snap-type: none;
   user-select: none;
-}
-
-main.bending > * {
-  grid-area: 1 / 1;
-  scroll-snap-align: none;
 }
 
 /* Each pane is a whole page while it turns: paper all the way down the cell, so what
@@ -436,6 +425,47 @@ main.bending > .bend-fx {
     var(--bend-ridge) 25%,
     transparent
   );
+}
+
+/* The light on the leaf: it darkens toward its free edge as it turns away. It is drawn
+   with the leaf's own transform, so it stays on the leaf. */
+.flip-sheen {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: var(--flip-h, 100%);
+  transform-origin: var(--flip-origin, 0 50%);
+  transform: var(--flip-transform, none);
+  background: linear-gradient(to right, transparent 35%, var(--flip-shade));
+  opacity: var(--flip-sheen, 0);
+  will-change: transform;
+}
+
+/* The shadow the leaf throws on the page under it, just past its free edge. */
+.flip-cast {
+  position: absolute;
+  top: 0;
+  left: var(--flip-edge, 0px);
+  width: var(--flip-cast-w);
+  height: var(--flip-h, 100%);
+  background: linear-gradient(to right, var(--flip-shade), transparent);
+  opacity: var(--flip-cast, 0);
+}
+
+/* One style of turn draws at a time: the other's parts stay out of the way. */
+main.flipping .bend-away,
+main.flipping .bend-kept,
+main.flipping .bend-shadow,
+main.flipping .bend-flap,
+main:not(.flipping) .flip-sheen,
+main:not(.flipping) .flip-cast {
+  display: none;
+}
+
+/* The leaf is cut where the turner says, so a long list is not repainted whole each frame. */
+main.flipping > .bend-front {
+  overflow: hidden;
 }
 
 .tasks-pane {
@@ -1185,6 +1215,14 @@ li.task-row:focus-within .delete-mark {
   display: none;
 }
 
+/* On the earliest day there is nothing to scroll the way a right swipe goes, so that swipe
+   is the page's (it turns back to the list); a left swipe still scrolls the days. */
+/* (`pan-right` is the browser's name for content moving right: a finger moving left, to later
+   days. A finger moving right is the one left out, so it reaches the page's handlers.) */
+.week-scroll.at-earliest {
+  touch-action: pan-y pan-right;
+}
+
 .day {
   position: relative;
   min-width: 7rem;
@@ -1755,16 +1793,12 @@ li.task-row:focus-within .delete-mark {
 
   main {
     touch-action: auto;
-    grid-auto-flow: row;
-    grid-auto-columns: none;
     grid-template-columns: minmax(16rem, 1fr) minmax(24rem, 2fr);
-    overflow: visible;
-    scroll-snap-type: none;
+    gap: var(--space-4);
   }
 
   main > * {
-    scroll-snap-align: none;
-    scroll-snap-stop: normal;
+    grid-area: auto;
   }
 
   /* The page fold: the planner starts on the next page of the spread,
@@ -1842,10 +1876,6 @@ li.task-row:focus-within .delete-mark {
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  main {
-    scroll-behavior: smooth;
-  }
-
   button,
   input,
   select {

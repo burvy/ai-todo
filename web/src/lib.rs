@@ -19,19 +19,23 @@ pub mod tuning;
 pub mod voice;
 pub mod week;
 
-#[cfg(any(target_arch = "wasm32", test))]
-mod bend;
 mod capture;
 mod edits;
+#[cfg(any(target_arch = "wasm32", test))]
+mod flip;
+mod flip_turner;
+#[cfg(any(target_arch = "wasm32", test))]
+mod fold;
+mod fold_turner;
 mod pane;
 mod rambo;
 mod scrap;
 mod tasks;
+#[cfg(target_arch = "wasm32")]
+mod turn_util;
 mod turner;
 
 use crate::capture::CaptureBox;
-#[cfg(target_arch = "wasm32")]
-use crate::pane::nearest_pane;
 use crate::rambo::Rambo;
 use crate::tasks::TaskList;
 
@@ -67,26 +71,11 @@ pub fn App() -> impl IntoView {
     account::start();
     let main_ref = NodeRef::<leptos::html::Main>::new();
     let (pane, set_pane) = signal(0_u8);
-    // The page turn (bend.rs, turner.rs): the page bends from the finger's corner. The
-    // browser's own scroll still moves `main` when a pane is shown, and `track` keeps the
-    // pane switch in step with it.
+    // The page turn (turner.rs): the list lies over the planner and turns like a book's page,
+    // hinged on its left, or bends from a corner, as the gear's Page turn setting says. The
+    // page showing is `pane`; the turn names the page that lands.
     let fx_ref = NodeRef::<leptos::html::Div>::new();
-    let turner = turner::Turner::new(main_ref, fx_ref, set_pane);
-    #[cfg(target_arch = "wasm32")]
-    let track = {
-        let turner = turner.clone();
-        move |_: leptos::ev::Event| {
-            // A turn scrolls `main` itself to stack the panes; that is not a switch.
-            if turner.turning() {
-                return;
-            }
-            if let Some(element) = main_ref.get() {
-                set_pane.set(nearest_pane(&element));
-            }
-        }
-    };
-    #[cfg(not(target_arch = "wasm32"))]
-    let track = |_: leptos::ev::Event| {};
+    let turner = turner::Turner::new(main_ref, fx_ref, pane, set_pane, view_settings);
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
     let (typing, set_typing) = signal(false);
@@ -143,7 +132,6 @@ pub fn App() -> impl IntoView {
         <main
                 node_ref=main_ref
                 data-pane=move || pane.get().to_string()
-                on:scroll=track
                 on:pointerdown={
                     let turner = turner.clone();
                     move |ev| turner.down(&ev)
@@ -184,9 +172,13 @@ pub fn App() -> impl IntoView {
                     move || turner.turn_to(0)
                 })
             />
-            // What a turning page draws between the two panes: the shadow it casts on
-            // the next page, the curl's rise, and the lifted flap with its own shadow. Hidden until a turn.
+            // What a turning page draws over the two panes, hidden until a turn: for the
+            // book flip, the light on the leaf and the shadow it throws on the page under it
+            // (flip-*); for the corner bend, the shadow it casts, the curl's rise and the
+            // lifted flap with its own shadow (bend-*).
             <div class="bend-fx" node_ref=fx_ref aria-hidden="true">
+                <div class="flip-sheen"></div>
+                <div class="flip-cast"></div>
                 <div class="bend-away"><i class="bend-strip bend-cast"></i></div>
                 <div class="bend-kept"><i class="bend-strip bend-rise"></i></div>
                 <div class="bend-shadow bend-shadow-far"></div>

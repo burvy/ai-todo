@@ -1,4 +1,5 @@
-//! The page turn on a phone: the page bends from the finger's corner and follows it.
+//! The fast page turn on a phone (the gear's `Page turn: Fast`): the page bends from the
+//! finger's corner and follows it. The book flip is `flip.rs`.
 //!
 //! The model is a flat fold. The finger drags a corner `C` of the page to `P`; the page
 //! folds along the line halfway between them. What stays flat is the part of the page on
@@ -8,7 +9,7 @@
 //! page; short of that it springs back.
 //!
 //! This file keeps the geometry and the decisions pure, so they are tested without a
-//! browser; `Turner` (browser only) reads the pointer, draws the shapes and animates.
+//! browser; `fold_turner` (browser only) reads the pointer, draws the shapes and animates.
 
 use crate::tuning::{
     BEND_BOUNCE, BEND_BOUNCE_AT, BEND_COMMIT_SHARE, BEND_FLICK_MIN_PX, BEND_FLICK_PX_PER_MS,
@@ -571,10 +572,41 @@ mod tests {
         );
     }
 
+    /// The points a `polygon(...)` string names, read back.
+    fn points_of(css: &str) -> Vec<Pt> {
+        css.strip_prefix("polygon(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .expect("a polygon")
+            .split(", ")
+            .map(|pair| {
+                let mut numbers = pair
+                    .split(' ')
+                    .map(|n| n.trim_end_matches("px").parse::<f64>().expect("a number"));
+                Pt::new(numbers.next().unwrap(), numbers.next().unwrap())
+            })
+            .collect()
+    }
+
     #[test]
-    fn a_polygon_is_written_for_css_and_nothing_clips_everything() {
-        let css = polygon_css(&[Pt::new(0.0, 0.0), Pt::new(10.0, 0.0), Pt::new(10.0, 5.5)]);
-        assert_eq!(css, "polygon(0.0px 0.0px, 10.0px 0.0px, 10.0px 5.5px)");
-        assert_eq!(polygon_css(&[]), "inset(100%)");
+    fn a_polygon_clips_to_the_shape_it_was_made_from() {
+        let shapes = bend(W, H, Pt::new(W, H), Pt::new(W - 120.0, H - 40.0)).expect("a fold");
+        for shape in [&shapes.kept, &shapes.away] {
+            let back = points_of(&polygon_css(shape));
+            assert_eq!(back.len(), shape.len());
+            assert!(
+                back.iter()
+                    .zip(shape.iter())
+                    .all(|(a, b)| a.minus(*b).len() < 0.06),
+                "within the one decimal the string keeps"
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_to_clip_to_hides_the_whole_page() {
+        assert!(
+            polygon_css(&[]).starts_with("inset("),
+            "an empty shape is not a polygon with no points, which would show everything"
+        );
     }
 }
