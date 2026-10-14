@@ -227,8 +227,23 @@ The bubble is the small speech bubble with choice buttons that shows when Rambo 
 - **Move:** the page turns to the planner and you tap an hour, and Rambo also offers the next free time. Not by carrying him to the planner.
 - **Dropped on a task's slip in the planner:** time choices: move, make it longer or shorter, take it off the planner.
 - **Dropped on an empty hour in the planner:** he starts a new task at that time and listens. Tapping or clicking anywhere else cancels it.
-- **Which choices the bubble keeps** (today Edit, Move, Done, Never mind; whether to add Delete) is not yet confirmed.
+- **The bubble's choices are final: Edit, Move, Done, Never mind.** No Delete: deleting is slashing the task out (below).
 
-### Crossing out (interview 3)
-- **Swiping left on a list task crosses it out realistically:** the ink stroke follows the finger as it moves.
-- **Not yet settled:** this clashes with the Gestures rules above (swipe right on a task deletes, swipe left turns the page to the planner). Open: whether crossing out means done or delete, what swipe right does now, and how the page is turned instead.
+### Slashing out = delete (interview 3)
+- **Swiping left on a list task slashes it out, and that deletes it.** The ink stroke follows the finger as it moves, like a real pen.
+- **Undo is the scrap:** the slashed row's scrap lies in the page corner for a few seconds; tap it to tape it back.
+- **Not yet settled:** the Gestures rules above say swipe right on a task deletes and swipe left turns the page to the planner. What swipe right on a task does now, and how the page is turned on the phone, is still open.
+
+### Accepted ideas (interview 3)
+Later steps under the physical principle:
+- **Ink dries:** a new row is glossy for a few seconds, and a tap smudges it.
+- **The nib runs dry:** after a long run of writing, Rambo taps his nib on the dish's rim.
+- **A bookmark ribbon marks today** in the planner; pull it to jump back to today.
+- **The scrap undo** above.
+- **A desk lamp is the dark-mode switch:** pull its chain and the night page is laid down.
+
+### Art direction: real assets, cozy and peaceful (interview 3)
+- **Use real assets:** real paper scans and textures, real ink, hand-drawn illustration. Pure CSS is only a base and a fallback.
+- **The look is aesthetic and far from generic: cozy and peaceful.**
+- **Free assets are fine** if their licence allows commercial use; CC0 is preferred.
+- **An artist must be able to replace every asset easily.** Each asset sits in its own slot folder under `web/assets/<slot>/` with a stable file name the code uses and an `ABOUT.md` beside it: what it is, where it appears, size and format, mood, source and licence, and how to replace it. `web/assets/README.md` indexes every slot; `web/assets/CREDITS.md` holds the licences. Replacing art means dropping in a new file with the same name and size, with no code change.
