@@ -70,7 +70,8 @@ pub(crate) struct Anchors {
     pub(crate) spot: Vec2,
     /// The reader asked for less motion: he is simply where he goes, with no hops.
     pub(crate) reduced_motion: bool,
-    /// The page's leaf, while a turn has it in motion; none at rest.
+    /// The page's leaf as the turner last showed it: none before any turn, and after one
+    /// the leaf lying where it landed (flat, not closing, or turned away).
     pub(crate) leaf: Option<Leaf>,
 }
 
@@ -91,7 +92,7 @@ pub(crate) enum Drive {
 /// How his body follows `state`, given what the page measured: he hops between spots
 /// (`mascot::hops_there`, the rule the notice beat is guarded by), rides the finger
 /// that holds him, and is exactly on whatever else he tracks.
-pub(crate) fn behaviour(state: &State, settled_home: bool, anchors: &Anchors) -> Drive {
+pub(crate) fn behaviour(state: &State, settled_home: bool, here: Vec2, anchors: &Anchors) -> Drive {
     let target = match state {
         State::Home | State::Skittering => anchors.nest,
         _ => anchors.spot,
@@ -100,11 +101,12 @@ pub(crate) fn behaviour(state: &State, settled_home: bool, anchors: &Anchors) ->
         _ if mascot::hops_there(state, settled_home) => Drive::HopTo(target),
         State::Dragging => Drive::Ride(target),
         // Under the leaf he works his way along to its free corner, level with where he
-        // was caught, and pushes it up from there.
+        // was caught (not with a finger that may still be moving), and pushes it up from
+        // there.
         State::Covered => Drive::Ride(
             anchors
                 .leaf
-                .map_or(target, |leaf| (leaf.free_edge_x(), target.1)),
+                .map_or(here, |leaf| (leaf.free_edge_x(), here.1)),
         ),
         _ => Drive::Follow(target),
     }
@@ -258,7 +260,12 @@ impl World {
         if let Some(event) = self.timer_due() {
             self.tell(event);
         }
-        let drive = behaviour(&self.rambo.brain, self.rambo.settled_home, anchors);
+        let drive = behaviour(
+            &self.rambo.brain,
+            self.rambo.settled_home,
+            self.rambo.pos,
+            anchors,
+        );
         if !matches!(drive, Drive::HopTo(_)) {
             self.rambo.run = None;
         }
@@ -290,10 +297,6 @@ impl World {
     /// The push he gives the leaf's corner from underneath while he is caught: the page
     /// steps its spring with it (`Spring::step_with_push`), and it can lift the leaf a
     /// little but never turn it.
-    #[allow(
-        dead_code,
-        reason = "the turner steps the leaf with it once the page is wired (step 11b)"
-    )]
     pub(crate) fn leaf_push(&self) -> Option<crate::flip::Push> {
         (self.rambo.brain == State::Covered).then_some(crate::flip::Push {
             accel: tuning::COVERED_PUSH_ACCEL,
@@ -895,10 +898,29 @@ mod tests {
         assert_eq!(world.rambo.brain, State::Covered);
         world.advance(1, &under(FELL, Some(leaf(0.95, false))));
         assert_eq!(world.rambo.brain, State::Home, "he hops home, undazed");
-        // No leaf in motion is the leaf lying flat over him: it does not let him go.
+        // No leaf shown at all, or one lying flat over him, does not let him go.
         let mut stuck = dropped_at(FELL);
         stuck.advance(1, &under(FELL, Some(leaf(0.7, true))));
         stuck.advance(steps(500.0), &under(FELL, None));
         assert_eq!(stuck.rambo.brain, State::Covered);
+    }
+
+    #[test]
+    fn caught_while_inking_he_stays_level_with_where_he_was_caught_not_with_the_finger() {
+        let mut world = dropped_at(FELL);
+        world.tell(Event::Grab);
+        assert_eq!(world.rambo.brain, State::Inking);
+        world.advance(steps(300.0), &anchors((60.0, 400.0)));
+        world.advance(1, &under((60.0, 400.0), Some(leaf(0.7, true))));
+        assert_eq!(world.rambo.brain, State::Covered);
+        let caught_y = world.rambo.pos.1;
+        // The finger carries on down the page while he is stuck under the leaf.
+        for y in [450.0, 520.0, 600.0] {
+            world.advance(steps(200.0), &under((60.0, y), Some(leaf(0.02, false))));
+            assert!(
+                (world.rambo.pos.1 - caught_y).abs() < 1e-6,
+                "level with where he was caught"
+            );
+        }
     }
 }
