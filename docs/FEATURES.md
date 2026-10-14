@@ -202,7 +202,7 @@ c. Code: `web/theme.css` (`:root` and `:root[data-theme="dark"]`);
 
 ### 6. Parchment theme
 a. The page is aged paper: warm palette, serif headings, a tiled paper texture that switches to a dark variant in dark mode.
-b. Look at the page background and the masthead in light and dark mode; with `web/assets/theme/*.svg` deleted it still reads as parchment.
+b. Look at the page background in light and dark mode; with `web/assets/theme/*.svg` deleted it still reads as parchment.
 c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics: `web/assets/theme/paper.svg`, `paper-dark.svg` (placeholders).
 
 ## IV. RAMBL, THE MASCOT

@@ -134,15 +134,7 @@ pub fn App() -> impl IntoView {
     });
 
     view! {
-        <header>
-            <h1>"Rambl"</h1>
-            <account::HeaderLink />
-            <settings::GearMenu
-                settings=view_settings
-                set_settings=set_view_settings
-                set_snapshot=set_snapshot
-                set_error=set_error
-            />
+        <div class="capture-slot">
             <CaptureBox
                 form_ref
                 nest_ref
@@ -156,33 +148,14 @@ pub fn App() -> impl IntoView {
                 set_typing
                 set_error
             />
-        </header>
+        </div>
         {move || error.get().map(|e| view! {
             <div class="error page-note" aria-live="polite">{e}</div>
         })}
         <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event audible=Signal::derive(move || voice::audible(view_settings.get().sounds, view_settings.get().rambo_talks)) quiet=Signal::derive(move || mascot::speaks_later(&mascot_state.get()) || pen_queue.with(|queue| !queue.is_empty())) set_speech=set_brain_speech set_pose=set_brain_pose />
-        <nav class="pane-switch" aria-label="Show">
-            <button
-                type="button"
-                class:active=move || pane.get() == 0
-                aria-pressed=move || (pane.get() == 0).to_string()
-                on:click={
-                    let turner = turner.clone();
-                    move |_| turner.turn_to(0)
-                }
-            >"To do"</button>
-            <button
-                type="button"
-                class:active=move || pane.get() == 1
-                aria-pressed=move || (pane.get() == 1).to_string()
-                on:click={
-                    let turner = turner.clone();
-                    move |_| turner.turn_to(1)
-                }
-            >"Planner"</button>
-        </nav>
         <main
                 node_ref=main_ref
+                data-pane=move || pane.get().to_string()
                 on:scroll=track
                 on:pointerdown={
                     let turner = turner.clone();
@@ -208,6 +181,7 @@ pub fn App() -> impl IntoView {
             <week::WeekGrid
                 snapshot=snapshot
                 settings=view_settings
+                set_settings=set_view_settings
                 set_snapshot=set_snapshot
                 set_error=set_error
                 capture_text
@@ -222,6 +196,17 @@ pub fn App() -> impl IntoView {
                 <div class="bend-flap"><i class="bend-strip bend-ridge"></i></div>
             </div>
         </main>
+        // The note at the page's foot says where the other page is; tapping it turns the page.
+        <button
+            type="button"
+            class="page-foot"
+            on:click={
+                let turner = turner.clone();
+                move |_| turner.turn_to(1 - pane.get_untracked())
+            }
+        >
+            {move || page_foot_note(pane.get())}
+        </button>
         <scrap::ScrapCorner scraps set_snapshot set_error />
         // The ink a dazed Rambo leaves: above the page, below him.
         <inklayer::InkLayer
@@ -265,4 +250,23 @@ pub fn start() {
     #[cfg(target_arch = "wasm32")]
     console_error_panic_hook::set_once();
     leptos::mount::mount_to_body(App);
+}
+
+/// What the note at a phone page's foot says: where the other page is.
+fn page_foot_note(pane: u8) -> &'static str {
+    match pane {
+        0 => "planner on the next page \u{2192}",
+        _ => "\u{2190} task list on the previous page",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::page_foot_note;
+
+    #[test]
+    fn each_page_names_the_other_one() {
+        assert_eq!(page_foot_note(0), "planner on the next page \u{2192}");
+        assert_eq!(page_foot_note(1), "\u{2190} task list on the previous page");
+    }
 }

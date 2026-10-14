@@ -227,7 +227,7 @@
     position: fixed;
     left: 0;
     right: 0;
-    bottom: calc(var(--tap, 2.75rem) + var(--space-2, 0.5rem) + env(safe-area-inset-bottom, 0px));
+    bottom: calc(var(--capture-clear) + var(--page-foot-h));
     z-index: var(--layer-sticky);
     width: auto;
     min-height: 0;
@@ -243,6 +243,11 @@
     height: 46dvh;
     overflow: hidden;
     box-shadow: 0 -2px 6px rgba(43, 35, 24, 0.15);
+  }
+
+  /* The tack belongs to the first page only: the planner page has none. */
+  main[data-pane="1"] .tack-board {
+    display: none;
   }
 
   .tack-tab {

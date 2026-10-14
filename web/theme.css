@@ -83,6 +83,8 @@
   /* One hour of the week planner, in CSS pixels. week.rs places the now-line
      with the same number, so change both together. */
   --hour-h: 64px;
+  --capture-clear: calc(56px + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px)); /* what a phone's fixed capture bar covers at the bottom */
+  --page-foot-h: 2rem; /* the note at a phone page's foot, which the tack tab rides above */
 
   /* Layers, lowest to highest: the one scale every z-index reads (docs/FRONTEND-PLAN.md
      1.5). Rambo and his bubbles sit under the gear menu and the edit sheet (which is a
@@ -245,14 +247,6 @@ h3 {
   line-height: 1.2;
 }
 
-h1 {
-  margin: 0;
-  /* The masthead is the owner's signature on the page, so it is in the hand. */
-  font-family: var(--font-hand);
-  font-weight: 600;
-  font-size: var(--text-2xl);
-}
-
 h2 {
   margin: 0 0 var(--space-3);
   font-size: var(--text-xl);
@@ -265,15 +259,13 @@ h3 {
   font-size: var(--text-lg);
 }
 
-/* --- Masthead: a heading written on the page, closed with a rule --- */
+/* --- The capture bar's slot: on a wide desk the bar sits at the top of the page, on a
+   phone it is fixed to the bottom edge and the slot holds nothing. --- */
 
-header {
+.capture-slot {
   position: relative;
-  display: grid;
-  gap: var(--space-2);
   margin-bottom: var(--space-4);
-  padding: var(--space-2) 0 var(--space-3);
-  border-bottom: 1px solid var(--rule-strong);
+  padding-top: var(--space-2);
 }
 
 /* --- Layout: the two panes sit side by side in a scroll-snap row on a phone --- */
@@ -445,12 +437,6 @@ main.bending > .bend-fx {
   padding-left: var(--space-3);
 }
 
-.pane-switch {
-  display: flex;
-  gap: var(--space-4);
-  margin: var(--space-2) 0;
-}
-
 /* Sections are parts of one page, not cards: space and rules divide them. */
 section {
   min-width: 0;
@@ -546,7 +532,6 @@ a {
 }
 
 /* The active tab or filter: underlined in golden brown, like a marked word. */
-.pane-switch button.active,
 .label-filters button.active,
 .duration-chips button.active,
 .gear-choices button.active {
@@ -627,7 +612,7 @@ li.task-row.row-lifted {
 .scrap-pile {
   position: fixed;
   left: var(--gutter);
-  bottom: calc(56px + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
+  bottom: var(--capture-clear);
   z-index: var(--layer-note);
   display: flex;
   flex-direction: column;
@@ -1502,9 +1487,41 @@ li.task-row:focus-within .delete-mark {
 }
 
 .gear-wrap {
+  position: relative;
+}
+
+/* The planner's top right: the account link beside the gear, which opens its menu
+   below itself. Only this page carries them. */
+.planner-page {
+  position: relative;
+}
+
+.planner-corner {
   position: absolute;
   top: 0;
   right: 0;
+  z-index: var(--layer-sticky);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.planner-corner .account-link {
+  margin: 0;
+}
+
+/* The note at the page's foot, in the hand, at the left so Rambo's bubble, which sits at the right, never covers it: a phone's two pages say where the other
+   one is, and a tap turns to it. A desk shows both pages, so it hides there. */
+.page-foot {
+  position: fixed;
+  left: var(--gutter);
+  bottom: var(--capture-clear);
+  z-index: var(--layer-sticky);
+  min-height: var(--page-foot-h);
+  padding: 0 var(--space-1);
+  font-family: var(--font-hand);
+  font-size: var(--text-base);
+  color: var(--ink-soft);
 }
 
 .gear {
@@ -1694,7 +1711,7 @@ li.task-row:focus-within .delete-mark {
     box-shadow: var(--fold-shadow);
   }
 
-  .pane-switch {
+  .page-foot {
     display: none;
   }
 
