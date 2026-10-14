@@ -67,9 +67,10 @@ fn step(
                 if let Some(line) = rambl_brain::data::lines().resolve(&key) {
                     let line = line.to_owned();
                     set_speech.set(Some(line.clone()));
-                    // The bubble and the voice are one thing: it goes when his
-                    // voice is done, plus a beat. With no voice it holds on its
-                    // own, because then it is the whole message.
+                    // The bubble and the voice are one thing: with a voice it
+                    // goes when the voice is done, plus a beat. Without one there
+                    // is nothing to wait for, so it holds on its own — it is then
+                    // the only channel the line has. Exactly one timer, either way.
                     let clear_later = move |after_ms: u32| {
                         let clear = set_speech;
                         Timeout::new(after_ms, move || clear.set(None)).forget();
@@ -77,9 +78,11 @@ fn step(
                     let spoke = audible.get_untracked()
                         && crate::voice::say(&line, {
                             let clear = clear_later;
-                            move || clear(crate::voice::BUBBLE_AFTER_VOICE_MS)
+                            move || clear(crate::voice::bubble_ms(true))
                         });
-                    clear_later(crate::voice::bubble_ms(spoke));
+                    if !spoke {
+                        clear_later(crate::voice::bubble_ms(false));
+                    }
                 }
             }
             Action::Pose(pose) | Action::Animate(pose) => set_pose.set(pose.to_owned()),
