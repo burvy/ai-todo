@@ -181,8 +181,13 @@ fn next_slot(
         return None;
     }
     let first_day = from.with_timezone(&hours.timezone).date_naive();
+    let last_day = deadline.map(|limit| limit.with_timezone(&hours.timezone).date_naive());
     for offset in 0..366 {
         let date = first_day + Duration::days(offset);
+        // Nothing on a later day can end by the deadline, so stop looking.
+        if last_day.is_some_and(|last| date > last) {
+            return None;
+        }
         for window in hours.days.get(&date.weekday()).into_iter().flatten() {
             let (Some(window_start), Some(window_end)) = (
                 local_to_utc(hours.timezone, date, window.start),
@@ -317,6 +322,27 @@ mod tests {
         );
         assert!(result.placements[0].start < due);
         assert!(result.placements[0].end <= due);
+    }
+
+    #[test]
+    fn a_deadline_no_working_hour_can_meet_leaves_the_task_unplaced() {
+        // Due 07:00, but work starts at 08:00 every day: no slot ends by then.
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+        );
+        let due = Utc.with_ymd_and_hms(2026, 1, 5, 7, 0, 0).unwrap();
+        let result = plan(
+            &[task("early", 60, When::DueBy(due), 0)],
+            &hours,
+            &ctx(
+                Utc.with_ymd_and_hms(2026, 1, 5, 6, 0, 0).unwrap(),
+                chrono_tz::UTC,
+            ),
+        );
+        assert!(result.placements.is_empty());
+        assert_eq!(result.unplaced, vec![todo_core::TaskId("early".into())]);
     }
 
     #[test]

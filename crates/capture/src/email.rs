@@ -166,25 +166,33 @@ fn parse_email_date(raw: &str) -> Option<DateTime<Utc>> {
         return Some(parsed.with_timezone(&Utc));
     }
 
-    const FORMATS: [&str; 6] = [
+    // RFC 5322 `Date:`. Parsed with its offset: a plain format string would read
+    // "+0200" and drop it, so a 10:03 +0200 mail would land two hours late.
+    if let Ok(parsed) = DateTime::parse_from_rfc2822(value) {
+        return Some(parsed.with_timezone(&Utc));
+    }
+
+    const DATE_TIME_FORMATS: [&str; 5] = [
         "%A, %B %d, %Y %I:%M %p",
         "%A, %B %d, %Y %l:%M %p",
-        "%a, %d %b %Y %H:%M:%S %z",
         "%m/%d/%Y %I:%M %p",
         "%m/%d/%Y %H:%M",
         "%Y-%m-%d %H:%M:%S",
     ];
+    // A date with no time, e.g. "Monday, October 12, 2026".
+    const DATE_FORMATS: [&str; 3] = ["%A, %B %d, %Y", "%m/%d/%Y", "%Y-%m-%d"];
 
-    for format in FORMATS {
-        if let Ok(naive) = NaiveDateTime::parse_from_str(value, format) {
-            return Some(naive.and_utc());
-        }
-        // A date with no time, e.g. "Monday, October 12, 2026".
-        if let Ok(date) = NaiveDate::parse_from_str(value, format) {
-            return Some(Utc.from_utc_datetime(&date.and_hms_opt(9, 0, 0)?));
-        }
-    }
-    None
+    DATE_TIME_FORMATS
+        .iter()
+        .find_map(|format| NaiveDateTime::parse_from_str(value, format).ok())
+        .map(|naive| naive.and_utc())
+        .or_else(|| {
+            DATE_FORMATS
+                .iter()
+                .find_map(|format| NaiveDate::parse_from_str(value, format).ok())
+                .and_then(|date| date.and_hms_opt(9, 0, 0))
+                .map(|naive| Utc.from_utc_datetime(&naive))
+        })
 }
 
 #[cfg(test)]
@@ -305,6 +313,14 @@ Subject: Invoice\nPlease pay the invoice by Friday.\n";
             ),
             ("10/12/2026 10:03 AM", "2026-10-12T10:03:00+00:00"),
             ("2026-10-12T14:03:00Z", "2026-10-12T14:03:00+00:00"),
+            // The offset is honoured, not dropped.
+            (
+                "Mon, 12 Oct 2026 10:03:00 +0200",
+                "2026-10-12T08:03:00+00:00",
+            ),
+            // A date with no time anchors at 09:00.
+            ("Monday, October 12, 2026", "2026-10-12T09:00:00+00:00"),
+            ("2026-10-12", "2026-10-12T09:00:00+00:00"),
         ];
         for (raw, expected) in cases {
             let parsed = parse_email_date(raw).unwrap_or_else(|| panic!("failed on {raw}"));

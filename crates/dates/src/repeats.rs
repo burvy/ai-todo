@@ -81,7 +81,8 @@ fn marker_at(tokens: &[Token], index: usize) -> Option<Marker> {
         }
         // "mondays" repeats; a bare "Monday" is a date, and stays with `phrases::day`.
         // The list starts at the name itself, so its last word sits one before the count.
-        plural if plural.ends_with('s') => {
+        // "days" alone is a length of time ("in 3 days"), a series only after "every".
+        plural if plural.ends_with('s') && plural != "days" => {
             let (days, used) = days_from(&words_from(tokens, index))?;
             (days, index + used - 1)
         }
@@ -312,6 +313,14 @@ mod tests {
         let mut days = list.to_vec();
         days.sort_by_key(|day| day.num_days_from_monday());
         days
+    }
+
+    #[test]
+    fn a_bare_days_is_a_length_of_time_not_a_series() {
+        // "days" only means a series after "every"; on its own it is a length of time.
+        for clause in ["finish the essay in 3 days", "I have two days to submit"] {
+            assert_eq!(recurrence(clause, &ctx()), None, "{clause}");
+        }
     }
 
     const EVERY_DAY: [Weekday; 7] = [
