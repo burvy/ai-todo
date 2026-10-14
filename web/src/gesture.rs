@@ -10,16 +10,20 @@
 //! first of all Rambo: [`crate::mascot::wants`]).
 //!
 //! It is pure: times are the pointer events' `timeStamp` in ms (the clock the
-//! page's frames run on) and speeds are px per ms. A finger that rests without
-//! moving sends no events, so the caller also feeds a [`Pointer::Tick`] each
-//! frame while a finger is down; that is how a hold is noticed on time.
+//! page's frames run on) and speeds are px per ms. Each sample names its finger
+//! (the event's `pointerId`); only the finger that went down first counts until it
+//! lifts. A finger that rests without moving sends no events, so a caller that
+//! needs holds on time feeds a [`Pointer::Tick`] each frame while a finger is down
+//! (the engine's tick, ENGINE-PLAN §1). Without ticks a hold is only noticed on
+//! the next move, so it can read Hold then Drag where a ticked finger reads Drag.
+//! Rambo's drop, the one caller today, reads only `Fling` and sends no ticks.
 //!
 //! The decisions are the ones `row::advance` made for a row, for everyone: a hold
 //! is decided by time before travel, and a decided press stays decided.
 
 use crate::tuning::{
-    GESTURE_FLING_MIN_SPEED, GESTURE_HOLD_MS, GESTURE_RELEASE_MAX_SPEED, GESTURE_RELEASE_SAMPLE_MS,
-    GESTURE_SLOP_PX,
+    GESTURE_FLING_MIN_SPEED, GESTURE_HOLD_MS, GESTURE_RELEASE_MAX_SPEED, GESTURE_RELEASE_REST_MS,
+    GESTURE_RELEASE_SAMPLE_MS, GESTURE_SLOP_PX,
 };
 
 /// A point on the page, or a velocity in px per ms.
@@ -67,6 +71,8 @@ pub struct Sample {
     pub pointer: Pointer,
     pub at: Vec2,
     pub t: f64,
+    /// Which finger (the event's `pointerId`).
+    pub id: i32,
 }
 
 /// What the finger means, as soon as it is known.
@@ -105,11 +111,14 @@ enum Phase {
     Dragging,
 }
 
-/// Turns one finger's samples into gestures. A second finger that goes down while
-/// one is already down is ignored, so swapping fingers mid-drag never jumps.
+/// Turns one finger's samples into gestures. Every sample from another finger
+/// while one is down is ignored, so a second finger never ends, moves or speeds up
+/// the first one's gesture.
 #[derive(Clone, Debug)]
 pub struct Recognizer {
     phase: Phase,
+    /// The finger that is down.
+    finger: i32,
     /// The finger's recent path (t, x, y), for its speed.
     recent: Vec<(f64, f64, f64)>,
 }
@@ -118,6 +127,7 @@ impl Default for Recognizer {
     fn default() -> Self {
         Recognizer {
             phase: Phase::Idle,
+            finger: 0,
             recent: Vec::new(),
         }
     }
@@ -137,15 +147,24 @@ impl Recognizer {
         self.phase != Phase::Idle
     }
 
+    /// The finger whose gesture this is, while one is down.
+    pub fn finger(&self) -> Option<i32> {
+        self.active().then_some(self.finger)
+    }
+
     /// One step: the gesture `sample` decides, if it decides one.
     pub fn advance(&mut self, sample: Sample) -> Option<Gesture> {
-        let Sample { pointer, at, t } = sample;
-        if self.active() && !matches!(pointer, Pointer::Down(_)) {
+        let Sample { pointer, at, t, id } = sample;
+        if self.active() && id != self.finger {
+            return None;
+        }
+        if self.active() && pointer == Pointer::Move {
             self.remember(at, t);
         }
         match (self.phase, pointer) {
             (Phase::Idle, Pointer::Down(target)) => {
                 self.phase = Phase::Pressed { from: at, since: t };
+                self.finger = id;
                 self.recent = vec![(t, at.0, at.1)];
                 Some(Gesture::Down { target, at })
             }
@@ -189,7 +208,7 @@ impl Recognizer {
         }
     }
 
-    /// Keeps the finger's path over the last [`GESTURE_RELEASE_SAMPLE_MS`]: all its
+    /// Keeps the finger's moves over the last [`GESTURE_RELEASE_SAMPLE_MS`]: all its
     /// speed is ever read from.
     fn remember(&mut self, at: Vec2, t: f64) {
         self.recent.push((t, at.0, at.1));
@@ -199,10 +218,17 @@ impl Recognizer {
 }
 
 /// How fast the finger was going at `now`: its travel over the last
-/// [`GESTURE_RELEASE_SAMPLE_MS`] of `samples` (t in ms, x, y), capped at
-/// [`GESTURE_RELEASE_MAX_SPEED`]. A finger that stopped before letting go throws
-/// nothing, however fast it went before. The one throw detector on the page.
+/// [`GESTURE_RELEASE_SAMPLE_MS`] of `samples` (its moves: t in ms, x, y), capped
+/// at [`GESTURE_RELEASE_MAX_SPEED`]. A finger whose last move is more than
+/// [`GESTURE_RELEASE_REST_MS`] old has stopped, and throws nothing however fast it
+/// went before. The one throw detector on the page.
 pub fn release_velocity(samples: &[(f64, f64, f64)], now: f64) -> Vec2 {
+    if samples
+        .last()
+        .is_none_or(|&(t, ..)| now - t > GESTURE_RELEASE_REST_MS)
+    {
+        return (0.0, 0.0);
+    }
     let mut recent = samples
         .iter()
         .filter(|(t, ..)| now - t <= GESTURE_RELEASE_SAMPLE_MS);
@@ -230,10 +256,19 @@ mod tests {
     use super::*;
 
     fn feed(samples: impl IntoIterator<Item = (Pointer, Vec2, f64)>) -> Vec<Gesture> {
+        fingers(
+            samples
+                .into_iter()
+                .map(|(pointer, at, t)| (1, pointer, at, t)),
+        )
+    }
+
+    /// Samples from more than one finger: (id, pointer, at, t).
+    fn fingers(samples: impl IntoIterator<Item = (i32, Pointer, Vec2, f64)>) -> Vec<Gesture> {
         let mut recognizer = Recognizer::new();
         samples
             .into_iter()
-            .filter_map(|(pointer, at, t)| recognizer.advance(Sample { pointer, at, t }))
+            .filter_map(|(id, pointer, at, t)| recognizer.advance(Sample { pointer, at, t, id }))
             .collect()
     }
 
@@ -395,25 +430,61 @@ mod tests {
 
     #[test]
     fn a_second_finger_is_ignored() {
-        let gestures = feed([
-            down((0.0, 0.0)),
+        let gestures = fingers([
+            (1, Pointer::Down(Target::Rambo), (0.0, 0.0), 0.0),
+            (1, Pointer::Move, (40.0, 0.0), 16.0),
             (
+                2,
                 Pointer::Down(Target::Page(Leaf::List)),
                 (300.0, 300.0),
-                10.0,
+                20.0,
             ),
-            (Pointer::Up, (0.0, 0.0), 50.0),
+            (2, Pointer::Move, (400.0, 300.0), 24.0),
+            (2, Pointer::Up, (400.0, 300.0), 28.0),
+            (1, Pointer::Move, (50.0, 0.0), 300.0),
         ]);
+        // The second finger's moves neither drag nor speed up the first, and its
+        // lifting ends nothing: the first is still dragging, slowly.
+        let Some(Gesture::Drag { pos, vel }) = gestures.last() else {
+            panic!("{gestures:?}");
+        };
+        assert_eq!(*pos, (50.0, 0.0));
+        assert!(!flung(*vel), "{vel:?}");
+        assert_eq!(gestures.len(), 3, "{gestures:?}");
+        let mut recognizer = Recognizer::new();
+        recognizer.advance(Sample {
+            pointer: Pointer::Down(Target::Rambo),
+            at: (0.0, 0.0),
+            t: 0.0,
+            id: 7,
+        });
+        assert_eq!(recognizer.finger(), Some(7));
+    }
+
+    #[test]
+    fn a_flick_that_rests_before_letting_go_is_put_down() {
+        // 2 px per ms, then the finger stops and lets go a moment later: shorter
+        // than the window the speed is read over, longer than a pointer's frame.
+        let flick = |rest: f64| {
+            let mut samples: Vec<_> = (0..=6)
+                .map(|i| match i {
+                    0 => down((0.0, 0.0)),
+                    _ => (
+                        Pointer::Move,
+                        (f64::from(i) * 32.0, 0.0),
+                        f64::from(i) * 16.0,
+                    ),
+                })
+                .collect();
+            samples.push((Pointer::Up, (192.0, 0.0), 96.0 + rest));
+            feed(samples).last().cloned()
+        };
+        const { assert!(GESTURE_RELEASE_REST_MS * 1.5 < GESTURE_RELEASE_SAMPLE_MS) };
         assert_eq!(
-            gestures,
-            [
-                Gesture::Down {
-                    target: Target::Rambo,
-                    at: (0.0, 0.0)
-                },
-                Gesture::Tap
-            ]
+            flick(GESTURE_RELEASE_REST_MS * 1.5),
+            Some(Gesture::Drop { pos: (192.0, 0.0) })
         );
+        assert!(matches!(flick(8.0), Some(Gesture::Fling { .. })));
     }
 
     #[test]

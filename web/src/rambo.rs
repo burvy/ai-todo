@@ -241,6 +241,17 @@ pub(crate) fn Rambo(
     // The finger that holds him, read by the page's one gesture recogniser: letting
     // go mid-flick is a hard drop.
     let finger = std::rc::Rc::new(std::cell::RefCell::new(gesture::Recognizer::new()));
+    // Whether `ev` comes from a finger other than the one holding him: a second
+    // finger never moves, drops or throws him.
+    let other_finger = {
+        let finger = finger.clone();
+        move |ev: &leptos::ev::PointerEvent| {
+            finger
+                .borrow()
+                .finger()
+                .is_some_and(|id| id != ev.pointer_id())
+        }
+    };
     let (finger_down, finger_move, finger_up, finger_cancel) =
         (finger.clone(), finger.clone(), finger.clone(), finger);
     // A long press listens: each grab takes a ticket, and the hold's timer starts
@@ -415,8 +426,12 @@ pub(crate) fn Rambo(
             on:pointerdown={
                 let daze = daze.clone();
                 let nib_below = nib_below.clone();
+                let other_finger = other_finger.clone();
                 move |ev: leptos::ev::PointerEvent| {
                     ev.prevent_default();
+                    if other_finger(&ev) {
+                        return;
+                    }
                     let before = state.get_untracked();
                     if mascot::pen_busy(&before) {
                         return;
@@ -433,12 +448,13 @@ pub(crate) fn Rambo(
                     let gy = ev.client_y() as f64;
                     let (ox, oy) = shown.get_untracked();
                     *grab_state_down.borrow_mut() = Some((gx, gy));
-                    // A fresh finger: a press that never moved left the last one down.
+                    // A fresh gesture: if this finger still holds one, its Up was lost.
                     *finger_down.borrow_mut() = gesture::Recognizer::new();
                     finger_down.borrow_mut().advance(gesture::Sample {
                         pointer: gesture::Pointer::Down(gesture::Target::Rambo),
                         at: (gx, gy),
                         t: ev.time_stamp(),
+                        id: ev.pointer_id(),
                     });
                     // In hand he never skitters off on his own.
                     daze.set(daze.get().wrapping_add(1));
@@ -480,9 +496,12 @@ pub(crate) fn Rambo(
             }
             on:pointermove={
                 let nib_below = nib_below.clone();
+                let other_finger = other_finger.clone();
                 move |ev: leptos::ev::PointerEvent| {
                     let held = state.get_untracked();
-                    if !matches!(held, mascot::State::Dragging | mascot::State::Inking) {
+                    if !matches!(held, mascot::State::Dragging | mascot::State::Inking)
+                        || other_finger(&ev)
+                    {
                         return;
                     }
                     *moved_move.borrow_mut() = true;
@@ -491,6 +510,7 @@ pub(crate) fn Rambo(
                         pointer: gesture::Pointer::Move,
                         at: (x, y),
                         t: ev.time_stamp(),
+                        id: ev.pointer_id(),
                     });
                     if let Some((gx, gy)) = *grab_state_move.borrow()
                         && !mascot::held_still((gx, gy), (x, y))
@@ -515,7 +535,22 @@ pub(crate) fn Rambo(
             on:pointerup={
                 let arm_daze = arm_daze.clone();
                 let land_dazed = land_dazed.clone();
+                let other_finger = other_finger.clone();
                 move |ev: leptos::ev::PointerEvent| {
+                    if other_finger(&ev) {
+                        return;
+                    }
+                    let (client_x, client_y) = (ev.client_x() as f64, ev.client_y() as f64);
+                    // Let go mid-flick: a hard drop, and he splats.
+                    let hard_drop = matches!(
+                        finger_up.borrow_mut().advance(gesture::Sample {
+                            pointer: gesture::Pointer::Up,
+                            at: (client_x, client_y),
+                            t: ev.time_stamp(),
+                            id: ev.pointer_id(),
+                        }),
+                        Some(gesture::Gesture::Fling { .. })
+                    );
                     let before = state.get_untracked();
                     // Let go before the hold ended: he never starts listening.
                     hold_up.set(hold_up.get().wrapping_add(1));
@@ -539,22 +574,11 @@ pub(crate) fn Rambo(
                         return;
                     }
                     *grab_state_up.borrow_mut() = None;
-                    let client_x = ev.client_x() as f64;
-                    let client_y = ev.client_y() as f64;
                     // He lands where you saw him, above the finger.
                     pen_pos.set(match before {
                         mascot::State::Inking => (client_x, client_y),
                         _ => held_spot(&ev, (client_x, client_y)),
                     });
-                    // Let go mid-flick: a hard drop, and he splats.
-                    let hard_drop = matches!(
-                        finger_up.borrow_mut().advance(gesture::Sample {
-                            pointer: gesture::Pointer::Up,
-                            at: (client_x, client_y),
-                            t: ev.time_stamp(),
-                        }),
-                        Some(gesture::Gesture::Fling { .. })
-                    );
 
                     // Put back in his nest: home at once, and forgiven a little
                     // if he was dazed.
@@ -592,10 +616,14 @@ pub(crate) fn Rambo(
                 let arm_daze = arm_daze.clone();
                 let land_dazed = land_dazed.clone();
                 move |ev: leptos::ev::PointerEvent| {
+                    if other_finger(&ev) {
+                        return;
+                    }
                     finger_cancel.borrow_mut().advance(gesture::Sample {
                         pointer: gesture::Pointer::Cancel,
                         at: (ev.client_x() as f64, ev.client_y() as f64),
                         t: ev.time_stamp(),
+                        id: ev.pointer_id(),
                     });
                     match state.get_untracked() {
                         mascot::State::Dragging => {

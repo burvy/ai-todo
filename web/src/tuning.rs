@@ -29,6 +29,10 @@ pub const GESTURE_HOLD_MS: f64 = 280.0;
 /// 40 to 120: shorter and one jittery move decides it, longer and a flick that
 /// slowed at the end still throws.
 pub const GESTURE_RELEASE_SAMPLE_MS: f64 = 80.0;
+/// How long a finger may rest between its last move and letting go and still throw.
+/// Safe range 24 to 50: shorter and a slow pointer's frame gap reads as a rest,
+/// longer and a flick that stopped still throws.
+pub const GESTURE_RELEASE_REST_MS: f64 = 32.0;
 /// The fastest throw, however wild the flick. Safe range 2 to 6.
 pub const GESTURE_RELEASE_MAX_SPEED: f64 = 4.0;
 /// The least release speed that throws; slower, what was carried is put down.
@@ -36,6 +40,7 @@ pub const GESTURE_RELEASE_MAX_SPEED: f64 = 4.0;
 pub const GESTURE_FLING_MIN_SPEED: f64 = 0.6;
 
 const _: () = assert!(GESTURE_FLING_MIN_SPEED < GESTURE_RELEASE_MAX_SPEED);
+const _: () = assert!(GESTURE_RELEASE_REST_MS < GESTURE_RELEASE_SAMPLE_MS);
 
 // ---- Rambo's ink (web/src/ink.rs, inklayer.rs, interview 4 item 2). Speeds in px
 // per ms, times in ms.

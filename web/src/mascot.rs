@@ -184,7 +184,10 @@ pub fn held_still(grab: (f64, f64), now: (f64, f64)) -> bool {
 /// before any target (ENGINE-PLAN §5). Dazed, a hold or a drag anywhere is his,
 /// drawing him to the finger (Interview 4, item 2), and while he is being drawn the
 /// gesture stays his until it ends. Home again, rows and slips get their holds
-/// back.
+/// back. A router asks at `Hold` and `Drag`; once he has taken a gesture it keeps
+/// it to the end (`Drop`, `Fling`, `Cancel`) whatever his state, and sends a
+/// `Cancel` to the target that had its `Down`. Nothing routes through it yet: the
+/// engine's router is the first caller (ENGINE-PLAN §5).
 pub fn wants(state: &State, gesture: &crate::gesture::Gesture) -> bool {
     use crate::gesture::Gesture;
     matches!(
