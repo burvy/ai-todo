@@ -6,9 +6,16 @@
 //! is pure and takes a path of points, so the drawing can be reasoned about and
 //! tested without a pointer.
 //!
-//! The trail is a run of round dots rather than a stroked path: a stroked path
+//! The trail is a run of round dabs rather than a stroked path: a stroked path
 //! has one width for the whole stroke, and a pen stroke is thin where it starts,
 //! full in the middle and thin where it lifts.
+//!
+//! The numbers come from `docs/DESIGN-DIRECTION.md` §6: each tool writes in its
+//! own ink and its own weight, the pencil is light and grainy and the marker is
+//! blunt. Colour is not decided here — the page draws the dabs in the tool's
+//! ink and the tail of the stroke in `--rambo-tint`.
+
+use crate::settings::Pen;
 
 /// One dab of ink, in the page's coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -16,35 +23,97 @@ pub struct Dot {
     pub x: f64,
     pub y: f64,
     pub radius: f64,
+    /// How much ink the nib lays down, 0..=1. Graphite is light; a felt tip is not.
+    pub alpha: f64,
 }
 
 /// A finger's path, in the order it was walked.
 pub type Path = Vec<(f64, f64)>;
 
-/// The default look: a dab every few points, so slow and fast hands draw the
-/// same line, with the ends thinner than the middle.
-pub const SPACING: f64 = 4.0;
-pub const BASE_RADIUS: f64 = 3.0;
-/// How much of the radius the first and last dabs keep. A nib touches down
-/// lighter than it presses.
-pub const TAPER: f64 = 0.45;
+/// How one tool's nib puts ink down.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Nib {
+    /// How far apart the dabs are, so a slow hand and a fast hand draw the same
+    /// line.
+    pub spacing: f64,
+    /// The width of the body of the stroke.
+    pub radius: f64,
+    /// What the first and last dabs keep: `1.0` is blunt (a marker lands flat),
+    /// lower is a nib touching down.
+    pub taper: f64,
+    /// How much the width wanders from dab to dab, 0..=1. Graphite on paper does
+    /// this; a fountain pen in ink does not.
+    pub grain: f64,
+    /// How much ink the nib lays down, 0..=1.
+    pub alpha: f64,
+}
 
-/// The dabs for one stroke.
+/// The fountain pen: the plain line every other tool is measured against.
+const FOUNTAIN: Nib = Nib {
+    spacing: 4.0,
+    radius: 3.0,
+    taper: 0.45,
+    grain: 0.0,
+    alpha: 1.0,
+};
+
+impl Nib {
+    /// The nib of the chosen tool. DESIGN-DIRECTION §6: the fountain pen and the
+    /// marker write in `--ink`, the pencil in `--ink` at 70% with the grain
+    /// texture, the ballpoint in `--ink-ballpoint`, the quill in `--ink-quill`.
+    pub fn for_pen(pen: Pen) -> Self {
+        match pen {
+            Pen::FountainPen => FOUNTAIN,
+            // A ballpoint lays down a fine, even line.
+            Pen::Ballpoint => Nib {
+                radius: 2.2,
+                spacing: 3.4,
+                ..FOUNTAIN
+            },
+            // Graphite: lighter, narrower, and it wanders.
+            Pen::Pencil => Nib {
+                radius: 2.6,
+                spacing: 3.2,
+                taper: 0.55,
+                grain: 0.18,
+                alpha: 0.7,
+            },
+            // A felt tip lands and lifts flat, and thick.
+            Pen::Marker => Nib {
+                radius: 5.0,
+                spacing: 4.6,
+                taper: 0.95,
+                ..FOUNTAIN
+            },
+            // A feather is broad in the middle and runs out at the tail, so it
+            // keeps a strong taper and a little wander of its own.
+            Pen::Quill => Nib {
+                radius: 3.6,
+                spacing: 4.2,
+                taper: 0.25,
+                grain: 0.08,
+                ..FOUNTAIN
+            },
+        }
+    }
+}
+
+/// The dabs for one stroke, in that tool's nib.
 ///
 /// Segments of no length — a finger that paused, or a pointer event with no
 /// movement — are skipped, so a finger that never moves draws nothing at all and
 /// tapping Rambo does not blot the page. Every other segment is walked from
-/// where the last dab was left, placing a dab every `spacing` and one where the
-/// finger stopped, so a fast hop draws the same line as a slow one. The radius
-/// follows a taper into the first and last dabs.
+/// where the last dab was left, placing a dab every `spacing` along the path and
+/// one where the finger stopped, so a fast hop draws the same line as a slow
+/// one. The radius follows a taper into the first and last dabs.
 ///
 /// A stroke too short for even one dab still inked: one light dot where it
 /// stopped.
-pub fn trail(path: &[(f64, f64)], spacing: f64, base_radius: f64, taper: f64) -> Vec<Dot> {
-    let spacing = spacing.max(f64::EPSILON);
+pub fn trail(path: &[(f64, f64)], nib: Nib) -> Vec<Dot> {
+    let spacing = nib.spacing.max(f64::EPSILON);
     let mut dots: Vec<Dot> = Vec::new();
-    // Distance walked since the last dab: it carries across segments, so a
-    // hand that crawls and a hand that leaps draw the same line.
+    // Distance walked since the last dab: it carries across segments, so a hand
+    // that crawls and a hand that leaps draw the same line.
     let mut pending = 0.0;
     for pair in path.windows(2) {
         let ((x0, y0), (x1, y1)) = (pair[0], pair[1]);
@@ -59,7 +128,8 @@ pub fn trail(path: &[(f64, f64)], spacing: f64, base_radius: f64, taper: f64) ->
             dots.push(Dot {
                 x: x0 + dx * walked / step,
                 y: y0 + dy * walked / step,
-                radius: base_radius,
+                radius: nib.radius,
+                alpha: nib.alpha,
             });
             pending = 0.0;
         }
@@ -77,36 +147,51 @@ pub fn trail(path: &[(f64, f64)], spacing: f64, base_radius: f64, taper: f64) ->
         dots.push(Dot {
             x,
             y,
-            radius: base_radius * taper,
+            radius: nib.radius,
+            alpha: nib.alpha,
         });
     }
-    taper_ends(&mut dots, base_radius, taper);
+    taper_ends(&mut dots, nib);
+    grain_dabs(&mut dots, nib);
     dots
 }
 
-/// A finger that has not moved: sub-pixel tremor and repeated pointer events
-/// are the same point, and neither is ink.
+/// A finger that has not moved: sub-pixel tremor and repeated pointer events are
+/// the same point, and neither is ink.
 const MOVE_EPSILON: f64 = 0.01;
 
 /// Thin the first and last dabs, the way a nib lands and lifts.
-fn taper_ends(dots: &mut [Dot], base_radius: f64, taper: f64) {
+fn taper_ends(dots: &mut [Dot], nib: Nib) {
     let last = dots.len().saturating_sub(1);
     if last < 2 {
         return;
     }
-    // A short stroke thins over a quarter of its length, a long one over a
-    // fixed few dabs, so a scribble does not fade away to nothing.
+    // A short stroke thins over a quarter of its length, a long one over a fixed
+    // few dabs, so a scribble does not fade away to nothing.
     let reach = (dots.len() / 4).max(2);
     for (index, dot) in dots.iter_mut().enumerate() {
         let from_start = index.min(last - index);
-        let weight = taper + (1.0 - taper) * (from_start.min(reach) as f64 / reach as f64);
-        dot.radius = base_radius * weight;
+        let weight = nib.taper + (1.0 - nib.taper) * (from_start.min(reach) as f64 / reach as f64);
+        dot.radius = nib.radius * weight;
     }
 }
 
-/// The whole trail in one go: [`trail`] with the look this app draws.
-pub fn rambo_trail(path: &[(f64, f64)]) -> Vec<Dot> {
-    trail(path, SPACING, BASE_RADIUS, TAPER)
+/// Let the width wander, so graphite is not a ruler line. The wander is a
+/// function of the dab's place along the stroke rather than a random number: the
+/// same stroke then always draws the same way, and a test can pin it.
+fn grain_dabs(dots: &mut [Dot], nib: Nib) {
+    if nib.grain <= 0.0 {
+        return;
+    }
+    for (index, dot) in dots.iter_mut().enumerate() {
+        let wave = ((index * 37) % 11) as f64 / 5.0 - 1.0;
+        dot.radius *= 1.0 + nib.grain * wave;
+    }
+}
+
+/// The whole trail in one go: the chosen tool's nib over a path.
+pub fn rambo_trail(path: &[(f64, f64)], pen: Pen) -> Vec<Dot> {
+    trail(path, Nib::for_pen(pen))
 }
 
 #[cfg(test)]
@@ -122,23 +207,27 @@ mod tests {
             .collect()
     }
 
+    fn fountain(path: &[(f64, f64)]) -> Vec<Dot> {
+        trail(path, Nib::for_pen(Pen::FountainPen))
+    }
+
     #[test]
     fn a_still_finger_draws_nothing() {
         // A press with no movement is not a dot on the page.
-        assert!(rambo_trail(&[]).is_empty());
-        assert!(rambo_trail(&[(10.0, 10.0)]).is_empty());
-        assert!(rambo_trail(&[(10.0, 10.0); 5]).is_empty());
+        assert!(fountain(&[]).is_empty());
+        assert!(fountain(&[(10.0, 10.0)]).is_empty());
+        assert!(fountain(&[(10.0, 10.0); 5]).is_empty());
     }
 
     #[test]
     fn a_held_still_finger_does_not_blob() {
-        // Pausing mid-stroke repeats the same point; the dab count must not
-        // grow with the pause, or holding still makes a blot.
+        // Pausing mid-stroke repeats the same point; the dab count must not grow
+        // with the pause, or holding still makes a blot.
         let mut path = line((0.0, 0.0), (100.0, 0.0), 10);
         let held = *path.last().unwrap();
         path.extend(std::iter::repeat_n(held, 40));
-        let paused = rambo_trail(&path);
-        let drawn = rambo_trail(&line((0.0, 0.0), (100.0, 0.0), 10));
+        let paused = fountain(&path);
+        let drawn = fountain(&line((0.0, 0.0), (100.0, 0.0), 10));
         assert_eq!(paused.len(), drawn.len());
     }
 
@@ -146,9 +235,10 @@ mod tests {
     fn a_slow_hand_and_a_fast_hand_draw_the_same_line() {
         // Same path, wildly different sample density: the dab count follows the
         // distance walked, not the number of events.
-        let expected = 200.0 / SPACING;
-        let dense = rambo_trail(&line((0.0, 0.0), (200.0, 0.0), 200));
-        let sparse = rambo_trail(&line((0.0, 0.0), (200.0, 0.0), 4));
+        let nib = Nib::for_pen(Pen::FountainPen);
+        let expected = 200.0 / nib.spacing;
+        let dense = fountain(&line((0.0, 0.0), (200.0, 0.0), 200));
+        let sparse = fountain(&line((0.0, 0.0), (200.0, 0.0), 4));
         for (label, dots) in [("dense", &dense), ("sparse", &sparse)] {
             assert!(
                 (dots.len() as f64 - expected).abs() <= 2.0,
@@ -161,48 +251,117 @@ mod tests {
     #[test]
     fn a_fast_hop_is_filled_in_not_gapped() {
         // Two pointer events 60px apart still draw a continuous line.
-        let dots = rambo_trail(&[(0.0, 0.0), (60.0, 0.0)]);
+        let spacing = Nib::for_pen(Pen::FountainPen).spacing;
+        let dots = fountain(&[(0.0, 0.0), (60.0, 0.0)]);
         assert!(dots.len() > 10, "{}", dots.len());
         for pair in dots.windows(2) {
             let gap = (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y);
-            assert!(gap <= SPACING * 1.5, "gap {gap}");
+            assert!(gap <= spacing * 1.5, "gap {gap}");
         }
     }
 
     #[test]
     fn a_trail_lands_where_the_finger_stopped() {
-        let dots = rambo_trail(&line((0.0, 0.0), (100.0, 40.0), 25));
+        let spacing = Nib::for_pen(Pen::FountainPen).spacing;
+        let dots = fountain(&line((0.0, 0.0), (100.0, 40.0), 25));
         let last = dots.last().expect("a trail");
-        assert!((last.x - 100.0).abs() < SPACING, "{last:?}");
-        assert!((last.y - 40.0).abs() < SPACING, "{last:?}");
+        assert!((last.x - 100.0).abs() < spacing, "{last:?}");
+        assert!((last.y - 40.0).abs() < spacing, "{last:?}");
     }
 
     #[test]
     fn a_trail_thins_at_both_ends_and_is_fullest_in_the_middle() {
-        let dots = rambo_trail(&line((0.0, 0.0), (300.0, 0.0), 60));
+        let nib = Nib::for_pen(Pen::FountainPen);
+        let dots = fountain(&line((0.0, 0.0), (300.0, 0.0), 60));
         let first = dots.first().expect("a trail");
         let last = dots.last().expect("a trail");
         let middle = dots[dots.len() / 2];
         assert!(first.radius < middle.radius, "{:?} vs {:?}", first, middle);
         assert!(last.radius < middle.radius, "{:?} vs {:?}", last, middle);
-        assert_eq!(middle.radius, BASE_RADIUS, "the body keeps its width");
-        // And the ends are never fainter than the taper asks for.
-        assert!(first.radius >= BASE_RADIUS * TAPER);
-        assert!(last.radius >= BASE_RADIUS * TAPER);
+        assert_eq!(middle.radius, nib.radius, "the body keeps its width");
+        assert!(first.radius >= nib.radius * nib.taper);
+        assert!(last.radius >= nib.radius * nib.taper);
     }
 
     #[test]
     fn a_stroke_shorter_than_one_dab_still_inks_one_dot() {
-        let dots = rambo_trail(&[(0.0, 0.0), (2.0, 0.0)]);
+        let dots = fountain(&[(0.0, 0.0), (2.0, 0.0)]);
         assert_eq!(dots.len(), 1);
         assert!((dots[0].x - 2.0).abs() < 0.01, "{dots:?}");
         assert!(dots[0].radius > 0.0);
     }
 
     #[test]
-    fn dabs_never_exceed_the_look_asks_for() {
-        let dots = rambo_trail(&line((0.0, 0.0), (500.0, 500.0), 500));
-        assert!(dots.iter().all(|dot| dot.radius <= BASE_RADIUS));
-        assert!(dots.iter().all(|dot| dot.radius > 0.0));
+    fn every_tool_keeps_a_positive_width_and_its_own_look() {
+        let path = line((0.0, 0.0), (500.0, 500.0), 500);
+        for pen in [
+            Pen::FountainPen,
+            Pen::Ballpoint,
+            Pen::Pencil,
+            Pen::Marker,
+            Pen::Quill,
+        ] {
+            let nib = Nib::for_pen(pen);
+            assert!(nib.spacing > 0.0 && nib.radius > 0.0, "{pen:?}");
+            assert!((0.0..=1.0).contains(&nib.taper), "{pen:?}");
+            assert!((0.0..=1.0).contains(&nib.alpha), "{pen:?}");
+            let dots = rambo_trail(&path, pen);
+            assert!(dots.iter().all(|dot| dot.radius > 0.0), "{pen:?}");
+            // Grain may make a dab wider than the body, but never past its reach.
+            assert!(
+                dots.iter()
+                    .all(|dot| dot.radius <= nib.radius * (1.0 + nib.grain)),
+                "{pen:?}"
+            );
+        }
+        // The marker is the broad one and the ballpoint the fine one.
+        assert!(Nib::for_pen(Pen::Marker).radius > Nib::for_pen(Pen::FountainPen).radius);
+        assert!(Nib::for_pen(Pen::Ballpoint).radius < Nib::for_pen(Pen::FountainPen).radius);
+        // A marker lands and lifts flat; a quill runs out at the tail.
+        assert!(Nib::for_pen(Pen::Marker).taper > Nib::for_pen(Pen::Quill).taper);
+    }
+
+    #[test]
+    fn the_pencil_is_light_and_graphite_wanders_while_ink_does_not() {
+        let path = line((0.0, 0.0), (300.0, 0.0), 120);
+        let pencil = rambo_trail(&path, Pen::Pencil);
+        assert!(
+            pencil.iter().all(|dot| dot.alpha < 1.0),
+            "graphite is never full ink"
+        );
+        assert!(
+            pencil.iter().any(|dot| {
+                let middle = &pencil[pencil.len() / 4..pencil.len() * 3 / 4];
+                dot.radius != middle[0].radius
+            }),
+            "a pencil wanders: {:?}",
+            pencil.iter().map(|d| d.radius).collect::<Vec<_>>()
+        );
+
+        // Ink does not wander: every dab in the body of a fountain stroke is the
+        // same width, and every dab is full ink.
+        let ink = rambo_trail(&path, Pen::FountainPen);
+        let body = &ink[ink.len() / 4..ink.len() * 3 / 4];
+        assert!(
+            body.iter().all(|dot| dot.radius == FOUNTAIN.radius),
+            "{:?}",
+            body.iter().map(|d| d.radius).collect::<Vec<_>>()
+        );
+        assert!(ink.iter().all(|dot| dot.alpha == 1.0));
+    }
+
+    #[test]
+    fn the_same_stroke_always_draws_the_same_way() {
+        // Grain must not be random: the same path twice is the same trail, or a
+        // redraw under the finger would shimmer.
+        let path = line((0.0, 0.0), (200.0, 120.0), 40);
+        assert_eq!(
+            rambo_trail(&path, Pen::Pencil),
+            rambo_trail(&path, Pen::Pencil)
+        );
+        assert_eq!(
+            rambo_trail(&path, Pen::Quill),
+            rambo_trail(&path, Pen::Quill)
+        );
     }
 }
