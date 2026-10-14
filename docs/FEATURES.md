@@ -238,8 +238,8 @@ time. When the finger lets go Rambo notices, hops to the tear and tapes it: a st
 every `TAPE_EVERY_PX` across it is laid from one end over `TAPE_LAY_MS`, `TAPE_AT_MS` after
 the finger lets go. After `TEAR_HOLD_MS` the tape and the tear fade away together over
 `TEAR_FADE_MS`, the one thing besides ink that fades; Rambo has hopped home by then. Only a
-resting Rambo (in his nest) goes; a busy one leaves the repair to the page. His worried
-face is the grumpy one for now; a grumpy drawing is *(planned)*. A desk (two pages side by
+resting Rambo (in his nest) goes; a busy one leaves the repair to the page. He is grumpy while he mends
+(`Pose::Sulking`). A desk (two pages side by
 side) has no rip: the planner is already beside the list. Try it: on a phone, swipe right
 across the empty part of the list page.
 Code: `web/src/rip.rs` (the rules: `is_rip`, `lane`, `Tear::outline`, `sheet_path`,

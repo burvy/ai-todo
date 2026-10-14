@@ -385,7 +385,7 @@ pub fn notice(before: &State, after: &State) -> Option<Pose> {
         // Called to write, or going home: he looks up, then goes.
         (_, State::Home | State::Flying | State::WritingCaret) => Some(Pose::Teasing),
         // The torn page puts him out: he looks it over, then goes.
-        (_, State::Mending) => Some(Pose::Worried),
+        (_, State::Mending) => Some(Pose::Sulking),
         _ => None,
     }
 }
@@ -587,7 +587,9 @@ pub fn pose_for(state: &State, brain_pose: &str, typing: bool) -> Pose {
         // Vacant: the nearest drawing to a daze until one is drawn.
         State::Dazed => Pose::Lobotomized,
         // Stuck and pushing, not dazed.
-        State::Covered | State::Mending => Pose::Worried,
+        State::Covered => Pose::Worried,
+        // The torn page puts him in a mood: grumpy while he mends it.
+        State::Mending => Pose::Sulking,
         State::Home | State::Splatting | State::Skittering => {
             if typing {
                 Mood::Peeking.pose()
@@ -759,7 +761,8 @@ mod tests {
         assert_eq!(transition(&State::Mending, Event::Grab), State::Dragging);
         assert!(hops_there(&State::Mending, false), "he hops to the tear");
         assert!(is_off_nest(&State::Mending));
-        assert_eq!(notice(&State::Home, &State::Mending), Some(Pose::Worried));
+        assert_eq!(notice(&State::Home, &State::Mending), Some(Pose::Sulking));
+        assert_eq!(pose_for(&State::Mending, "home", false), Pose::Sulking);
     }
 
     #[test]
