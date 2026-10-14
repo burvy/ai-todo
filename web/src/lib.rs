@@ -1,7 +1,5 @@
 use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Timelike, Utc, Weekday};
 use gloo_timers::callback::Timeout;
-#[cfg(target_arch = "wasm32")]
-use js_sys::Array;
 use leptos::prelude::*;
 use todo_core::Snapshot;
 use todo_core::{Label, Priority, Source, TaskDraft, TaskId, When};
@@ -13,6 +11,7 @@ pub mod brain;
 pub mod mascot;
 pub mod pen;
 pub mod settings;
+pub mod sound;
 pub mod speech;
 pub mod week;
 
@@ -1198,6 +1197,9 @@ fn Rambo(
                                 let set_snapshot_clone = set_snapshot;
                                 let set_state_clone = set_state;
                                 wasm_bindgen_futures::spawn_local(async move {
+                                    // Rambo's own "x", not a row delete: the row is
+                                    // not what the user clicked, so it does not
+                                    // get crossed out.
                                     if let Ok(new_snap) = api::delete_task(&TaskId(task_id)).await {
                                         set_snapshot_clone.set(new_snap);
                                     }
@@ -1387,6 +1389,321 @@ fn is_overdue(task: &todo_core::Task) -> bool {
     }
 }
 
+/// Glyph-by-glyph writing, DOM side. The pure timing lives in `pen`; these
+/// helpers measure the real rendered text so the nib traces what the user
+/// actually sees. All wasm-only: no DOM on the test path.
+#[cfg(target_arch = "wasm32")]
+mod write {
+    use super::{pen, sound};
+    use leptos::prelude::{RwSignal, Set};
+    use std::collections::HashMap;
+    use wasm_bindgen::JsCast;
+
+    /// The element's inline style, so a frame can move the ink without
+    /// rewriting the whole `style` attribute and losing what is already on
+    /// the element. `None` for anything that is not an HTML element, which is
+    /// never the case for the title and rows we animate.
+    pub(super) fn inline_style(el: &web_sys::Element) -> Option<web_sys::CssStyleDeclaration> {
+        el.clone()
+            .dyn_into::<web_sys::HtmlElement>()
+            .ok()
+            .map(|el| el.style())
+    }
+
+    /// Wait until the self-hosted handwriting fonts have loaded, so glyph
+    /// widths are measured in the writing font and not the fallback. The
+    /// caller awaits this before parking the nib, so a cold font cache does
+    /// not park the pen on fallback metrics and then jump.
+    pub async fn wait_for_fonts() {
+        let Some(fonts) = web_sys::window()
+            .and_then(|w| w.document())
+            .map(|doc| doc.fonts())
+        else {
+            return;
+        };
+        if let Ok(ready) = fonts.ready() {
+            let _ = wasm_bindgen_futures::JsFuture::from(ready).await;
+        }
+    }
+
+    /// A canvas laid out with `el`'s computed font: the measuring stick for
+    /// glyph advance widths and the em box around the baseline.
+    fn measuring_canvas(el: &web_sys::Element) -> Option<web_sys::CanvasRenderingContext2d> {
+        let style = web_sys::window()?.get_computed_style(el).ok().flatten()?;
+        let property = |name: &str| style.get_property_value(name).ok();
+        let font = format!(
+            "{} {} {} {}",
+            property("font-style")?,
+            property("font-weight")?,
+            property("font-size")?,
+            property("font-family")?
+        );
+        let canvas = web_sys::window()?
+            .document()?
+            .create_element("canvas")
+            .ok()?
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .ok()?;
+        let ctx = canvas
+            .get_context("2d")
+            .ok()?
+            .and_then(|ctx| ctx.dyn_into::<web_sys::CanvasRenderingContext2d>().ok())?;
+        // The string is the computed font shorthand, so this parses; if it
+        // somehow does not, the canvas keeps its default font and the write
+        // still runs, just paced off fallback metrics.
+        ctx.set_font(&font);
+        Some(ctx)
+    }
+
+    /// The writing font measured once: how wide each glyph is on the page,
+    /// and how far the em box runs above and below the baseline.
+    struct Writing {
+        width_of: Box<dyn Fn(char) -> f64>,
+        ascent: f64,
+        descent: f64,
+    }
+
+    fn measure(el: &web_sys::Element, text: &str) -> Option<Writing> {
+        let ctx = measuring_canvas(el)?;
+        // Every distinct glyph is measured once, so a long title does not
+        // re-measure the same letter over and over.
+        let mut widths: HashMap<char, f64> = HashMap::new();
+        for c in text.chars().filter(|c| !c.is_whitespace()) {
+            widths.entry(c).or_insert_with(|| {
+                ctx.measure_text(&c.to_string())
+                    .map(|m| m.width())
+                    .unwrap_or(6.0)
+            });
+        }
+        let space = ctx.measure_text(" ").map(|m| m.width()).unwrap_or(4.0);
+        let metrics = ctx.measure_text(text).ok()?;
+        Some(Writing {
+            width_of: Box::new(move |c: char| {
+                if c.is_whitespace() {
+                    space
+                } else {
+                    widths.get(&c).copied().unwrap_or(6.0)
+                }
+            }),
+            ascent: metrics.font_bounding_box_ascent(),
+            descent: metrics.font_bounding_box_descent(),
+        })
+    }
+
+    /// Which tool Rambo is holding, from the gear menu's `data-pen` hook. Absent
+    /// until that menu lands, which is why the pen's ink falls back.
+    fn held_tool() -> Option<String> {
+        web_sys::window()?
+            .document()?
+            .query_selector(".rambo")
+            .ok()
+            .flatten()?
+            .get_attribute("data-pen")
+    }
+
+    /// Put the pen so its nib sits at `(x, y)`, in the offset-from-home
+    /// coordinates Rambo's element is placed with.
+    pub fn place_nib(pen_pos: RwSignal<(f64, f64)>, x: f64, y: f64) {
+        let center = pen::writing_pen_center(x, y);
+        let Some(rambo) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|doc| doc.query_selector(".rambo").ok().flatten())
+        else {
+            return;
+        };
+        let rect = rambo.get_bounding_client_rect();
+        pen_pos.set((
+            center.0 - (rect.left() + rect.width() / 2.0),
+            center.1 - (rect.top() + rect.height() / 2.0),
+        ));
+    }
+
+    /// Park the nib at the left edge of `row`'s line, before the flight, so
+    /// the pen arrives exactly where it is about to start writing.
+    pub fn park_nib(row: &web_sys::Element, pen_pos: RwSignal<(f64, f64)>) {
+        let Some(title) = row.query_selector(".pen-title").ok().flatten() else {
+            return;
+        };
+        let Some(line) = one_line(&title) else {
+            return;
+        };
+        place_nib(pen_pos, line.left, line.baseline);
+    }
+
+    /// The title's one line box, when it is only one: a long title wraps onto
+    /// the next ruled line and the pen has no single edge to trace, so those
+    /// are left to the CSS wipe.
+    fn one_line(title: &web_sys::Element) -> Option<Line> {
+        let rects = title.get_client_rects();
+        // Zero rects means nothing is laid out yet (a title still hidden from
+        // the flight); two or more means the title wrapped.
+        if rects.length() != 1 {
+            return None;
+        }
+        let rect = rects.get(0)?;
+        let writing = measure(title, &title.text_content().unwrap_or_default())?;
+        Some(Line {
+            left: rect.left(),
+            width: rect.width(),
+            baseline: pen::baseline_y(rect.top(), rect.height(), writing.ascent, writing.descent),
+        })
+    }
+
+    /// One ruled line of a title: where it starts, how wide it is, and the
+    /// baseline the nib rides on.
+    struct Line {
+        left: f64,
+        width: f64,
+        baseline: f64,
+    }
+
+    /// Write `row`'s title under the nib.
+    ///
+    /// The whole title is laid out from the start and only the ink is
+    /// clipped, so the line never reflows under the pen. Each frame moves the
+    /// clip and the nib together — the nib is always exactly at the edge of
+    /// the ink — and the pen scratches for as long as it is moving. A title
+    /// too long for one ruled line keeps the CSS wipe: the sound still runs
+    /// for as long as the wipe takes, but there is no single edge to follow.
+    ///
+    /// Takes the row from `pen-pending` to written, so the caller only marks
+    /// the row pending, awaits the fonts and parks the nib.
+    pub async fn write_row_title(row: &web_sys::Element, pen_pos: RwSignal<(f64, f64)>) {
+        let unhide = || {
+            row.class_list().remove_1("pen-pending").ok();
+            row.class_list().remove_1("pen-writing").ok();
+        };
+        let Some(title) = row.query_selector(".pen-title").ok().flatten() else {
+            unhide();
+            return;
+        };
+        let text = title.text_content().unwrap_or_default();
+        if text.trim().is_empty() {
+            unhide();
+            return;
+        }
+        // The tool's ink goes on before anything is measured. The marker is
+        // bolder than the base weight, so a title measured at 500 and drawn
+        // at 700 is paced off the wrong widths - and that is the one promise
+        // the whole schedule exists to keep.
+        let ink = pen::ink_for_pen(held_tool().as_deref());
+        row.class_list().add_1(ink).ok();
+        row.class_list().add_1("pen-writing").ok();
+        // A traced title starts with no ink at all, so the finished title is
+        // never on screen before the pen begins writing it. Reaching here is
+        // one task: the row leaves `pen-pending`'s full clip and gains an
+        // empty one of its own before the browser paints either.
+        let traced = one_line(&title);
+        let style = inline_style(&title);
+        if let (Some(style), Some(traced)) = (&style, &traced) {
+            style
+                .set_property("clip-path", &format!("inset(0 {:.1}px 0 0)", traced.width))
+                .ok();
+        }
+        row.class_list().remove_1("pen-pending").ok();
+
+        let scratch = sound::looping(sound::Cue::Write);
+        if let (Some(style), Some(writing)) = (&style, measure(&title, &text)) {
+            let line = pen::schedule(&text, |c| (writing.width_of)(c));
+            let total = line.last().map(|glyph| glyph.ends_ms).unwrap_or(0);
+            match traced {
+                // Wrapped: theme.css is already transitioning the clip, so all
+                // that is left is to scratch for as long as it will take.
+                None => gloo_timers::future::TimeoutFuture::new(total).await,
+                Some(traced) => {
+                    let mut elapsed = 0;
+                    loop {
+                        let drawn = f64::from(pen::inked(&line, elapsed)) * traced.width;
+                        style
+                            .set_property(
+                                "clip-path",
+                                &format!("inset(0 {:.1}px 0 0)", traced.width - drawn),
+                            )
+                            .ok();
+                        place_nib(pen_pos, traced.left + drawn, traced.baseline);
+                        if elapsed >= total {
+                            break;
+                        }
+                        gloo_timers::future::TimeoutFuture::new(pen::INK_TICK_MS).await;
+                        elapsed += pen::INK_TICK_MS;
+                    }
+                }
+            }
+        }
+        if let Some(scratch) = scratch {
+            scratch.stop();
+        }
+        // The clip has done its job and the row is plain text again, so the
+        // title keeps the ink it was written in only while Rambo is writing.
+        if let Some(style) = &style {
+            style.remove_property("clip-path").ok();
+        }
+        row.class_list().remove_1(ink).ok();
+        row.class_list().remove_1("pen-writing").ok();
+    }
+}
+
+/// Scribbling a row out, DOM side. The row's own `data-title` says how long
+/// the crossing-out takes, so a caller only ever has to name the task.
+#[cfg(target_arch = "wasm32")]
+mod scribble {
+    use super::{mascot, pen, sound, write::inline_style};
+
+    /// Cross `row` out with ink, then let the cloud take it away. The caller
+    /// deletes the task once this returns.
+    pub async fn scribble_out(row_id: &str) {
+        let Some(row) = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|doc| {
+                doc.query_selector(&format!("li[data-id=\"{row_id}\"]"))
+                    .ok()
+                    .flatten()
+            })
+        else {
+            return;
+        };
+        sound::play(sound::Cue::Scribble);
+        if mascot::prefers_reduced_motion() {
+            return;
+        }
+        let title = row.get_attribute("data-title").unwrap_or_default();
+        let ms = pen::scribble_ms(&title);
+        // The row's own crossing-out takes exactly as long as the pen needs,
+        // so a long title is not crossed out faster than it can be read.
+        if let Some(style) = inline_style(&row) {
+            style.set_property("--scribble-ms", &format!("{ms}ms")).ok();
+        }
+        row.class_list().add_1("scribbling").ok();
+        gloo_timers::future::TimeoutFuture::new(ms).await;
+        row.class_list().remove_1("scribbling").ok();
+        if let Some(style) = inline_style(&row) {
+            style.remove_property("--scribble-ms").ok();
+        }
+    }
+}
+
+/// Hook exposed for Rambo's scribble-out animation before removal. Named
+/// after the task, because the row carries its own title.
+#[cfg(target_arch = "wasm32")]
+pub async fn on_delete_requested(task_id: todo_core::TaskId) {
+    scribble::scribble_out(&task_id.0).await;
+}
+
+/// Off the browser there is nothing to scribble on, so the row just goes.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn on_delete_requested(_task_id: todo_core::TaskId) {}
+
+/// Delete a task the user asked to delete, with Rambo crossing its title out
+/// first. Every user-initiated delete goes through here, so the scribble is
+/// the rule rather than a promise in a comment: the `api::delete_task` calls
+/// that bypass it are the two that must not scribble, and each says why.
+pub async fn delete_with_scribble(
+    task_id: &todo_core::TaskId,
+) -> Result<todo_core::Snapshot, api::ApiError> {
+    on_delete_requested(task_id.clone()).await;
+    api::delete_task(task_id).await
+}
+
 #[component]
 fn TaskList(
     snapshot: ReadSignal<Snapshot>,
@@ -1468,63 +1785,27 @@ fn TaskList(
                             break;
                         }
                         set_state.set(mascot::transition(&state, mascot::Event::WriteRow));
-                        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                            if let Some(row) = doc
-                                .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
-                                .ok()
-                                .flatten()
-                            {
-                                {
-                                    let arr = Array::new();
-                                    arr.push(&"pen-pending".into());
-                                    row.class_list().add(&arr).ok();
-                                }
-                                let rect = row.get_bounding_client_rect();
-                                let center = pen::writing_pen_center(
-                                    rect.left() + 40.0,
-                                    rect.top() + rect.height() / 2.0,
-                                );
-                                // Convert to offset from Rambo's home position
-                                if let Some(rambo) = doc.query_selector(".rambo").ok().flatten() {
-                                    let rrect = rambo.get_bounding_client_rect();
-                                    let hx = rrect.left() + rrect.width() / 2.0;
-                                    let hy = rrect.top() + rrect.height() / 2.0;
-                                    pen_pos.set((center.0 - hx, center.1 - hy));
-                                }
-                            }
+                        let row = web_sys::window()
+                            .and_then(|w| w.document())
+                            .and_then(|doc| {
+                                doc.query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
+                                    .ok()
+                                    .flatten()
+                            });
+                        // Clip the title and park the nib at the line's start.
+                        // The fonts settle first: parking on fallback metrics
+                        // would put the pen somewhere the line does not start.
+                        if let Some(row) = row.as_ref() {
+                            row.class_list().add_1("pen-pending").ok();
+                        }
+                        write::wait_for_fonts().await;
+                        if let Some(row) = row.as_ref() {
+                            write::park_nib(row, pen_pos);
                         }
                         gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
                         set_state.set(mascot::State::WritingRow);
-                        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                            if let Some(row) = doc
-                                .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
-                                .ok()
-                                .flatten()
-                            {
-                                {
-                                    let remove_arr = Array::new();
-                                    remove_arr.push(&"pen-pending".into());
-                                    row.class_list().remove(&remove_arr).ok();
-                                }
-                                {
-                                    let add_arr = Array::new();
-                                    add_arr.push(&"pen-writing".into());
-                                    row.class_list().add(&add_arr).ok();
-                                }
-                            }
-                        }
-                        gloo_timers::future::TimeoutFuture::new(pen::WRITE_MS).await;
-                        // Remove pen-writing class so the title becomes fully visible
-                        if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
-                            if let Some(row) = doc
-                                .query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
-                                .ok()
-                                .flatten()
-                            {
-                                let remove_arr = Array::new();
-                                remove_arr.push(&"pen-writing".into());
-                                row.class_list().remove(&remove_arr).ok();
-                            }
+                        if let Some(row) = row.as_ref() {
+                            write::write_row_title(row, pen_pos).await;
                         }
                         // Fly home after this row
                         set_state.set(mascot::transition(
@@ -1647,7 +1928,9 @@ fn TaskList(
                                 let task_id_clone = task_id_clone.clone();
                                 let set_snapshot_clone = set_snapshot;
                                 wasm_bindgen_futures::spawn_local(async move {
-                                    if let Ok(new_snap) = api::delete_task(&task_id_clone).await {
+                                    // Rambo crosses the title out first; the task
+                                    // only leaves once the ink has dried.
+                                    if let Ok(new_snap) = delete_with_scribble(&task_id_clone).await {
                                         set_snapshot_clone.set(new_snap);
                                     }
                                 });
@@ -2065,7 +2348,10 @@ fn TaskList(
                                         move |_| {
                                             let task_id = task_id.clone();
                                             wasm_bindgen_futures::spawn_local(async move {
-                                                if let Ok(new_snap) = api::delete_task(&task_id).await {
+                                                // The row is behind the dialog, but it
+                                                // is the user's row: it gets crossed
+                                                // out like any other delete.
+                                                if let Ok(new_snap) = delete_with_scribble(&task_id).await {
                                                     set_snapshot.set(new_snap);
                                                     set_editing_task.set(None);
                                                 }
@@ -2103,7 +2389,9 @@ fn TaskList(
                                                         Ok(snapshot) => {
                                                             set_snapshot.set(snapshot);
                                                             // The series takes over: drop the
-                                                            // one-off row it grew out of.
+                                                            // one-off row it grew out of. Not
+                                                            // crossed out - the user never
+                                                            // deleted it, it was absorbed.
                                                             if let Ok(snapshot) = api::delete_task(&task_id).await {
                                                                 set_snapshot.set(snapshot);
                                                             } else {
@@ -2676,12 +2964,10 @@ mod pane_tests {
     }
 }
 
-/// Hook exposed for Chuan's Rambo scribble-out animation before removal.
-pub fn on_delete_requested(task_id: todo_core::TaskId) {
-    // Placeholder: the row's delete event handler will call the existing
-    // delete API; this function is the public hook for pre-delete effects.
-    let _ = task_id;
-}
+/// Row delete (Angela's swipe / hover mark): swipe right or tap the mark.
+/// Either goes through `delete_with_scribble`, so the title is crossed out
+/// before the task goes. Rambo's own "x" and the row a weekly series absorbs
+/// are not row deletes and do not scribble.
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SwipeAction {
