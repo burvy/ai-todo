@@ -16,6 +16,9 @@ rambl-brain = { path = "../crates/rambl-brain" }
 js-sys = "0.3.102"
 leptos = { version = "0.8.19", features = ["csr"] }
 todo-core = { package = "todo-core", path = "../crates/core" }
+# A title is written one grapheme at a time: an accent, a skin tone, a flag or a
+# ZWJ family is one glyph on the page. Already in the tree through another crate.
+unicode-segmentation = "1.13"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 wasm-bindgen = "0.2.125"

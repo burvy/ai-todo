@@ -14,10 +14,24 @@
 
 use crate::mascot::State;
 use crate::tuning::{
-    WORD_GAP_W, WRITE_DIP_PX, WRITE_DIP_SHARE, WRITE_FLICK_DEG, WRITE_FLICK_PX, WRITE_HOLD_MAX_MS,
+    WORD_GAP_W, WRITE_DIP_PX, WRITE_FLICK_DEG, WRITE_FLICK_MS, WRITE_FLICK_PX, WRITE_HOLD_MAX_MS,
     WRITE_LIFT_PX, WRITE_MAX_MS, WRITE_MIN_MS, WRITE_PER_GLYPH_MS, WRITE_TOUCHDOWN_MS,
     WRITE_TOUCHDOWN_PX, WRITE_WOBBLE_DEG,
 };
+use unicode_segmentation::UnicodeSegmentation;
+
+/// A title's glyphs as the reader sees them: grapheme clusters, so an accent, an
+/// emoji with a skin tone, a flag or a ZWJ family is one glyph, written in one
+/// stroke and inked as one.
+pub fn glyphs_of(text: &str) -> impl Iterator<Item = &str> {
+    text.graphemes(true)
+}
+
+/// Whether `glyph` is a word gap, which the pen lifts across.
+pub fn is_gap(glyph: &str) -> bool {
+    glyph.chars().all(char::is_whitespace)
+}
+
 /// Even the narrowest glyph costs this much of the schedule (an `i` is
 /// quick, not free), so a run of thin glyphs never flashes by.
 pub const MIN_GLYPH_W: f64 = 6.0;
@@ -65,15 +79,14 @@ pub fn write_total_ms(glyphs: usize) -> u32 {
 /// and a space pays the [`WORD_GAP_W`] pen lift on top of its own width. The
 /// total is always [`write_total_ms`]: the last glyph absorbs the rounding
 /// drift so the line finishes exactly on time.
-pub fn schedule(text: &str, width_of: impl Fn(char) -> f64) -> Vec<Glyph> {
-    let widths: Vec<f64> = text.chars().map(&width_of).collect();
+pub fn schedule(text: &str, width_of: impl Fn(&str) -> f64) -> Vec<Glyph> {
+    let widths: Vec<f64> = glyphs_of(text).map(&width_of).collect();
     if widths.is_empty() {
         return Vec::new();
     }
-    let weights: Vec<f64> = text
-        .chars()
+    let weights: Vec<f64> = glyphs_of(text)
         .zip(&widths)
-        .map(|(c, &width)| match c.is_whitespace() {
+        .map(|(glyph, &width)| match is_gap(glyph) {
             true => width.max(MIN_GLYPH_W) + WORD_GAP_W,
             false => width.max(MIN_GLYPH_W),
         })
@@ -158,35 +171,51 @@ impl Hand {
         dip_px: 0.0,
         tilt_deg: 0.0,
     };
-    /// The flick as the last letter closes: up off the paper and turned away.
-    pub const FLICK: Hand = Hand {
-        dip_px: -WRITE_FLICK_PX,
-        tilt_deg: WRITE_FLICK_DEG,
-    };
 }
 
-/// His hand on `stroke`, `gap` when its glyph is a space. The nib presses in at
-/// each glyph's first stroke and eases off; over a gap it lifts. The lean wobbles
-/// from glyph to glyph, keyed to the glyph's place, so a title always writes the
-/// same way and never like a plotter.
-pub fn hand(stroke: Stroke, gap: bool) -> Hand {
-    let dip_px = match gap {
-        true => -WRITE_LIFT_PX,
-        false => WRITE_DIP_PX * (1.0 - stroke.progress / WRITE_DIP_SHARE).max(0.0),
-    };
-    Hand {
-        dip_px,
-        tilt_deg: WRITE_WOBBLE_DEG * (stroke.index as f64 * 2.4).sin(),
+/// A swell over `share` of a movement, 0 to 1: nothing at either end and all of
+/// it in the middle, so a hand that follows it never jumps.
+fn swell(share: f64) -> f64 {
+    match share {
+        share if share > 0.0 && share < 1.0 => (std::f64::consts::PI * share).sin(),
+        _ => 0.0,
     }
 }
 
-/// His hand `ms` after landing on the line: the nib touches down and the dip
-/// settles out over [`WRITE_TOUCHDOWN_MS`].
-pub fn touch_down(ms: u32) -> Hand {
-    let left = 1.0 - f64::from(ms) / f64::from(WRITE_TOUCHDOWN_MS);
+/// His hand on `stroke`, `gap` when its glyph is a space. The nib presses in
+/// through each glyph's stroke and comes back up as it ends; over a gap it lifts
+/// and comes back down. The lean wobbles as he goes, keyed to where he is in the
+/// title, so a title always writes the same way and never like a plotter. Every
+/// part is continuous from one glyph into the next, so the hand moves, never
+/// jumps.
+pub fn hand(stroke: Stroke, gap: bool) -> Hand {
+    let dip_px = match gap {
+        true => -WRITE_LIFT_PX,
+        false => WRITE_DIP_PX,
+    } * swell(stroke.progress);
     Hand {
-        dip_px: WRITE_TOUCHDOWN_PX * left.max(0.0),
+        dip_px,
+        tilt_deg: WRITE_WOBBLE_DEG * ((stroke.index as f64 + stroke.progress) * 2.4).sin(),
+    }
+}
+
+/// His hand `ms` after landing on the line: the nib touches down and settles back
+/// over [`WRITE_TOUCHDOWN_MS`].
+pub fn touch_down(ms: u32) -> Hand {
+    Hand {
+        dip_px: WRITE_TOUCHDOWN_PX * swell(f64::from(ms) / f64::from(WRITE_TOUCHDOWN_MS)),
         tilt_deg: 0.0,
+    }
+}
+
+/// His hand `ms` into the flick off the paper as the last letter closes, from
+/// `last`, his hand on that letter: up and turned away, then back to rest by
+/// [`WRITE_FLICK_MS`].
+pub fn flick(ms: u32, last: Hand) -> Hand {
+    let share = (f64::from(ms) / f64::from(WRITE_FLICK_MS)).min(1.0);
+    Hand {
+        dip_px: last.dip_px * (1.0 - share) - WRITE_FLICK_PX * swell(share),
+        tilt_deg: last.tilt_deg * (1.0 - share) + WRITE_FLICK_DEG * swell(share),
     }
 }
 
@@ -276,10 +305,11 @@ pub fn scribble_ms(title: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tuning::INK_TICK_MS;
 
     /// Every letter the same width: the easy case to reason about.
     fn even(text: &str) -> Vec<Glyph> {
-        schedule(text, |c| if c.is_whitespace() { 6.0 } else { 10.0 })
+        schedule(text, |glyph| if is_gap(glyph) { 6.0 } else { 10.0 })
     }
 
     #[test]
@@ -311,7 +341,7 @@ mod tests {
 
     #[test]
     fn wide_glyphs_take_longer_than_thin_ones() {
-        let glyphs = schedule("mim", |c| if c == 'm' { 20.0 } else { 4.0 });
+        let glyphs = schedule("mim", |glyph| if glyph == "m" { 20.0 } else { 4.0 });
         let strokes: Vec<u32> = glyphs
             .iter()
             .scan(0_u32, |spent, glyph| {
@@ -354,6 +384,29 @@ mod tests {
                 width: 12.0
             }]
         );
+    }
+
+    #[test]
+    fn a_glyph_is_what_the_reader_sees_as_one() {
+        // e + combining acute, a thumbs-up with a skin tone, a flag, a ZWJ family:
+        // each is several chars and one glyph, written in one stroke.
+        let title = "Caf\u{65}\u{301} \u{1F44D}\u{1F3FD}\u{1F1F3}\u{1F1FF}\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+        let glyphs: Vec<&str> = glyphs_of(title).collect();
+        assert_eq!(
+            glyphs,
+            [
+                "C",
+                "a",
+                "f",
+                "e\u{301}",
+                " ",
+                "\u{1F44D}\u{1F3FD}",
+                "\u{1F1F3}\u{1F1FF}",
+                "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",
+            ]
+        );
+        assert_eq!(even(title).len(), glyphs.len(), "one stroke a glyph");
+        assert!(is_gap(" ") && !is_gap("e\u{301}"));
     }
 
     #[test]
@@ -413,12 +466,12 @@ mod tests {
     #[test]
     fn the_nib_presses_at_each_glyph_and_lifts_over_a_gap() {
         let at = |index, progress| Stroke { index, progress };
-        assert_eq!(hand(at(3, 0.0), false).dip_px, WRITE_DIP_PX, "first stroke");
-        assert_eq!(hand(at(3, 0.9), false).dip_px, 0.0, "eased off by the end");
+        assert_eq!(hand(at(3, 0.5), false).dip_px, WRITE_DIP_PX, "mid-stroke");
+        assert!(hand(at(3, 1.0), false).dip_px.abs() < 1e-9, "up by the end");
         assert_eq!(
             hand(at(3, 0.5), true).dip_px,
             -WRITE_LIFT_PX,
-            "up over the gap"
+            "highest over the middle of the gap"
         );
         // A wobble, not a sway: bounded, different between neighbours, and the
         // same each time the glyph is written.
@@ -433,16 +486,75 @@ mod tests {
 
     #[test]
     fn he_touches_down_and_settles() {
-        assert_eq!(touch_down(0).dip_px, WRITE_TOUCHDOWN_PX);
-        assert!(touch_down(WRITE_TOUCHDOWN_MS / 2).dip_px < WRITE_TOUCHDOWN_PX);
-        assert_eq!(touch_down(WRITE_TOUCHDOWN_MS), Hand::REST);
+        assert_eq!(touch_down(0), Hand::REST);
+        assert_eq!(
+            touch_down(WRITE_TOUCHDOWN_MS / 2).dip_px,
+            WRITE_TOUCHDOWN_PX
+        );
+        assert!(touch_down(WRITE_TOUCHDOWN_MS).dip_px.abs() < 1e-9);
         assert_eq!(touch_down(10 * WRITE_TOUCHDOWN_MS), Hand::REST);
-        const {
-            assert!(
-                Hand::FLICK.dip_px < 0.0 && Hand::FLICK.tilt_deg > 0.0,
-                "up and away"
-            )
+    }
+
+    #[test]
+    fn he_flicks_up_and_away_and_comes_to_rest() {
+        let last = Hand {
+            dip_px: 0.0,
+            tilt_deg: -1.5,
         };
+        assert_eq!(flick(0, last), last, "it starts from his last letter");
+        let top = flick(WRITE_FLICK_MS / 2, last);
+        assert!(
+            top.dip_px < 0.0 && top.tilt_deg > 0.0,
+            "up and away: {top:?}"
+        );
+        let end = flick(WRITE_FLICK_MS, last);
+        assert!(
+            end.dip_px.abs() < 1e-9 && end.tilt_deg.abs() < 1e-9,
+            "{end:?}"
+        );
+    }
+
+    /// The most his hand moves between two frames over `hands`, in px and degrees.
+    fn largest_step(hands: &[Hand]) -> (f64, f64) {
+        hands.windows(2).fold((0.0, 0.0), |(dip, tilt), w| {
+            (
+                f64::max(dip, (w[1].dip_px - w[0].dip_px).abs()),
+                f64::max(tilt, (w[1].tilt_deg - w[0].tilt_deg).abs()),
+            )
+        })
+    }
+
+    #[test]
+    fn his_hand_moves_and_never_jumps() {
+        // Frame by frame through a title, glyph boundaries and gaps included, then
+        // the flick: a hand, not a jitter.
+        let text = "Buy oat milk";
+        let glyphs = even(text);
+        let gaps: Vec<bool> = glyphs_of(text).map(is_gap).collect();
+        let total = glyphs.last().expect("a line").ends_ms;
+        let writing: Vec<Hand> = (0..=total)
+            .step_by(INK_TICK_MS as usize)
+            .filter_map(|ms| stroke_at(&glyphs, ms))
+            .map(|at| hand(at, gaps[at.index]))
+            .collect();
+        let (dip, tilt) = largest_step(&writing);
+        assert!(
+            dip <= 1.0 && tilt <= 1.0,
+            "{dip:.2}px, {tilt:.2}deg in a frame"
+        );
+        let last = *writing.last().expect("frames");
+        let flicking: Vec<Hand> = std::iter::once(last)
+            .chain(
+                (0..=WRITE_FLICK_MS)
+                    .step_by(INK_TICK_MS as usize)
+                    .map(|ms| flick(ms, last)),
+            )
+            .collect();
+        let (dip, tilt) = largest_step(&flicking);
+        assert!(
+            dip <= 1.0 && tilt <= 2.0,
+            "{dip:.2}px, {tilt:.2}deg in a frame"
+        );
     }
 
     #[test]
@@ -450,7 +562,7 @@ mod tests {
         // The pen's time on a space is its width plus the lift across the gap,
         // so the ink runs slower over a word break than the break is wide — and
         // slower than a letter of the same place in the line.
-        let glyphs = schedule("ab cd", |c| if c.is_whitespace() { 6.0 } else { 10.0 });
+        let glyphs = schedule("ab cd", |glyph| if is_gap(glyph) { 6.0 } else { 10.0 });
         let space = glyphs[2];
         let total = glyphs.last().expect("a line").ends_ms;
         let stroke = space.ends_ms - glyphs[1].ends_ms;

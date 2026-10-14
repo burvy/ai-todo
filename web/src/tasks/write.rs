@@ -6,6 +6,7 @@ use crate::pen::{Beat, Hand, LineBox, Stroke};
 use crate::tuning::{INK_FADE_MS, INK_TICK_MS, WRITE_FINISH_MS, WRITE_FLICK_MS, WRITE_SETTLE_MS};
 use crate::{mascot, pen, sound};
 use leptos::prelude::{GetUntracked, ReadSignal, RwSignal, Set, WriteSignal};
+use std::cell::Cell;
 use std::collections::HashMap;
 use wasm_bindgen::JsCast;
 
@@ -68,7 +69,7 @@ fn measuring_canvas(el: &web_sys::Element) -> Option<web_sys::CanvasRenderingCon
 /// The writing font measured once: how wide each glyph is on the page,
 /// and how far the em box runs above and below the baseline.
 struct Writing {
-    width_of: Box<dyn Fn(char) -> f64>,
+    width_of: Box<dyn Fn(&str) -> f64>,
     ascent: f64,
     descent: f64,
 }
@@ -77,22 +78,20 @@ fn measure(el: &web_sys::Element, text: &str) -> Option<Writing> {
     let ctx = measuring_canvas(el)?;
     // Every distinct glyph is measured once, so a long title does not
     // re-measure the same letter over and over.
-    let mut widths: HashMap<char, f64> = HashMap::new();
-    for c in text.chars().filter(|c| !c.is_whitespace()) {
-        widths.entry(c).or_insert_with(|| {
-            ctx.measure_text(&c.to_string())
-                .map(|m| m.width())
-                .unwrap_or(6.0)
-        });
+    let mut widths: HashMap<String, f64> = HashMap::new();
+    for glyph in pen::glyphs_of(text).filter(|glyph| !pen::is_gap(glyph)) {
+        widths
+            .entry(glyph.to_owned())
+            .or_insert_with(|| ctx.measure_text(glyph).map(|m| m.width()).unwrap_or(6.0));
     }
     let space = ctx.measure_text(" ").map(|m| m.width()).unwrap_or(4.0);
     let metrics = ctx.measure_text(text).ok()?;
     Some(Writing {
-        width_of: Box::new(move |c: char| {
-            if c.is_whitespace() {
+        width_of: Box::new(move |glyph: &str| {
+            if pen::is_gap(glyph) {
                 space
             } else {
-                widths.get(&c).copied().unwrap_or(6.0)
+                widths.get(glyph).copied().unwrap_or(6.0)
             }
         }),
         ascent: metrics.font_bounding_box_ascent(),
@@ -188,43 +187,56 @@ async fn fly(
 /// The title spelled out one span a glyph while Rambo writes it, so each glyph's
 /// ink can appear on its own. The text the view rendered is set aside, not
 /// replaced, and is put back as it was when this is dropped: the view keeps
-/// owning it, and whatever ends the writing leaves the title plain text.
+/// owning it, and whatever ends the writing leaves the title plain text. A screen
+/// reader hears the title whole, not letter by letter, while it is spelled out.
 struct Spelled {
     title: web_sys::Element,
     kept: Vec<web_sys::Node>,
     glyphs: Vec<web_sys::Element>,
+    /// How many glyphs are inked so far: each frame touches only the new ones.
+    inked: Cell<usize>,
 }
 
 impl Spelled {
     fn new(title: &web_sys::Element, text: &str) -> Option<Self> {
         let doc = title.owner_document()?;
-        let mut kept = Vec::new();
+        // Built before anything moves, so a failure part way still puts back
+        // whatever was set aside.
+        let mut spelled = Spelled {
+            title: title.clone(),
+            kept: Vec::new(),
+            glyphs: Vec::new(),
+            inked: Cell::new(0),
+        };
+        title.set_attribute("aria-label", text).ok();
         while let Some(node) = title.first_child() {
             title.remove_child(&node).ok()?;
-            kept.push(node);
+            spelled.kept.push(node);
         }
-        let glyphs = text
-            .chars()
-            .filter_map(|c| {
-                let glyph = doc.create_element("span").ok()?;
-                glyph.set_class_name("ink-glyph");
-                glyph.set_text_content(Some(&c.to_string()));
-                title.append_child(&glyph).ok()?;
-                Some(glyph)
-            })
-            .collect();
-        Some(Spelled {
-            title: title.clone(),
-            kept,
-            glyphs,
-        })
+        for text in pen::glyphs_of(text) {
+            let glyph = doc.create_element("span").ok()?;
+            glyph.set_class_name("ink-glyph");
+            glyph.set_attribute("aria-hidden", "true").ok();
+            glyph.set_text_content(Some(text));
+            title.append_child(&glyph).ok()?;
+            spelled.glyphs.push(glyph);
+        }
+        Some(spelled)
     }
 
     /// Show the ink of the first `count` glyphs.
     fn ink(&self, count: usize) {
-        for glyph in self.glyphs.iter().take(count) {
+        let count = count.min(self.glyphs.len());
+        for glyph in self.glyphs.iter().take(count).skip(self.inked.get()) {
             glyph.class_list().add_1("inked").ok();
         }
+        self.inked.set(self.inked.get().max(count));
+    }
+
+    /// Whether the title is laid out on the page: a title hidden with its row has
+    /// no box.
+    fn laid_out(&self) -> bool {
+        self.glyph_box(0).is_some_and(|glyph| glyph.height > 0.0)
     }
 
     /// Where glyph `index` sits on the page now.
@@ -247,6 +259,7 @@ impl Drop for Spelled {
         for node in &self.kept {
             self.title.append_child(node).ok();
         }
+        self.title.remove_attribute("aria-label").ok();
     }
 }
 
@@ -307,7 +320,7 @@ pub async fn write_row_title(
         return;
     };
     let text = title.text_content().unwrap_or_default();
-    let (Some(style), Some(writing)) = (inline_style(&title), measure(&title, &text)) else {
+    let (Some(style), Some(writing)) = (inline_style(row), measure(&title, &text)) else {
         unhide();
         return;
     };
@@ -321,20 +334,21 @@ pub async fn write_row_title(
     // the whole schedule exists to keep.
     let ink = pen::ink_for_pen(held_tool().as_deref());
     row.class_list().add_1(ink).ok();
-    row.class_list().add_1("pen-writing").ok();
-    style
-        .set_property("--ink-fade-ms", &format!("{INK_FADE_MS}ms"))
-        .ok();
     // Every glyph starts with no ink, so the finished title is never on screen
     // before the pen begins writing it: the row leaves `pen-pending`'s clip only
     // once its glyphs are in.
     let Some(spelled) = Spelled::new(&title, &text) else {
+        row.class_list().remove_1(ink).ok();
         unhide();
         return;
     };
+    row.class_list().add_1("pen-writing").ok();
+    style
+        .set_property("--ink-fade-ms", &format!("{INK_FADE_MS}ms"))
+        .ok();
     row.class_list().remove_1("pen-pending").ok();
-    let chars: Vec<char> = text.chars().collect();
-    let glyphs = pen::schedule(&text, |c| (writing.width_of)(c));
+    let gaps: Vec<bool> = pen::glyphs_of(&text).map(pen::is_gap).collect();
+    let glyphs = pen::schedule(&text, |glyph| (writing.width_of)(glyph));
     let total_ms = glyphs.last().map(|glyph| glyph.ends_ms).unwrap_or(0);
     let rambo = web_sys::window()
         .and_then(|window| window.document())
@@ -358,17 +372,20 @@ pub async fn write_row_title(
     touch_down(rambo).await;
     let (mut elapsed, mut held) = (0, 0);
     let mut scratch: Option<sound::Loop> = None;
+    let mut hand = Hand::REST;
     loop {
-        let lines = lines_of(&title);
-        let on_page = row.is_connected() && !lines.is_empty();
+        let on_page = row.is_connected() && spelled.laid_out();
         let on_screen = on_page && in_view(row);
         let beat = pen::beat(&state.get_untracked(), on_screen, on_page, held);
         // He scratches, and his hand moves, only while the nib is on the paper.
-        if beat != Beat::Write {
-            set_hand(rambo, Hand::REST);
-            if let Some(sound) = scratch.take() {
-                sound.stop();
-            }
+        if beat != Beat::Write && hand != Hand::REST {
+            hand = Hand::REST;
+            set_hand(rambo, hand);
+        }
+        if beat != Beat::Write
+            && let Some(sound) = scratch.take()
+        {
+            sound.stop();
         }
         match beat {
             Beat::Write => {
@@ -377,18 +394,24 @@ pub async fn write_row_title(
                 spelled.ink(pen::inked_count(&glyphs, elapsed));
                 if let Some(at) = pen::stroke_at(&glyphs, elapsed) {
                     nib_to(at);
-                    let gap = chars.get(at.index).is_some_and(|c| c.is_whitespace());
-                    set_hand(rambo, pen::hand(at, gap));
+                    let gap = gaps.get(at.index).copied().unwrap_or(false);
+                    hand = pen::hand(at, gap);
+                    set_hand(rambo, hand);
                 }
                 if elapsed >= total_ms {
                     if let Some(sound) = scratch.take() {
                         sound.stop();
                     }
-                    // The last letter closes with a flick off the paper, then he
-                    // holds a beat before leaving.
-                    set_hand(rambo, Hand::FLICK);
-                    gloo_timers::future::TimeoutFuture::new(WRITE_FLICK_MS).await;
+                    // The last letter closes with a flick off the paper. The
+                    // row's meta inks in while he holds a beat before leaving.
+                    let mut ms = 0;
+                    while ms < WRITE_FLICK_MS {
+                        set_hand(rambo, pen::flick(ms, hand));
+                        gloo_timers::future::TimeoutFuture::new(INK_TICK_MS).await;
+                        ms += INK_TICK_MS;
+                    }
                     set_hand(rambo, Hand::REST);
+                    row.class_list().add_1("meta-inked").ok();
                     gloo_timers::future::TimeoutFuture::new(WRITE_FINISH_MS).await;
                     break;
                 }
@@ -430,4 +453,5 @@ pub async fn write_row_title(
     style.remove_property("--ink-fade-ms").ok();
     row.class_list().remove_1(ink).ok();
     row.class_list().remove_1("pen-writing").ok();
+    row.class_list().remove_1("meta-inked").ok();
 }

@@ -232,7 +232,7 @@ back and carries on. A row left waiting `WRITE_HOLD_MAX_MS` simply shows its tit
 and a reload always shows titles whole.
 b. Type a long task and press Enter; pick him up halfway through, then let go.
 c. Code: `web/src/tasks/write.rs:write_row_title`; `web/src/pen.rs:schedule,
-stroke_at, inked_count, hand, touch_down, beat`; pace and hand in
+glyphs_of, stroke_at, inked_count, hand, touch_down, flick, beat`; pace and hand in
 `web/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`).
 
 ### 4. Drop actions

@@ -130,11 +130,9 @@ pub const WRITE_HOLD_MAX_MS: u32 = 15_000;
 /// How long a glyph's ink takes to appear once the nib passes its middle, in ms. Ink
 /// is the one thing that fades in. Safe range 40 to 160.
 pub const INK_FADE_MS: u32 = 90;
-/// How far the nib presses into the paper at each glyph's first stroke, in px. Safe
-/// range 0 to 3.
+/// How far the nib presses into the paper at the middle of each glyph's stroke, in
+/// px. Safe range 0 to 3.
 pub const WRITE_DIP_PX: f64 = 1.5;
-/// The share of a glyph's stroke the press takes to ease off. Safe range 0.1 to 0.6.
-pub const WRITE_DIP_SHARE: f64 = 0.35;
 /// How far the pen lifts off the paper over a word gap, in px. Safe range 0 to 4.
 pub const WRITE_LIFT_PX: f64 = 2.0;
 /// How far his lean wanders from glyph to glyph, either way, in degrees. Safe range
@@ -144,9 +142,9 @@ pub const WRITE_WOBBLE_DEG: f64 = 2.0;
 /// Safe ranges 0 to 4 px and 30 to 120 ms; the settle fits in `WRITE_SETTLE_MS`.
 pub const WRITE_TOUCHDOWN_PX: f64 = 2.0;
 pub const WRITE_TOUCHDOWN_MS: u32 = 60;
-/// The flick as the last letter closes: a lift in px, a turn in degrees, and how
-/// long it is held in ms, before `WRITE_FINISH_MS`. Safe ranges 0 to 4 px, 0 to 8
-/// degrees and 60 to 200 ms.
+/// The flick as the last letter closes: how high it lifts in px, how far it turns
+/// in degrees, and how long it takes to go up and settle in ms, before
+/// `WRITE_FINISH_MS`. Safe ranges 0 to 4 px, 0 to 8 degrees and 60 to 200 ms.
 pub const WRITE_FLICK_PX: f64 = 2.0;
 pub const WRITE_FLICK_DEG: f64 = 4.0;
 pub const WRITE_FLICK_MS: u32 = 120;

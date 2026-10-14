@@ -118,6 +118,8 @@
   --dur: 200ms;
   --dur-slow: 450ms;
   --ease: ease;
+  /* Rambo's lean while he writes, at the caret and on a row. */
+  --write-lean: 34deg;
 
   /* Paper grain (web/assets/theme/); the flat colours carry the page if missing. */
   --texture-paper: url("assets/theme/paper.svg");
@@ -976,7 +978,7 @@ li.task-row:focus-within .delete-mark {
   transform: translate(
       calc(var(--pen-x) - 50%),
       calc(var(--pen-y) - 50%)
-    ) rotate(34deg) scale(0.78);
+    ) rotate(var(--write-lean)) scale(0.78);
 }
 
 /* Writing a row: not a flight, so nothing eases and the nib is where the ink is on
@@ -989,7 +991,7 @@ li.task-row:focus-within .delete-mark {
   transform: translate(
       calc(var(--pen-x) - 50%),
       calc(var(--pen-y) - 50% + var(--nib-dip, 0px))
-    ) rotate(calc(34deg + var(--nib-tilt, 0deg))) scale(0.78);
+    ) rotate(calc(var(--write-lean) + var(--nib-tilt, 0deg))) scale(0.78);
 }
 
 /* Writing at caret (same as writing, but marked for future differentiation) */
@@ -997,7 +999,7 @@ li.task-row:focus-within .delete-mark {
   transform: translate(
       calc(var(--pen-x) - 50%),
       calc(var(--pen-y) - 50%)
-    ) rotate(34deg) scale(0.78);
+    ) rotate(var(--write-lean)) scale(0.78);
 }
 
 /* Asking: positioned at the task */
@@ -1741,6 +1743,17 @@ li.task-row:focus-within .delete-mark {
 
 .ink-glyph.inked {
   opacity: 1;
+}
+
+/* The row's meta (duration, day and time) is not written by the pen: it waits
+   until the title is done and inks in as he flicks off the paper. */
+.pen-pending .task-meta,
+.pen-writing:not(.meta-inked) .task-meta {
+  opacity: 0;
+}
+
+.pen-writing .task-meta {
+  transition: opacity var(--ink-fade-ms, 90ms) ease-out;
 }
 
 /* Per-tool ink: the gear menu's `data-pen` names the tool Rambo is holding and

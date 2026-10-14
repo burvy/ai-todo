@@ -772,11 +772,14 @@ pub(crate) fn TaskList(
                             <span class="pen-title-wrap">
                                 <strong class="pen-title">{render_task_title.clone()}</strong>
                                 {repeat_mark}
-                            </span> " — " {task.duration_min} " min"
-                            {move || {
-                                let time = task_time(&snapshot.get(), &render_task_id, view_settings.get().clock);
-                                (!time.is_empty()).then(|| view! { <span class="task-time">" · " {time}</span> })
-                            }}
+                            </span>
+                            <span class="task-meta">
+                                " — " {task.duration_min} " min"
+                                {move || {
+                                    let time = task_time(&snapshot.get(), &render_task_id, view_settings.get().clock);
+                                    (!time.is_empty()).then(|| view! { <span class="task-time">" · " {time}</span> })
+                                }}
+                            </span>
                             {is_overdue(&task).then(|| view! { <span class="overdue">"Overdue"</span> })}
                         </span>
                         {(!is_occurrence).then(|| view! {
