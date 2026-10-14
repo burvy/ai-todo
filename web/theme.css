@@ -126,6 +126,7 @@
   --wash: rgba(217, 164, 92, 0.14);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   --sheet-shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.8);
+  --fold-shadow: -8px 0 14px -10px rgba(0, 0, 0, 0.6);
   --backdrop: rgba(10, 8, 5, 0.55);
 
   --texture-paper: url("assets/theme/paper-dark.svg");
@@ -186,7 +187,7 @@ body {
   margin: 0 auto;
   padding: var(--gutter);
   /* Room for the fixed capture bar, plus the phone's home-indicator inset. */
-  padding-bottom: calc(var(--tap) + var(--space-4) + var(--space-2) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(var(--tap) + 2 * var(--space-2) + env(safe-area-inset-bottom, 0px));
   color: var(--ink);
   font: var(--text-base) / 1.55 var(--font-body);
   background-color: var(--paper);
@@ -531,18 +532,6 @@ li.task-row:focus-within .delete-mark {
   }
 }
 
-.swipe-deleted {
-  transform: translateX(110%);
-  transition: transform 0.25s ease-out;
-  opacity: 0;
-}
-
-.swipe-snapped {
-  transform: translateX(0);
-  transition: transform 0.2s ease-out;
-  opacity: 1;
-}
-
 /* --- Capture box: a fixed bar at the bottom edge, under the thumb --- */
 
 .capture {
@@ -564,17 +553,6 @@ li.task-row:focus-within .delete-mark {
 .capture input {
   flex: 1;
   min-width: 0;
-}
-
-.mic {
-  min-width: var(--tap);
-  white-space: nowrap;
-}
-
-.mic.listening {
-  color: var(--accent);
-  font-weight: 700;
-  border-color: var(--accent);
 }
 
 /* ── Rambo: one mascot, one element, rests in the capture nest ── */
@@ -655,52 +633,6 @@ li.task-row:focus-within .delete-mark {
   50% {
     transform: translateY(-1px) rotate(1deg);
   }
-}
-
-.rambo.pose-teasing img {
-  animation: rambo-peek 1.7s ease-in-out infinite;
-}
-
-@keyframes rambo-peek {
-  0%,
-  100% {
-    transform: rotate(-3deg);
-  }
-  50% {
-    transform: rotate(4deg) translateY(-6%);
-  }
-}
-
-.rambo.pose-dozing img {
-  animation: rambo-doze 3.6s ease-in-out infinite;
-}
-
-@keyframes rambo-doze {
-  0%,
-  100% {
-    transform: rotate(-5deg);
-  }
-  50% {
-    transform: rotate(-6deg) scaleY(0.985) translateY(2%);
-  }
-}
-
-.rambo.pose-happy img {
-  animation: rambo-cheer 0.75s ease-in-out 2;
-}
-
-@keyframes rambo-cheer {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  35% {
-    transform: translateY(-14%) rotate(7deg);
-  }
-}
-
-.rambo.pose-sulking img {
-  transform: rotate(-9deg) translateY(6%);
 }
 
 .rambo.pose-worried img {
@@ -1110,7 +1042,7 @@ li.task-row:focus-within .delete-mark {
   bottom: 35%;
   width: 2px;
   transform: translateX(-50%);
-  background: color-mix(in srgb, var(--coffee) 55%, transparent);
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
 }
 
 /* The slip in hand: half faint while it is over the board... its shadow
@@ -1215,27 +1147,6 @@ li.task-row:focus-within .delete-mark {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--danger);
-}
-
-.delete {
-  flex: 0 0 auto;
-  min-width: var(--tap);
-  min-height: var(--tap);
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--text-sm);
-  color: var(--danger);
-}
-
-.delete:hover {
-  color: var(--danger);
-  font-weight: 700;
-}
-
-.task-editor {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: var(--space-1);
-  align-items: center;
 }
 
 /* Fixed and centred (behaviour from #135); here it also fits a phone:
@@ -1474,7 +1385,7 @@ li.task-row:focus-within .delete-mark {
   margin: var(--space-2) 0;
   padding: var(--space-2) var(--space-3);
   color: var(--danger);
-  background-color: rgba(165, 52, 42, 0.07);
+  background-color: color-mix(in srgb, var(--danger) 7%, var(--paper));
   border: none;
   border-left: 3px solid var(--danger);
   border-radius: 0;
@@ -1495,11 +1406,6 @@ li.task-row:focus-within .delete-mark {
   background-color: color-mix(in srgb, var(--danger) 7%, var(--paper));
   box-shadow: 0 6px 16px -10px rgba(0, 0, 0, 0.45);
   pointer-events: none;
-}
-
-.import {
-  font-size: var(--text-sm);
-  color: var(--ink-soft);
 }
 
 .version {
@@ -1615,15 +1521,6 @@ li.task-row:focus-within .delete-mark {
     color: var(--accent);
   }
 
-  .mic.listening {
-    animation: mic-pulse 1.2s ease-in-out infinite;
-  }
-
-  @keyframes mic-pulse {
-    50% {
-      opacity: 0.55;
-    }
-  }
 }
 
 /* Pen writing row animation: the title reveals left to right. The reveal is
