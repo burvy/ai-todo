@@ -217,8 +217,8 @@ on screen (`--nest-w` by `--nest-h`). Rambo sits in it, his tip behind the nest'
 which is a second layer drawn over him (`.nest::before` is the back, `.nest-rim` the front).
 Tapping the nest submits the box.
 d. Nothing pops in or out. The only thing on main that fades is ink (it appears over `INK_FADE_MS`
-and fades out over `INK_FADE_OUT_MS`); the one other thing allowed to fade,
-Rambo's tape patch on a page tear, is *(planned)*. Everything else moves: a done or
+and fades out over `INK_FADE_OUT_MS`); the one other thing allowed to fade is Rambo's
+tape patch and the tear it mends (item g). Everything else moves: a done or
 deleted row flies to the pin, a taped-back task flies back from it, the rows below slide up
 to close a gap (`ROW_CLOSE_MS`), a crumpled strip drops away, and Rambo's ask bubble grows
 out of him and folds back into him over `ASK_FOLD_MS` before it leaves the page, at full
@@ -228,6 +228,25 @@ the box stay put; swipe a row right and watch it travel to the pin.
 f. Code: `web/src/lib.rs:App, PageFoot`; `web/src/week.rs:WeekGrid` (the planner page, the
 gear); `web/src/scrap.rs` (the pin); `web/theme.css` (`.capture`, `.nest`, `.nest-rim`, the
 phone block with `100dvh`); numbers in `web/src/tuning.rs`.
+g. **The page rips.** On a phone, a swipe to the right on bare paper of the list page (not on
+a task, and mostly level: `RIP_MIN_PX`, `RIP_MAX_SLOPE`) tears the page along the swipe. The
+tear is a real hole, a ragged slit up to `RIP_GAP_PX` wide: the planner page, which lies
+under the list while a tear lasts, shows through it live (its own slips and lines, not a
+picture). It follows the finger, never goes back, stops short of the pin's column, and never
+touches a task's words: a press too near a row tears nothing (`rip::lane`). One tear at a
+time. When the finger lets go Rambo notices, hops to the tear and tapes it: a strip of tape
+every `TAPE_EVERY_PX` across it is laid from one end over `TAPE_LAY_MS`, `TAPE_AT_MS` after
+the finger lets go. After `TEAR_HOLD_MS` the tape and the tear fade away together over
+`TEAR_FADE_MS`, the one thing besides ink that fades; Rambo has hopped home by then. Only a
+resting Rambo (in his nest) goes; a busy one leaves the repair to the page. His worried
+face is the grumpy one for now; a grumpy drawing is *(planned)*. A desk (two pages side by
+side) has no rip: the planner is already beside the list. Try it: on a phone, swipe right
+across the empty part of the list page.
+Code: `web/src/rip.rs` (the rules: `is_rip`, `lane`, `Tear::outline`, `sheet_path`,
+`stage`; pure and tested), `web/src/rip_ui.rs:Ripper, TearLayer` (the pointer, the hole,
+the tape), `web/src/mascot.rs:State::Mending, Event::Mend`, `web/theme.css` (`main.torn`,
+`.tear-layer`, `.tape`); numbers in `web/src/tuning.rs` (`RIP_*`, `TAPE_*`, `TEAR_*`,
+`MEND_MS`).
 
 ## III. WEEK PLANNER
 
