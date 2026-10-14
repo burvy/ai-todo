@@ -123,6 +123,7 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
 - **Visual tickets** (any CSS or art change): a pixel diff, not eyeballing. Take four screenshots on `main` and four on the branch, on the same machine with the same fonts: 1366x800 and 390x844, each in light and dark. Report for each pair either "identical" or the share of pixels that differ. Over 0.1% must be a change the ticket asks for, and the PR names it.
 - **Behaviour tickets**: add a test that fails without the change, and say in the PR that you checked it fails.
 - **Guard tests stay green.** `mascot.rs` holds tests that read the source and CSS as text (`rambo_rules` and the ones these tickets add). Never weaken one; a ticket that needs to may not go ahead without Emilio.
+- **Art lives in asset slots** (DESIGN-DIRECTION §9). Code and CSS name a slot's stable file, `web/assets/<slot>/<name>`, never a source's own file name. No art is drawn in CSS except as the fallback under a slot. A ticket that adds or changes art also writes or updates the slot's `ABOUT.md`, the `web/assets/README.md` index and `web/assets/CREDITS.md`.
 - Never edit `docs/DESIGN-DIRECTION.md`. Never add a crate. Never change server code.
 - Respect the standing rules: Rambo stays a separate fixed layer, independent of the nest. No blue focus or tap highlight. No native browser controls or scrollbars. The theme never follows the OS (DESIGN-DIRECTION §7).
 - The reviewer (Emilio) checks each acceptance item one by one. A PR that misses one goes back.
@@ -210,7 +211,7 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
 Several GLM agents at once drain the usage budget, so only one builds at a time (owner, interview 2). God dispatches the next ticket when the last one is reviewed. Keep tickets small. Current order:
 
 1. FE-4: state changes through `transition` (Huang, running).
-2. Ping: paper and nest art (journal paper, DESIGN-DIRECTION §9).
+2. Ping: paper and nest art (journal paper, DESIGN-DIRECTION §9). **Waits for the picked assets:** Dario is sourcing candidates (hive `ASSETS-PLAN.md`); Ping builds on the ones chosen, in asset slots.
 3. FE-3: CSS tidy (Chuan).
 4. FE-2: art follows the page theme (Zhipu).
 5. Then: BUG-9, BUG-1 to BUG-3 (one agent, in turn), FE-5 (Funny), BUG-4 to BUG-8, then the later steps.
@@ -247,7 +248,12 @@ Each becomes a ticket when the steps before it have landed, written with what th
 - **Preset C: music and dancing.** Calm classical background music from CC0 or public-domain recordings, and Rambo dancing to its beat. After the sound engine.
 - **Full calendar view** (owner: later): scrolling back in time and further ahead.
 - **Rambo's ask bubble does what it says** (2.6): Edit, Move, the planner-slip choices and the empty-hour task, one ticket each.
-- **A cross-out that follows the finger** (2.6): the stroke is drawn as the finger moves, once the open swipe questions are answered.
+- **Slash-out delete** (DESIGN-DIRECTION §9): swipe left on a row draws an ink slash that follows the finger; past the threshold the row is deleted, short of it the ink lifts away. Replaces the swipe-right delete in `row.rs`; waits for the open page-turn question (2.6). Accept: a pure test of the stroke's length against the finger's travel, and the delete threshold.
+- **Scrap undo** (with the slash-out): the deleted row's scrap lies in the page corner for a few seconds; a tap tapes it back and the task returns as it was. Accept: a test that undo restores the task unchanged, and that the scrap goes after its time.
+- **Ink dries:** a new row is glossy for a few seconds after Rambo writes it; a tap in that time smudges it. Accept: the gloss time is a tuning constant; the smudge is only a look and never changes the task.
+- **The nib runs dry:** after a long run of rows, Rambo taps his nib on the dish's rim before the next. Accept: a pure test of when the tap comes (a tuning count of rows); it never delays a capture by more than the tap.
+- **Bookmark ribbon:** a cloth ribbon down the planner's edge marks today; pulling it scrolls the planner back to today. Art in an asset slot. Accept: the pull lands on today at both screen sizes.
+- **Desk-lamp theme switch:** a small lamp in the page corner replaces the theme control; pulling its chain lays the night page down (the physical dark-mode switch). Art in an asset slot. The theme still never follows the OS.
 - **One animation clock, then one gesture module.**
 - **Split the big files**, move-only, last.
 
@@ -346,23 +352,14 @@ Rambo's ask bubble (dropping him on a task) offers Edit, Move, Done and Never mi
 - **Dropped on a planner slip:** a bubble with time choices: Move, Longer, Shorter, Off the planner. Needs a hit test for slips, as `row_under` is for rows.
 - **Dropped on an empty hour:** a new task at that time, and he listens; a tap or click elsewhere cancels.
 
-Still open, for god to ask the owner:
-1. **The bubble's choices.** Keep Edit, Move, Done and Never mind? Add Delete?
-2. **Swipe left crosses out** (new): does crossing out mean done or delete? Swipe left on a task today means "turn the page to the planner", and swipe right means delete. What do swipe right and the page turn become?
+Also decided: the bubble keeps Edit, Move, Done and Never mind, with no Delete; deleting is the slash-out (2.4).
+
+Still open, for god to ask the owner: swipe left on a task now slashes it out. What does swipe right on a task do, and how is the page turned on the phone (today swipe left turns it, and swipe right on the planner turns back)?
 
 ## 3. Not checked
 
 - Phone width and touch were not reproduced in a browser (the window would not shrink below 905px here); the off-pane flight is read from code and layout. QA should confirm FE-0 on a phone.
 - That content shown through `<use>` picks up the page's `--rambo-*` tokens (FE-2) is how browsers specify it; the ticket's screenshots are the check.
-
-### Ideas to offer the owner
-
-Not planned; for god to put to the owner when the time is right.
-- **Ink dries.** A freshly written row stays slightly glossy for a few seconds, and a tap smudges it. It shows the row is new, physically.
-- **Rambo's nib runs dry.** After a long run of writing, he taps his nib on the dish's rim before the next row.
-- **Bookmark ribbon.** A cloth ribbon down the page edge marks today in the planner; pull it to jump back to today.
-- **Torn-off corner for undo.** A deleted row's scrap lies on the page corner for a few seconds; tap it to tape it back.
-- **Night page:** in dark mode, a small desk lamp in the corner is the theme switch, and pulling its chain swaps the page.
 
 ## 4. Spec questions: answered
 
