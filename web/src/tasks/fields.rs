@@ -146,6 +146,7 @@ fn parse_local_input(value: &str) -> Option<DateTime<Utc>> {
 
 /// Whether the instant a browser built from `asked` still reads as `asked` on the wall:
 /// false when the browser moved it out of a clock-change gap.
+#[cfg(any(target_arch = "wasm32", test))]
 fn wall_clock_kept(asked: &str, read_back: &str) -> bool {
     asked == read_back
 }
