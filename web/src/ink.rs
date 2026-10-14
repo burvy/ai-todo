@@ -23,8 +23,13 @@ pub struct Dot {
     pub x: f64,
     pub y: f64,
     pub radius: f64,
-    /// How much ink the nib lays down, 0..=1. Graphite is light; a felt tip is not.
+    /// How much ink the nib lays down, 0..=1. Graphite is light; a felt tip is
+    /// not, and a quill's tail dries out.
     pub alpha: f64,
+    /// The last few dabs of a stroke take Rambo's own tint, so the trail is
+    /// his rather than the tool's (DESIGN-DIRECTION §1: `--rambo-tint` is the
+    /// ink tail of a stroke).
+    pub tail: bool,
 }
 
 /// A finger's path, in the order it was walked.
@@ -41,11 +46,15 @@ pub struct Nib {
     /// What the first and last dabs keep: `1.0` is blunt (a marker lands flat),
     /// lower is a nib touching down.
     pub taper: f64,
-    /// How much the width wanders from dab to dab, 0..=1. Graphite on paper does
-    /// this; a fountain pen in ink does not.
+    /// How much the **deposit** varies from dab to dab, 0..=1. Graphite lays
+    /// down an even width with uneven ink; a wandering outline reads as a shaky
+    /// hand and, at two or three pixels, as aliasing.
     pub grain: f64,
-    /// How much ink the nib lays down, 0..=1.
+    /// How much ink the nib lays down in the body of the stroke, 0..=1.
     pub alpha: f64,
+    /// How far the ink dries out through the run-out, 0..=1. A quill is the one
+    /// tool that runs dry; a pen does not.
+    pub dry_out: f64,
 }
 
 /// The fountain pen: the plain line every other tool is measured against.
@@ -55,6 +64,7 @@ const FOUNTAIN: Nib = Nib {
     taper: 0.45,
     grain: 0.0,
     alpha: 1.0,
+    dry_out: 0.0,
 };
 
 impl Nib {
@@ -70,13 +80,14 @@ impl Nib {
                 spacing: 3.4,
                 ..FOUNTAIN
             },
-            // Graphite: lighter, narrower, and it wanders.
+            // Graphite: an even line with an uneven deposit, light ink.
             Pen::Pencil => Nib {
                 radius: 2.6,
                 spacing: 3.2,
                 taper: 0.55,
-                grain: 0.18,
-                alpha: 0.7,
+                grain: 0.28,
+                alpha: 0.625,
+                ..FOUNTAIN
             },
             // A felt tip lands and lifts flat, and thick.
             Pen::Marker => Nib {
@@ -85,13 +96,14 @@ impl Nib {
                 taper: 0.95,
                 ..FOUNTAIN
             },
-            // A feather is broad in the middle and runs out at the tail, so it
-            // keeps a strong taper and a little wander of its own.
+            // A feather is broad in the middle, runs out at the tail and dries
+            // as it goes: width and ink both fall away.
             Pen::Quill => Nib {
                 radius: 3.6,
                 spacing: 4.2,
                 taper: 0.25,
-                grain: 0.08,
+                grain: 0.12,
+                dry_out: 0.85,
                 ..FOUNTAIN
             },
         }
@@ -130,6 +142,7 @@ pub fn trail(path: &[(f64, f64)], nib: Nib) -> Vec<Dot> {
                 y: y0 + dy * walked / step,
                 radius: nib.radius,
                 alpha: nib.alpha,
+                tail: false,
             });
             pending = 0.0;
         }
@@ -149,10 +162,12 @@ pub fn trail(path: &[(f64, f64)], nib: Nib) -> Vec<Dot> {
             y,
             radius: nib.radius,
             alpha: nib.alpha,
+            tail: false,
         });
     }
     taper_ends(&mut dots, nib);
-    grain_dabs(&mut dots, nib);
+    vary_deposit(&mut dots, nib);
+    mark_the_tail(&mut dots);
     dots
 }
 
@@ -176,16 +191,36 @@ fn taper_ends(dots: &mut [Dot], nib: Nib) {
     }
 }
 
-/// Let the width wander, so graphite is not a ruler line. The wander is a
-/// function of the dab's place along the stroke rather than a random number: the
-/// same stroke then always draws the same way, and a test can pin it.
-fn grain_dabs(dots: &mut [Dot], nib: Nib) {
-    if nib.grain <= 0.0 {
-        return;
-    }
+/// Vary the **deposit**, not the outline: graphite and quill ink are uneven in
+/// how much they leave down, while the line they draw is an even width. The
+/// variation is a function of the dab's place along the stroke rather than a
+/// random number, so the same stroke always draws the same way and a redraw
+/// under the finger does not shimmer.
+fn vary_deposit(dots: &mut [Dot], nib: Nib) {
+    let count = dots.len();
+    let run_out = ((count as f64) * nib.dry_out) as usize;
     for (index, dot) in dots.iter_mut().enumerate() {
-        let wave = ((index * 37) % 11) as f64 / 5.0 - 1.0;
-        dot.radius *= 1.0 + nib.grain * wave;
+        if nib.grain > 0.0 {
+            let wave = ((index * 37) % 11) as f64 / 5.0 - 1.0;
+            dot.alpha *= 1.0 + nib.grain * wave;
+        }
+        if run_out > 0 && index >= count - run_out {
+            // The last stretch of a quill's run-out dries as it goes.
+            let through = (index - (count - run_out)) as f64 / run_out as f64;
+            dot.alpha *= 1.0 - nib.dry_out * through;
+        }
+        dot.alpha = dot.alpha.clamp(0.0, 1.0);
+    }
+}
+
+/// Mark the last few dabs as Rambo's: the tail of the stroke takes his tint, so
+/// the trail is his rather than the tool's. Kept short — the last sixth of the
+/// stroke or six dabs, whichever is fewer — so a line never looks blue-green.
+fn mark_the_tail(dots: &mut [Dot]) {
+    let total = dots.len();
+    let tail = (total / 6).min(6);
+    for dot in dots.iter_mut().skip(total.saturating_sub(tail)) {
+        dot.tail = true;
     }
 }
 
@@ -305,12 +340,15 @@ mod tests {
             assert!(nib.spacing > 0.0 && nib.radius > 0.0, "{pen:?}");
             assert!((0.0..=1.0).contains(&nib.taper), "{pen:?}");
             assert!((0.0..=1.0).contains(&nib.alpha), "{pen:?}");
+            assert!((0.0..=1.0).contains(&nib.dry_out), "{pen:?}");
             let dots = rambo_trail(&path, pen);
             assert!(dots.iter().all(|dot| dot.radius > 0.0), "{pen:?}");
-            // Grain may make a dab wider than the body, but never past its reach.
             assert!(
-                dots.iter()
-                    .all(|dot| dot.radius <= nib.radius * (1.0 + nib.grain)),
+                dots.iter().all(|dot| dot.radius <= nib.radius),
+                "{pen:?}: a dab is never wider than the nib"
+            );
+            assert!(
+                dots.iter().all(|dot| (0.0..=1.0).contains(&dot.alpha)),
                 "{pen:?}"
             );
         }
@@ -322,32 +360,66 @@ mod tests {
     }
 
     #[test]
-    fn the_pencil_is_light_and_graphite_wanders_while_ink_does_not() {
+    fn graphite_varies_its_ink_not_its_width() {
         let path = line((0.0, 0.0), (300.0, 0.0), 120);
+        let nib = Nib::for_pen(Pen::Pencil);
         let pencil = rambo_trail(&path, Pen::Pencil);
+        let body = &pencil[pencil.len() / 4..pencil.len() * 3 / 4];
         assert!(
-            pencil.iter().all(|dot| dot.alpha < 1.0),
-            "graphite is never full ink"
+            body.iter().all(|dot| dot.radius == nib.radius),
+            "a pencil draws an even width: {:?}",
+            body.iter().map(|d| d.radius).collect::<Vec<_>>()
         );
+        let inks: Vec<f64> = body.iter().map(|dot| dot.alpha).collect();
+        let min = inks.iter().cloned().fold(f64::MAX, f64::min);
+        let max = inks.iter().cloned().fold(f64::MIN, f64::max);
+        // Roughly 0.45 to 0.8 by design; the band is stated against the nib's own
+        // alpha so the test cannot fail on float slack.
         assert!(
-            pencil.iter().any(|dot| {
-                let middle = &pencil[pencil.len() / 4..pencil.len() * 3 / 4];
-                dot.radius != middle[0].radius
-            }),
-            "a pencil wanders: {:?}",
-            pencil.iter().map(|d| d.radius).collect::<Vec<_>>()
+            min >= nib.alpha * 0.70 && max <= nib.alpha * 1.30,
+            "pencil ink {min}..{max}"
         );
+        assert!(max > min + 0.05, "the deposit wanders: {inks:?}");
 
-        // Ink does not wander: every dab in the body of a fountain stroke is the
-        // same width, and every dab is full ink.
-        let ink = rambo_trail(&path, Pen::FountainPen);
-        let body = &ink[ink.len() / 4..ink.len() * 3 / 4];
+        // Ink is steady in both width and deposit.
+        let fountain = rambo_trail(&path, Pen::FountainPen);
+        let body = &fountain[fountain.len() / 4..fountain.len() * 3 / 4];
+        assert!(body.iter().all(|dot| dot.alpha == 1.0));
         assert!(
             body.iter().all(|dot| dot.radius == FOUNTAIN.radius),
             "{:?}",
             body.iter().map(|d| d.radius).collect::<Vec<_>>()
         );
-        assert!(ink.iter().all(|dot| dot.alpha == 1.0));
+    }
+
+    #[test]
+    fn a_quills_tail_dries_out() {
+        let path = line((0.0, 0.0), (300.0, 0.0), 120);
+        let quill = rambo_trail(&path, Pen::Quill);
+        let head = quill[quill.len() / 4];
+        let tip = quill.last().expect("a trail");
+        assert!(
+            tip.alpha < head.alpha * 0.5,
+            "tail {tip:?} vs head {head:?}"
+        );
+        // And a pen does not dry.
+        let pen = rambo_trail(&path, Pen::FountainPen);
+        assert_eq!(pen.last().expect("a trail").alpha, 1.0);
+    }
+
+    #[test]
+    fn only_the_short_tail_is_rambo_tinted() {
+        let path = line((0.0, 0.0), (300.0, 0.0), 120);
+        let dots = rambo_trail(&path, Pen::FountainPen);
+        let tinted = dots.iter().filter(|dot| dot.tail).count();
+        assert!(tinted > 0, "the tail is his");
+        assert!(tinted <= 6, "and short: {tinted}");
+        assert!(tinted * 6 <= dots.len(), "no more than a sixth: {tinted}");
+        // The tint is the end of the stroke, never the start.
+        assert_eq!(
+            dots.iter().position(|dot| dot.tail),
+            Some(dots.len() - tinted)
+        );
     }
 
     #[test]

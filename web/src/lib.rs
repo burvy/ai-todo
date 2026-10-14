@@ -9,6 +9,7 @@ pub mod account;
 pub mod api;
 pub mod brain;
 pub mod ink;
+pub mod inklayer;
 pub mod mascot;
 pub mod pen;
 pub mod settings;
@@ -657,6 +658,8 @@ fn CaptureBox(
     // Rambo peeks over at you while you type. He lives in the capture form, so
     // the peek signal belongs with the input that drives it.
     let (typing, set_typing) = signal(false);
+    // The ink trail Rambo leaves when you pull him. Nothing writes here yet.
+    let dots = signal(Vec::<ink::Dot>::new()).0;
 
     // Watch for speech transcript from Rambo: when capture_text changes, fill the input
     Effect::new(move |_| {
@@ -870,6 +873,12 @@ fn CaptureBox(
                 form_ref
                 pen=Signal::derive(move || view_settings.get().pen)
                 typing
+            />
+            // The ink surface, above the page and below Rambo. Empty until he is
+            // pulled: the pointer hookup waits on Stanley's layer (#235).
+            <inklayer::InkLayer
+                dots
+                pen=Signal::derive(move || view_settings.get().pen)
             />
         </form>
     }

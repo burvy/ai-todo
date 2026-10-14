@@ -1458,6 +1458,20 @@ a {
   }
 }
 
+/* The ink surface. It is a layer above the page and below Rambo, and never over
+   the capture line (z-index 3) or a dialog (10): the same z-index as the page's
+   own content, and later in the document, so it paints over the paper and
+   under everything that is furniture. It takes no pointer — Rambo is the thing
+   you pull, and the trail is what follows him. */
+.ink-layer {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   main {
     scroll-behavior: smooth;
