@@ -189,19 +189,31 @@ fn parse_edited_due(value: &str, task: &todo_core::Task) -> Option<When> {
 }
 
 /// The `when` a save sends, or the message to show when the typed clock time names no
-/// instant. A wall-clock time inside a spring-forward gap — 02:30 on the day the clocks
-/// jump from 02:00 to 03:00 — never happened, so both parsers give up on it; the dialog
-/// has to say that and stay open, because a Save that quietly does nothing looks broken.
-/// `deadline` is the edited task, which carries the zone its due time is read in.
+/// instant. Three error messages distinguish the cause: empty field, unrecognised
+/// format, or a wall-clock time inside a spring-forward gap (02:30 when the clocks jump
+/// 02:00 to 03:00). The dialog shows the message and stays open so a Save that does
+/// nothing quietly does not look broken. `deadline` is the edited task, which carries
+/// the zone its due time is read in.
 pub(crate) fn typed_when(
     kind: EditWhen,
     value: &str,
     deadline: Option<&todo_core::Task>,
 ) -> Result<When, &'static str> {
+    if let EditWhen::Anytime = kind {
+        return Ok(When::Anytime);
+    }
+    if value.trim().is_empty() {
+        return Err("Pick a time");
+    }
+    // Check the format before resolving: `NaiveDateTime::parse_from_str` fails on
+    // bad format, while the time-zone resolver fails on spring-forward gaps.
+    if chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M").is_err() {
+        return Err("That is not a time");
+    }
     let when = match kind {
-        EditWhen::Anytime => Some(When::Anytime),
         EditWhen::DueBy => deadline.and_then(|task| parse_edited_due(value, task)),
         EditWhen::At => parse_local_input(value).map(When::At),
+        _ => None,
     };
     when.ok_or("That time does not exist on this day (clocks change)")
 }
@@ -271,30 +283,61 @@ mod tests {
         );
     }
 
-    /// A time inside a spring-forward gap names no instant, so the dialog refuses it
-    /// with a message and stays open, rather than a Save that does nothing quietly.
+    /// Three different error messages for three different problems: empty field,
+    /// unrecognised format, and a time that never happens (spring-forward gap).
     #[test]
-    fn a_time_in_the_spring_forward_gap_is_refused_with_a_message() {
+    fn typed_when_distinguishes_empty_bad_format_and_clock_skip() {
         let mut task = api::fixture_snapshot().tasks[0].clone();
         task.when = When::DueBy(Utc.with_ymd_and_hms(2027, 3, 13, 7, 0, 0).unwrap());
         task.due_tz = Some("America/New_York".into());
 
-        // 02:30 on 2027-03-14 New York: the clocks jump 02:00 to 03:00 that day.
+        // Empty field asks the user to pick.
+        assert_eq!(
+            typed_when(EditWhen::DueBy, "", Some(&task)),
+            Err("Pick a time")
+        );
+        // Whitespace-only is treated as empty.
+        assert_eq!(
+            typed_when(EditWhen::DueBy, "   ", Some(&task)),
+            Err("Pick a time")
+        );
+        // Text that is not a datetime format gets a format message.
+        assert_eq!(
+            typed_when(EditWhen::DueBy, "tomorrow", Some(&task)),
+            Err("That is not a time")
+        );
+        assert_eq!(
+            typed_when(EditWhen::DueBy, "14:30", Some(&task)),
+            Err("That is not a time")
+        );
+        // 02:30 on 2027-03-14 New York: clocks jump 02:00 to 03:00 that day.
         assert_eq!(
             typed_when(EditWhen::DueBy, "2027-03-14T02:30", Some(&task)),
             Err("That time does not exist on this day (clocks change)")
         );
-        // An empty field is no instant either, and gets the same refusal.
-        assert!(typed_when(EditWhen::DueBy, "", Some(&task)).is_err());
-
-        // An ordinary time in that zone saves, and "Anytime" never looks at the field.
+        // An ordinary time saves correctly.
         assert_eq!(
             typed_when(EditWhen::DueBy, "2027-03-14T09:30", Some(&task)),
             Ok(When::DueBy(
                 Utc.with_ymd_and_hms(2027, 3, 14, 13, 30, 0).unwrap()
             ))
         );
+        // "Anytime" ignores the field entirely.
         assert_eq!(typed_when(EditWhen::Anytime, "", None), Ok(When::Anytime));
+    }
+
+    /// The same three messages apply to the `At` kind (no deadline task needed).
+    #[test]
+    fn typed_when_at_kind_has_same_error_messages() {
+        assert_eq!(typed_when(EditWhen::At, "", None), Err("Pick a time"));
+        assert_eq!(
+            typed_when(EditWhen::At, "noon", None),
+            Err("That is not a time")
+        );
+        assert!(matches!(
+            typed_when(EditWhen::At, "2027-06-01T10:00", None),
+            Ok(When::At(_))
+        ));
     }
 
     /// A task from before `due_tz` existed has no zone: the edit dialog falls back
