@@ -2171,11 +2171,20 @@ svg {
 /* Nothing pops in or out (SPEC-ANSWERS, Interview 4 item 12). Each arrival has a
    physical motion: a row drops in, a sheet rises, a landing unfolds. Only ink and
    Rambo's cut-and-patch fade. Motion is off for prefers-reduced-motion. */
-/* Nothing fades except ink and Rambo's cut-and-patch: arrivals move. A new row
-   falls in from above the list line and settles with a small bounce. */
-@keyframes row-drop {
-  0% { transform: translateY(-28px); }
-  70% { transform: translateY(4px); }
+/* Nothing fades except ink and Rambo's cut-and-patch: arrivals move. Nothing
+   pops: every arrival starts out of sight and grows or slides into view.
+
+   A new row makes room first (its slot opens from zero height, the rows below
+   step down), then its contents fall from above the slot, clipped by the slot,
+   and settle with a 2px bounce. */
+@keyframes row-make-room {
+  from { max-height: 0; overflow: hidden; }
+  to { max-height: 200px; overflow: hidden; }
+}
+
+@keyframes row-fall {
+  0% { transform: translateY(-100%); }
+  80% { transform: translateY(2px); }
   100% { transform: translateY(0); }
 }
 
@@ -2183,23 +2192,23 @@ svg {
   from { transform: scaleY(0); }
 }
 
-/* The gear menu unfolds from the gear, the account block and the overdue tag
-   slide in from their own edge. */
-@keyframes menu-unfold {
-  from { transform: scaleY(0.4); }
+/* The gear menu unfolds from the gear, the account block from its top edge, the
+   overdue tag from its left edge. */
+@keyframes unfold-down {
+  from { transform: scaleY(0); }
 }
 
-@keyframes slide-from-top {
-  from { transform: translateY(-16px); }
-}
-
-@keyframes slide-from-left {
-  from { transform: translateX(-12px); }
+@keyframes unfold-across {
+  from { transform: scaleX(0); }
 }
 
 @media (prefers-reduced-motion: no-preference) {
   li.task-row {
-    animation: row-drop 320ms var(--arrive-ease) backwards;
+    animation: row-make-room 180ms var(--arrive-ease) backwards;
+  }
+
+  li.task-row > * {
+    animation: row-fall 260ms var(--arrive-ease) backwards;
   }
 
   .landing {
@@ -2208,16 +2217,18 @@ svg {
   }
 
   .account {
-    animation: slide-from-top var(--arrive-ms) var(--arrive-ease) backwards;
+    transform-origin: top;
+    animation: unfold-down var(--arrive-ms) var(--arrive-ease) backwards;
   }
 
   .gear-menu {
     transform-origin: top right;
-    animation: menu-unfold var(--arrive-ms) var(--arrive-ease) backwards;
+    animation: unfold-down var(--arrive-ms) var(--arrive-ease) backwards;
   }
 
   .overdue {
-    animation: slide-from-left var(--arrive-ms) var(--arrive-ease) backwards;
+    transform-origin: left;
+    animation: unfold-across var(--arrive-ms) var(--arrive-ease) backwards;
   }
 
   /* The edit sheet is a native dialog, so it can animate in and out: the
