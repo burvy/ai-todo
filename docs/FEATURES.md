@@ -241,7 +241,7 @@ c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/src/mas
 ### 2. Drag, daze, write and return
 a. A drag carries him without listening (a still hold listens), riding just above
 your finger or cursor so it never covers him. Every move he makes from one spot to
-another is a few brisk hops, never a glide. Dropped on the page (not on a task or his nest), Rambo
+another is a few brisk hops, never a glide, and never instant: first he notices, his face reacts, then he goes. Dropped on the page (not on a task or his nest), Rambo
 is dazed: he stays where he landed, tipped over, and does not listen. Dragging a
 dazed Rambo writes on the page in his tool's ink. He hops home on his own
 after 8 seconds untouched, or comes home at once when dropped on his nest, and

@@ -281,6 +281,31 @@ pub fn hops_there(state: &State, settled_home: bool) -> bool {
     }
 }
 
+/// The face he makes in the beat before he sets off (DESIGN-DIRECTION §9, "Rambo
+/// reacts before he moves"), or `None` when going from `before` to `after` sends him
+/// nowhere new. He never moves instantly: every run of hops starts in `rambo.rs`'s
+/// mover, which asks this first and holds the face for `NOTICE_BEAT_MS`.
+pub fn notice(before: &State, after: &State) -> Option<Pose> {
+    match (before, after) {
+        _ if before == after => None,
+        // Landing at the end of a trip is not setting off.
+        (State::Flying | State::Skittering, State::Home) => None,
+        // He comes round from the daze with a start, then runs home.
+        (_, State::Skittering) => Some(Pose::Worried),
+        // Called to write, or going home: he looks up, then goes.
+        (_, State::Home | State::Flying | State::WritingCaret) => Some(Pose::Teasing),
+        _ => None,
+    }
+}
+
+/// How much he perks up `elapsed` ms into the notice beat, as a hop's squash
+/// (negative is stretched): it rises and falls back to nothing, so the hop's crouch
+/// starts from his resting shape.
+pub fn notice_squash(elapsed: u32) -> f64 {
+    let share = (f64::from(elapsed) / f64::from(crate::tuning::NOTICE_BEAT_MS)).clamp(0.0, 1.0);
+    -crate::tuning::NOTICE_PERK * (std::f64::consts::PI * share).sin()
+}
+
 /// Where his centre rides while you hold him at `pointer`: just above it, so your
 /// finger or cursor never covers him. `box_h` is his height on this screen; a
 /// fingertip covers more than a cursor, so a `touch` holds him higher.
@@ -663,6 +688,97 @@ mod tests {
             !hops_there(&State::Home, true),
             "home, he rides the scrolling nest"
         );
+    }
+
+    /// Every state, and every event, the guard tests below walk.
+    fn every_state() -> Vec<State> {
+        vec![
+            State::Home,
+            State::Dragging,
+            State::Dazed,
+            State::Inking,
+            State::Splatting,
+            State::Skittering,
+            State::Asking {
+                task_id: "t1".into(),
+                title: "Lab report".into(),
+            },
+            State::Flying,
+            State::WritingCaret,
+            State::WritingRow,
+        ]
+    }
+
+    fn every_event() -> Vec<Event> {
+        vec![
+            Event::Grab,
+            Event::Release,
+            Event::DropEmpty,
+            Event::DropHard,
+            Event::DropTask {
+                task_id: "t1".into(),
+                title: "Lab report".into(),
+            },
+            Event::DropNest,
+            Event::Return,
+            Event::Choose,
+            Event::Talk,
+            Event::WriteCaret,
+            Event::WriteRow,
+            Event::SkipRow,
+            Event::FlyHome,
+        ]
+    }
+
+    #[test]
+    fn no_move_starts_without_the_notice_beat() {
+        // DESIGN-DIRECTION §9: he never moves instantly. Any change of state that
+        // sets him hopping somewhere new shows a face first; only landing at the
+        // end of a trip does not.
+        for before in every_state() {
+            for event in every_event() {
+                let after = transition(&before, event.clone());
+                let sets_off = after != before
+                    && hops_there(&after, false)
+                    && !matches!(
+                        (&before, &after),
+                        (State::Flying | State::Skittering, State::Home)
+                    );
+                assert_eq!(
+                    notice(&before, &after).is_some(),
+                    sets_off,
+                    "{before:?} --{event:?}--> {after:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn he_reacts_to_what_sends_him() {
+        assert_eq!(
+            notice(&State::Home, &State::WritingCaret),
+            Some(Pose::Teasing)
+        );
+        assert_eq!(
+            notice(&State::WritingRow, &State::Flying),
+            Some(Pose::Teasing)
+        );
+        assert_eq!(
+            notice(&State::Dazed, &State::Skittering),
+            Some(Pose::Worried),
+            "he comes round with a start"
+        );
+        assert_eq!(notice(&State::Flying, &State::Home), None, "he has landed");
+        assert_eq!(notice(&State::Home, &State::Dragging), None, "you move him");
+    }
+
+    #[test]
+    fn the_perk_rises_and_settles_before_the_hop() {
+        let beat = crate::tuning::NOTICE_BEAT_MS;
+        assert_eq!(notice_squash(0), 0.0);
+        assert!(notice_squash(beat / 2) < 0.0, "stretched at the top");
+        assert!(notice_squash(beat).abs() < 1e-9, "back to rest as he hops");
+        assert!(notice_squash(beat * 3).abs() < 1e-9);
     }
 
     #[test]

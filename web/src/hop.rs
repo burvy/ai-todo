@@ -111,7 +111,7 @@ fn squash_at(share: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tuning::{FLY_MS, INK_TICK_MS};
+    use crate::tuning::{FLY_MS, INK_TICK_MS, NOTICE_BEAT_MS};
 
     const NEST: (f64, f64) = (40.0, 40.0);
 
@@ -131,9 +131,10 @@ mod tests {
 
     #[test]
     fn every_run_fits_in_a_flight() {
-        // Callers wait FLY_MS for him to arrive before they start what comes next.
+        // Callers wait FLY_MS for him to arrive before they start what comes next,
+        // and every run starts with his notice beat (`mascot::notice`).
         let far = Hop::plan(NEST, (5000.0, 5000.0)).expect("a long way");
-        assert!(far.ms() <= FLY_MS, "{}ms", far.ms());
+        assert!(NOTICE_BEAT_MS + far.ms() <= FLY_MS, "{}ms", far.ms());
     }
 
     #[test]

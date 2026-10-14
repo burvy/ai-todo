@@ -258,9 +258,9 @@ pub const HOP_MS: u32 = 150;
 /// How far one hop carries him, in px; the way is split into this many-px hops,
 /// rounded up. Safe range 100 to 300.
 pub const HOP_SPAN_PX: f64 = 180.0;
-/// The most hops one move takes, however far: the whole run fits in `FLY_MS`.
-/// Safe range 1 to 4.
-pub const HOP_MAX: u32 = 3;
+/// The most hops one move takes, however far: the notice beat and the whole run
+/// fit in `FLY_MS`. Safe range 1 to 3.
+pub const HOP_MAX: u32 = 2;
 /// Moves shorter than this, in px, are a step, not a hop: the caret moving a
 /// letter, a nudge. Safe range 4 to 30.
 pub const HOP_MIN_PX: f64 = 12.0;
@@ -272,6 +272,16 @@ pub const HOP_RISE: f64 = 0.35;
 /// How much he squashes crouching and landing, and stretches in the air, as a
 /// share of his size. Safe range 0 to 0.25.
 pub const HOP_SQUASH: f64 = 0.14;
+
+/// The beat before he sets off anywhere (DESIGN-DIRECTION §9, "Rambo reacts before
+/// he moves"): he notices, his face changes and he perks up, then he hops
+/// (`mascot::notice`), in ms. Safe range 120 to 250: shorter and the face never
+/// registers; longer leaves too little of `FLY_MS` for the hops, and a capture
+/// waits out `FLY_MS`, so it must never grow to fit the beat.
+pub const NOTICE_BEAT_MS: u32 = 150;
+/// How much he straightens up in that beat, as a share of his size: a stretch, the
+/// opposite of a hop's squash. Safe range 0 to 0.12.
+pub const NOTICE_PERK: f64 = 0.06;
 
 /// How hard the ride spring pulls him after the finger that holds him, in rad/s: it is
 /// critically damped, so he trails the finger by about 1/RIDE_OMEGA s and never swings
@@ -286,7 +296,8 @@ pub const HELD_GAP_TOUCH_PX: f64 = 20.0;
 /// its point. Safe range 0 to 24.
 pub const HELD_GAP_POINTER_PX: f64 = 12.0;
 
-const _: () = assert!(HOP_MS * HOP_MAX <= FLY_MS);
+// The beat and the longest run of hops fit in one flight, which the writing waits out.
+const _: () = assert!(NOTICE_BEAT_MS + HOP_MS * HOP_MAX <= FLY_MS);
 const _: () = assert!(HOP_MIN_PX < HOP_SPAN_PX);
 
 // ---- Rambo writing a new row (UI-BUGS #11, v1's writing)
@@ -295,7 +306,8 @@ const _: () = assert!(HOP_MIN_PX < HOP_SPAN_PX);
 /// so the ink never jumps a letter and the pen never looks stalled. Safe range 8
 /// to 33.
 pub const INK_TICK_MS: u32 = 16;
-/// His flight between two spots (caret, row, home), in ms. Safe range 300 to 700.
+/// His flight between two spots (caret, row, home), in ms: the notice beat, then
+/// his hops. Safe range 300 to 700.
 pub const FLY_MS: u32 = 450;
 /// Quiet time at the capture box after typing stops before he flies home, in ms.
 /// Safe range 800 to 4000.
