@@ -7,6 +7,9 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen::closure::Closure;
 use web_sys::{SpeechRecognition, Window};
 
+/// Said when a session ends without hearing a word.
+pub const NO_SPEECH_NOTE: &str = "No speech was detected.";
+
 /// The one calm note for a page that cannot listen at all — no speech API, or the
 /// page is not secure (a phone on plain-http LAN). Shown instead of an error, while
 /// Rambo keeps his listening pose (docs/DESIGN-DIRECTION.md: no scary errors).
@@ -79,7 +82,7 @@ fn calm_note(code: &str) -> Option<&'static str> {
     match code {
         "not-allowed" | "service-not-allowed" => Some("Microphone permission was denied."),
         "audio-capture" => Some("No microphone was found."),
-        "no-speech" => Some("No speech was detected."),
+        "no-speech" => Some(NO_SPEECH_NOTE),
         "network" => Some("Speech service could not be reached."),
         _ => None,
     }
@@ -172,7 +175,7 @@ impl Session {
         let on_end = Closure::wrap(Box::new(move || {
             machine_for_end.borrow_mut().handle(Event::Ended);
             if !*heard.borrow() {
-                set_error_for_end(Some("No speech was detected.".to_owned()));
+                set_error_for_end(Some(NO_SPEECH_NOTE.to_owned()));
             }
             set_listening_for_end(false);
         }) as Box<dyn FnMut()>);

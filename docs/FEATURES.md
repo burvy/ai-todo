@@ -16,9 +16,10 @@ d. Code: `web/src/capture.rs:CaptureBox, WHISPER_PROMPTS, schedule_whisper`; `we
 `crates/capture/src/pipeline.rs:capture_text, clean_title`.
 
 ### 2. Capture from speech
-a. Picking Rambo up starts speech recognition when the browser supports it; there is no mic button.
-b. Grab Rambo ("Grab Rambo to listen") and speak; the transcription appears in the capture box
-and can be submitted as a task.
+a. Holding Rambo still for a moment (`LISTEN_HOLD_MS`, a long press) starts speech
+recognition when the browser supports it; there is no mic button. A drag only carries him.
+b. Press and hold Rambo ("Grab Rambo to listen") and speak, or press Space or Enter on him;
+the transcription appears in the capture box and is submitted as a task when you let go.
 c. Code: `web/src/capture.rs:CaptureBox`; `web/src/speech.rs:Session, supported`;
 `web/src/api.rs:capture_text`.
 
@@ -98,8 +99,10 @@ g. Code: `web/src/row.rs` (the gesture rules, unit-tested) and its `dom` module
 
 ### 4. Edit through Rambo
 a. Dropping Rambo on a task offers actions: **Edit** opens that task's edit sheet,
-**Done** toggles completion, **×** deletes it, **Move** does nothing yet. Rambo
-listening while the sheet is open (DESIGN-DIRECTION §9) is (planned).
+**Done** toggles completion, **×** deletes it, **Move** does nothing yet. On Edit
+Rambo also listens: say the change ("make it Friday at 3") and the server's revise
+call (Jev) applies it, then the sheet shows the result. A repeating task's sheet
+edits its series, which revise cannot, so he does not listen there.
 b. Drag Rambo onto a task, then choose **Edit**, **Move**, **Done**, or **×**.
 c. Code: `web/src/rambo.rs:Rambo`, which sets `edit_request` for
 `web/src/tasks/mod.rs:TaskList` to open its sheet; `web/src/api.rs:patch_task, delete_task`.
@@ -184,12 +187,12 @@ c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics: `web/assets/theme/pap
 
 ### 1. Talk button
 a. The pen beside the capture box is Rambo's send and talk control.
-b. Click the pen to send, or press and hold it to talk. Only a Rambo resting in
+b. Click the pen to send, or press and hold it still to talk. Only a Rambo resting in
 his nest listens: picked up while dazed (below), he writes instead.
 c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:State, Event, transition`.
 
 ### 2. Drag, daze, write and return
-a. The first drag listens. Dropped on the page (not on a task or his nest), Rambo
+a. A drag carries him without listening (a still hold listens). Dropped on the page (not on a task or his nest), Rambo
 is dazed: he stays where he landed, tipped over, and does not listen. Dragging a
 dazed Rambo writes on the page in his tool's ink. He skitters home on his own
 after 8 seconds untouched, or comes home at once when dropped on his nest, and
