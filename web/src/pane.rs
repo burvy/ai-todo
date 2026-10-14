@@ -60,6 +60,65 @@ pub(crate) fn curl_for(from: u8, nearest: u8) -> Option<bool> {
 mod tests {
     use super::{curl_for, pane_at};
 
+    /// The body of the first rule in `css` whose selector line is exactly `selector`.
+    fn rule<'a>(css: &'a str, selector: &str) -> &'a str {
+        let start = css
+            .find(&format!(
+                "
+{selector} {{"
+            ))
+            .unwrap_or_else(|| panic!("no `{selector}` rule"));
+        let body = &css[start..];
+        &body[..body
+            .find(
+                "
+}",
+            )
+            .expect("the rule ends")]
+    }
+
+    /// BUG-9: `.week` clips its overflow (so the sticky day names stick to
+    /// `.week-scroll`), and a clipped box adds nothing to its parent's scroll width. If
+    /// `.week` is only as wide as the screen, the later days are cut off and cannot be
+    /// scrolled to. It must be at least as wide as its columns on a phone, and may shrink
+    /// to the pane on a wide screen.
+    #[test]
+    fn the_week_is_as_wide_as_its_columns_so_every_day_can_be_scrolled_to() {
+        let css = include_str!("../theme.css");
+        let week = rule(css, ".week");
+        assert!(
+            week.contains("overflow-x: clip"),
+            "the clip is why the width matters"
+        );
+        let width = week
+            .lines()
+            .skip_while(|line| !line.contains("min-width: calc("))
+            .take(3)
+            .collect::<String>();
+        for part in ["--planner-gutter", "--days", "--day-min-w", "--space-1"] {
+            assert!(
+                width.contains(part),
+                "the week's min-width must count {part}: {width}"
+            );
+        }
+        let wide = &css[css
+            .find("@media (min-width: 701px)")
+            .expect("the wide rules")..];
+        assert!(
+            rule(wide, "  .week").contains("min-width: 0"),
+            "wide screens fit the pane"
+        );
+    }
+
+    /// GESTURES FINAL: inside the grid a right swipe scrolls the days back and stops at
+    /// the first day; only a swipe from outside the grid turns the page to the list.
+    #[test]
+    fn a_sideways_swipe_in_the_grid_does_not_turn_the_page() {
+        let css = include_str!("../theme.css");
+        assert!(rule(css, ".week-scroll").contains("overscroll-behavior-x: contain"));
+        assert!(rule(css, "main").contains("scroll-snap-type: x mandatory"));
+    }
+
     #[test]
     fn a_phone_swipe_maps_to_the_nearest_pane() {
         assert_eq!(pane_at(0.0, 400.0), 0);
