@@ -111,7 +111,7 @@ fn has_obligation(lower: &str) -> bool {
 /// news, so a request may only step past an ask on one of these when the verb then
 /// hands the errand on — see `is_action_handed_on`.
 const MENTAL_VERBS: &[&str] = &[
-    "believe", "imagine", "guess", "think", "see", "hear", "feel", "remember", "tell", "know",
+    "believe", "imagine", "guess", "think", "hear", "feel", "remember", "tell", "know",
 ];
 
 /// Words that open a statement, a question or a fragment, never an instruction.
@@ -535,6 +535,9 @@ mod tests {
         for clause in [
             "can you call mom",
             "could you fix the sink",
+            // "see" a shape in the world: a concrete look, not a state of mind
+            // (Mario's review at 8ccee4c caught the regression).
+            "can you see the sink",
             "can you remember to call mom",
             "can you tell mom to call",
             "will you tell her to call",
