@@ -27,6 +27,28 @@
   --rambo-deep: #004552;  /* outline, shaded side, pupils */
   --rambo-tint: #4a939f;  /* highlight stripe, ink tail, bubble rim */
 
+  /* The contract the drawings in web/assets/rambo are drawn against. Each file
+     names a token and falls back to the light value here, so it still looks
+     right opened on its own; the page overrides them from the dark block
+     below. An <img> cannot see these, so the art is shown through <use>.
+     Spec: docs/FRONTEND-PLAN.md FE-2. */
+  --rambo-barrel: var(--rambo);
+  --rambo-cap: var(--accent);
+  --rambo-nib: var(--accent);
+  --rambo-lead: var(--rambo-deep);
+  --rambo-ink: var(--rambo-deep);
+  --rambo-eye: #fcfaf4;    /* the white of an eye: the paper itself */
+  --rambo-pupil: var(--rambo-deep);
+  --rambo-brow: var(--rambo-deep);
+  --rambo-blush: #d08770;  /* pressed in, so it is the same ink in both themes */
+  --rambo-fx: var(--rambo-tint);
+  /* The nest is still the old brown placeholder dish, not the DESIGN-DIRECTION
+     one, so it keeps its own names until Ping redraws it. */
+  --rambo-nest-cap: #9f682e;
+  --rambo-nest-nib: #e1c38c;
+  --rambo-nest-ink: #5d4732;
+  --rambo-nest-fx: #a7865d;
+
   /* Rambo's inks, one per tool in the gear menu: a row he writes with a
      quill is brown, with a ballpoint blue, with a marker heavy black. */
   --ink-pencil: #4a4034;
@@ -114,6 +136,16 @@
   --rambo: #64bbc4;       /* body */
   --rambo-deep: #358e9b;  /* outline, shaded side, pupils */
   --rambo-tint: #a3dde0;  /* highlight stripe, ink tail, bubble rim */
+
+  /* The drawing tokens (web/theme.css :root) lean on the four colours above, so
+     they need no values here. These two are the same ink in either theme, and
+     the nest's four are still the old brown placeholder dish. FE-2. */
+  --rambo-eye: #fcfaf4;
+  --rambo-blush: #d08770;
+  --rambo-nest-cap: #c89b62;
+  --rambo-nest-nib: #e8d9b0;
+  --rambo-nest-ink: #c9ae85;
+  --rambo-nest-fx: #b5976d;
 
   --ink-pencil: #d8cbb4;
   --ink-ballpoint: #9fc0e8;
@@ -524,9 +556,20 @@ a {
   cursor: pointer;
   position: relative;
   flex-shrink: 0;
-  /* The dish is drawn here, on the furniture, so it stays put when Rambo is
-     carried off: he is only the pen. */
-  background: url("assets/rambo/nest.svg") center bottom / contain no-repeat;
+  /* The dish is drawn on the furniture, so it stays put when Rambo is carried
+     off: he is only the pen. */
+}
+
+/* The drawing comes in through <use>, so it takes the page's rambo tokens.
+   It keeps the old bottom anchor and sizing the background-image had. */
+.nest-art {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 100%;
+  height: auto;
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 
 /* The single Rambo button: independent fixed layer above everything.
@@ -563,7 +606,7 @@ a {
   cursor: grabbing;
 }
 
-.rambo img {
+.rambo .rambo-drawing {
   width: 100%;
   height: 100%;
   pointer-events: none;
@@ -585,7 +628,7 @@ a {
   }
 }
 
-.rambo.pose-teasing img {
+.rambo.pose-teasing .rambo-drawing {
   animation: rambo-peek 1.7s ease-in-out infinite;
 }
 
@@ -599,7 +642,7 @@ a {
   }
 }
 
-.rambo.pose-dozing img {
+.rambo.pose-dozing .rambo-drawing {
   animation: rambo-doze 3.6s ease-in-out infinite;
 }
 
@@ -613,7 +656,7 @@ a {
   }
 }
 
-.rambo.pose-happy img {
+.rambo.pose-happy .rambo-drawing {
   animation: rambo-cheer 0.75s ease-in-out 2;
 }
 
@@ -627,11 +670,11 @@ a {
   }
 }
 
-.rambo.pose-sulking img {
+.rambo.pose-sulking .rambo-drawing {
   transform: rotate(-9deg) translateY(6%);
 }
 
-.rambo.pose-worried img {
+.rambo.pose-worried .rambo-drawing {
   animation: rambo-grumble 1.1s ease-in-out infinite;
 }
 
@@ -646,7 +689,8 @@ a {
 }
 
 /* The mood picture beside him: a floating z, sparks, a grumpy scribble cloud.
-   Drawn with currentColor, so it takes the page's ink in light and dark. */
+   Still an <img>: it is drawn with currentColor and carries no theme colour,
+   so it has nothing for the page's tokens to fill in. */
 .rambo img.rambo-fx {
   position: absolute;
   top: -2%;
@@ -654,6 +698,7 @@ a {
   width: 44%;
   height: 44%;
   color: var(--ink-soft);
+  pointer-events: none;
   transform-origin: 50% 100%;
   animation: rambo-fx-float 2.6s ease-in-out infinite;
 }

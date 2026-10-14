@@ -300,9 +300,20 @@ impl Pose {
         }
     }
 
-    /// The drawing of Rambo in this pose, holding this tool.
-    pub fn art(self, pen: Pen) -> String {
+    /// The file this pose's drawing lives in, for every tool.
+    pub fn art_file(self, pen: Pen) -> String {
         format!("assets/rambo/{}/{}.svg", art_folder(pen), self.id())
+    }
+
+    /// How the page shows the drawing: `<svg><use href=...></use></svg>`.
+    ///
+    /// An `<img>` loads the SVG as its own document, so it never sees the
+    /// page's `--rambo-*` tokens and Rambo follows the OS instead of
+    /// `data-theme`. Content pulled in through `<use>` does inherit them, so
+    /// the fragment names the drawing's root group. Spec: docs/FRONTEND-PLAN.md
+    /// FE-2.
+    pub fn art(self, pen: Pen) -> String {
+        format!("{}#art", self.art_file(pen))
     }
 }
 
@@ -421,8 +432,8 @@ pub fn fx_for(state: &State, brain_pose: &str, typing: bool) -> Option<Fx> {
     }
 }
 
-/// The drawing of this tool, in this pose, at this moment: the one path the
-/// page's `<img>` needs.
+/// The drawing of this tool, in this pose, at this moment: the one href the
+/// page's `<svg><use>` needs.
 pub fn art_for(pen: Pen, state: &State, brain_pose: &str, typing: bool) -> String {
     pose_for(state, brain_pose, typing).art(pen)
 }
@@ -637,9 +648,83 @@ mod tests {
     }
 
     #[test]
-    fn every_drawing_defines_every_colour_it_uses() {
-        // The art is shown through <img>, which never sees the page's CSS: a
-        // colour the file uses but does not define itself paints Rambo black.
+    fn every_drawing_is_shown_through_its_art_group() {
+        // An <img> loads the SVG as its own document, so it never sees the
+        // page's --rambo-* tokens and Rambo follows the OS, not data-theme.
+        // Only <use> hands them the page's colours, and only if the href names
+        // the drawing's root group. Every pose, every tool.
+        for (file, href) in every_drawing() {
+            assert!(
+                href == format!("{file}#art"),
+                "{file} is not shown through its art group: {href}"
+            );
+            let svg = std::fs::read_to_string(art_file(&file)).expect("art exists");
+            assert!(
+                svg.contains(r#"id="art""#),
+                "{file} has no group the page can point at"
+            );
+        }
+    }
+
+    #[test]
+    fn no_drawing_follows_the_operating_system() {
+        // A media query in a drawing made Rambo follow the OS while the page
+        // followed the gear menu. Colours belong in the page's tokens.
+        for file in every_svg_in_assets() {
+            let svg = std::fs::read_to_string(&file).expect("asset exists");
+            assert!(
+                !svg.contains("prefers-color-scheme"),
+                "{} still follows the OS",
+                file.display()
+            );
+        }
+    }
+
+    #[test]
+    fn every_colour_in_the_art_is_a_token_with_a_light_fallback() {
+        // The fallback is why a drawing opened on its own still looks right,
+        // and why a token the page forgets paints today's colour and not black.
+        let glint = "rgba(255,255,255,.35)"; // the gloss on the barrel, both themes
+        for (file, _) in every_drawing() {
+            let svg = std::fs::read_to_string(art_file(&file)).expect("art exists");
+            for quoted in ["fill=\"", "stroke=\""]
+                .into_iter()
+                .flat_map(|attribute| svg.split(attribute).skip(1))
+            {
+                let paint = quoted.split('"').next().expect("closes");
+                assert!(
+                    paint == "none" || paint == glint || (paint.starts_with("var(--") && paint.contains(", #")),
+                    "{file} paints {paint:?} outside the token contract"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_token_the_art_names_resolves_in_both_themes() {
+        // The light block defines the tokens; the dark block leans on the four
+        // colours it already overrides. A token left out of either one paints a
+        // light ink on a dark page.
+        let css = include_str!("../theme.css");
+        let (light, dark) = (theme_tokens(css, ":root {"), theme_tokens(css, ":root[data-theme=\"dark\"] {"));
+        for (file, _) in every_drawing() {
+            let svg = std::fs::read_to_string(art_file(&file)).expect("art exists");
+            for token in tokens_used_in(&svg) {
+                assert!(light.contains(&token), "{file} names {token}, the page never defines it");
+                let value = light.get(&token).expect("just checked");
+                for leans_on in tokens_used_in(value) {
+                    assert!(
+                        dark.contains(&leans_on),
+                        "{token} leans on {leans_on}, which the dark theme never defines"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The drawing the page must find for every pose and tool, paired with how
+    /// it is referenced.
+    fn every_drawing() -> Vec<(String, String)> {
         let pens = [
             Pen::FountainPen,
             Pen::Pencil,
@@ -647,39 +732,72 @@ mod tests {
             Pen::Quill,
             Pen::Marker,
         ];
-        for pen in pens {
-            for pose in REACHABLE_POSES {
-                let path = pose.art(pen);
-                let svg = std::fs::read_to_string(art_file(&path)).expect("art exists");
-                // A `<` inside the style block (even in a CSS comment) is a tag
-                // to the XML parser, and the browser then shows no Rambo at all.
-                let style = svg
-                    .split_once("<style>")
-                    .and_then(|(_, rest)| rest.split_once("</style>"))
-                    .map_or("", |(css, _)| css);
-                assert!(
-                    !style.contains('<'),
-                    "{path}: '<' inside <style> breaks the SVG"
-                );
-                for used in svg.split("var(--").skip(1) {
-                    let name = &used[..used.find([')', ',']).expect("var() closes")];
-                    assert!(
-                        svg.contains(&format!("--{name}:")),
-                        "{path} uses --{name} but never defines it"
-                    );
+        pens.iter()
+            .flat_map(|pen| {
+                REACHABLE_POSES
+                    .iter()
+                    .map(move |pose| (pose.art_file(*pen), pose.art(*pen)))
+            })
+            .collect()
+    }
+
+    /// Every `.svg` under `web/assets`, however the page shows it.
+    fn every_svg_in_assets() -> Vec<std::path::PathBuf> {
+        let root = art_file("assets");
+        let mut found = Vec::new();
+        let mut stack = vec![root];
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).expect("assets dir") {
+                let path = entry.expect("entry").path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "svg") {
+                    found.push(path);
                 }
             }
         }
+        found.sort();
+        found
+    }
+
+    /// `--name:` declarations in one top-level block, with what they are set to.
+    fn theme_tokens(css: &str, selector: &str) -> std::collections::HashMap<String, String> {
+        let block = css
+            .split_once(selector)
+            .and_then(|(_, rest)| rest.split_once('{').map(|(_, body)| body))
+            .map_or("", |body| body.split_once("}").map_or(body, |(body, _)| body));
+        block
+            .split(";")
+            .filter_map(|decl| {
+                let (name, value) = decl.trim().split_once(':')?;
+                name.starts_with("--").then(|| {
+                    (
+                        name.trim().to_owned(),
+                        value.split([';', '\n', '/']).next().unwrap_or("").trim().to_owned(),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Every `--name` a piece of CSS or SVG mentions, through `var()`.
+    fn tokens_used_in(text: &str) -> Vec<String> {
+        text.match_indices("var(--")
+            .map(|(at, _)| {
+                let rest = &text[at + 5..];
+                rest[..rest.find([')', ',']).expect("var() closes")].to_owned()
+            })
+            .collect()
     }
 
     #[test]
     fn every_tool_draws_from_its_own_folder() {
         assert_eq!(
-            Pose::Idle.art(Pen::FountainPen),
+            Pose::Idle.art_file(Pen::FountainPen),
             "assets/rambo/fountain/idle.svg"
         );
         assert_eq!(
-            Pose::Writing.art(Pen::Quill),
+            Pose::Writing.art_file(Pen::Quill),
             "assets/rambo/quill/writing.svg"
         );
         // The fountain pen is the one tool whose slug and folder differ.
@@ -710,7 +828,7 @@ mod tests {
             Pen::Marker,
         ] {
             for pose in REACHABLE_POSES {
-                let file = art_file(&pose.art(pen));
+                let file = art_file(&pose.art_file(pen));
                 assert!(file.is_file(), "missing art: {file:?}");
             }
         }

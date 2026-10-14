@@ -280,6 +280,10 @@ pub(crate) fn CaptureBox(
                 class="nest"
                 aria-label="Submit task"
             >
+                // Drawn through <use> so the dish takes the page's rambo tokens.
+                <svg class="nest-art" viewBox="0 0 96 56" aria-hidden="true">
+                    <use href="assets/rambo/nest.svg#art" />
+                </svg>
             </button>
         </form>
     }

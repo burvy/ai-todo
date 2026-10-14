@@ -421,10 +421,12 @@ pub(crate) fn Rambo(
                 }
             }
         >
-            <img
-                src=move || mascot::art_for(pen.get(), &state.get(), &brain_pose.get(), typing.get())
-                alt="Rambo"
-            />
+            // The drawing comes in through <use>, not <img>: only <use> hands it the
+            // page's rambo tokens, so he follows the gear menu and not the OS.
+            // viewBox: every drawing is drawn on the same 64x112 page.
+            <svg class="rambo-drawing" viewBox="0 0 64 112" aria-hidden="true">
+                <use href=move || mascot::art_for(pen.get(), &state.get(), &brain_pose.get(), typing.get()) />
+            </svg>
             // The mood's little picture, when the mood has one and he is home.
             {move || mascot::fx_for(&state.get(), &brain_pose.get(), typing.get()).map(|fx| view! {
                 <img class="rambo-fx" src=fx.art() alt="" aria-hidden="true" />
