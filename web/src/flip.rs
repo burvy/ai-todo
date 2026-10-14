@@ -159,6 +159,15 @@ impl Spring {
     }
 }
 
+/// How far a button's turn has gone at `t` (0 to 1) of its time: nobody holds the page, so
+/// it is lifted and laid down on a fixed time, slow, quick, slow. It is symmetric
+/// (`glide(1 - t) = 1 - glide(t)`), so the turn back is the turn forward played in reverse:
+/// the same leaf through the same poses.
+pub(crate) fn glide(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 /// Where the leaf's free edge is on the screen, in px from the spine, for a page `width`
 /// px wide swung to `angle`, with the viewer `distance` px in front of the spine: the
 /// edge comes toward the viewer as it swings, so it is carried a little outward.
@@ -382,6 +391,40 @@ mod tests {
             fast.step(1.0, SETTLE, 1.0 / 60.0);
         }
         assert!((slow.x - fast.x).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_button_turn_is_slow_at_both_ends_and_never_backwards() {
+        assert!(glide(0.2) < 0.15 && glide(0.8) > 0.85);
+        assert_eq!((glide(0.0), glide(1.0)), (0.0, 1.0));
+        let steps: Vec<f64> = (0..=40).map(|i| glide(f64::from(i) / 40.0)).collect();
+        assert!(steps.windows(2).all(|pair| pair[0] <= pair[1]));
+    }
+
+    /// The back turn is the forward turn in reverse: at every instant the leaf is where
+    /// the forward leaf will be at the mirrored instant.
+    #[test]
+    fn the_turn_back_is_the_turn_forward_played_in_reverse() {
+        let pose = |turn: Turn, t: f64| {
+            let (from, to) = (
+                turn.open_after(Settle::SpringBack),
+                turn.open_after(Settle::Complete),
+            );
+            from + (to - from) * glide(t)
+        };
+        assert_eq!(pose(Turn::Forward, 0.0), 0.0);
+        assert_eq!(
+            pose(Turn::Back, 0.0),
+            1.0,
+            "back starts where forward ended"
+        );
+        for step in 0..=20 {
+            let t = f64::from(step) / 20.0;
+            assert!(
+                (pose(Turn::Back, t) - pose(Turn::Forward, 1.0 - t)).abs() < 1e-12,
+                "at {t}"
+            );
+        }
     }
 
     #[test]

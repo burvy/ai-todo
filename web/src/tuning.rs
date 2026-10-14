@@ -192,9 +192,6 @@ pub const FLIP_FINISH_OMEGA: f64 = 14.0;
 /// no rebound; lower swings). Safe range 12 to 20, and 0.4 to 0.8.
 pub const FLIP_FALL_OMEGA: f64 = 16.0;
 pub const FLIP_FALL_DAMPING: f64 = 0.55;
-/// How quickly a button's turn goes: nobody holds the page, so it is unhurried. Safe range
-/// 7 to 12.
-pub const FLIP_BUTTON_OMEGA: f64 = 9.0;
 /// How much of its speed the leaf keeps when it meets the table or the spine. Safe range
 /// 0.4 to 0.8.
 pub const FLIP_WALL_BOUNCE: f64 = 0.65;

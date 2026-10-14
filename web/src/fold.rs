@@ -49,21 +49,40 @@ pub(crate) enum Turn {
     /// The list turns away to the planner: the corner is on the right edge and the
     /// finger travels left.
     Forward,
-    /// The planner turns back to the list: the corner is on the left edge and the
-    /// finger travels right.
+    /// The list turns back from the planner: the forward turn in reverse. The same leaf
+    /// and the same corner, so the finger travels right and the fold unwinds.
     Back,
 }
 
 impl Turn {
-    /// The pane that turns, 0 for the list and 1 for the planner.
+    /// The pane that turns: always the list, 0, forward or back.
     pub(crate) fn turning_pane(self) -> u8 {
-        match self {
-            Turn::Forward => 0,
-            Turn::Back => 1,
-        }
+        0
     }
     pub(crate) fn revealed_pane(self) -> u8 {
-        1 - self.turning_pane()
+        1
+    }
+    /// Where the corner's drag starts and where it ends when the turn completes, along
+    /// the page's width `w` (the corner's drag is 0 with the page flat and `-full * w`
+    /// with it turned right over). Back runs from the one to the other.
+    pub(crate) fn start_drag(self, w: f64, full: f64) -> f64 {
+        match self {
+            Turn::Forward => 0.0,
+            Turn::Back => -full * w,
+        }
+    }
+    pub(crate) fn end_drag(self, w: f64, full: f64) -> f64 {
+        match self {
+            Turn::Forward => -full * w,
+            Turn::Back => 0.0,
+        }
+    }
+    /// The pane showing once the turn has ended.
+    pub(crate) fn lands_on(self, outcome: Settle) -> u8 {
+        match (self, outcome) {
+            (Turn::Forward, Settle::Complete) | (Turn::Back, Settle::SpringBack) => 1,
+            (Turn::Forward, Settle::SpringBack) | (Turn::Back, Settle::Complete) => 0,
+        }
     }
     /// +1 when a finger moving right helps the turn, -1 when moving left does.
     pub(crate) fn inward(self) -> f64 {
@@ -76,7 +95,7 @@ impl Turn {
 
 /// Which turn a press that has travelled `dx`, `dy` is asking for, once it has left
 /// the slop and is more sideways than up or down: a left swipe on the list, a right
-/// swipe on the planner. Any other swipe is not a page turn.
+/// swipe on the planner (which brings the list back). Any other swipe is not a page turn.
 pub(crate) fn turn_for(pane: u8, dx: f64, dy: f64) -> Option<Turn> {
     if dx.hypot(dy) < BEND_SLOP_PX || dx.abs() <= dy.abs() {
         return None;
@@ -550,6 +569,26 @@ mod tests {
     }
 
     #[test]
+    fn the_turn_back_runs_the_forward_turn_the_other_way() {
+        let (w, full) = (W, 2.05);
+        assert_eq!(
+            Turn::Back.start_drag(w, full),
+            Turn::Forward.end_drag(w, full)
+        );
+        assert_eq!(
+            Turn::Back.end_drag(w, full),
+            Turn::Forward.start_drag(w, full)
+        );
+        for turn in [Turn::Forward, Turn::Back] {
+            assert_eq!((turn.turning_pane(), turn.revealed_pane()), (0, 1));
+        }
+        assert_eq!(Turn::Forward.lands_on(Settle::Complete), 1);
+        assert_eq!(Turn::Forward.lands_on(Settle::SpringBack), 0);
+        assert_eq!(Turn::Back.lands_on(Settle::Complete), 0);
+        assert_eq!(Turn::Back.lands_on(Settle::SpringBack), 1);
+    }
+
+    #[test]
     fn each_turn_names_the_pane_that_turns_and_the_one_it_shows() {
         assert_eq!(
             (Turn::Forward.turning_pane(), Turn::Forward.revealed_pane()),
@@ -557,7 +596,8 @@ mod tests {
         );
         assert_eq!(
             (Turn::Back.turning_pane(), Turn::Back.revealed_pane()),
-            (1, 0)
+            (0, 1),
+            "the list is the leaf both ways"
         );
         assert_eq!((Turn::Forward.inward(), Turn::Back.inward()), (-1.0, 1.0));
     }

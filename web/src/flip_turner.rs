@@ -51,19 +51,13 @@ mod imp {
     use std::rc::Rc;
 
     use leptos::prelude::*;
-    use web_sys::Element;
 
     use crate::flip::{self, Pull, Settle, Spring, Turn};
     use crate::tuning::{
-        FLIP_BUTTON_OMEGA, FLIP_FALL_DAMPING, FLIP_FALL_OMEGA, FLIP_FINISH_OMEGA, FLIP_PERSPECTIVE,
+        BEND_BUTTON_MS, FLIP_FALL_DAMPING, FLIP_FALL_OMEGA, FLIP_FINISH_OMEGA, FLIP_PERSPECTIVE,
     };
-    use crate::turn_util::{el_style, element_of, now, phone, show_pane};
+    use crate::turn_util::{el_style, element_of, may_turn_from, now, phone, show_pane};
 
-    /// Presses that start here are not page turns: they have their own scroll or swipe.
-    const OWN_GESTURE: &str = ".task-dialog, .tack-board, input, textarea, select, .paper-picker";
-    /// Things on the planner's grid that a press picks up or taps, so it is not empty
-    /// paper.
-    const ON_THE_GRID: &str = ".placement, .landing";
     /// Reduced motion slides the page: a quick settle with no swing to it.
     const SLIDE_PULL: Pull = Pull {
         omega: 30.0,
@@ -95,15 +89,27 @@ mod imp {
         slide: bool,
     }
 
-    /// The leaf let go: it moves on its spring toward `target`, then the turn ends.
+    /// How the leaf moves once nobody holds it.
+    #[derive(Clone, Copy)]
+    enum Motion {
+        /// Let go of: it carries on at its speed on a spring toward `target`.
+        Spring {
+            spring: Spring,
+            target: f64,
+            pull: Pull,
+        },
+        /// A button's turn on a fixed time, `from` to `to`: the same poses forward and back.
+        Glide { from: f64, to: f64, ms: f64 },
+    }
+
+    /// The leaf let go, until the turn ends.
     #[derive(Clone, Copy)]
     struct Flight {
         stage: Stage,
-        spring: Spring,
-        target: f64,
-        pull: Pull,
+        motion: Motion,
         outcome: Settle,
-        /// Time of the last frame, in ms.
+        /// When the flight began and when the last frame was drawn, in ms.
+        began: f64,
         last: f64,
     }
 
@@ -129,21 +135,6 @@ mod imp {
 
     #[derive(Clone)]
     pub(crate) struct Turner(Rc<Inner>);
-
-    /// Whether a press landed where it may start a page turn. The planner's grid is
-    /// the planner's own to scroll, except on its earliest day: there nothing is left to
-    /// scroll the way a back swipe goes, and a press on empty paper turns the page.
-    fn may_turn_from(target: &Element) -> bool {
-        if target.closest(OWN_GESTURE).ok().flatten().is_some() {
-            return false;
-        }
-        match target.closest(".week-scroll").ok().flatten() {
-            None => true,
-            Some(grid) => {
-                grid.scroll_left() <= 1 && target.closest(ON_THE_GRID).ok().flatten().is_none()
-            }
-        }
-    }
 
     impl Turner {
         pub(crate) fn new(
@@ -262,20 +253,28 @@ mod imp {
                 return;
             };
             *self.0.phase.borrow_mut() = Phase::Settling;
-            let pull = if stage.slide {
-                SLIDE_PULL
+            let (from, to) = (
+                turn.open_after(Settle::SpringBack),
+                turn.open_after(Settle::Complete),
+            );
+            let motion = if stage.slide {
+                Motion::Spring {
+                    spring: Spring::new(from, 0.0),
+                    target: to,
+                    pull: SLIDE_PULL,
+                }
             } else {
-                Pull {
-                    omega: FLIP_BUTTON_OMEGA,
-                    zeta: 1.0,
+                Motion::Glide {
+                    from,
+                    to,
+                    ms: f64::from(BEND_BUTTON_MS),
                 }
             };
             self.run(Flight {
                 stage,
-                spring: Spring::new(turn.open_after(Settle::SpringBack), 0.0),
-                target: turn.open_after(Settle::Complete),
-                pull,
+                motion,
                 outcome: Settle::Complete,
+                began: 0.0,
                 last: 0.0,
             });
         }
@@ -314,10 +313,13 @@ mod imp {
                     let speed = stage.turn.open_dir() * finger * 1000.0 / stage.w;
                     self.run(Flight {
                         stage,
-                        spring: Spring::new(stage.turn.open_at(reach / stage.w), speed),
-                        target: stage.turn.open_after(outcome),
-                        pull,
+                        motion: Motion::Spring {
+                            spring: Spring::new(stage.turn.open_at(reach / stage.w), speed),
+                            target: stage.turn.open_after(outcome),
+                            pull,
+                        },
                         outcome,
+                        began: 0.0,
                         last: 0.0,
                     });
                 }
@@ -401,20 +403,34 @@ mod imp {
 
         /// Steps the leaf's spring each frame, then ends the turn when it comes to rest.
         fn run(&self, flight: Flight) {
+            let t = now();
             self.frame(Flight {
-                last: now(),
+                began: t,
+                last: t,
                 ..flight
             });
         }
 
         fn frame(&self, mut flight: Flight) {
             let t = now();
-            flight
-                .spring
-                .step(flight.target, flight.pull, (t - flight.last) / 1000.0);
+            let done = match &mut flight.motion {
+                Motion::Spring {
+                    spring,
+                    target,
+                    pull,
+                } => {
+                    spring.step(*target, *pull, (t - flight.last) / 1000.0);
+                    self.draw(&flight.stage, spring.x);
+                    spring.at_rest(*target)
+                }
+                Motion::Glide { from, to, ms } => {
+                    let share = ((t - flight.began) / *ms).clamp(0.0, 1.0);
+                    self.draw(&flight.stage, *from + (*to - *from) * flip::glide(share));
+                    share >= 1.0
+                }
+            };
             flight.last = t;
-            self.draw(&flight.stage, flight.spring.x);
-            if flight.spring.at_rest(flight.target) {
+            if done {
                 self.end(&flight.stage, flight.outcome);
             } else {
                 let this = self.clone();

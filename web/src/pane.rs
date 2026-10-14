@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn a_sideways_swipe_in_the_grid_does_not_turn_the_page() {
         let css = include_str!("../theme.css");
-        assert!(rule(css, ".week-scroll").contains("overscroll-behavior-x: contain"));
+        assert!(rule(css, ".week-scroll").contains("overscroll-behavior-x: none"));
         let main = rule(css, "main");
         assert!(
             !main.contains("scroll-snap"),

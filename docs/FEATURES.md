@@ -113,11 +113,11 @@ Page turn; `Fast` is the corner bend below): swipe left
 on the list, or swipe right on the planner (outside its grid, or on empty paper while the
 grid is at its earliest day), or press a pane button. The list is the leaf: forward, its
 right edge lifts toward you and swings over the spine, and the planner shows beneath;
-back, it swings in from the spine and lands on the planner. The edge keeps pace with the
+back is the same leaf coming back: it swings in from the spine and lies down again over the
+planner, the forward turn played in reverse (the same poses, in the opposite order). The edge keeps pace with the
 finger, the leaf darkens as it turns away, and it throws a shadow on the page under it
 (black in light and dark). Letting go past a share of the width or in a flick finishes
-the turn; short of that the leaf falls back and rebounds a little. A button's turn is
-eased in and out. While a turn runs the pane tabs do not move. With reduced motion it
+the turn; short of that the leaf falls back and rebounds a little. A button's turn runs on a fixed time, slow, quick, slow, the same both ways. While a turn runs the pane tabs do not move. With reduced motion it
 slides. Geometry, the leaf's spring and decisions: `web/src/flip.rs` (tested); browser
 side: `web/src/flip_turner.rs`; numbers in `web/src/tuning.rs` (`FLIP_*`), looks in
 `web/theme.css` `--flip-*` and `.flip-*`. The leaf moves on a spring with a speed of its own,
@@ -126,8 +126,11 @@ so a flick carries on at the speed of the finger. The two pages lie stacked in o
 row between them. The gear's **Page turn** setting picks `Realistic` (this) or `Fast`, the
 older corner bend (`web/src/fold.rs`, `fold_turner.rs`, `--bend-*`): swipe the corner and
 the page folds along the line halfway to the finger. `web/src/turner.rs` picks one for each
-gesture. On the earliest day the grid takes `touch-action: pan-y pan-right`, so a
-swipe to the right is the page's and a swipe to the left still scrolls the days.
+gesture; in `Fast` too the list is the only leaf and back is the fold run the other way.
+The pages fill the screen edge to edge on a phone (safe areas are page padding). On the
+earliest day the grid takes `touch-action: pan-y pan-right` and `overscroll-behavior-x:
+none`, so a swipe to the right is the page's (never the grid stretching) and a swipe to
+the left still scrolls the days.
 f. Rows for series occurrences are not reorderable: a drag that starts or lands
 on one does nothing (occurrences share the series' row, not a slot of their own —
 ARCHITECTURE.md 7.1 lists reordering them as out of scope). A slip dropped where

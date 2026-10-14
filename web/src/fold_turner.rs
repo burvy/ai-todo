@@ -58,11 +58,7 @@ mod imp {
         BEND_FULL_TURN, BEND_LIFT, BEND_LIFT_CAP, BEND_SHADOW_FAR_PX, BEND_SHADOW_NEAR_PX,
         BEND_SLIDE_MS, BEND_SPRING_MS,
     };
-    use crate::turn_util::{el_style, now, phone, show_pane};
-
-    /// Presses that start here are not page turns: they have their own scroll or swipe.
-    const OWN_GESTURE: &str =
-        ".week-scroll, .task-dialog, .tack-board, input, textarea, select, .paper-picker";
+    use crate::turn_util::{el_style, element_of, may_turn_from, now, phone, show_pane};
 
     /// Where the page turn is.
     enum Phase {
@@ -99,6 +95,10 @@ mod imp {
         /// share of the page's height: a finger's, or a button's lower one.
         lift: (f64, f64),
         turn: Turn,
+        /// The corner's drag where the turn starts and where it completes: flat and turned
+        /// over, one way forward and the other way back.
+        start: Pt,
+        end: Pt,
         /// Reduced motion: slide the page instead of bending it.
         slide: bool,
     }
@@ -189,11 +189,7 @@ mod imp {
             if !matches!(*self.0.phase.borrow(), Phase::Idle) || !ev.is_primary() || !phone() {
                 return;
             }
-            let own = ev
-                .target()
-                .and_then(|target| target.dyn_into::<Element>().ok())
-                .is_some_and(|el| el.closest(OWN_GESTURE).ok().flatten().is_some());
-            if own {
+            if !element_of(ev).is_some_and(|target| may_turn_from(&target)) {
                 return;
             }
             *self.0.phase.borrow_mut() = Phase::Pressed {
@@ -242,9 +238,14 @@ mod imp {
                     }
                 }
                 Phase::Dragging(drag) if drag.id == ev.pointer_id() => {
-                    let raw = Pt::new(x - drag.origin.x, y - drag.origin.y);
+                    let start = drag.stage.start;
+                    let raw = Pt::new(start.x + x - drag.origin.x, start.y + y - drag.origin.y);
                     drag.drag = fold::limited(raw, drag.stage.w, BEND_FULL_TURN);
-                    let reach = drag.drag.x * drag.stage.turn.inward();
+                    if drag.stage.turn == Turn::Back {
+                        // The leaf cannot be unwound past flat.
+                        drag.drag.x = drag.drag.x.min(0.0);
+                    }
+                    let reach = (drag.drag.x - start.x) * drag.stage.turn.inward();
                     let t = now();
                     if t > drag.at {
                         drag.velocity = (reach - drag.reach) / (t - drag.at);
@@ -293,8 +294,8 @@ mod imp {
             };
             self.run(Flight {
                 stage,
-                from: Pt::new(0.0, 0.0),
-                to: self.finish_drag(&stage),
+                from: stage.start,
+                to: stage.end,
                 ms: f64::from(ms),
                 outcome: Settle::Complete,
                 ease: Ease::InOut,
@@ -324,7 +325,7 @@ mod imp {
                     drop(phase);
                     let (to, ms) = match outcome {
                         Settle::Complete => (
-                            self.finish_drag(&stage),
+                            stage.end,
                             if stage.slide {
                                 BEND_SLIDE_MS
                             } else {
@@ -332,7 +333,7 @@ mod imp {
                             },
                         ),
                         Settle::SpringBack => (
-                            Pt::new(0.0, 0.0),
+                            stage.start,
                             if stage.slide {
                                 BEND_SLIDE_MS
                             } else {
@@ -359,16 +360,13 @@ mod imp {
             }
         }
 
-        /// Where the corner ends up when the page is turned right over: far enough that
-        /// nothing of the page is left.
-        fn finish_drag(&self, stage: &Stage) -> Pt {
-            Pt::new(stage.turn.inward() * BEND_FULL_TURN * stage.w, 0.0)
-        }
-
         /// Stacks the panes for a turn and takes hold of the corner nearest `finger`.
         fn begin(&self, turn: Turn, grip: Grip) -> Option<Drag> {
             let main = self.0.main.get()?;
             let fx = self.0.fx.get()?;
+            // Both pages show while a turn is on, so the page measured is the same one
+            // whichever way the turn goes.
+            let _ = main.class_list().add_1("bending");
             let panes = main.children();
             let front = panes.item(u32::from(turn.turning_pane()))?;
             let under = panes.item(u32::from(turn.revealed_pane()))?;
@@ -384,7 +382,6 @@ mod imp {
                 (-rect.top()).max(0.0),
                 (view_h - rect.top()).min(rect.height()),
             );
-            let _ = main.class_list().add_1("bending");
             let _ = front.class_list().add_1("bend-front");
             let _ = under.class_list().add_1("bend-under");
             // Nothing below the screen is seen during a turn, so the turning page is cut
@@ -397,26 +394,35 @@ mod imp {
                 Grip::Button => Pt::new(0.0, 0.0),
             };
             let low = matches!(grip, Grip::Button) || finger.y - rect.top() > (top + bottom) / 2.0;
-            let corner = Pt::new(
-                if turn == Turn::Forward { w } else { 0.0 },
-                if low { bottom.min(h) } else { top },
+            // The corner is the right one both ways: the back turn is the forward turn run
+            // the other way, so it is the same leaf with the same corner.
+            let corner = Pt::new(w, if low { bottom.min(h) } else { top });
+            let (start, end) = (
+                Pt::new(turn.start_drag(w, BEND_FULL_TURN), 0.0),
+                Pt::new(turn.end_drag(w, BEND_FULL_TURN), 0.0),
             );
+            let stage = Stage {
+                w,
+                h,
+                corner,
+                low,
+                lift: match grip {
+                    Grip::Finger(_) => (BEND_LIFT, BEND_LIFT_CAP),
+                    Grip::Button => (BEND_BUTTON_LIFT, BEND_BUTTON_LIFT_CAP),
+                },
+                turn,
+                start,
+                end,
+                slide: crate::mascot::prefers_reduced_motion(),
+            };
+            // The back turn starts with the leaf turned right over: put it there before the
+            // first frame, or the list would cover the planner for a moment.
+            self.draw(&stage, start);
             Some(Drag {
                 id: 0,
-                stage: Stage {
-                    w,
-                    h,
-                    corner,
-                    low,
-                    lift: match grip {
-                        Grip::Finger(_) => (BEND_LIFT, BEND_LIFT_CAP),
-                        Grip::Button => (BEND_BUTTON_LIFT, BEND_BUTTON_LIFT_CAP),
-                    },
-                    turn,
-                    slide: crate::mascot::prefers_reduced_motion(),
-                },
+                stage,
                 origin: finger,
-                drag: Pt::new(0.0, 0.0),
+                drag: start,
                 at: now(),
                 reach: 0.0,
                 velocity: 0.0,
@@ -520,12 +526,8 @@ mod imp {
                 el_style(&fx, "visibility", "hidden");
             }
             *self.0.parts.borrow_mut() = None;
-            let shown = match outcome {
-                Settle::Complete => stage.turn.revealed_pane(),
-                Settle::SpringBack => stage.turn.turning_pane(),
-            };
             if let Some(main) = self.0.main.get() {
-                show_pane(&main, shown, self.0.set_pane);
+                show_pane(&main, stage.turn.lands_on(outcome), self.0.set_pane);
             }
             *self.0.phase.borrow_mut() = Phase::Idle;
         }

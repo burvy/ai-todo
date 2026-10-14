@@ -1202,11 +1202,10 @@ li.task-row:focus-within .delete-mark {
      edge, the week columns slide sideways under it on a narrow screen. */
   overflow-x: auto;
   overscroll-behavior: contain;
-  /* Sideways it must not chain (GESTURES FINAL): a swipe right inside the grid
-     scrolls the days back and stops at the first day; only a swipe that starts
-     outside the grid (the heading, the margins) reaches main's snap scroll and
-     turns back to the list. */
-  overscroll-behavior-x: contain;
+  /* Sideways it neither chains nor stretches: a swipe right inside the grid scrolls the
+     days back and stops at the first day, with no bounce; at the first day the swipe is
+     the page's and turns back to the list (`.at-earliest`, below). */
+  overscroll-behavior-x: none;
   /* Hide the scrollbar but keep scrolling: swipes already scroll the grid (#300). */
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -1601,11 +1600,27 @@ li.task-row:focus-within .delete-mark {
    Each page is as tall as the screen above the capture bar, so the note sits at that foot,
    and the page's own content stops short of it. A desk shows both pages and hides it. */
 @media (max-width: 700px) {
+  /* The pages and the turn fill the screen edge to edge: no body margin above or at the
+     sides, and the device's safe areas (notch, rounded corners) become the page's own
+     padding, so the turning sheet is the whole screen. */
+  :root {
+    --page-top: 0px;
+  }
+
+  body {
+    padding-top: 0;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
   main > * {
     box-sizing: border-box;
     align-content: start;
     min-height: calc(100dvh - var(--page-top) - var(--capture-clear));
+    padding-top: calc(var(--gutter) + env(safe-area-inset-top, 0px));
+    padding-right: calc(var(--gutter) + env(safe-area-inset-right, 0px));
     padding-bottom: var(--page-foot-h);
+    padding-left: calc(var(--gutter) + env(safe-area-inset-left, 0px));
   }
 }
 
