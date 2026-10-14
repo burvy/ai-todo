@@ -5,17 +5,32 @@ pub mod admin_web;
 pub mod app;
 pub mod auth;
 pub mod backup;
+pub mod csp;
 pub mod http;
 pub mod ics_export;
 pub mod ics_import;
 pub mod store;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use todo_core::SystemClock;
 
 use app::App;
 use store::{SqliteStore, Store};
+
+/// Locking that survives a panic elsewhere. A panic while a lock is held poisons the
+/// mutex, and `lock().unwrap()` would then panic on every later request until a restart.
+/// What the lock guards is a database handle and an app whose truth lives in the
+/// database, so carrying on is safe.
+pub trait LockExt<T> {
+    fn lock_recover(&self) -> MutexGuard<'_, T>;
+}
+
+impl<T> LockExt<T> for Mutex<T> {
+    fn lock_recover(&self) -> MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
 
 /// Starts the daily database backup and the expiry of idle anonymous accounts that
 /// follows it. Call once from the server's `main`, never from code that tests run.

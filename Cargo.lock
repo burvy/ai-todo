@@ -2138,6 +2138,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "capture",
  "chrono",
  "chrono-tz",
@@ -2152,6 +2153,7 @@ dependencies = [
  "scheduler",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "todo-core",
  "tokio",

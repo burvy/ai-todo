@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use todo_core::{ApiError, ErrorCode, Snapshot, Task, TaskDraft};
 use uuid::Uuid;
 
+use super::LockExt;
 use super::admin_web;
 use super::app::{self, App, ImportResult, Patch};
 use super::auth::{self, TokenVerifier};
@@ -69,6 +70,9 @@ pub struct Caps {
     pub paid: u32,
     /// New anonymous ids one client address may be issued per day.
     pub anon_ids_per_ip: u32,
+    /// Sign-in attempts one client address may make per day. Each one costs a request
+    /// to Google, and nothing else limits a caller who has no account yet.
+    pub signins_per_ip: u32,
 }
 
 impl Caps {
@@ -79,6 +83,7 @@ impl Caps {
             free: env_number("RAMBL_JEV_DAILY_CAP", DEFAULT_JEV_DAILY_CAP),
             paid: env_number("RAMBL_JEV_DAILY_CAP_PAID", DEFAULT_PAID_JEV_DAILY_CAP),
             anon_ids_per_ip: env_number("RAMBL_ANON_IDS_PER_IP", DEFAULT_ANON_IDS_PER_IP),
+            signins_per_ip: env_number("RAMBL_SIGNINS_PER_IP", DEFAULT_SIGNINS_PER_IP),
         }
     }
 
@@ -116,7 +121,7 @@ impl CurrentUser {
         if headers.contains_key(axum::http::header::AUTHORIZATION) {
             let token = auth::bearer(headers)
                 .ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
-            let app = shared.app.lock().expect("app mutex");
+            let app = shared.app.lock_recover();
             let user = auth::session_user(app.store(), &token, Utc::now())
                 .map_err(HttpError::from)?
                 .ok_or_else(|| unauthorized("that session has expired"))?;
@@ -126,7 +131,7 @@ impl CurrentUser {
             .get(&ANON_HEADER)
             .and_then(|value| value.to_str().ok())
             .filter(|value| valid_anon_id(value));
-        let app = shared.app.lock().expect("app mutex");
+        let app = shared.app.lock_recover();
         match anonymous {
             Some(id) if app.store().anonymous_exists(id).map_err(store_failed)? => {
                 // A visit keeps the id alive; see `Store::touch_anonymous`.
@@ -306,6 +311,8 @@ pub const DEFAULT_PAID_JEV_DAILY_CAP: u32 = 1000;
 pub const DEFAULT_ANON_JEV_DAILY_CAP: u32 = 30;
 /// Anonymous ids one client address may be issued per day.
 pub const DEFAULT_ANON_IDS_PER_IP: u32 = 20;
+/// Sign-in attempts one client address may make per day.
+pub const DEFAULT_SIGNINS_PER_IP: u32 = 60;
 
 impl Default for Caps {
     fn default() -> Self {
@@ -314,6 +321,7 @@ impl Default for Caps {
             free: DEFAULT_JEV_DAILY_CAP,
             paid: DEFAULT_PAID_JEV_DAILY_CAP,
             anon_ids_per_ip: DEFAULT_ANON_IDS_PER_IP,
+            signins_per_ip: DEFAULT_SIGNINS_PER_IP,
         }
     }
 }
@@ -438,13 +446,13 @@ async fn assign_anonymous_id(
 }
 
 fn issued_anonymous_id(shared: &Shared, id: &str) -> bool {
-    let app = shared.app.lock().expect("app mutex");
+    let app = shared.app.lock_recover();
     app.store().anonymous_exists(id).unwrap_or(false)
 }
 
 /// A new anonymous id, unless this client address has used up its allowance today.
 fn issue_anonymous_id(shared: &Shared, ip: &str) -> Result<String, HttpError> {
-    let app = shared.app.lock().expect("app mutex");
+    let app = shared.app.lock_recover();
     let today = app.now().date_naive();
     let issued = app
         .store()
@@ -611,6 +619,12 @@ async fn sign_in_google(
         .and_then(|value| value.to_str().ok())
         .filter(|value| valid_anon_id(value))
         .map(str::to_owned);
+    let ip = client_ip(
+        request.headers(),
+        peer_ip(&request),
+        &shared.trusted_proxies,
+    );
+    check_sign_in_allowance(&shared, &ip)?;
     let Json(body): Json<SignInIn> = Json::from_request(request, &())
         .await
         .map_err(bad_request)?;
@@ -621,10 +635,28 @@ async fn sign_in_google(
         .verify(&body.credential)
         .await
         .map_err(HttpError::from)?;
-    let app = shared.app.lock().expect("app mutex");
+    let app = shared.app.lock_recover();
     let session = auth::open_session(app.store(), &info, app.now(), anonymous.as_deref())
         .map_err(HttpError::from)?;
     Ok(Json(session))
+}
+
+/// Count this attempt against the address's daily allowance, before Google is asked.
+///
+/// Kept in the same table as the anonymous-id allowance under a `signin:` prefix, so
+/// it survives a restart and is pruned with the rest of the day counts.
+fn check_sign_in_allowance(shared: &Shared, ip: &str) -> Result<(), HttpError> {
+    let app = shared.app.lock_recover();
+    let attempts = app
+        .store()
+        .record_anon_issued(&format!("signin:{ip}"), app.now().date_naive())
+        .map_err(store_failed)?;
+    if attempts > shared.caps.signins_per_ip {
+        return Err(unauthorized(
+            "too many sign-in attempts from this address today; try again tomorrow",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -640,7 +672,7 @@ async fn sign_out(
     if !shared.local {
         let token = auth::bearer(&headers)
             .ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
-        let app = shared.app.lock().expect("app mutex");
+        let app = shared.app.lock_recover();
         auth::sign_out(app.store(), &token).map_err(HttpError::from)?;
     }
     Ok(StatusCode::NO_CONTENT)
@@ -665,7 +697,7 @@ async fn me(
     }
     let token =
         auth::bearer(&headers).ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
-    let app = shared.app.lock().expect("app mutex");
+    let app = shared.app.lock_recover();
     let user = auth::session_user(app.store(), &token, Utc::now())
         .map_err(HttpError::from)?
         .ok_or_else(|| unauthorized("that session has expired"))?;
@@ -678,7 +710,7 @@ async fn delete_me(
     headers: HeaderMap,
 ) -> Result<StatusCode, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
-    let app = shared.app.lock().expect("app mutex");
+    let app = shared.app.lock_recover();
     auth::delete_user(app.store(), &user).map_err(HttpError::from)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -688,7 +720,7 @@ async fn delete_me(
 /// announce itself.
 fn admin_of(headers: &HeaderMap, shared: &Shared) -> Result<auth::Me, HttpError> {
     let token = auth::bearer(headers).ok_or_else(admin_404)?;
-    let app = shared.app.lock().expect("app mutex");
+    let app = shared.app.lock_recover();
     let user = auth::session_user(app.store(), &token, Utc::now())
         .map_err(HttpError::from)?
         .ok_or_else(admin_404)?;
@@ -717,14 +749,20 @@ fn admin_404() -> HttpError {
 async fn admin_page(
     State(shared): State<Arc<Shared>>,
     headers: HeaderMap,
-) -> Result<Html<&'static str>, HttpError> {
+) -> Result<([(HeaderName, String); 1], Html<&'static str>), HttpError> {
     if shared.admin_emails.is_none() {
         return Err(admin_404());
     }
     if auth::bearer(&headers).is_some() {
         admin_of(&headers, &shared)?;
     }
-    Ok(Html(admin_web::PAGE))
+    Ok((
+        [(
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            super::csp::for_html(admin_web::PAGE),
+        )],
+        Html(admin_web::PAGE),
+    ))
 }
 
 /// `GET /api/v1/admin/usage`: today's captures by user (with plan) and address,
@@ -734,7 +772,7 @@ async fn admin_usage(
     headers: HeaderMap,
 ) -> Result<Json<admin_web::UsageOut>, HttpError> {
     admin_of(&headers, &shared)?;
-    let app = shared.app.lock().expect("app mutex");
+    let app = shared.app.lock_recover();
     Ok(Json(
         admin_web::usage(app.store(), app.now().date_naive()).map_err(store_failed)?,
     ))
@@ -746,7 +784,7 @@ async fn admin_blocks(
     headers: HeaderMap,
 ) -> Result<Json<Vec<admin_web::BlockOut>>, HttpError> {
     admin_of(&headers, &shared)?;
-    let app = shared.app.lock().expect("app mutex");
+    let app = shared.app.lock_recover();
     Ok(Json(admin_web::blocks(app.store()).map_err(store_failed)?))
 }
 
@@ -775,7 +813,7 @@ async fn admin_block(
     Json(body): Json<BlockIn>,
 ) -> Result<Json<AdminOut>, HttpError> {
     admin_of(&headers, &shared)?;
-    let app = shared.app.lock().expect("app mutex");
+    let app = shared.app.lock_recover();
     let message = admin_web::block(app.store(), &body.kind, &body.value).map_err(bad_request)?;
     Ok(Json(AdminOut { message }))
 }
@@ -787,7 +825,7 @@ async fn admin_unblock(
     Json(body): Json<BlockIn>,
 ) -> Result<Json<AdminOut>, HttpError> {
     admin_of(&headers, &shared)?;
-    let app = shared.app.lock().expect("app mutex");
+    let app = shared.app.lock_recover();
     let message = admin_web::unblock(app.store(), &body.kind, &body.value).map_err(bad_request)?;
     Ok(Json(AdminOut { message }))
 }
@@ -799,7 +837,7 @@ async fn admin_set_plan(
     Json(body): Json<PlanIn>,
 ) -> Result<Json<AdminOut>, HttpError> {
     admin_of(&headers, &shared)?;
-    let app = shared.app.lock().expect("app mutex");
+    let app = shared.app.lock_recover();
     let message = admin_web::set_plan(app.store(), &body.who, &body.plan).map_err(bad_request)?;
     Ok(Json(AdminOut { message }))
 }
@@ -813,7 +851,7 @@ async fn snapshot(
 ) -> Result<Json<Snapshot>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let app = shared.app.lock().unwrap();
+    let app = shared.app.lock_recover();
     let today = app.now().with_timezone(&tz).date_naive();
     let from = match window.from {
         Some(from) => from,
@@ -846,7 +884,7 @@ async fn create(
 ) -> Result<Json<Snapshot>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let mut app = shared.app.lock().unwrap();
+    let mut app = shared.app.lock_recover();
     Ok(Json(app.create(draft, &user, tz)?))
 }
 
@@ -858,7 +896,7 @@ async fn update(
 ) -> Result<Json<Snapshot>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let mut app = shared.app.lock().unwrap();
+    let mut app = shared.app.lock_recover();
     Ok(Json(app.patch(&id, patch, &user, tz)?))
 }
 
@@ -869,7 +907,7 @@ async fn remove(
 ) -> Result<Json<Snapshot>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let mut app = shared.app.lock().unwrap();
+    let mut app = shared.app.lock_recover();
     Ok(Json(app.delete(&id, &user, tz)?))
 }
 
@@ -881,7 +919,7 @@ async fn create_series(
 ) -> Result<Json<Snapshot>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let mut app = shared.app.lock().unwrap();
+    let mut app = shared.app.lock_recover();
     Ok(Json(app.create_series(draft, &user, tz)?))
 }
 
@@ -894,7 +932,7 @@ async fn update_series(
 ) -> Result<Json<Snapshot>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let mut app = shared.app.lock().unwrap();
+    let mut app = shared.app.lock_recover();
     Ok(Json(app.update_series(&id, patch, &user, tz)?))
 }
 
@@ -906,7 +944,7 @@ async fn remove_series(
 ) -> Result<Json<Snapshot>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let mut app = shared.app.lock().unwrap();
+    let mut app = shared.app.lock_recover();
     Ok(Json(app.delete_series(&id, &user, tz)?))
 }
 
@@ -920,7 +958,7 @@ async fn patch_occurrence(
 ) -> Result<Json<Snapshot>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let mut app = shared.app.lock().unwrap();
+    let mut app = shared.app.lock_recover();
     Ok(Json(app.patch_occurrence(&id, date, body, &user, tz)?))
 }
 
@@ -933,7 +971,7 @@ async fn clear_occurrence(
 ) -> Result<Json<Snapshot>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let mut app = shared.app.lock().unwrap();
+    let mut app = shared.app.lock_recover();
     Ok(Json(app.clear_occurrence(&id, date, &user, tz)?))
 }
 
@@ -971,7 +1009,7 @@ async fn import(
             ics_text.ok_or_else(|| bad_request("send the calendar as multipart field `file`"))?;
         let calendar =
             ics_import::parse_calendar(&ics_text).map_err(|error| bad_request(error.0))?;
-        let mut app = shared.app.lock().unwrap();
+        let mut app = shared.app.lock_recover();
         return Ok(Json(app.import(calendar, &user, tz)?));
     }
 
@@ -1022,7 +1060,7 @@ async fn import(
     }
 
     // All valid — now write them.
-    let app = shared.app.lock().unwrap();
+    let app = shared.app.lock_recover();
     let now = app.now();
     let tasks = app.store().tasks(&user).map_err(store_failed)?;
     app::check_room(tasks.len(), import_in.tasks.len())?;
@@ -1041,7 +1079,7 @@ async fn import(
         // Clear external_uid — this is not a calendar import.
         task.external_uid = None;
 
-        let app = shared.app.lock().unwrap();
+        let app = shared.app.lock_recover();
         app.store().put(&user, task).map_err(|e| {
             HttpError(ApiError {
                 code: ErrorCode::Internal,
@@ -1051,7 +1089,7 @@ async fn import(
         created.push(new_id);
     }
 
-    let app = shared.app.lock().unwrap();
+    let app = shared.app.lock_recover();
     let snapshot = app.snapshot(&user, tz)?;
     Ok(Json(ImportResult {
         created,
@@ -1081,7 +1119,7 @@ async fn reorder(
 ) -> Result<Json<Snapshot>, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let mut app = shared.app.lock().unwrap();
+    let mut app = shared.app.lock_recover();
     Ok(Json(app.reorder(&body.ids, &user, tz)?))
 }
 
@@ -1118,16 +1156,16 @@ async fn capture(
     let tz = zone(request.headers())?;
     let (text, source, anchor) = read_capture(request).await?;
     check_capture_size(&text)?;
-    let now = anchor.unwrap_or_else(|| shared.app.lock().unwrap().now());
+    let now = anchor.unwrap_or_else(|| shared.app.lock_recover().now());
     let ctx = LocalContext { now, tz };
     let plan = if headers.contains_key(axum::http::header::AUTHORIZATION) {
-        let app = shared.app.lock().expect("app mutex");
+        let app = shared.app.lock_recover();
         app.store().user_plan(&user).map_err(store_failed)?
     } else {
         auth::Plan::Anon
     };
     let jev_fallback = {
-        let app = shared.app.lock().expect("app mutex");
+        let app = shared.app.lock_recover();
         let store = app.store();
         let day = now.date_naive();
         let blocked = store.is_blocked(&user, &ip).map_err(store_failed)?;
@@ -1149,7 +1187,7 @@ async fn capture(
             .await
             .map_err(upstream)?
     };
-    let mut app = shared.app.lock().unwrap();
+    let mut app = shared.app.lock_recover();
     let (created, snapshot) = app.add_drafts(drafts, &user, tz)?;
     Ok(Json(CaptureOut {
         created,
@@ -1253,14 +1291,14 @@ async fn revise_task(
         return Err(bad_request("instruction is required"));
     }
     let (title, now) = {
-        let app = shared.app.lock().unwrap();
+        let app = shared.app.lock_recover();
         (app.title_of(&user, &id)?, app.now())
     };
     let ctx = LocalContext { now, tz };
     let revision: Revision = capture::revise(&shared.judge, &title, &instruction, &ctx)
         .await
         .map_err(upstream)?;
-    let mut app = shared.app.lock().unwrap();
+    let mut app = shared.app.lock_recover();
     Ok(Json(app.apply_revision(
         &id,
         &revision,
@@ -1277,7 +1315,7 @@ async fn calendar_ics(
 ) -> Result<([(HeaderName, &'static str); 1], String), HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let snapshot = shared.app.lock().unwrap().snapshot(&user, tz)?;
+    let snapshot = shared.app.lock_recover().snapshot(&user, tz)?;
     Ok((
         [(
             axum::http::header::CONTENT_TYPE,
@@ -1308,7 +1346,7 @@ async fn export(
 ) -> Result<Response, HttpError> {
     let user = CurrentUser::resolve(&headers, &shared)?;
     let tz = zone(&headers)?;
-    let app = shared.app.lock().unwrap();
+    let app = shared.app.lock_recover();
     // `App::tasks`, not `snapshot`: a download has no plan in it, and planning
     // a list twice the size of what is written out is work nobody asked for.
     let tasks = app.tasks(&user)?;
@@ -4359,6 +4397,42 @@ mod tests {
 
     /// The tunnel's socket on this machine, the peer production requests arrive on.
     const TUNNEL: &str = "127.0.0.1:41234";
+
+    /// Sign-in asks Google each time, so an address gets a daily number of attempts.
+    #[tokio::test]
+    async fn sign_in_attempts_are_limited_per_address() {
+        let router = router_with_caps(
+            MemoryStore::default(),
+            Caps {
+                signins_per_ip: 2,
+                ..Caps::default()
+            },
+        );
+        let attempt = |ip: &'static str| {
+            let router = router.clone();
+            async move {
+                call_from(
+                    &router,
+                    "POST",
+                    "/api/v1/auth/google",
+                    Some(r#"{"credential":"x"}"#),
+                    &[("cf-connecting-ip", ip)],
+                    Some(TUNNEL),
+                )
+                .await
+                .0
+            }
+        };
+        for _ in 0..2 {
+            assert_eq!(attempt("203.0.113.7").await, StatusCode::BAD_REQUEST);
+        }
+        assert_eq!(attempt("203.0.113.7").await, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            attempt("203.0.113.8").await,
+            StatusCode::BAD_REQUEST,
+            "another address has its own allowance"
+        );
+    }
 
     /// Past the per-address allowance, a client gets no new anonymous id.
     #[tokio::test]

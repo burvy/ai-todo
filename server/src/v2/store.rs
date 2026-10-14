@@ -11,6 +11,7 @@
 use std::path::Path;
 use std::sync::Mutex;
 
+use super::LockExt;
 use chrono::{DateTime, Duration, NaiveDate, NaiveTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use todo_core::{
@@ -40,7 +41,7 @@ pub fn data_path_from_env() -> std::path::PathBuf {
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
@@ -54,6 +55,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_7,
     MIGRATION_8,
     MIGRATION_9,
+    MIGRATION_10,
 ];
 
 const MIGRATION_1: &str = "
@@ -202,6 +204,36 @@ CREATE TABLE IF NOT EXISTS v2_usage_totals (
     calls  INTEGER NOT NULL DEFAULT 0
 );
 ";
+
+/// Session tokens are stored hashed. The rows already there are hashed in Rust, right
+/// after this runs (`hash_plain_sessions`), because SQLite has no SHA-256 of its own.
+const MIGRATION_10: &str = "SELECT 1;";
+
+/// What is stored for a session token: its SHA-256 in hex. A copy of the database, or of
+/// a backup, then holds nothing that works as a login.
+fn hash_token(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(token.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Hash every session token still stored as issued. Tokens are 32 hex characters and
+/// hashes are 64, so a row already done is never hashed twice.
+fn hash_plain_sessions(conn: &Connection) -> rusqlite::Result<()> {
+    let plain: Vec<String> = conn
+        .prepare("SELECT token FROM v2_sessions WHERE length(token) = 32")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for token in plain {
+        conn.execute(
+            "UPDATE v2_sessions SET token = ?1 WHERE token = ?2",
+            params![hash_token(&token), token],
+        )?;
+    }
+    Ok(())
+}
 
 /// Every column of `v2_tasks`, in one list.
 ///
@@ -598,8 +630,7 @@ impl Store for MemoryStore {
     fn tasks(&self, user: &str) -> Result<Vec<Task>, StoreError> {
         let mut stored: Vec<Task> = self
             .tasks
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .iter()
             .filter(|(owner, _)| owner == user)
             .map(|(_, task)| task.clone())
@@ -614,7 +645,7 @@ impl Store for MemoryStore {
     }
 
     fn put(&self, user: &str, task: Task) -> Result<(), StoreError> {
-        let mut stored = self.tasks.lock().expect("memory store mutex");
+        let mut stored = self.tasks.lock_recover();
         if stored
             .iter()
             .any(|(owner, other)| owner != user && other.id == task.id)
@@ -652,8 +683,7 @@ impl Store for MemoryStore {
         }
         Ok(self
             .users
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .iter()
             .find(|held| held.id == user)
             .map(|held| held.plan)
@@ -661,7 +691,7 @@ impl Store for MemoryStore {
     }
 
     fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError> {
-        let mut users = self.users.lock().expect("memory store mutex");
+        let mut users = self.users.lock_recover();
         let Some(found) = users.iter_mut().find(|held| held.id == user) else {
             return Err(StoreError::NotFound);
         };
@@ -672,19 +702,15 @@ impl Store for MemoryStore {
     fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
         Ok(self
             .users
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .iter()
             .any(|held| held.id == user && held.plan == super::auth::Plan::Anon))
     }
 
     fn ensure_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
-        let mut users = self.users.lock().expect("memory store mutex");
+        let mut users = self.users.lock_recover();
         if !users.iter().any(|held| held.id == user) {
-            self.activity
-                .lock()
-                .expect("memory store mutex")
-                .insert(user.to_owned(), now);
+            self.activity.lock_recover().insert(user.to_owned(), now);
             users.push(super::auth::Me {
                 id: user.to_owned(),
                 email: String::new(),
@@ -697,11 +723,7 @@ impl Store for MemoryStore {
     }
 
     fn touch_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
-        if let Some(seen) = self
-            .activity
-            .lock()
-            .expect("memory store mutex")
-            .get_mut(user)
+        if let Some(seen) = self.activity.lock_recover().get_mut(user)
             && *seen < now - ACTIVITY_THROTTLE
         {
             *seen = now;
@@ -710,7 +732,7 @@ impl Store for MemoryStore {
     }
 
     fn expire_anonymous(&self, cutoff: DateTime<Utc>) -> Result<usize, StoreError> {
-        let mut activity = self.activity.lock().expect("memory store mutex");
+        let mut activity = self.activity.lock_recover();
         let gone: Vec<String> = activity
             .iter()
             .filter(|(_, seen)| **seen <= cutoff)
@@ -720,35 +742,31 @@ impl Store for MemoryStore {
             activity.remove(user);
         }
         self.tasks
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .retain(|(owner, _)| !gone.contains(owner));
         // The series go with them: nothing cascades here either, so leaving them would
         // keep a dead visitor's routines with nobody left who could see them.
         self.series
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .retain(|(owner, _)| !gone.contains(owner));
         self.exceptions
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .retain(|(owner, _, _)| !gone.contains(owner));
         self.users
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .retain(|held| !gone.contains(&held.id));
         Ok(gone.len())
     }
 
     fn delete(&self, user: &str, id: &TaskId) -> Result<bool, StoreError> {
-        let mut stored = self.tasks.lock().expect("memory store mutex");
+        let mut stored = self.tasks.lock_recover();
         let before = stored.len();
         stored.retain(|(owner, task)| !(owner == user && &task.id == id));
         Ok(stored.len() != before)
     }
 
     fn set_order(&self, user: &str, ids: &[TaskId]) -> Result<(), StoreError> {
-        let mut stored = self.tasks.lock().expect("memory store mutex");
+        let mut stored = self.tasks.lock_recover();
         for (position, id) in ids.iter().enumerate() {
             if let Some((_, task)) = stored
                 .iter_mut()
@@ -763,8 +781,7 @@ impl Store for MemoryStore {
     fn find_by_uid(&self, user: &str, uid: &str) -> Result<Option<Task>, StoreError> {
         Ok(self
             .tasks
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .iter()
             .find(|(owner, task)| owner == user && task.external_uid.as_deref() == Some(uid))
             .map(|(_, task)| task.clone()))
@@ -773,8 +790,7 @@ impl Store for MemoryStore {
     fn series(&self, user: &str) -> Result<Vec<Series>, StoreError> {
         let mut held: Vec<Series> = self
             .series
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .iter()
             .filter(|(owner, _)| owner == user)
             .map(|(_, series)| series.clone())
@@ -789,7 +805,7 @@ impl Store for MemoryStore {
     }
 
     fn put_series(&self, user: &str, series: Series) -> Result<(), StoreError> {
-        let mut held = self.series.lock().expect("memory store mutex");
+        let mut held = self.series.lock_recover();
         if held
             .iter()
             .any(|(owner, other)| owner != user && other.id == series.id)
@@ -810,14 +826,13 @@ impl Store for MemoryStore {
     }
 
     fn delete_series(&self, user: &str, id: &SeriesId) -> Result<bool, StoreError> {
-        let mut held = self.series.lock().expect("memory store mutex");
+        let mut held = self.series.lock_recover();
         let before = held.len();
         held.retain(|(owner, series)| !(owner == user && &series.id == id));
         let removed = held.len() != before;
         if removed {
             self.exceptions
-                .lock()
-                .expect("memory store mutex")
+                .lock_recover()
                 .retain(|(owner, series, _)| !(owner == user && series == id));
         }
         Ok(removed)
@@ -826,8 +841,7 @@ impl Store for MemoryStore {
     fn exceptions(&self, user: &str, id: &SeriesId) -> Result<Vec<SeriesException>, StoreError> {
         let mut held: Vec<SeriesException> = self
             .exceptions
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .iter()
             .filter(|(owner, series, _)| owner == user && series == id)
             .map(|(_, _, exception)| exception.clone())
@@ -842,7 +856,7 @@ impl Store for MemoryStore {
         id: &SeriesId,
         exception: SeriesException,
     ) -> Result<(), StoreError> {
-        let mut held = self.exceptions.lock().expect("memory store mutex");
+        let mut held = self.exceptions.lock_recover();
         match held.iter_mut().find(|(owner, series, held)| {
             owner == user && series == id && held.date == exception.date
         }) {
@@ -858,7 +872,7 @@ impl Store for MemoryStore {
         id: &SeriesId,
         date: NaiveDate,
     ) -> Result<bool, StoreError> {
-        let mut held = self.exceptions.lock().expect("memory store mutex");
+        let mut held = self.exceptions.lock_recover();
         let before = held.len();
         held.retain(|(owner, series, exception)| {
             !(owner == user && series == id && exception.date == date)
@@ -872,7 +886,7 @@ impl Store for MemoryStore {
         token: &str,
         expires_at: chrono::DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let mut users = self.users.lock().expect("memory store mutex");
+        let mut users = self.users.lock_recover();
         match users.iter_mut().find(|held| held.id == user.id) {
             // A returning sign-in keeps the plan the database already holds.
             Some(existing) => {
@@ -883,18 +897,15 @@ impl Store for MemoryStore {
             None => users.push(user.clone()),
         }
         drop(users);
-        self.sessions.lock().expect("memory store mutex").push((
-            token.to_owned(),
-            user.id.clone(),
-            expires_at,
-        ));
+        self.sessions
+            .lock_recover()
+            .push((token.to_owned(), user.id.clone(), expires_at));
         Ok(())
     }
 
     fn delete_session(&self, token: &str) -> Result<(), StoreError> {
         self.sessions
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .retain(|(held, _, _)| held != token);
         Ok(())
     }
@@ -904,7 +915,7 @@ impl Store for MemoryStore {
         token: &str,
         now: chrono::DateTime<Utc>,
     ) -> Result<Option<super::auth::Me>, StoreError> {
-        let sessions = self.sessions.lock().expect("memory store mutex");
+        let sessions = self.sessions.lock_recover();
         let Some((_, user_id, _expires_at)) = sessions
             .iter()
             .find(|(held, _, expires_at)| held == token && *expires_at > now)
@@ -915,33 +926,23 @@ impl Store for MemoryStore {
         drop(sessions);
         Ok(self
             .users
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .iter()
             .find(|user| user.id == user_id)
             .cloned())
     }
 
     fn delete_user(&self, user: &str) -> Result<(), StoreError> {
-        self.tasks
-            .lock()
-            .expect("memory store mutex")
-            .retain(|(owner, _)| owner != user);
+        self.tasks.lock_recover().retain(|(owner, _)| owner != user);
         self.series
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .retain(|(owner, _)| owner != user);
         self.exceptions
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .retain(|(owner, _, _)| owner != user);
-        self.users
-            .lock()
-            .expect("memory store mutex")
-            .retain(|held| held.id != user);
+        self.users.lock_recover().retain(|held| held.id != user);
         self.sessions
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .retain(|(_, owner, _)| owner != user);
         Ok(())
     }
@@ -949,25 +950,21 @@ impl Store for MemoryStore {
     fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
         Ok(self
             .captures
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .iter()
             .filter(|(owner, _, when)| owner == user && *when == day)
             .count() as u32)
     }
 
     fn record_capture(&self, user: &str, ip: &str, day: NaiveDate) -> Result<(), StoreError> {
-        self.captures.lock().expect("memory store mutex").push((
-            user.to_owned(),
-            ip.to_owned(),
-            day,
-        ));
+        self.captures
+            .lock_recover()
+            .push((user.to_owned(), ip.to_owned(), day));
         // The all-time total, which the per-day counts cannot answer for once they
         // are pruned away.
         *self
             .usage_totals
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .entry(user.to_owned())
             .or_default() += 1;
         Ok(())
@@ -976,15 +973,14 @@ impl Store for MemoryStore {
     fn ip_captures_today(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError> {
         Ok(self
             .captures
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .iter()
             .filter(|(_, from, when)| from == ip && *when == day)
             .count() as u32)
     }
 
     fn record_anon_issued(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError> {
-        let mut issued = self.anon_issued.lock().expect("memory store mutex");
+        let mut issued = self.anon_issued.lock_recover();
         issued.push((ip.to_owned(), day));
         Ok(issued
             .iter()
@@ -993,7 +989,7 @@ impl Store for MemoryStore {
     }
 
     fn block(&self, target: &Block) -> Result<(), StoreError> {
-        let mut blocks = self.blocks.lock().expect("memory store mutex");
+        let mut blocks = self.blocks.lock_recover();
         if !blocks.contains(target) {
             blocks.push(target.clone());
         }
@@ -1001,7 +997,7 @@ impl Store for MemoryStore {
     }
 
     fn unblock(&self, target: &Block) -> Result<bool, StoreError> {
-        let mut blocks = self.blocks.lock().expect("memory store mutex");
+        let mut blocks = self.blocks.lock_recover();
         let before = blocks.len();
         blocks.retain(|held| held != target);
         Ok(blocks.len() != before)
@@ -1010,18 +1006,17 @@ impl Store for MemoryStore {
     fn is_blocked(&self, user: &str, ip: &str) -> Result<bool, StoreError> {
         Ok(self
             .blocks
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .iter()
             .any(|held| *held == Block::User(user.into()) || *held == Block::Ip(ip.into())))
     }
 
     fn blocks(&self) -> Result<Vec<Block>, StoreError> {
-        Ok(self.blocks.lock().expect("memory store mutex").clone())
+        Ok(self.blocks.lock_recover().clone())
     }
 
     fn usage_today(&self, day: NaiveDate, top: usize) -> Result<Usage, StoreError> {
-        let captures = self.captures.lock().expect("memory store mutex");
+        let captures = self.captures.lock_recover();
         let today = captures.iter().filter(|(_, _, when)| *when == day);
         Ok(Usage {
             users: top_counts(today.clone().map(|(user, _, _)| user.as_str()), top),
@@ -1033,13 +1028,12 @@ impl Store for MemoryStore {
         let mut calls: Vec<(String, u32)> = match order {
             UsageOrder::AllTime => self
                 .usage_totals
-                .lock()
-                .expect("memory store mutex")
+                .lock_recover()
                 .iter()
                 .map(|(user, calls)| (user.clone(), *calls))
                 .collect(),
             UsageOrder::Day(day) => {
-                let captures = self.captures.lock().expect("memory store mutex");
+                let captures = self.captures.lock_recover();
                 let mut counted: std::collections::HashMap<&str, u32> =
                     std::collections::HashMap::new();
                 for (user, _, _when) in captures.iter().filter(|(_, _, _when)| *_when == day) {
@@ -1054,7 +1048,7 @@ impl Store for MemoryStore {
         // Most spend first, then by id, so equal spend has one order on every store.
         calls.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         calls.truncate(top);
-        let users = self.users.lock().expect("memory store mutex");
+        let users = self.users.lock_recover();
         calls
             .into_iter()
             .map(|(user, calls)| {
@@ -1073,25 +1067,18 @@ impl Store for MemoryStore {
     fn is_user_blocked(&self, user: &str) -> Result<bool, StoreError> {
         Ok(self
             .blocks
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .contains(&Block::User(user.to_owned())))
     }
 
     fn account_exists(&self, user: &str) -> Result<bool, StoreError> {
-        Ok(self
-            .users
-            .lock()
-            .expect("memory store mutex")
-            .iter()
-            .any(|held| held.id == user))
+        Ok(self.users.lock_recover().iter().any(|held| held.id == user))
     }
 
     fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {
         Ok(self
             .users
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .iter()
             .find(|held| held.plan != super::auth::Plan::Anon && held.email == email)
             .map(|held| held.id.clone()))
@@ -1102,10 +1089,9 @@ impl Store for MemoryStore {
             return Ok(());
         }
         self.users
-            .lock()
-            .expect("memory store mutex")
+            .lock_recover()
             .retain(|held| held.id != anonymous);
-        let mut stored = self.tasks.lock().expect("memory store mutex");
+        let mut stored = self.tasks.lock_recover();
         let existing_uids: std::collections::HashSet<_> = stored
             .iter()
             .filter(|(owner, _)| owner == user)
@@ -1129,7 +1115,7 @@ impl Store for MemoryStore {
         });
         stored.extend(moved.into_iter().map(|task| (user.to_owned(), task)));
         drop(stored);
-        let mut series = self.series.lock().expect("memory store mutex");
+        let mut series = self.series.lock_recover();
         let moved_series: Vec<Series> = series
             .iter()
             .filter(|(owner, _)| owner == anonymous)
@@ -1137,7 +1123,7 @@ impl Store for MemoryStore {
             .collect();
         series.retain(|(owner, _)| owner != anonymous);
         drop(series);
-        let mut exceptions = self.exceptions.lock().expect("memory store mutex");
+        let mut exceptions = self.exceptions.lock_recover();
         let moved_exceptions: Vec<(SeriesId, SeriesException)> = exceptions
             .iter()
             .filter(|(owner, _, _)| owner == anonymous)
@@ -1203,7 +1189,7 @@ impl SqliteStore {
     /// Bring the schema up to [`SCHEMA_VERSION`]. Runs on every open; it is a
     /// no-op once the file is current.
     fn migrate(&self) -> Result<(), StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(|e| StoreError::Backend(e.to_string()))?;
@@ -1221,6 +1207,9 @@ impl SqliteStore {
             tx.execute_batch(statement)
                 .map_err(|e| StoreError::Backend(e.to_string()))?;
         }
+        if version < 10 {
+            hash_plain_sessions(&tx).map_err(|e| StoreError::Backend(e.to_string()))?;
+        }
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)
             .map_err(|e| StoreError::Backend(e.to_string()))?;
         tx.commit().map_err(|e| StoreError::Backend(e.to_string()))
@@ -1230,8 +1219,7 @@ impl SqliteStore {
     #[cfg(test)]
     fn count(&self) -> i64 {
         self.conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row("SELECT COUNT(*) FROM v2_tasks", [], |row| row.get(0))
             .expect("count")
     }
@@ -1239,7 +1227,7 @@ impl SqliteStore {
 
 impl Store for SqliteStore {
     fn tasks(&self, user: &str) -> Result<Vec<Task>, StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         let mut stmt = conn
             .prepare(&format!(
                 "SELECT {TASK_COLUMNS} FROM v2_tasks WHERE user_id = ?1 \
@@ -1257,7 +1245,7 @@ impl Store for SqliteStore {
 
     fn put(&self, user: &str, task: Task) -> Result<(), StoreError> {
         let (when_kind, when_time) = when_to_parts(task.when);
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         // The id is unique across every user, so an id already held by someone else is
         // refused, not taken over: the `WHERE` makes that upsert change nothing.
         let written = conn
@@ -1312,8 +1300,7 @@ impl Store for SqliteStore {
     fn delete(&self, user: &str, id: &TaskId) -> Result<bool, StoreError> {
         let removed = self
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .execute(
                 "DELETE FROM v2_tasks WHERE id = ?1 AND user_id = ?2",
                 params![id.0, user],
@@ -1323,7 +1310,7 @@ impl Store for SqliteStore {
     }
 
     fn set_order(&self, user: &str, ids: &[TaskId]) -> Result<(), StoreError> {
-        let mut conn = self.conn.lock().expect("db mutex");
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction().map_err(backend)?;
         {
             let mut stmt = tx
@@ -1338,7 +1325,7 @@ impl Store for SqliteStore {
     }
 
     fn find_by_uid(&self, user: &str, uid: &str) -> Result<Option<Task>, StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         let mut stmt = conn
             .prepare(&format!(
                 "SELECT {TASK_COLUMNS} FROM v2_tasks WHERE external_uid = ?1 AND user_id = ?2"
@@ -1352,7 +1339,7 @@ impl Store for SqliteStore {
     }
 
     fn series(&self, user: &str) -> Result<Vec<Series>, StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         let mut stmt = conn
             .prepare(
                 "SELECT id, title, duration_min, weekdays, until, start_day, time_of_day, zone, \
@@ -1371,7 +1358,7 @@ impl Store for SqliteStore {
     }
 
     fn put_series(&self, user: &str, series: Series) -> Result<(), StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         // Same ownership rule as `put`: an id held by someone else is refused,
         // never taken over.
         let written = conn
@@ -1417,7 +1404,7 @@ impl Store for SqliteStore {
     }
 
     fn delete_series(&self, user: &str, id: &SeriesId) -> Result<bool, StoreError> {
-        let mut conn = self.conn.lock().expect("db mutex");
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction().map_err(backend)?;
         let removed = tx
             .execute(
@@ -1435,7 +1422,7 @@ impl Store for SqliteStore {
     }
 
     fn exceptions(&self, user: &str, id: &SeriesId) -> Result<Vec<SeriesException>, StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         let mut stmt = conn
             .prepare(
                 "SELECT date, kind, moved_when, moved_tz FROM v2_series_exceptions \
@@ -1460,8 +1447,7 @@ impl Store for SqliteStore {
     ) -> Result<(), StoreError> {
         let (kind, moved_when, moved_tz) = exception_to_parts(&exception.kind);
         self.conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .execute(
                 "INSERT INTO v2_series_exceptions (series_id, user_id, date, kind, moved_when, moved_tz) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
@@ -1490,8 +1476,7 @@ impl Store for SqliteStore {
     ) -> Result<bool, StoreError> {
         let removed = self
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .execute(
                 "DELETE FROM v2_series_exceptions \
                  WHERE user_id = ?1 AND series_id = ?2 AND date = ?3",
@@ -1507,7 +1492,7 @@ impl Store for SqliteStore {
         token: &str,
         expires_at: chrono::DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        let mut conn = self.conn.lock().expect("db mutex");
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction().map_err(backend)?;
         // First sign-in creates the user, later ones refresh the name and picture, so
         // a rename at Google reaches the app.
@@ -1529,7 +1514,12 @@ impl Store for SqliteStore {
         tx.execute(
             "INSERT INTO v2_sessions (token, user_id, expires_at, created_at) \
              VALUES (?1, ?2, ?3, ?4)",
-            params![token, user.id, format_ts(expires_at), format_ts(Utc::now())],
+            params![
+                hash_token(token),
+                user.id,
+                format_ts(expires_at),
+                format_ts(Utc::now())
+            ],
         )
         .map_err(backend)?;
         tx.commit().map_err(backend)
@@ -1537,9 +1527,11 @@ impl Store for SqliteStore {
 
     fn delete_session(&self, token: &str) -> Result<(), StoreError> {
         self.conn
-            .lock()
-            .expect("db mutex")
-            .execute("DELETE FROM v2_sessions WHERE token = ?1", params![token])
+            .lock_recover()
+            .execute(
+                "DELETE FROM v2_sessions WHERE token = ?1",
+                params![hash_token(token)],
+            )
             .map_err(backend)?;
         Ok(())
     }
@@ -1549,7 +1541,7 @@ impl Store for SqliteStore {
         token: &str,
         now: chrono::DateTime<Utc>,
     ) -> Result<Option<super::auth::Me>, StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         let mut stmt = conn
             .prepare(
                 "SELECT v2_users.id, v2_users.email, v2_users.name, v2_users.picture, v2_users.plan \
@@ -1558,7 +1550,7 @@ impl Store for SqliteStore {
             )
             .map_err(backend)?;
         let mut rows = stmt
-            .query(params![token, format_ts(now)])
+            .query(params![hash_token(token), format_ts(now)])
             .map_err(backend)?;
         let Some(row) = rows.next().map_err(backend)? else {
             return Ok(None);
@@ -1573,7 +1565,7 @@ impl Store for SqliteStore {
     }
 
     fn delete_user(&self, user: &str) -> Result<(), StoreError> {
-        let mut conn = self.conn.lock().expect("db mutex");
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction().map_err(backend)?;
         // Tasks go first: SQLite cannot cascade here because user_id is a column
         // added by migration with a default, not a declared constraint.
@@ -1596,8 +1588,7 @@ impl Store for SqliteStore {
     fn captures_today(&self, user: &str, day: chrono::NaiveDate) -> Result<u32, StoreError> {
         let count: i64 = self
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row(
                 "SELECT COALESCE(SUM(n), 0) FROM v2_capture_counts WHERE user_id = ?1 AND day = ?2",
                 params![user, day.to_string()],
@@ -1608,7 +1599,7 @@ impl Store for SqliteStore {
     }
 
     fn record_capture(&self, user: &str, ip: &str, day: NaiveDate) -> Result<(), StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         conn.execute(
             "INSERT INTO v2_capture_counts (user_id, ip, day, n) VALUES (?1, ?2, ?3, 1)
              ON CONFLICT (user_id, ip, day) DO UPDATE SET n = n + 1",
@@ -1629,8 +1620,7 @@ impl Store for SqliteStore {
     fn ip_captures_today(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError> {
         let count: i64 = self
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row(
                 "SELECT COALESCE(SUM(n), 0) FROM v2_capture_counts WHERE ip = ?1 AND day = ?2",
                 params![ip, day.to_string()],
@@ -1641,7 +1631,7 @@ impl Store for SqliteStore {
     }
 
     fn record_anon_issued(&self, ip: &str, day: NaiveDate) -> Result<u32, StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         let count: i64 = conn
             .query_row(
                 "INSERT INTO v2_anon_issued (ip, day, n) VALUES (?1, ?2, 1)
@@ -1658,8 +1648,7 @@ impl Store for SqliteStore {
     fn block(&self, target: &Block) -> Result<(), StoreError> {
         let (kind, value) = block_parts(target);
         self.conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .execute(
                 "INSERT OR IGNORE INTO v2_blocks (kind, value) VALUES (?1, ?2)",
                 params![kind, value],
@@ -1672,8 +1661,7 @@ impl Store for SqliteStore {
         let (kind, value) = block_parts(target);
         let changed = self
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .execute(
                 "DELETE FROM v2_blocks WHERE kind = ?1 AND value = ?2",
                 params![kind, value],
@@ -1685,8 +1673,7 @@ impl Store for SqliteStore {
     fn is_blocked(&self, user: &str, ip: &str) -> Result<bool, StoreError> {
         let found: bool = self
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row(
                 "SELECT EXISTS (SELECT 1 FROM v2_blocks
                  WHERE (kind = 'user' AND value = ?1) OR (kind = 'ip' AND value = ?2))",
@@ -1698,7 +1685,7 @@ impl Store for SqliteStore {
     }
 
     fn blocks(&self) -> Result<Vec<Block>, StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         let mut stmt = conn
             .prepare("SELECT kind, value FROM v2_blocks ORDER BY kind, value")
             .map_err(backend)?;
@@ -1719,7 +1706,7 @@ impl Store for SqliteStore {
     }
 
     fn usage_today(&self, day: NaiveDate, top: usize) -> Result<Usage, StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         Ok(Usage {
             users: top_users_today(&conn, "user_id", day, top)?,
             ips: top_users_today(&conn, "ip", day, top)?,
@@ -1727,7 +1714,7 @@ impl Store for SqliteStore {
     }
 
     fn usage_ranking(&self, order: UsageOrder, top: usize) -> Result<Vec<UsageRow>, StoreError> {
-        let conn = self.conn.lock().expect("db mutex");
+        let conn = self.conn.lock_recover();
         // One query per ordering rather than one clever query: where the spend comes
         // from differs, and the rest — the join to an account, the order, the limit —
         // is the same. A new ordering adds a row here and nothing else.
@@ -1770,8 +1757,7 @@ impl Store for SqliteStore {
     fn is_user_blocked(&self, user: &str) -> Result<bool, StoreError> {
         let found: bool = self
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row(
                 "SELECT EXISTS (SELECT 1 FROM v2_blocks WHERE kind = 'user' AND value = ?1)",
                 params![user],
@@ -1784,8 +1770,7 @@ impl Store for SqliteStore {
     fn account_exists(&self, user: &str) -> Result<bool, StoreError> {
         let found: bool = self
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row(
                 "SELECT EXISTS (SELECT 1 FROM v2_users WHERE id = ?1)",
                 params![user],
@@ -1797,8 +1782,7 @@ impl Store for SqliteStore {
 
     fn user_id_for_email(&self, email: &str) -> Result<Option<String>, StoreError> {
         self.conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row(
                 "SELECT id FROM v2_users WHERE email = ?1 AND plan <> 'anon'",
                 params![email],
@@ -1813,8 +1797,7 @@ impl Store for SqliteStore {
         }
         let plan: String = self
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row(
                 "SELECT plan FROM v2_users WHERE id = ?1",
                 params![user],
@@ -1827,8 +1810,7 @@ impl Store for SqliteStore {
     fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError> {
         let changed = self
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .execute(
                 "UPDATE v2_users SET plan = ?1 WHERE id = ?2",
                 params![plan.as_str(), user],
@@ -1841,7 +1823,7 @@ impl Store for SqliteStore {
     }
 
     fn adopt_anonymous(&self, anonymous: &str, user: &str) -> Result<(), StoreError> {
-        let mut conn = self.conn.lock().expect("db mutex");
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction().map_err(backend)?;
         let is_anonymous: bool = tx
             .query_row(
@@ -1888,8 +1870,7 @@ impl Store for SqliteStore {
     fn anonymous_exists(&self, user: &str) -> Result<bool, StoreError> {
         let found: Option<String> = self
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row(
                 "SELECT id FROM v2_users WHERE id = ?1 AND plan = 'anon'",
                 params![user],
@@ -1902,8 +1883,7 @@ impl Store for SqliteStore {
 
     fn ensure_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
         self.conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .execute(
                 "INSERT OR IGNORE INTO v2_users \
                      (id, email, name, picture, created_at, plan, last_activity_at) \
@@ -1916,8 +1896,7 @@ impl Store for SqliteStore {
 
     fn touch_anonymous(&self, user: &str, now: DateTime<Utc>) -> Result<(), StoreError> {
         self.conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .execute(
                 "UPDATE v2_users SET last_activity_at = ?2 \
                  WHERE id = ?1 AND plan = 'anon' AND last_activity_at < ?3",
@@ -1928,7 +1907,7 @@ impl Store for SqliteStore {
     }
 
     fn expire_anonymous(&self, cutoff: DateTime<Utc>) -> Result<usize, StoreError> {
-        let mut conn = self.conn.lock().expect("db mutex");
+        let mut conn = self.conn.lock_recover();
         let tx = conn.transaction().map_err(backend)?;
         let cutoff = format_ts(cutoff);
         let stale = "SELECT id FROM v2_users WHERE plan = 'anon' AND last_activity_at <= ?1";
@@ -3151,7 +3130,7 @@ mod tests {
     #[test]
     fn the_schema_is_at_the_version_the_code_expects() {
         let store = SqliteStore::open_in_memory().unwrap();
-        let conn = store.conn.lock().expect("db mutex");
+        let conn = store.conn.lock_recover();
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
@@ -3161,7 +3140,7 @@ mod tests {
     #[test]
     fn the_column_list_matches_the_table() {
         let store = SqliteStore::open_in_memory().unwrap();
-        let conn = store.conn.lock().expect("db mutex");
+        let conn = store.conn.lock_recover();
         let mut stmt = conn
             .prepare("SELECT name FROM pragma_table_info('v2_tasks')")
             .unwrap();
@@ -3271,8 +3250,7 @@ mod tests {
         // A v1-shaped table in the same file must survive, untouched.
         store
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .execute_batch(
                 "CREATE TABLE tasks (id TEXT PRIMARY KEY, title TEXT NOT NULL);
                  INSERT INTO tasks (id, title) VALUES ('v1-1', 'v1 task');",
@@ -3281,7 +3259,7 @@ mod tests {
 
         store.put(USER, task("t1", 0)).unwrap();
 
-        let conn = store.conn.lock().expect("db mutex");
+        let conn = store.conn.lock_recover();
         let v1: String = conn
             .query_row("SELECT title FROM tasks WHERE id = 'v1-1'", [], |row| {
                 row.get(0)
@@ -3295,8 +3273,7 @@ mod tests {
         let store = SqliteStore::open_in_memory().unwrap();
         store
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .execute_batch(
                 "INSERT INTO v2_tasks (id, title, duration_min, when_kind, when_time, \
                                         done, \"order\", label, priority, source, created, external_uid, user_id) \
@@ -3470,8 +3447,7 @@ mod tests {
         sign_in(&store, "erin");
         store
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .execute(
                 "UPDATE v2_users SET last_activity_at = ?1 WHERE id = 'erin'",
                 params![format_ts(at(12) - DAY * 60)],
@@ -3530,8 +3506,7 @@ mod tests {
         assert_eq!(store.expire_anonymous(Utc::now() + DAY).unwrap(), 1);
         let version: i64 = store
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
@@ -3570,8 +3545,7 @@ mod tests {
         assert_eq!(store.series("dana").unwrap().len(), 1, "and holds one now");
         let version: i64 = store
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
@@ -3609,8 +3583,7 @@ mod tests {
         // v2_usage_totals table exists and is empty
         let has_table: bool = store
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='v2_usage_totals')",
                 [],
@@ -3620,8 +3593,7 @@ mod tests {
         assert!(has_table, "v2_usage_totals table was created");
         let version: i64 = store
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
@@ -3663,8 +3635,7 @@ mod tests {
         );
         let version: i64 = store
             .conn
-            .lock()
-            .expect("db mutex")
+            .lock_recover()
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
@@ -3681,6 +3652,48 @@ mod tests {
         SqliteStore::open(&path).expect("migrating from version 3 must not redo version 2");
 
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// An upgrade must not sign anyone out: a session issued before tokens were hashed
+    /// keeps working, is stored hashed afterwards, and is not hashed again on a reopen.
+    #[test]
+    fn a_version_9_session_survives_the_move_to_hashed_tokens() {
+        let path = unique_temp_dir().join("rambl.db");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let plain = "0123456789abcdef0123456789abcdef";
+        {
+            let conn = database_at(&path, 9);
+            conn.execute_batch(&format!(
+                "INSERT INTO v2_users (id, email, name, picture, created_at, plan) VALUES
+                     ('dana', 'dana@example.com', 'Dana', NULL, '2026-01-01T00:00:00Z', 'free');
+                 INSERT INTO v2_sessions (token, user_id, expires_at, created_at) VALUES
+                     ('{plain}', 'dana', '2099-01-01T00:00:00Z', '2026-01-01T00:00:00Z');"
+            ))
+            .unwrap();
+        }
+
+        for _ in 0..2 {
+            let store = SqliteStore::open(&path).unwrap();
+            let me = store.session_user(plain, at(12)).unwrap();
+            assert_eq!(me.map(|me| me.id), Some("dana".to_owned()));
+            let stored: String = store
+                .conn
+                .lock_recover()
+                .query_row("SELECT token FROM v2_sessions", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(stored, hash_token(plain));
+            assert_ne!(stored, plain);
+        }
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_token_hashes_to_its_known_sha256() {
+        assert_eq!(
+            hash_token("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     /// A folder of its own, so two tests writing at once cannot collide.
