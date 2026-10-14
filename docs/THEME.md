@@ -21,7 +21,7 @@ The look is **one page of parchment, written on in ink** (owner brief, `docs/DES
 | `--danger` | `#a5342a` | red pencil: errors, Overdue, Delete |
 | `--now` | `#b03a2a` | the current-time line |
 | `--rule` | chamoisee 42% | hairlines between rows and hours |
-| `--rule-strong` | chamoisee 62% | masthead rule, page fold, input rules |
+| `--rule-strong` | chamoisee 62% | page fold, input rules |
 | `--margin-line` | `rgba(165,52,42,.24)` | the notebook's red margin, on the task list |
 | `--wash` | `rgba(159,104,46,.1)` | tint behind a placement |
 | `--backdrop` | `rgba(46,35,21,.35)` | dialog backdrop |
@@ -51,7 +51,7 @@ The look is **one page of parchment, written on in ink** (owner brief, `docs/DES
 Every word is handwritten (`docs/DESIGN-DIRECTION.md`), in the three self-hosted OFL faces in `web/assets/fonts/` (Ping's woff2 set; sources, licences and the tool mapping live in that folder's README):
 
 - **The neat, very legible hand** (`--font-hand-neat`): Patrick Hand, 400. Writes all UI text — buttons, tabs, labels, hour labels, settings, day names. `--font-body` and `--font-heading` resolve to it.
-- **The expressive hand** (`--font-hand`): Caveat, variable 400-700. Task titles (`.task-open > strong`, `.dialog-task-title`, `.placement strong`) and the masthead signature (`h1`).
+- **The expressive hand** (`--font-hand`): Caveat, variable 400-700. Task titles (`.task-open > strong`, `.dialog-task-title`, `.placement strong`).
 - **The tool hand** (`--font-marker`): Kalam, 300/400/700. Rambo's writing tools (ballpoint = light, fountain pen/quill = regular, marker = bold).
 
 System handwriting stacks remain in the tokens as fallbacks only. Hands run small and narrow against a body stack, so the type scale is lifted a step (`--text-base` 1.05rem, `--text-xs` 0.85rem) and body line-height is 1.55; re-check legibility at 390px when touching these numbers.
@@ -89,7 +89,7 @@ Every texture sits on top of a `--paper*` colour, so a missing file degrades to 
 
 Check 360px and 390px before a wide window. The layout behaviour comes from `web/src/lib.rs` and `web/src/week.rs` (PR #135) and is left as it is; the theme owns colours, fonts, spacing, paper and ruled lines.
 
-- **Panes:** the base rules are the phone: `main` is a horizontal scroll-snap row — the To do pane and the Planner pane sit side by side, swiped or tapped via `.pane-switch`. Those declarations (scroll-snap, `grid-auto-columns: 100%`, `position: relative`, hidden scrollbar) are behaviour and are not restyled; the theme colours `.pane-switch button.active` (golden-brown underline, 700 weight) and gives the tab buttons a 44x44 target. The buttons carry `aria-pressed`; tapping one scrolls the pane row to that pane's own `offset_left` (`show_pane` in `web/src/lib.rs`). From `min-width: 701px` the panes become a two-column grid, the fold rule appears between them, and the switcher hides.
+- **Panes:** the base rules are the phone: `main` is a horizontal scroll-snap row — the To do pane and the Planner pane sit side by side, swiped, or turned by the note at the page's foot (`.page-foot`, which says where the other page is). Those declarations (scroll-snap, `grid-auto-columns: 100%`, `position: relative`, hidden scrollbar) are behaviour and are not restyled; there is no header and no tab switcher: the settings gear and the account link sit at the top right of the planner page only (`.planner-corner`), and the tack board belongs to the first page. From `min-width: 701px` the panes become a two-column grid, the fold rule appears between them, and the page-foot note hides.
 - **Tap targets:** every control is at least `--tap` (2.75rem / 44px) tall or wide — tabs, chips, Mic, Add, Delete, the settings summary and the download link. Checkboxes and radios stay 1.25rem so they do not become grey boxes; their 44px hit area comes from the row (`.task-list li`) or the `<label>` they sit in.
 - **Type:** inputs and body text sit at `--text-base` (1.05rem ≈ 17px), above 16px so iOS does not zoom the inputs. Only meta text (`--text-xs` 0.85rem: hour labels, version, the Overdue tag) is smaller — re-check its legibility at 390px when changing.
 - **Capture box:** on a phone it is a fixed bar at the bottom edge with the safe-area inset, so Mic, Rambo and Add sit under the thumb; the body reserves matching bottom padding. It is page-coloured with a top rule — it belongs to the page, it is not a floating card. On desktop it stays in the masthead, fully transparent.

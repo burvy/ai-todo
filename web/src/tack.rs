@@ -1067,10 +1067,13 @@ pub fn TackBoard(
                     <div class="tack-bin" node_ref=bin_ref role="img" aria-label="Bin — drop a strip here to crumple it"></div>
                 })
             }}
-            <button class="tack-tab" type="button" aria-expanded=move || open.get().to_string() on:click=toggle_open>
-                "Done " <span class="tack-tab-count">{done_count}</span>
-            </button>
         </section>
+        // On a phone the tab is a small paper tacked at the top right of the list's page
+        // (a desk has the whole board beside the list, so it hides there): a tap opens the
+        // board. It sits beside the board, not in it, so it turns with the page.
+        <button class="tack-tab" type="button" aria-expanded=move || open.get().to_string() on:click=toggle_open>
+            "Done " <span class="tack-tab-count">{done_count}</span>
+        </button>
     }
 }
 

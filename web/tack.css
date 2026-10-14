@@ -221,51 +221,73 @@
 }
 
 @media (max-width: 700px) {
-  /* Collapsed, the board is just the tab above the capture bar; pulled up it
-     covers the lower half of the page. */
+  /* Collapsed, the board is nothing but the paper tacked at the list page's top right
+     (`.tack-tab`); opened, it drops from the top over the upper part of the page. */
   .tack-board {
     position: fixed;
+    top: 0;
+    bottom: auto;
     left: 0;
     right: 0;
-    bottom: calc(var(--tap, 2.75rem) + var(--space-2, 0.5rem) + env(safe-area-inset-bottom, 0px));
     z-index: var(--layer-sticky);
     width: auto;
     min-height: 0;
     height: 0;
     border-left: none;
-    border-top: 1px dashed var(--tack-rule);
+    border-bottom: 1px dashed var(--tack-rule);
     background: color-mix(in srgb, var(--tack-paper) 88%, transparent);
-    transition: height var(--dur, 200ms) ease;
+    /* Collapsed it shows nothing, not even its pin or rule: the tab is its only sign. */
+    visibility: hidden;
+    transition: height var(--dur, 200ms) ease, visibility 0s linear var(--dur, 200ms);
     overflow: visible;
   }
 
   .tack-board.open {
+    visibility: visible;
+    transition: height var(--dur, 200ms) ease;
     height: 46dvh;
     overflow: hidden;
-    box-shadow: 0 -2px 6px rgba(43, 35, 24, 0.15);
+    box-shadow: 0 2px 6px rgba(43, 35, 24, 0.15);
   }
 
+  /* The tack belongs to the first page only: the planner page has none. */
+  main[data-pane="1"] .tack-board {
+    display: none;
+  }
+
+  /* A small paper tacked to the list page's top right, a pin at its top. */
   .tack-tab {
     display: inline-flex;
     position: absolute;
-    top: -36px;
-    left: 50%;
-    transform: translateX(-50%);
+    top: 0;
+    right: 0;
     z-index: calc(var(--layer-sticky) + 1);
     align-items: center;
     gap: 0.35rem;
-    min-height: 32px;
-    padding: 0 var(--space-3, 0.75rem);
+    min-height: 36px;
+    padding: 0.35rem var(--space-3, 0.75rem) 0.2rem;
     font-family: var(--font-hand, cursive);
     color: var(--tack-ink);
     background: var(--tack-paper);
     border: 1px dashed var(--tack-rule);
-    border-bottom: none;
-    border-radius: 14px 14px 0 0;
+    border-radius: 2px;
+    box-shadow: 0 2px 4px -2px rgba(43, 35, 24, 0.35);
+    transform: rotate(2deg);
     cursor: pointer;
   }
 
-  .tack-tab-count {
+  .tack-tab::before {
+    content: "";
+    position: absolute;
+    top: -7px;
+    left: 50%;
+    width: 14px;
+    height: 14px;
+    transform: translateX(-50%);
+    background: url("assets/tackboard/pin.svg") center / contain no-repeat;
+  }
+
+.tack-tab-count {
     font-size: 0.75rem;
     color: var(--tack-accent);
   }
