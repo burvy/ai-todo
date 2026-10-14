@@ -213,18 +213,8 @@ pub fn WeekGrid(
         if move_request.with_untracked(Option::is_none) || drag.with_untracked(Option::is_some) {
             return None;
         }
-        // A slip is a task of its own, not an hour.
         #[cfg(target_arch = "wasm32")]
-        if ev.target().is_some_and(|target| {
-            use wasm_bindgen::JsCast as _;
-            target
-                .dyn_into::<web_sys::Element>()
-                .is_ok_and(|el| el.closest(".placement").ok().flatten().is_some())
-        }) {
-            return None;
-        }
-        #[cfg(target_arch = "wasm32")]
-        return landing_at(
+        return hour_at(
             f64::from(ev.client_x()),
             f64::from(ev.client_y()),
             &settings.get_untracked(),
@@ -1021,6 +1011,20 @@ fn landing_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
         day: location.0,
         minutes,
     })
+}
+
+/// The hour under a point on the screen, as a day and a quarter hour: what a tap
+/// while a task waits, or Rambo dropped on the planner, points at. None off the
+/// planner or over a slip, which is a task of its own.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn hour_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
+    let over_slip = leptos::prelude::document()
+        .element_from_point(x as f32, y as f32)
+        .is_some_and(|el| el.closest(".placement").ok().flatten().is_some());
+    if over_slip {
+        return None;
+    }
+    landing_at(x, y, settings)
 }
 
 /// The paper a not-yet-lifted finger slides over: `main` along its length,
