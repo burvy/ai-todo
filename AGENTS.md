@@ -42,6 +42,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo check -p rambl-web --target wasm32-unknown-unknown   # web code only compiles fully for the browser
+cargo clippy -p rambl-web --target wasm32-unknown-unknown --all-targets -- -D warnings   # browser-only code lints here, not on the host
 cd web && trunk build --release                              # only if you touched web/
 ```
 

@@ -15,14 +15,11 @@ fn check_response(response: &Response) {
         crate::account::session_ended();
     }
     #[cfg(target_arch = "wasm32")]
+    if let Some(id) = response.headers().get("x-rambl-anon")
+        && let Some(window) = web_sys::window()
+        && let Ok(Some(storage)) = window.local_storage()
     {
-        if let Some(id) = response.headers().get("x-rambl-anon") {
-            if let Some(window) = web_sys::window()
-                && let Ok(Some(storage)) = window.local_storage()
-            {
-                let _ = storage.set_item("rambl_anon_id", &id);
-            }
-        }
+        let _ = storage.set_item("rambl_anon_id", &id);
     }
 }
 

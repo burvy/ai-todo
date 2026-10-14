@@ -57,6 +57,9 @@ jobs:
         with:
           version: latest
 
+      - name: Run Clippy for the browser target
+        run: cargo clippy -p rambl-web --target wasm32-unknown-unknown --all-targets -- -D warnings
+
       - name: Build the Leptos app
         working-directory: web
         run: trunk build --release
