@@ -132,6 +132,7 @@ pub(crate) fn pose(state: &State, ms: f64, reduced_motion: bool) -> Look {
         // Caught under the leaf he stands upright, pushing.
         State::Flying
         | State::Skittering
+        | State::Mending
         | State::Covered
         | State::Thrown
         | State::Inking
