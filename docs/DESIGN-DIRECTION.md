@@ -158,7 +158,7 @@ These are settled.
 - Data: done stays done on the server; tacked/set-aside/positions are presentation only, saved per device in localStorage. Restore = undo done. Crumple = delete.
 
 ### Gestures (phone)
-- Swipe **right** on a task = delete (Rambo scribbles it out). Swipe **left** = flip the page to the planner (parchment page flip); swipe right on the planner flips back.
+- Swipe **right** on a task = delete (Rambo scribbles it out). Swipe **left** = flip the page to the planner (parchment page flip); swipe right on the planner flips back. Made exact in §9 (Gestures, final).
 
 ### Planner
 - Opens at working hours or now; handwritten day names, today underlined; drag a task to another time/day like moving a paper slip; long-press an empty hour pre-fills the capture line with that slot.
@@ -227,12 +227,23 @@ The bubble is the small speech bubble with choice buttons that shows when Rambo 
 - **Move:** the page turns to the planner and you tap an hour, and Rambo also offers the next free time. Not by carrying him to the planner.
 - **Dropped on a task's slip in the planner:** time choices: move, make it longer or shorter, take it off the planner.
 - **Dropped on an empty hour in the planner:** he starts a new task at that time and listens. Tapping or clicking anywhere else cancels it.
-- **The bubble's choices are final: Edit, Move, Done, Never mind.** No Delete: deleting is slashing the task out (below).
+- **The bubble's choices are final: Edit, Move, Done, Never mind.** No Delete: deleting is the scribble-out (below).
 
-### Slashing out = delete (interview 3)
-- **Swiping left on a list task slashes it out, and that deletes it.** The ink stroke follows the finger as it moves, like a real pen.
-- **Undo is the scrap:** the slashed row's scrap lies in the page corner for a few seconds; tap it to tape it back.
-- **Not yet settled:** the Gestures rules above say swipe right on a task deletes and swipe left turns the page to the planner. What swipe right on a task does now, and how the page is turned on the phone, is still open.
+### Gestures, final (interview 3)
+This replaces the earlier interview 3 note that swiping left crosses a task out. "Swipe right" means the finger moves from left to right.
+- **On the list:**
+  - Swipe right on a task deletes it: **a scribble-out that follows the finger**, in Rambo's ink. "Scribble-out" replaces "cross-out" and "slash-out".
+  - Swipe left turns the page to the planner.
+  - **Swipe right anywhere else on the list page** (not on a task) rips the page a little. Rambo tapes it up, and he is grumpy for a while. The tape and the tear fade away after a while.
+- **On the planner:**
+  - Swipe left scrolls to later days.
+  - Swipe right inside the planner grid scrolls back.
+  - Swipe right outside the grid turns the page back to the list.
+- **Undo is the scrap:** the deleted row's scrap lies in the page corner for a few seconds; tap it to tape it back.
+
+### Rambo reacts before he moves (interview 3)
+- **He never moves instantly.** Before any move, he shows a visible beat: he notices, his face reacts, then he acts. It gives him personality.
+- The beat's timings live in the tuning file.
 
 ### Accepted ideas (interview 3)
 Later steps under the physical principle:
