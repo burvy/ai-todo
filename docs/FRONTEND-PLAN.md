@@ -63,19 +63,19 @@ A read-only audit of `web/src` and the CSS on 3fc7aba, made by the cloud session
 
 | # | Finding | Lands in |
 |---|---|---|
-| 1 | Done strips are never pinned: `just_done` is built from the same snapshot as `listed`, so it is always empty (`tack.rs`) | bug backlog (2.5) |
-| 2 | Saved strip positions are wiped on load: the reconcile runs on the empty first snapshot and saves it | bug backlog |
-| 3 | Crumple and restore on a repeat-day strip send a `series:date` id the server refuses | bug backlog |
-| 4 | Rambo's Edit only cycles priority, and Move only sends him home; spec 8.1 promises real ones | bug backlog |
-| 5 | Planner day and hour labels never refresh (after midnight, or a clock-format change) | bug backlog |
-| 6 | Rambo reacts to "task added" on every page load (`brain.rs`) | bug backlog |
+| 1 | Done strips are never pinned: `just_done` is built from the same snapshot as `listed`, so it is always empty (`tack.rs`) | BUG-1 (2.5) |
+| 2 | Saved strip positions are wiped on load: the reconcile runs on the empty first snapshot and saves it | BUG-2 |
+| 3 | Crumple and restore on a repeat-day strip send a `series:date` id the server refuses | BUG-3 |
+| 4 | Rambo's Edit only cycles priority, and Move only sends him home; spec 8.1 promises real ones | questions in 2.6 |
+| 5 | Planner day and hour labels never refresh (after midnight, or a clock-format change) | BUG-4 |
+| 6 | Rambo reacts to "task added" on every page load (`brain.rs`) | BUG-5 |
 | 7 | The edit dialog is not modal (`open`, not `showModal()`): no backdrop, the page stays clickable | z-index step: switch to `showModal()`, which also puts it above Rambo, as answered |
-| 8 | Every invalid time says "does not exist on this day (clocks change)" (`tasks/fields.rs`) | bug backlog |
-| 9 | The snapshot's date window depends on who fetched last; changing the days setting never re-fetches | bug backlog |
+| 8 | Every invalid time says "does not exist on this day (clocks change)" (`tasks/fields.rs`) | BUG-7 |
+| 9 | The snapshot's date window depends on who fetched last; changing the days setting never re-fetches | BUG-6 |
 | 10 | The pen queue is never drained with reduced motion or Lobotomized, and a mid-run reset drops rows | interruptions step (the pausable queue) |
 | 11 | `pen_pos` has four writers, counting the nest measure | resolver step (as 1.3) |
 | 12 | A row's hold timer is not tied to its press: tap, release and press again within 280ms, and the old timer lifts the new press | gesture step |
-| 13–15 | Two occurrence-id parsers; a planner move that bypasses `patch_and_show`; the overdue rule written twice; two copies of `prefers_reduced_motion` | bug backlog (13, 14); ticker step (15) |
+| 13–15 | Two occurrence-id parsers; a planner move that bypasses `patch_and_show`; the overdue rule written twice; two copies of `prefers_reduced_motion` | BUG-8 (13, 14); ticker step (15) |
 | 16 | Reduced motion is mostly ignored: the `*` reset has zero specificity, so every class rule beats it | cascade layers step: in the last layer it wins whatever the specificity |
 | 17–18 | The phone tack board (z 4) covers the capture bar (z 3); everything competes in one stacking context, so day names paint over the capture bar and the ink | z-index step |
 | 19 | Rambo's bubbles are children of his transformed button: they tilt 34° and shrink while he writes, run off a 360px screen, and `.ask` nests buttons in a button (invalid HTML) | two-element step: bubbles become siblings of the button in the Rambo layer |
@@ -223,19 +223,99 @@ Each becomes a ticket when the steps before it have landed, written with what th
 
 Not front end, already with others: stripping lead-ins such as "Add a task to…" from titles (Dario, capture and Jev).
 
-### 2.5 Bug backlog from the audit
+### 2.5 Bug tickets from the audit
 
-Small functional bugs found by the cloud audit (1.8). Each is one GLM-sized ticket once written: file, a test that fails first, the fix. None of them waits for the restructure. Suggested order, most visible first:
+Small functional bugs found by the cloud audit (1.8). Each ticket is one PR, follows the rules for every ticket above, and starts with a test that fails before the fix. None waits for the restructure. Line numbers are against main `ae22919`; find the code by the names given if they have moved.
 
-1. Done strips are never pinned (item 1).
-2. Saved strip positions are wiped on load (2).
-3. Repeat-day strips: crumple and restore use the occurrence path (3).
-4. Planner labels refresh at midnight and on a clock-format change (5).
-5. No "task added" reaction on page load (6).
-6. One date window for every fetch, re-fetched when the days setting changes (9).
-7. The right error for an empty or invalid time (8).
-8. One occurrence-id parser; the planner move goes through `patch_and_show`; one overdue rule (13, 14).
-9. Rambo's Edit and Move do what they say, and dropping him on a planner block asks (4, 22). This needs a short spec from the owner first.
+BUG-1 and BUG-2 both change the snapshot effect in `tack.rs`: give them to one agent, or run BUG-2 after BUG-1 lands.
+
+**BUG-1: done strips are never pinned** · Rust · small
+- The bug: the snapshot effect in `tack.rs` (about line 652) builds `listed` (the to-do ids) from the *same* snapshot as `done`, so a task that was just ticked is never in both, `reconcile` returns an empty `just_done`, and the "cut out and tack" moment (the swing-in, the pin sound, `Cue::CutAndTack`) never happens. `reconcile`'s own doc (about line 282) says `listed` is what the *previous* snapshot showed as to-do.
+- Files: `web/src/tack.rs`.
+- Do: keep the previous pass's to-do ids and pass those to `reconcile`. Put the rule in a small pure type next to `reconcile`, for example `struct Watch { listed: HashSet<String> }` with `fn pass(&mut self, strips, snapshot) -> Pass`, which uses the stored `listed` and then stores the new one. The effect only calls it.
+- Accept:
+  - A test: a `Watch` sees snapshot 1 with task "a" open, then snapshot 2 with "a" done, and `just_done` is `["a"]`. A task already done in the first snapshot is not in `just_done`. Checked to fail when `listed` comes from the current snapshot.
+  - On the site: tick a task; after the pause its strip swings onto the tack board.
+- Do not touch: `reconcile` itself, the physics, CSS.
+
+**BUG-2: saved strip positions are wiped on load** · Rust · small · after BUG-1
+- The bug: the page starts with an empty snapshot (`empty_snapshot()` in `lib.rs`). The tack board's snapshot effect runs on it before the real load, finds no done tasks, keeps no strips, and the save effect writes that empty board to localStorage. Every reload loses where the user left their strips.
+- Files: `web/src/tack.rs`, `web/src/lib.rs`.
+- Do: the board does not reconcile, and does not save, until the first real snapshot has arrived. `lib.rs` already knows that moment (the `Ok(loaded)` arm of the first fetch); give `TackBoard` a `loaded: Signal<bool>` and have both effects wait for it.
+- Accept:
+  - A pure test: the stored strips survive a pass over the empty first snapshot (for example a `Watch::pass` that is given `loaded = false` returns the strips unchanged and says not to save).
+  - On the site: move a strip off the tack, reload, and it is where you left it.
+- Do not touch: the storage format.
+
+**BUG-3: repeat-day strips cannot be crumpled or restored** · Rust · small
+- The bug: a done occurrence of a repeating task has the id `"{series}:{date}"`. Crumpling its strip calls `api::delete_task` with that id (`tack.rs` about line 995) and restoring it calls `toggle_done_body` and `patch_and_show` (about line 923). The server answers 400 to both. The list already does this right: `delete_with_scribble` skips the occurrence, and `tick_action` / `apply_tick` clear its done mark (`tasks/mod.rs`).
+- Files: `web/src/tack.rs`.
+- Do: crumple goes through the same path as `delete_with_scribble` (an occurrence is skipped, a plain task deleted), and restore through `tick_action` + `apply_tick`, instead of building its own requests.
+- Accept:
+  - A test on the pure part: for an occurrence id the board chooses the occurrence action (skip on crumple, clear done on restore); for a plain id, delete and the task PATCH.
+  - On the site, with a task that repeats daily, ticked done: crumple its strip and the day is skipped; restore another and it is open again. No error note.
+- Do not touch: `api.rs`, the list's own paths.
+
+**BUG-4: planner labels never refresh** · Rust · small
+- The bug: in `week.rs` the day headers (`day_label(...)`, about line 180) and the hour labels (`clock::format_time(..., settings.get().clock)`, about line 241) are plain values inside `<For>`, so they are computed once. After midnight the first column still says yesterday, and switching the 12/24-hour setting leaves the old labels.
+- Files: `web/src/week.rs`.
+- Do: make both labels reactive closures (`move || ...`). The day header must also depend on the date, so read the planner's existing one-minute "now" signal (`now_minutes`) in it, so that the header changes when the day does.
+- Accept:
+  - A pure test for the label function: the same day offset gives the next day's name once "now" crosses midnight.
+  - On the site: switch the clock setting in the gear menu and the hour labels change at once.
+- Do not touch: the planner layout, CSS.
+
+**BUG-5: Rambo reacts to "task added" on every page load** · Rust · small
+- The bug: `brain.rs` keeps `previous` starting from the empty first snapshot (about line 109) and calls it `TaskAdded` whenever there are more tasks than before (about line 152). So the first load, a wider date window, or new repeat-day rows all make him react.
+- Files: `web/src/brain.rs`.
+- Do: compare ids, not counts, and only after a real snapshot. `TaskAdded` fires when the current snapshot has a plain task id (not a repeat-day occurrence) that the previous *loaded* snapshot did not. The first loaded snapshot never fires it. Put the rule in a pure function beside `overdue_changes`, with tests.
+- Accept:
+  - Tests: first load fires nothing; one new plain task fires `TaskAdded`; new occurrence rows only fire nothing; a deleted plus an added task (same count) fires `TaskAdded`.
+  - On the site: reload the page and Rambo says nothing about a new task.
+- Do not touch: the other events, the brain crate.
+
+**BUG-6: one date window for every snapshot** · Rust · small
+- The bug: the first load and the reload after a refused edit ask the server for `settings.days` days (`lib.rs` about line 69, `edits.rs` about line 126). Every edit response uses the server's own default window. Changing the days setting (`settings.rs` about line 333) never re-fetches. With days = 3, repeat-day rows and their strips come and go depending on which call ran last.
+- Files: `web/src/lib.rs`, `web/src/edits.rs`, `web/src/api.rs`, `crates/core/src/tuning.rs` (from #270; `crates/core/src/lib.rs` if #270 has not landed), and one line in `server/src/v2/http.rs` (an allowed exception to "no server code": the import only).
+- Do: every fetch asks for the same window as the server's default, `DEFAULT_WINDOW_DAYS = 7` (`server/src/v2/http.rs` about line 980). Move that constant, unchanged, to core's tuning file with a one-line reason, so the server and the page share it. Every `fetch_snapshot` call in the page uses it. The days setting then only chooses how many planner columns show, so changing it needs no fetch.
+- Accept:
+  - `grep -n "fetch_snapshot(" web/src` shows only calls that use the one constant.
+  - The server's tests pass unchanged, and `grep -rn "DEFAULT_WINDOW_DAYS" server crates web` shows one definition, in core.
+  - On the site with days = 3: tick a repeat-day task; the list keeps the same rows before and after.
+- Do not touch: any other server code, the planner's column count.
+
+**BUG-7: the right message for a bad time** · Rust · small
+- The bug: `typed_when` in `tasks/fields.rs` (about line 206) answers every failure with "That time does not exist on this day (clocks change)", including an empty field and text that is not a time.
+- Files: `web/src/tasks/fields.rs`.
+- Do: tell three cases apart: empty ("Pick a time"), not a time ("That is not a time"), and a time skipped by a clock change (the message today). Parse first, then resolve the local time, and map each failure to its message.
+- Accept: a test for each of the three, plus a valid time that still works.
+- Do not touch: the dialog's look.
+
+**BUG-8: one occurrence parser, one move path, one overdue rule** · Rust · small · three commits
+- The bug: the same rules are written twice and have drifted.
+  - Occurrence ids are parsed by `occurrence_parts` (`tasks/mod.rs` about line 93, `split_once(':')`) and `occurrence_of` (`week.rs` about line 476, `rsplit_once(':')`).
+  - A planner move (`week.rs` about line 787) calls `patch_task` itself instead of `patch_and_show`, so a stale move shows raw error text and does not reload.
+  - The overdue rule is in `brain.rs` (`overdue_changes`) and in `tasks/mod.rs` (`is_overdue_at`).
+- Files: `web/src/tasks/mod.rs`, `web/src/week.rs`, `web/src/brain.rs`, `web/src/edits.rs`.
+- Do:
+  - One parser, `rsplit_once(':')`, since a date never contains a colon, as `pub(crate) fn occurrence_parts` in `edits.rs`. Both callers use it; delete the other.
+  - The planner's plain-task move calls `patch_and_show`.
+  - `brain.rs` uses `tasks::is_overdue_at`.
+- Accept:
+  - The parser's tests cover a plain id, an occurrence id, and a series id that contains a colon.
+  - `grep -rn "split_once(':')" web/src` finds only time parsing.
+  - On the site: moving a slip on the planner works as before. Two tabs, move the same task in both: the second shows the reload note, not raw error text.
+- Do not touch: the Overdue badge's look.
+
+### 2.6 Rambo's Edit and Move: questions for the owner
+
+Rambo's ask bubble (dropping him on a task) offers Edit, Move, Done and Never mind. Edit only changes the priority, and Move only sends him home (`rambo.rs` about line 450). Dropping him on a planner block does nothing, because those handlers are for HTML drag and drop, which he does not use. Before a ticket:
+
+1. **Edit.** When you drop Rambo on a task and pick Edit, what should happen: the edit sheet opens for that task, or he listens and you say the change ("make it Friday at 3"), and Jev applies it?
+2. **Move.** When you pick Move, how do you choose the new time: he carries the task and you drop him on the planner, the page turns to the planner and you tap an hour, or he offers the next free time?
+3. **Dropping him on the planner.** Dropped on a task's slip in the planner, should he ask the same as on a row (Edit, Move, Done), or offer things about its time (move, make longer or shorter, take it off the planner)?
+4. **An empty hour.** Dropped on an empty hour in the planner, should he start a new task at that time and listen, like the long press does?
+5. **The bubble.** Which choices should the bubble keep? Is there one missing, such as Delete?
 
 ## 3. Not checked
 
