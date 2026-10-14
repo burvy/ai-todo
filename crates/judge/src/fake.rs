@@ -269,7 +269,12 @@ fn is_instruction(lower: &str) -> bool {
     // One word alone ("Thanks", "Groceries") is too little to call an instruction.
     rest.len() >= 2
         && rest.first().is_some_and(|first| {
-            !NOT_A_VERB.contains(first) && !is_gerund(first) && !is_past_form(first)
+            !NOT_A_VERB.contains(first)
+                && !is_gerund(first)
+                && !is_past_form(first)
+                // A bare mind verb ("remember", "believe", "imagine") opens a
+                // remark, not an errand, unless it hands the action on.
+                && (!MENTAL_VERBS.contains(first) || is_action_handed_on(&rest[1..]))
         })
 }
 
@@ -280,9 +285,11 @@ fn verb_and_rest<'a>(lead: &[&str], words: &'a [&str]) -> Option<&'a [&'a str]> 
     Some(&words[index..])
 }
 
-/// Whether the mind verb in a request still hands on the errand: "remember to call
-/// mom" and "tell mom to call" do, while what follows otherwise ("when we moved",
-/// "that we are late", a bare "it") is a remark on the moment, not an errand.
+/// Whether the mind verb still hands on the errand: "remember to call mom" and
+/// "tell mom to call" do, while what follows otherwise ("when we moved", "that
+/// we are late", a bare "it") is a remark on the moment, not an errand. The
+/// same rule for the asked forms ("can you remember to call mom") and the bare
+/// ones ("remember to call mom").
 fn is_action_handed_on(words: &[&str]) -> bool {
     /// The person the errand is passed to: a name ("mom") or an object pronoun
     /// ("tell her to call").
@@ -571,6 +578,47 @@ mod tests {
         assert_eq!(answers[0].is_task, 0.0);
         assert_eq!(answers[1].is_task, 0.0);
         assert_eq!(answers[2].is_task, 0.0);
+        assert_eq!(answers[3].is_task, 1.0);
+        assert_eq!(answers[4].is_task, 1.0);
+    }
+
+    /// A bare mind verb opens a remark, not an errand — the same mind-verb + to
+    /// + action rule #342 gave the asked forms.
+    #[test]
+    fn a_bare_mind_verb_is_an_instruction_only_for_an_action_handed_on() {
+        for clause in [
+            "remember when we went to the lake",
+            "believe it or not it rained",
+            "imagine the view from up there",
+        ] {
+            assert!(is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
+        }
+        for clause in ["remember to call mom", "tell mom to call"] {
+            assert!(!is_chit_chat(&clause.to_ascii_lowercase()), "{clause}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_bare_mind_verb_is_a_task_only_for_an_action_handed_on() {
+        let questions = [
+            question(
+                "remember when we went to the lake",
+                &["Remember when we went to the lake"],
+                &[],
+            ),
+            question(
+                "believe it or not it rained",
+                &["believe it or not it rained"],
+                &[],
+            ),
+            question("imagine the view from up there", &["Imagine the view"], &[]),
+            question("remember to call mom", &["Remember to call mom"], &[]),
+            question("tell mom to call", &["Tell mom to call"], &[]),
+        ];
+        let answers = FakeJudge.judge(&questions).await.unwrap();
+        for answer in &answers[..3] {
+            assert_eq!(answer.is_task, 0.0);
+        }
         assert_eq!(answers[3].is_task, 1.0);
         assert_eq!(answers[4].is_task, 1.0);
     }
