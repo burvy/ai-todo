@@ -11,6 +11,7 @@ pub mod account;
 pub mod api;
 pub mod brain;
 pub mod clock;
+pub mod ink;
 pub mod mascot;
 pub mod pen;
 pub mod row;
