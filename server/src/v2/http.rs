@@ -124,7 +124,7 @@ impl CurrentUser {
             let token = auth::bearer(headers)
                 .ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
             let app = shared.app.lock_recover();
-            let user = auth::session_user(app.store(), &token, Utc::now())
+            let user = auth::session_user(app.store(), &token, app.now())
                 .map_err(HttpError::from)?
                 .ok_or_else(|| unauthorized("that session has expired"))?;
             return Self::unpaused(app.store(), user.id);
@@ -782,7 +782,7 @@ async fn me(
     let token =
         auth::bearer(&headers).ok_or_else(|| unauthorized("send Authorization: Bearer <token>"))?;
     let app = shared.app.lock_recover();
-    let user = auth::session_user(app.store(), &token, Utc::now())
+    let user = auth::session_user(app.store(), &token, app.now())
         .map_err(HttpError::from)?
         .ok_or_else(|| unauthorized("that session has expired"))?;
     Ok(Json(user))
@@ -805,7 +805,7 @@ async fn delete_me(
 fn admin_of(headers: &HeaderMap, shared: &Shared) -> Result<auth::Me, HttpError> {
     let token = auth::bearer(headers).ok_or_else(admin_404)?;
     let app = shared.app.lock_recover();
-    let user = auth::session_user(app.store(), &token, Utc::now())
+    let user = auth::session_user(app.store(), &token, app.now())
         .map_err(HttpError::from)?
         .ok_or_else(admin_404)?;
     let allowed = shared.admin_emails.as_deref().is_some_and(|emails| {
@@ -3465,6 +3465,24 @@ mod tests {
         );
         let (status, _) = send_as(&router, "GET", "/api/v1/admin/blocks", None, Some(&token)).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "the API must be 404 too");
+    }
+
+    /// A session is opened and checked on the same clock. On the wall clock, a
+    /// session opened by a clock more than 90 days behind it reads as already expired.
+    #[tokio::test]
+    async fn a_session_expires_by_the_apps_clock_not_the_wall_clock() {
+        let long_ago = Utc.with_ymd_and_hms(2020, 1, 6, 15, 0, 0).unwrap();
+        let router = accounts_router_with_admins(
+            long_ago,
+            "google-1",
+            "boss@example.com",
+            Some(vec!["boss@example.com".into()]),
+        );
+        let token = sign_in(&router).await;
+        for uri in ["/api/v1/me", "/api/v1/snapshot", "/api/v1/admin/usage"] {
+            let (status, body) = send_as(&router, "GET", uri, None, Some(&token)).await;
+            assert_eq!(status, StatusCode::OK, "GET {uri}: {body}");
+        }
     }
 
     /// Only a signed-in user whose email is in `RAMBL_ADMIN_EMAILS` sees the admin
