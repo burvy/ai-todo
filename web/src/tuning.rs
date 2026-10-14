@@ -48,11 +48,14 @@ pub const SCRIBBLE_LIFT_MS: u32 = 200;
 pub const SCRAP_UNDO_MS: u32 = 5000;
 /// How long the scrap takes to slide in or away, in ms. Safe range 150 to 400.
 pub const SCRAP_SLIDE_MS: u32 = 240;
+/// The most scraps lying in the corner at once; a new delete beyond it sends the oldest
+/// away. Safe range 1 to 5: two quick deletes keep two, but the pile never fills the page.
+pub const SCRAP_MAX: usize = 3;
 /// How often the scrap's undo clock is read, in ms: it only runs while the page is
 /// in view. Safe range 50 to 500; a hidden tab may tick slower, which only pauses.
 pub const SCRAP_TICK_MS: u32 = 100;
 
-const _: () = assert!(SCRIBBLE_BAND.0 < SCRIBBLE_BAND.1);
+const _: () = assert!(SCRIBBLE_BAND.0 < SCRIBBLE_BAND.1 && SCRAP_MAX >= 1);
 
 // ---- the page turn (web/src/bend.rs)
 

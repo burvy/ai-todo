@@ -2716,6 +2716,61 @@ mod tests {
         assert_eq!(tasks[0].title, "Post the letter");
     }
 
+    /// The scrap undo end to end: two tasks deleted one after the other are both taped
+    /// back, and a fresh read of the list (a reload) still holds both.
+    #[tokio::test]
+    async fn two_quick_deletes_are_both_taped_back_and_stay() {
+        let router = router_at(sunday_night());
+        let mut gone = Vec::new();
+        let mut originals = Vec::new();
+        for title in ["Post the letter", "Water the plants"] {
+            let id = create_task(&router, title).await;
+            let (_, held) = send(&router, "GET", "/api/v1/snapshot", None).await;
+            let task = serde_json::from_value::<Snapshot>(held)
+                .unwrap()
+                .tasks
+                .into_iter()
+                .find(|task| task.id.0 == id)
+                .expect("created");
+            gone.push(serde_json::to_string(&task).unwrap());
+            originals.push(task);
+            send(&router, "DELETE", &format!("/api/v1/tasks/{id}"), None).await;
+        }
+        let (_, empty) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        assert!(
+            serde_json::from_value::<Snapshot>(empty)
+                .unwrap()
+                .tasks
+                .is_empty()
+        );
+
+        for task in &gone {
+            let (status, _) = send(&router, "POST", "/api/v1/tasks/restore", Some(task)).await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        let (_, reload) = send(&router, "GET", "/api/v1/snapshot", None).await;
+        let mut back = serde_json::from_value::<Snapshot>(reload).unwrap().tasks;
+        assert_eq!(
+            back.len(),
+            2,
+            "each task is back and stored, not just answered"
+        );
+        // Every field as it was, bar the three the server owns: a fresh id, its own
+        // update time, and a place in the list kept within one step of it.
+        let as_was = |task: &Task| Task {
+            id: TaskId(String::new()),
+            updated_at: DateTime::<Utc>::MIN_UTC,
+            order: 0,
+            ..task.clone()
+        };
+        back.sort_by(|a, b| a.title.cmp(&b.title));
+        originals.sort_by(|a, b| a.title.cmp(&b.title));
+        for (back, original) in back.iter().zip(&originals) {
+            assert_eq!(as_was(back), as_was(original));
+            assert_ne!(back.id, original.id, "never the client's id");
+        }
+    }
+
     #[tokio::test]
     async fn a_restore_is_checked_like_a_create() {
         let router = router_at(sunday_night());
