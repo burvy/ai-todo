@@ -1795,7 +1795,9 @@ impl Store for SqliteStore {
         if user == super::auth::LOCAL_USER {
             return Ok(super::auth::Plan::Free);
         }
-        let plan: String = self
+        // An id with no account row (an anonymous visitor who has since signed in or
+        // expired, whose captures still count today) is anonymous, as in `MemoryStore`.
+        let plan: Option<String> = self
             .conn
             .lock_recover()
             .query_row(
@@ -1803,8 +1805,9 @@ impl Store for SqliteStore {
                 params![user],
                 |row| row.get(0),
             )
+            .optional()
             .map_err(backend)?;
-        Ok(parse_plan(&plan))
+        Ok(plan.map_or(super::auth::Plan::Anon, |plan| parse_plan(&plan)))
     }
 
     fn set_user_plan(&self, user: &str, plan: super::auth::Plan) -> Result<(), StoreError> {
