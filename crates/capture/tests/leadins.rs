@@ -72,8 +72,10 @@ fn jevs_recorded_choices_on_the_holdout_miss_only_two() {
     assert_eq!(
         misses(HOLDOUT, |clause, _| picks[clause]),
         [
-            "Hey, can you put a reminder in for me to renew the lease",
-            "Add the task of mowing the lawn"
+            "Add the task of mowing the lawn",
+            // Jev cuts this to "Call Mom", arguably better than the whole clause the
+            // review asked for; the offline judge keeps the whole clause.
+            "Add note to self to call Mom"
         ]
     );
 }
@@ -81,10 +83,12 @@ fn jevs_recorded_choices_on_the_holdout_miss_only_two() {
 #[test]
 fn the_offline_judge_takes_the_first_candidate_which_is_the_grammars() {
     // `FakeJudge` answers `title: 0`.
-    assert_eq!(misses(DESIGN, |_, _| 0), Vec::<&str>::new());
+    // The grammar leaves "add task buy ..." whole (a task noun is an ordinary word); Jev
+    // is offered "Buy a birthday card" and takes it.
+    assert_eq!(misses(DESIGN, |_, _| 0), ["Add task buy a birthday card"]);
     assert!(
         misses(HOLDOUT, |_, _| 0).len() <= 13,
-        "the grammar alone gets 33 of 46 on the holdout"
+        "the grammar alone gets 40 of 53 on the holdout"
     );
 }
 

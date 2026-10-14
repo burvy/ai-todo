@@ -39,8 +39,17 @@ const OPENERS: [&[&str]; 11] = [
     &["let's"],
     &["lets"],
 ];
+/// Whether `word` joins a lead-in to the title, given the word after it. "to" before an
+/// article or pronoun is an addressee ("a note to the landlord", "a note to self"), and
+/// "for me" is a favour, not a title.
+fn is_link(word: &str, next: Option<&str>) -> bool {
+    LINKS.contains(&word)
+        && !(word == "to" && next.is_some_and(|next| NOT_AN_ACTION.contains(&next)))
+        && !(word == "for" && next.is_some_and(|next| ["me", "us"].contains(&next)))
+}
+
 /// How far into the clause a title may start.
-const MAX_LEAD_IN_WORDS: usize = 8;
+const MAX_LEAD_IN_WORDS: usize = 10;
 
 /// A word without edge punctuation, lowercased, and whether a colon ended it.
 fn plain(word: &str) -> (String, bool) {
@@ -121,9 +130,8 @@ pub fn strip(title: &str) -> Option<String> {
     if is(i, &["on", "in", "to"]) && is(i + 1, &["my"]) && is(i + 2, &["list", "todo", "to-do"]) {
         i += 3;
     }
-    let linked = is(i, &LINKS)
-        && !(is(i, &["to"]) && is(i + 1, &NOT_AN_ACTION))
-        && !(is(i, &["for"]) && is(i + 1, &["me", "us"]));
+    let linked =
+        at(i).is_some_and(|(link, _)| is_link(&link, at(i + 1).map(|(next, _)| next).as_deref()));
     if linked {
         i += 1;
         // "a task that says call Dana"
@@ -131,10 +139,10 @@ pub fn strip(title: &str) -> Option<String> {
             i += 1;
         }
     }
-    // Without a link word the lead-in must be unmistakable: a colon label, or a verb and a
-    // bare noun ("add task buy cards"). "Create a new task template" is a task.
-    let bare = verb && !article;
-    if !(linked || colon || bare) {
+    // Without a link word the lead-in must be unmistakable: a colon label. A task noun
+    // is also an ordinary word ("Write note cards for the talk", "Make task force
+    // plans"), so "add task buy cards" is left whole here and only offered to Jev.
+    if !(linked || colon) {
         return None;
     }
     let rest = capitalised(&words[i..]);
@@ -154,7 +162,14 @@ pub fn options(title: &str) -> Vec<String> {
     }
     for start in 1..words.len().min(MAX_LEAD_IN_WORDS + 1) {
         let (before, colon) = plain(words[start - 1]);
-        let after_link = LINKS.contains(&before.as_str()) || colon;
+        let next = plain(words[start]).0;
+        // A link word or colon, or a request verb and a bare task noun ("add task buy
+        // cards"): offered to Jev, never cut by the grammar.
+        let verb_and_noun = TASK_NOUNS.contains(&before.as_str())
+            && !LINKS.contains(&next.as_str())
+            && start >= 2
+            && MAKE_VERBS.contains(&plain(words[start - 2]).0.as_str());
+        let after_link = is_link(&before, Some(&next)) || colon || verb_and_noun;
         let requests = words[..start].iter().any(|word| {
             let (word, _) = plain(word);
             [&MAKE_VERBS[..], &TASK_NOUNS[..], &CUES[..]]
@@ -190,7 +205,6 @@ mod tests {
             strip("Put a task on my list to clean the fridge").as_deref(),
             Some("Clean the fridge")
         );
-        assert_eq!(strip("Add task buy a card").as_deref(), Some("Buy a card"));
     }
 
     #[test]
@@ -202,6 +216,14 @@ mod tests {
             "Make a to-do list for the move",
             "Task the interns with the cleanup",
             "Add a task",
+            // A task noun is also an ordinary word.
+            "Write note cards for the talk",
+            "Put note cards in the bag",
+            "Set reminder alarms for Friday",
+            "Make todo list",
+            "Make task force plans",
+            "Add note to self to call Mom",
+            "Add task buy a card",
         ] {
             assert_eq!(strip(title), None, "{title}");
         }
@@ -213,10 +235,18 @@ mod tests {
             options("Add a task to buy milk"),
             ["Buy milk", "Add a task to buy milk"]
         );
-        assert_eq!(
-            options("Add milk to the list"),
-            ["Add milk to the list", "The list"]
-        );
+        // "to the" is not a link, so "The list" is no longer even offered.
+        assert_eq!(options("Add milk to the list"), ["Add milk to the list"]);
         assert_eq!(options("Buy milk"), ["Buy milk"]);
+        // A request verb and a bare task noun: offered to Jev, not cut by the grammar.
+        assert_eq!(
+            options("Add task buy a card"),
+            ["Add task buy a card", "Buy a card"]
+        );
+        // "to self" is an addressee, so it is not a start.
+        assert_eq!(
+            options("Add note to self to call Mom"),
+            ["Add note to self to call Mom", "Call Mom"]
+        );
     }
 }

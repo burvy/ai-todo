@@ -49,3 +49,11 @@ Put a note on the fridge => Put a note on the fridge
 Add a note to the file about the delivery => Add a note to the file about the delivery
 Add an item to the menu => Add an item to the menu
 Remind the team about the deadline => Remind the team about the deadline
+# -- added after review (Fabio): ordinary words that are also task nouns; the whole clause is the title
+Write note cards for the talk => Write note cards for the talk
+Put note cards in the bag => Put note cards in the bag
+Write item descriptions for the shop => Write item descriptions for the shop
+Set reminder alarms for Friday => Set reminder alarms
+Make todo list => Make todo list
+Make task force plans => Make task force plans
+Add note to self to call Mom => Add note to self to call Mom

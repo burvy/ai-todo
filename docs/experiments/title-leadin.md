@@ -5,15 +5,15 @@ finding where the title starts: a plain code rule, or a Jev `Choice` over start 
 code proposes?
 
 **Answer.** Jev choosing among code-made candidates, with a sharper question. It got 67 of
-67 on the set the rule was built against and 44 of 46 on a set written afterwards, against
-33 of 46 for the rule. It is also what Jev already does for titles, so it costs no extra
+67 on the set the rule was built against and 51 of 53 on a set written afterwards (after the
+review below), against 66 and 40 for the rule alone. It is also what Jev already does for titles, so it costs no extra
 call. The rule stays, as the candidate Jev sees first and the answer the offline judge gives.
 
 ## Method
 
 - **Eval sets**: `crates/capture/tests/fixtures/leadins.txt` (67 clauses, written while
-  building the rule) and `leadins.holdout.txt` (46, written after the rule was fixed, in
-  phrasings it was not built for). Each line is `clause => expected title`. Each set mixes
+  building the rule) and `leadins.holdout.txt` (53: 46 written after the rule was fixed, in
+  phrasings it was not built for, and 7 added after review, see below). Each line is `clause => expected title`. Each set mixes
   clauses with a lead-in, clauses without one, and tricky ones that only look like a lead-in
   ("Add milk to the list", "Schedule a meeting with Sam", "Write a note to the landlord").
   Expected titles were written by hand.
@@ -42,7 +42,13 @@ call. The rule stays, as the candidate Jev sees first and the answer the offline
 | Jev, original question ("best names the task"), link-word candidates | 62 (93%) | 41 (89%) |
 | Jev, sharper question, link-word candidates | 64 (96%) | 41 (89%) |
 | Jev, sharper question, **every word** as a candidate | 61 (91%) | 39 (85%) |
-| **Jev, sharper question, link-word candidates + the rule's answer (shipped)** | **67 (100%)** | **44 (96%)** |
+| Jev, sharper question, link-word candidates + the rule's answer (first version) | 67 (100%) | 44 of 46 (96%) |
+| *After review (the "bare noun" cut removed), on the final sets* | design (67) | holdout (53) |
+| Today (`clean_title` only) | 32 (48%) | 24 (45%) |
+| Code rule | 66 (99%) | 40 (75%) |
+| **Jev, sharper question, link-word candidates + the rule's answer (shipped)** | **67 (100%)** | **51 (96%)** |
+
+The rows above the divider were measured on the original 46-clause holdout.
 
 Notes on reading this:
 
@@ -51,17 +57,29 @@ Notes on reading this:
   "that says"), which moved it from 27 to 31 and then 33; so the holdout is no longer fully
   untouched for the rule. Jev's holdout figures changed only through candidate changes, not
   through any tuning to individual clauses.
-- Every Jev miss with the final setup is a clause where the right title was **not on offer**
-  (44 of 46 were reachable): "Add the task of mowing the lawn" (the code does not offer a
-  start after "of") and a clause where Jev took the nearer link word ("... for me to renew").
-  When the right title is on offer Jev picked it every time, including the tricky ones.
+- Review (Fabio) found a defect in the first version: the rule cut "verb + task noun" with no
+  link word ("add task buy cards"), but a task noun is also an ordinary word, so "Write note
+  cards for the talk" became "Cards for the talk", "Make task force plans" became "Force
+  plans". Those were in neither set. The cut is gone: such a clause is now left whole by the
+  rule and "Buy cards" is only *offered* to Jev. Seven of the clauses found were added to the
+  holdout with the whole clause as the answer, so they cannot come back. The candidate list
+  also applies the "to + the/me/self" test that the rule has, so "Add note to self to call
+  Mom" no longer offers "To self to call Mom". The rule on its own now scores 66 (was 67)
+  on the design set, because "Add task buy a birthday card" is left whole; the shipped
+  answer is unchanged at 67.
+- The two Jev misses on the final holdout: "Add the task of mowing the lawn" (the code does
+  not offer a start after "of"), and "Add note to self to call Mom", where Jev picks "Call
+  Mom", which is arguably a better title than the whole clause the review asked for; the
+  offline judge keeps the whole clause.
 - Offering **every word** as a start made Jev over-cut ("Add milk to the list" became "Milk to
   the list"). Starts after link words only is better.
 - Sharpening the question text ("words that only ask the app to create the task are not part
   of the title") fixed Jev's habit of keeping "Add a reminder to ..." whole.
-- The rule on its own cuts wrongly in a few holdout cases before the "to + the/me" guard
-  ("Write a note to the landlord" became "The landlord"). That is why the rule is not used alone.
-- Today's pipeline already handles "remind me to" and "I need to". The remaining 52% / 63% of
+- The rule on its own cut wrongly in a few holdout cases before the "to + the/me" guard
+  ("Write a note to the landlord" became "The landlord"). Rule-only numbers hide false
+  positives that neither set contained until review, which is why the rule is not used alone
+  and the whole clause is always a candidate.
+- Today's pipeline already handles "remind me to" and "I need to". The remaining 52% / 55% of
   failures are the "add/create/make/schedule a task to" family and openers.
 
 ## What shipped
