@@ -980,6 +980,7 @@ impl Store for MemoryStore {
             .lock_recover()
             .retain(|(owner, _, _)| owner != user);
         self.users.lock_recover().retain(|held| held.id != user);
+        self.activity.lock_recover().remove(user);
         self.sessions
             .lock_recover()
             .retain(|(_, owner, _)| owner != user);
@@ -1130,6 +1131,7 @@ impl Store for MemoryStore {
         self.users
             .lock_recover()
             .retain(|held| held.id != anonymous);
+        self.activity.lock_recover().remove(anonymous);
         let mut stored = self.tasks.lock_recover();
         let existing_uids: std::collections::HashSet<_> = stored
             .iter()
@@ -1155,17 +1157,30 @@ impl Store for MemoryStore {
         stored.extend(moved.into_iter().map(|task| (user.to_owned(), task)));
         drop(stored);
         let mut series = self.series.lock_recover();
-        let moved_series: Vec<Series> = series
+        let existing_series_uids: std::collections::HashSet<_> = series
+            .iter()
+            .filter(|(owner, _)| owner == user)
+            .filter_map(|(_, held)| held.external_uid.clone())
+            .collect();
+        // Like tasks: a series the user already imported keeps the signed-in copy.
+        let (moved_series, dropped_series): (Vec<Series>, Vec<Series>) = series
             .iter()
             .filter(|(owner, _)| owner == anonymous)
             .map(|(_, held)| held.clone())
-            .collect();
+            .partition(|held| {
+                !held
+                    .external_uid
+                    .as_ref()
+                    .is_some_and(|uid| existing_series_uids.contains(uid))
+            });
         series.retain(|(owner, _)| owner != anonymous);
         drop(series);
         let mut exceptions = self.exceptions.lock_recover();
         let moved_exceptions: Vec<(SeriesId, SeriesException)> = exceptions
             .iter()
-            .filter(|(owner, _, _)| owner == anonymous)
+            .filter(|(owner, id, _)| {
+                owner == anonymous && !dropped_series.iter().any(|held| held.id == *id)
+            })
             .map(|(_, series, exception)| (series.clone(), exception.clone()))
             .collect();
         exceptions.retain(|(owner, _, _)| owner != anonymous);
@@ -1893,6 +1908,27 @@ impl Store for SqliteStore {
         tx.execute(
             "UPDATE v2_tasks SET user_id = ?1 WHERE user_id = ?2",
             params![user, anonymous],
+        )
+        .map_err(|e| backend(e, at!()))?;
+        // Like tasks: a series the user already imported keeps the signed-in copy, and
+        // the anonymous copy's exceptions go with it.
+        const DUPLICATE_SERIES: &str = "SELECT id FROM v2_series
+             WHERE user_id = ?1 AND external_uid IS NOT NULL
+             AND external_uid IN (
+                 SELECT external_uid FROM v2_series
+                 WHERE user_id = ?2 AND external_uid IS NOT NULL
+             )";
+        tx.execute(
+            &format!(
+                "DELETE FROM v2_series_exceptions WHERE user_id = ?1
+                 AND series_id IN ({DUPLICATE_SERIES})"
+            ),
+            params![anonymous, user],
+        )
+        .map_err(|e| backend(e, at!()))?;
+        tx.execute(
+            &format!("DELETE FROM v2_series WHERE id IN ({DUPLICATE_SERIES})"),
+            params![anonymous, user],
         )
         .map_err(|e| backend(e, at!()))?;
         tx.execute(
@@ -2829,6 +2865,71 @@ mod tests {
         );
     }
 
+    /// A calendar imported while anonymous and again after signing in is one series,
+    /// not two: the signed-in copy stays and the anonymous copy goes, exceptions and all.
+    fn adoption_keeps_the_signed_in_copy_of_a_series(store: &dyn Store) {
+        const ANON: &str = "anon_0123456789abcdef0123456789abcdef";
+        let imported = |id: &str, uid: Option<&str>| Series {
+            external_uid: uid.map(str::to_owned),
+            ..series(id, 0)
+        };
+        store.ensure_anonymous(ANON, at(9)).unwrap();
+        store
+            .put_series(ANON, imported("anon-copy", Some("uid-1")))
+            .unwrap();
+        store
+            .put_series(ANON, imported("anon-own", Some("uid-2")))
+            .unwrap();
+        store
+            .put_exception(
+                ANON,
+                &SeriesId("anon-copy".into()),
+                SeriesException {
+                    date: on((2026, 10, 12)),
+                    kind: ExceptionKind::Done,
+                },
+            )
+            .unwrap();
+        store
+            .put_series(USER, imported("mine", Some("uid-1")))
+            .unwrap();
+
+        store.adopt_anonymous(ANON, USER).unwrap();
+
+        let mut ids: Vec<_> = store
+            .series(USER)
+            .unwrap()
+            .into_iter()
+            .map(|held| held.id.0)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, ["anon-own", "mine"]);
+        assert!(
+            store
+                .exceptions(USER, &SeriesId("anon-copy".into()))
+                .unwrap()
+                .is_empty(),
+            "the dropped copy's exceptions must not follow it"
+        );
+    }
+
+    /// An anonymous account that was adopted or deleted is gone, so expiry has
+    /// nothing left of it to count.
+    fn adopted_and_deleted_accounts_are_not_expired_again(store: &dyn Store) {
+        const ADOPTED: &str = "anon_0123456789abcdef0123456789abcdef";
+        const DELETED: &str = "anon_fedcba9876543210fedcba9876543210";
+        store.ensure_anonymous(ADOPTED, at(9)).unwrap();
+        store.ensure_anonymous(DELETED, at(9)).unwrap();
+
+        store.adopt_anonymous(ADOPTED, USER).unwrap();
+        store.delete_user(DELETED).unwrap();
+
+        assert_eq!(
+            store.expire_anonymous(at(9) + Duration::days(365)).unwrap(),
+            0
+        );
+    }
+
     /// Only a real anonymous id adopts anything. A signed-in user's id, given as the
     /// anonymous header, moves nothing.
     fn adoption_ignores_ids_that_are_not_anonymous(store: &dyn Store) {
@@ -3049,6 +3150,8 @@ mod tests {
         on_disk(series_are_isolated);
         on_disk(adoption_moves_anonymous_tasks_and_ends_the_id);
         on_disk(adoption_ignores_ids_that_are_not_anonymous);
+        on_disk(adoption_keeps_the_signed_in_copy_of_a_series);
+        on_disk(adopted_and_deleted_accounts_are_not_expired_again);
         on_disk(blocks_hold_until_lifted);
         on_disk(captures_are_counted_per_user_and_address);
         on_disk(anonymous_ids_are_counted_per_address_per_day);
@@ -3061,6 +3164,8 @@ mod tests {
     fn memory_store_adoption_and_scoping_rules() {
         adoption_moves_anonymous_tasks_and_ends_the_id(&MemoryStore::default());
         adoption_ignores_ids_that_are_not_anonymous(&MemoryStore::default());
+        adoption_keeps_the_signed_in_copy_of_a_series(&MemoryStore::default());
+        adopted_and_deleted_accounts_are_not_expired_again(&MemoryStore::default());
     }
 
     #[test]
