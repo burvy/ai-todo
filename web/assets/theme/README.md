@@ -1,13 +1,28 @@
-# Theme Assets (Placeholder)
+# Theme Assets
 
 Rambo's poses live in `web/assets/rambo/` (see `art/GUIDE.md`), not here.
 
-All files in this directory are AI-generated placeholder graphics. Replace them with real art before shipping.
+Concept art pending review (PR `ping/paper-concept`), drawn in-repo. The
+contract for both files:
+
+- **Tileable** at 512x512: every `feTurbulence` carries `stitchTiles="stitch"`,
+  so the tile repeats with no seam. Use as a repeating `background-image`.
+- **Subtle on purpose**: four stacked layers (dark pulp clouds, light clouds,
+  fine dark grain, fine light grain) at single-digit alpha. No stains, no
+  aged props.
+- **Colour = the app's token, not the file's**: the base rect fills with
+  `var(--parchment, <fallback>)`. Inlined in a page that defines the token it
+  follows the theme; loaded as `url()` it shows the fallback. There is
+  deliberately **no `prefers-color-scheme`** in these files — the app picks
+  `paper.svg` for light and `paper-dark.svg` for dark.
 
 | File | Purpose | Size | Format | Used in |
 |---|---|---|---|---|
-| paper.svg | Tileable light parchment grain | 512x512 | SVG (tileable) | Page background |
-| paper-dark.svg | Tileable dark-mode parchment grain | 512x512 | SVG (tileable) | Dark page background |
+| paper.svg | Tileable light parchment grain (fallback `#f2e8cf`, today's token) | 512x512 | SVG (tileable) | Page background |
+| paper-dark.svg | Tileable dark paper grain. Fallback `#48443a` is the **proposed** bright dark paper (UI-BUGS #10: bright, not brown; old `#241c11`) — pending review, the token change comes after | 512x512 | SVG (tileable) | Dark page background |
+
+Preview both on mock journal pages: `art/previews/paper-concept.html`
+(open from disk; not served).
 
 ## Replacement steps
 

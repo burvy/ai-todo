@@ -29,8 +29,11 @@ as `--rambo-*` CSS variables with a `prefers-color-scheme: dark` variant.
 | `sulking.svg` | dedicated: sulking at overdue |
 | `lobotomized.svg` | no-brain mode |
 
-Shared, skin-independent: `rambo/nest.svg` (viewBox `0 0 96 56`, the bubble
-he rests in; tapping it submits) and the mood fx in `rambo/fx/` below.
+Shared, skin-independent: `rambo/nest.svg` (viewBox `0 0 96 56`, the paper
+dish he rests in; tapping it submits). Unlike the poses, the nest takes the
+page palette tokens (`--ecru`, `--chamoisee`, `--wheat`, `--ink`) with light
+fallbacks and carries no `prefers-color-scheme` — it follows the app theme.
+The mood fx in `rambo/fx/` below are shared too.
 `rambo/sheet.html` previews every skin × pose on light and dark paper —
 open it in a browser to check art.
 
@@ -80,10 +83,13 @@ three weights (ballpoint / fountain / marker tool writing). Paste-ready
 
 ## Theme — `theme/`
 
+Concept art pending review (`ping/paper-concept`; details and replacement
+steps: `theme/README.md`, preview: `art/previews/paper-concept.html`).
+
 | File | What | Notes |
 |---|---|---|
-| `paper.svg` | light parchment grain tile, 512×512, seamless (`stitchTiles`) | use as repeating `background-image`; faint on purpose |
-| `paper-dark.svg` | dark parchment grain tile | same, for night mode |
+| `paper.svg` | light parchment grain tile, 512×512, seamless (`stitchTiles`); four layers (dark + light pulp clouds, fine dark + light grain) | repeating `background-image`; base colour = `var(--parchment, #f2e8cf)` |
+| `paper-dark.svg` | dark paper grain tile, same layers rebalanced | fallback `#48443a` **proposes** the bright not-brown dark paper (UI-BUGS #10); old `#241c11` |
 | `stain.svg`, `edge.svg` | cup stain / torn edge | currently unused (the brief calls them dirt — keep them out) |
 
 ## Sounds — `sounds/`

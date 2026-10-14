@@ -1,23 +1,38 @@
-<!-- PLACEHOLDER: replace me, see art/GUIDE.md -->
+<!-- Concept art (ping/paper-concept, drawn in-repo): the nest as furniture —
+     a shallow paper dish, ecru with a chamoisee rim, pressed-in inside
+     (docs/DESIGN-DIRECTION.md §2). Same filename, viewBox and class names as
+     the old placeholder; colours are app tokens with light fallbacks, so an
+     inlined copy follows the theme. No prefers-color-scheme in here. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 56" role="img" aria-label="Rambo's nest">
+  <defs>
+    <filter id="nest-soft" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.8"/>
+    </filter>
+  </defs>
   <style>
-    svg{--rambo-barrel:#9F682E;--rambo-cap:#9F682E;--rambo-nib:#E1C38C;--rambo-lead:#3E2F1F;--rambo-ink:#5D4732;--rambo-eye:#FCFAF4;--rambo-pupil:#3E2F1F;--rambo-blush:#D08770;--rambo-fx:#A7865D;--rambo-brow:#3E2F1F}
-    @media (prefers-color-scheme:dark){svg{--rambo-barrel:#C89B62;--rambo-cap:#C89B62;--rambo-nib:#E8D9B0;--rambo-ink:#C9AE85;--rambo-fx:#B5976D;--rambo-brow:#4A331D}}
-    .nest-cup{fill:var(--rambo-nib);stroke:var(--rambo-ink);stroke-width:2;stroke-linejoin:round}
-    .nest-hole{fill:var(--rambo-cap);opacity:.4}
-    .nest-strip{stroke:var(--rambo-fx);stroke-width:2;stroke-linecap:round;fill:none}
-    .nest-stitch{stroke:var(--rambo-fx);stroke-width:1.6;stroke-linecap:round;fill:none}
-    .nest-shadow{fill:var(--rambo-ink);opacity:.12}
-    .nest-dot{fill:var(--rambo-ink)}
+    .nest-cup{fill:var(--ecru,#e1c38c)}
+    .nest-rim{fill:none;stroke:var(--chamoisee,#a7865d);stroke-width:2.4;stroke-linecap:round}
+    .nest-hole{fill:var(--chamoisee,#a7865d);opacity:.26}
+    .nest-shade{fill:none;stroke:var(--chamoisee,#a7865d);opacity:.38;stroke-width:2;stroke-linecap:round}
+    .nest-stitch{fill:none;stroke:var(--wheat,#ecd7af);opacity:.75;stroke-width:1.5;stroke-linecap:round}
+    .nest-strip{fill:none;stroke:var(--chamoisee,#a7865d);stroke-width:1.8;stroke-linecap:round}
+    .nest-shadow{fill:var(--ink,#5d4732);opacity:.15}
+    .nest-dot{fill:var(--chamoisee,#a7865d);opacity:.8}
   </style>
-  <ellipse class="nest-shadow" cx="48" cy="47" rx="34" ry="5.5"/>
-  <path class="nest-cup" d="M16 27 Q19 44 48 46 Q77 44 80 27 L74 29 Q70 24 64 27 Q59 22 52 26 Q46 21 39 26 Q33 22 28 27 Q22 24 16 27 Z"/>
-  <ellipse class="nest-hole" cx="48" cy="27" rx="24" ry="6"/>
-  <path class="nest-stitch" d="M26 36 Q30 40 38 41"/>
-  <path class="nest-stitch" d="M58 41 Q66 40 70 36"/>
-  <path class="nest-strip" d="M20 24 Q16 17 20 12"/>
-  <path class="nest-strip" d="M76 25 Q80 19 77 14"/>
-  <path class="nest-strip" d="M64 22 Q66 15 63 11"/>
-  <circle class="nest-dot" cx="13" cy="31" r="1.2"/>
-  <circle class="nest-dot" cx="84" cy="33" r="1.1"/>
+  <!-- the sheet's shadow under the dish -->
+  <ellipse class="nest-shadow" cx="48" cy="45.5" rx="29" ry="4" filter="url(#nest-soft)"/>
+  <!-- dish interior: pressed-in paper -->
+  <ellipse class="nest-cup" cx="48" cy="26" rx="30" ry="8"/>
+  <ellipse class="nest-hole" cx="48" cy="26.5" rx="25.5" ry="6.2"/>
+  <path class="nest-shade" d="M26 23.5 Q48 16.5 70 23.5"/>
+  <!-- front wall -->
+  <path class="nest-cup" d="M18 26 Q22 39 48 41 Q74 39 78 26 A30 8 0 0 1 18 26 Z"/>
+  <path class="nest-stitch" d="M27 34.5 Q48 40 69 34.5"/>
+  <!-- the lip: a hand-drawn ellipse, two arcs of slightly different squash -->
+  <path class="nest-rim" d="M18 26 A30 8 0 1 1 78 26 A30 7 0 1 1 18 26"/>
+  <!-- stray fibres and flecks, as on real paper -->
+  <path class="nest-strip" d="M23 22 Q20.5 18.5 22 16"/>
+  <path class="nest-strip" d="M74 22.5 Q76.5 19 75 16.5"/>
+  <circle class="nest-dot" cx="14" cy="33" r="1.1"/>
+  <circle class="nest-dot" cx="83" cy="34.5" r="1"/>
 </svg>
