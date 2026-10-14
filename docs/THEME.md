@@ -99,7 +99,7 @@ Check 360px and 390px before a wide window. The layout behaviour comes from `web
 
 ## Light and dark
 
-Dark follows the OS (`prefers-color-scheme`) until the user picks a theme. The CSS already honours `data-theme="dark"` and `data-theme="light"` on `:root` over the OS preference; the in-app toggle that sets them lives in settings (planned, `docs/REDESIGN.md` section 1). Nothing may rely on a texture alone for contrast.
+**Parchment light is the default and the page never follows the OS** (owner QA, 2026-10-13): `web/index.html` ships `<html data-theme="light">` so even the paint before the app loads is light, the OS media query is not used at all, and dark exists only when the user picks Dark in the gear menu (`settings::Theme`, stored with the other view settings). Nothing may rely on a texture alone for contrast.
 
 ## Motion
 

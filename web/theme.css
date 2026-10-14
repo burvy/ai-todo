@@ -82,36 +82,8 @@
 }
 
 /* Dark is the same desk at night: deep paper, parchment-coloured ink.
-   Shown when the OS asks for dark (until the user picks a theme in settings,
-   which sets data-theme and wins over the OS). */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-
-    --parchment: #241c11;
-    --wheat: #2d2315;
-    --ecru: #1a140b;
-    --ink: #efe3c8;
-    --accent: #d9a45c;
-    --danger: #e0705f;
-    --now: #d96a4f;
-
-    --ink-soft: #c9b693;
-    --ink-faint: #b3a17e;
-
-    --rule: rgba(167, 134, 93, 0.3);
-    --rule-strong: rgba(167, 134, 93, 0.46);
-    --margin-line: rgba(224, 112, 95, 0.26);
-    --wash: rgba(217, 164, 92, 0.14);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --sheet-shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.8);
-    --fold-shadow: -8px 0 14px -10px rgba(0, 0, 0, 0.65);
-    --backdrop: rgba(10, 8, 5, 0.55);
-
-    --texture-paper: url("assets/theme/paper-dark.svg");
-  }
-}
-
+   Only the gear menu's Dark choice sets data-theme="dark" — the page is
+   light by default and never follows the OS (owner QA, 2026-10-13). */
 :root[data-theme="dark"] {
   color-scheme: dark;
 

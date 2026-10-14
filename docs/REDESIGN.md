@@ -6,7 +6,7 @@ The v1 prototype was decent; read it for feel and behaviour (not code to copy):
 `git show 679f669^:static/index.html`, `679f669^:static/app.js`, `679f669^:static/styles.css`.
 
 ## 1. Theme
-- **Light is the default and is parchment.** Dark mode exists too (v1 had both), toggled in settings, following the OS only until the user picks.
+- **Light is the default and is parchment.** Dark mode exists too (v1 had both), toggled in the gear menu. It never follows the OS — dark only when the user picks it (owner QA, 2026-10-13).
 - Light palette (use as `:root` tokens in `web/theme.css`):
   - parchment `#F2E8CF` (page) · wheat `#ECD7AF` · ecru `#E1C38C`
   - chamoisee `#A7865D` (lines, muted text) · coffee `#5D4732` (ink) · golden brown `#9F682E` (accent)

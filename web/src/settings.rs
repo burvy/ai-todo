@@ -43,11 +43,13 @@ impl Pen {
     }
 }
 
-/// Light is the default; System follows the OS until the user picks.
+/// Parchment light is the default and the page never follows the OS: dark
+/// exists only when the user picks it in the gear menu (owner QA, 2026-10-13).
+/// `data-theme="light"` is baked into `web/index.html` so even the first
+/// paint before the app loads is light.
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Theme {
     #[default]
-    System,
     Light,
     Dark,
 }
@@ -55,7 +57,6 @@ pub enum Theme {
 impl Theme {
     pub fn label(self) -> &'static str {
         match self {
-            Theme::System => "System",
             Theme::Light => "Light",
             Theme::Dark => "Dark",
         }
@@ -71,7 +72,7 @@ const DEFAULTS: Settings = Settings {
     end_hour: 24,
     days: 7,
     mode: RamblMode::Interactive,
-    theme: Theme::System,
+    theme: Theme::Light,
     sounds: true,
     pen: Pen::FountainPen,
 };
@@ -191,7 +192,7 @@ pub fn GearMenu(
                     <div class="gear-menu" role="menu" aria-label="Settings">
                         <h3>"Paper"</h3>
                         <div class="gear-choices" role="group" aria-label="Theme">
-                            <For each=|| [Theme::Light, Theme::Dark, Theme::System] key=|t| *t let:theme>
+                            <For each=|| [Theme::Light, Theme::Dark] key=|t| *t let:theme>
                                 <button
                                     type="button"
                                     role="radio"
@@ -318,8 +319,8 @@ pub fn GearMenu(
     }
 }
 
-/// Light/Dark set `data-theme` on the page; System clears it so the OS
-/// preference decides. theme.css honours the attribute over the media query.
+/// Light/Dark set `data-theme` on the page; the attribute is always present
+/// (index.html bakes in the light default), so the OS is never followed.
 fn apply_theme(theme: Theme) {
     #[cfg(target_arch = "wasm32")]
     {
@@ -330,7 +331,6 @@ fn apply_theme(theme: Theme) {
             .and_then(|el| el.dyn_into::<web_sys::HtmlHtmlElement>().ok());
         if let Some(html) = html {
             match theme {
-                Theme::System => html.remove_attribute("data-theme"),
                 Theme::Light => html.set_attribute("data-theme", "light"),
                 Theme::Dark => html.set_attribute("data-theme", "dark"),
             }
@@ -427,9 +427,19 @@ mod tests {
                 ..Settings::default()
             }
         );
-        assert_eq!(Settings::default().theme, Theme::System);
+        assert_eq!(Settings::default().theme, Theme::Light);
         assert!(Settings::default().sounds);
         assert_eq!(Settings::default().pen, Pen::FountainPen);
+    }
+
+    #[test]
+    fn a_stored_system_choice_falls_back_to_light() {
+        // "System" no longer exists: the row is refused wholesale and the
+        // defaults (light paper, sounds on, fountain pen) take over.
+        assert_eq!(
+            Settings::parse_or_default(r#"{"theme":"System"}"#),
+            Settings::default()
+        );
     }
 
     #[test]
