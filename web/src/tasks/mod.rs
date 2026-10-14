@@ -335,7 +335,7 @@ pub(crate) fn TaskList(
                         // A row off the screen (the other pane on a phone, or
                         // scrolled away) is left as it is; he stays home.
                         if !row.as_ref().is_some_and(write::in_view) {
-                            set_state.set(mascot::State::Home);
+                            set_state.set(mascot::transition(&state, mascot::Event::SkipRow));
                             continue;
                         }
                         set_state.set(mascot::transition(&state, mascot::Event::WriteRow));
@@ -350,7 +350,10 @@ pub(crate) fn TaskList(
                             write::park_nib(row, pen_pos);
                         }
                         gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
-                        set_state.set(mascot::State::WritingRow);
+                        set_state.set(mascot::transition(
+                            &mascot_state.get_untracked(),
+                            mascot::Event::WriteRow,
+                        ));
                         if let Some(row) = row.as_ref() {
                             write::write_row_title(row, pen_pos).await;
                         }
@@ -360,7 +363,10 @@ pub(crate) fn TaskList(
                             mascot::Event::FlyHome,
                         ));
                         gloo_timers::future::TimeoutFuture::new(pen::FLY_MS).await;
-                        set_state.set(mascot::State::Home);
+                        set_state.set(mascot::transition(
+                            &mascot_state.get_untracked(),
+                            mascot::Event::FlyHome,
+                        ));
                     }
                     pen_queue.set(Vec::new());
                 });
