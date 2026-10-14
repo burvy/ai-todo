@@ -273,6 +273,12 @@ pub const HOP_RISE: f64 = 0.35;
 /// share of his size. Safe range 0 to 0.25.
 pub const HOP_SQUASH: f64 = 0.14;
 
+/// How hard the ride spring pulls him after the finger that holds him, in rad/s: it is
+/// critically damped, so he trails the finger by about 1/RIDE_OMEGA s and never swings
+/// past it. Safe range 25 to 70: lower and he drags behind like a balloon, higher and
+/// he is glued to the finger with no weight at all.
+pub const RIDE_OMEGA: f64 = 40.0;
+
 /// How far above a finger he rides while held, in px between the finger and his
 /// bottom edge: a fingertip covers more than its point. Safe range 8 to 48.
 pub const HELD_GAP_TOUCH_PX: f64 = 20.0;
