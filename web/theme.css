@@ -922,7 +922,11 @@ a {
   --planner-gutter: 3.25rem;
   display: grid;
   gap: var(--space-1);
-  overflow-x: auto;
+  /* Clip, never auto: `auto` would make .week a scroll container of its own,
+     and the sticky day-name row would stick against it (which never scrolls
+     vertically) instead of .week-scroll. The horizontal scroll on a narrow
+     screen lives on .week-scroll, which scrolls on both axes. */
+  overflow-x: clip;
   padding-left: var(--planner-gutter);
   grid-template-columns: repeat(var(--days, 7), minmax(8rem, 1fr));
 }
@@ -930,6 +934,9 @@ a {
 .week-scroll {
   max-height: 65vh;
   overflow-y: auto;
+  /* The scroll container on both axes: the day-name row sticks against this
+     edge, the week columns slide sideways under it on a narrow screen. */
+  overflow-x: auto;
   overscroll-behavior: contain;
   overscroll-behavior-x: contain;
 }
@@ -937,14 +944,24 @@ a {
 .day {
   position: relative;
   min-width: 7rem;
-  padding: var(--space-1);
+  /* Vertical room lives on the name itself, so the sticky row can ride
+     the top of the scroll box flush. */
+  padding: 0 var(--space-1);
   border-left: 1px solid var(--rule);
 }
 
 /* The day's name in the neat hand, as it looks like it was written on the
-   paper; today is underlined in the accent ink. */
+   paper; today is underlined in the accent ink. The row rides the top of
+   .week-scroll: it stays in view while the day's hours scroll beneath it,
+   in the paper colour, like a band of clean paper across the spread. */
 .day-name {
+  position: sticky;
+  top: 0;
+  /* Above the slips (2) and the landing outline (3): the hours slide under
+     the band, never across it. */
+  z-index: 4;
   margin: 0 0 var(--space-1);
+  background-color: var(--paper);
   font-family: var(--font-hand-neat);
   font-weight: 400;
   font-size: var(--text-sm);
@@ -970,10 +987,12 @@ a {
 }
 
 /* Only today's column carries the hour text, and it sits in the gutter to
-   the left of the grid, over the padding, never under a task block. */
+   the left of the grid, over the padding, never under a task block. The
+   digits line up in a column of their own, 09:30 exactly on top of 10:00. */
 .hour span {
   font-size: var(--text-xs);
   font-family: var(--font-hand-neat);
+  font-variant-numeric: tabular-nums;
   color: var(--ink-faint);
 }
 
@@ -1000,11 +1019,38 @@ a {
   border: none;
   border-left: 3px solid var(--accent);
   border-radius: 0;
-  /* A 30-minute block is 32px tall: one small line, truncated, never spilled. */
+  /* A 30-minute block is 32px tall; taller slips hold one line and cut it
+     with an ellipsis. Shorter slips give their words to .slip-text, below. */
+  min-height: 20px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
   font-size: var(--text-sm);
+}
+
+/* Short slips (under an hour) have no room for their words: the words move
+   beside the slip, written over the hour lines of its right-hand column,
+   whole — nothing there is ever cut off. */
+.placement.short {
+  overflow: visible;
+}
+
+.placement.short .slip-text {
+  position: absolute;
+  left: calc(100% + var(--space-2));
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  padding: 0 var(--space-1);
+  background-color: var(--paper);
+  pointer-events: none;
+}
+
+/* The last day has no right-hand neighbour to write over: turn the words
+   inwards onto the empty paper to its left instead. */
+.day:last-child .placement.short .slip-text {
+  left: auto;
+  right: calc(100% + var(--space-2));
 }
 
 /* The drag grip: a small strip along the placement's left edge, drawn as the

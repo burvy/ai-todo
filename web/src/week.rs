@@ -41,18 +41,25 @@ pub fn WeekGrid(
     let (now_minutes, set_now_minutes) = signal(current_minutes());
     set_interval(move || set_now_minutes.set(current_minutes()), 60_000).forget();
     // The planner opens on the working morning, not in the middle of the
-    // night: about 08:00, or now if it is already later.
+    // night: about 08:00, or now if it is already later. Once, not on every
+    // settings change: a pen swap must not jump the paper back up.
+    let opened = RwSignal::new(false);
     Effect::new(move |_| {
-        let s = settings.get();
-        if let Some(grid) = grid_ref.get() {
-            #[cfg(target_arch = "wasm32")]
-            {
-                let target = planner_open_minutes(current_minutes(), s.start_hour, s.end_hour);
-                grid.set_scroll_top(now_line_top(target, s.start_hour, HOUR_PX) as i32);
-            }
-            #[cfg(not(target_arch = "wasm32"))]
-            let _ = (grid, s);
+        if opened.get() {
+            return;
         }
+        let s = settings.get();
+        let Some(grid) = grid_ref.get() else {
+            return;
+        };
+        #[cfg(target_arch = "wasm32")]
+        {
+            let target = planner_open_minutes(current_minutes(), s.start_hour, s.end_hour);
+            grid.set_scroll_top(now_line_top(target, s.start_hour, HOUR_PX) as i32);
+            opened.set(true);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = (grid, s);
     });
     // The paper slip: a dragged task and where the finger is.
     let drag = RwSignal::new(None::<Drag>);
@@ -109,14 +116,15 @@ pub fn WeekGrid(
                                         aria-label="Current time"
                                     ></div>
                                 })}
-                            <For each=move || {
+                            <For
+                                each=move || {
                                     // Re-read every minute, so "today" moves on at midnight.
                                     let _ = now_minutes.get();
                                     let snapshot = snapshot.get();
                                     let ctx = planner_context(&snapshot.tz);
                                     placements_on_day(&snapshot.plan.placements, i64::from(day), &ctx)
                                 }
-                                key=|placement| placement.task.clone() let:placement>
+                                key=placement_key let:placement>
                                 <PlacementBlock placement snapshot settings set_snapshot set_error drag landing set_mascot_state />
                             </For>
                                 <For each=hours key=|hour| *hour let:hour>
@@ -268,6 +276,42 @@ fn day_label(ctx: &LocalContext, day: i64) -> String {
         .format("%a %-d")
         .to_string()
 }
+/// A slip shorter than a full hour carries its words beside it (see
+/// theme.css on `.placement.short`); an hour or more holds them inside.
+const SHORT_SLIP_PX: f32 = HOUR_PX;
+
+/// What a slip's row in the week grid is keyed on: the task AND its slot. Keying
+/// on the task alone would leave a slip that moves or is re-planned inside its
+/// own day painted at the old spot with the old time until the page reloads.
+fn placement_key(placement: &Placement) -> (String, DateTime<Utc>, DateTime<Utc>) {
+    (placement.task.0.clone(), placement.start, placement.end)
+}
+
+/// Top and height in pixels of a slip spanning `start`..`end`, in the
+/// planner's zone: a day-crossing task is clipped at the working day's end.
+fn placement_box(
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    ctx: &LocalContext,
+    settings: &Settings,
+) -> (f32, f32) {
+    let local_start = ctx.local(start);
+    let local_end = ctx.local(end);
+    let start_min = local_start.hour() as u16 * 60 + local_start.minute() as u16;
+    let end_min = if local_end.date() > local_start.date() {
+        u16::from(settings.end_hour) * 60
+    } else {
+        local_end.hour() as u16 * 60 + local_end.minute() as u16
+    };
+    placement_style(
+        start_min,
+        end_min,
+        settings.start_hour,
+        HOUR_PX,
+        settings.end_hour,
+    )
+}
+
 /// Placement top/height in pixels, clipped to planner bounds.
 /// start/end are minutes-since-midnight in planner zone.
 fn placement_style(
@@ -568,18 +612,21 @@ fn PlacementBlock(
     );
 
     view! {
-        <div class="placement" class:dragging=move || drag.get().is_some_and(|d| d.id == drag_task_id) style=move || {
-            let s = settings.get();
-            let ctx = planner_context(&snapshot.get().tz);
-            let local_start = ctx.local(placement.start);
-            let local_end = ctx.local(placement.end);
-            let start_min = local_start.hour() as u16 * 60 + local_start.minute() as u16;
-            let end_min = if local_end.date() > local_start.date() {
-                s.end_hour as u16 * 60
-            } else {
-                local_end.hour() as u16 * 60 + local_end.minute() as u16
-            };
-            let (top, height) = placement_style(start_min, end_min, s.start_hour, HOUR_PX, s.end_hour);
+        <div class="placement" class:short=move || {
+            let (.., height) = placement_box(
+                placement.start,
+                placement.end,
+                &planner_context(&snapshot.get().tz),
+                &settings.get(),
+            );
+            height < SHORT_SLIP_PX
+        } class:dragging=move || drag.get().is_some_and(|d| d.id == drag_task_id) style=move || {
+            let (top, height) = placement_box(
+                placement.start,
+                placement.end,
+                &planner_context(&snapshot.get().tz),
+                &settings.get(),
+            );
             format!("top: {}px; height: {}px;", top, height)
         }
             on:drop=move |_| set_mascot_state.update(|state| {
@@ -601,8 +648,10 @@ fn PlacementBlock(
                 on:pointerup=grip_end
                 on:pointercancel=grip_cancel
             ></span>
-            {move || view! { <strong>{placement_label(&snapshot.get(), &label_task_id)}</strong> }}
-            " · " {render_time}
+            <span class="slip-text">
+                {move || view! { <strong>{placement_label(&snapshot.get(), &label_task_id)}</strong> }}
+                " · " {render_time}
+            </span>
         </div>
     }
 }
@@ -855,6 +904,50 @@ mod tests {
         assert_eq!(at(1, 9 * 60 + 30), "tomorrow 09:30 ");
         // 2026-10-16 is a Friday.
         assert_eq!(at(4, 10 * 60), "friday 10:00 ");
+    }
+
+    #[test]
+    fn a_moved_or_replanned_placement_changes_its_key_so_the_block_is_redrawn() {
+        // The same slip, moved half an hour later inside its own day.
+        let first = Placement {
+            task: TaskId("t".into()),
+            start: at_utc(2026, 10, 12, 14, 0),
+            end: at_utc(2026, 10, 12, 14, 30),
+        };
+        let moved = Placement {
+            start: at_utc(2026, 10, 12, 14, 30),
+            end: at_utc(2026, 10, 12, 15, 0),
+            ..first.clone()
+        };
+        assert_ne!(placement_key(&first), placement_key(&moved));
+        // An unchanged placement keeps its key, so the row is not rebuilt for nothing.
+        assert_eq!(placement_key(&first), placement_key(&first.clone()));
+    }
+
+    #[test]
+    fn a_thirty_minute_slip_is_short_an_hour_long_one_is_not() {
+        let ny = zone("America/New_York", at_utc(2026, 10, 12, 12, 0));
+        let settings = Settings::default();
+        let slip = |start: DateTime<Utc>, end: DateTime<Utc>| Placement {
+            task: TaskId("t".into()),
+            start,
+            end,
+        };
+        // 14:00 UTC is 10:00 in New York: a half hour, then a full hour.
+        let half = slip(at_utc(2026, 10, 12, 14, 0), at_utc(2026, 10, 12, 14, 30));
+        let whole = slip(at_utc(2026, 10, 12, 14, 0), at_utc(2026, 10, 12, 15, 0));
+        assert_eq!(
+            placement_box(half.start, half.end, &ny, &settings).1,
+            HOUR_PX / 2.0
+        );
+        assert!(
+            placement_box(half.start, half.end, &ny, &settings).1 < SHORT_SLIP_PX,
+            "half an hour gets its words beside the slip"
+        );
+        assert!(
+            placement_box(whole.start, whole.end, &ny, &settings).1 >= SHORT_SLIP_PX,
+            "an hour holds its own words"
+        );
     }
 
     #[test]
