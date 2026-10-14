@@ -1652,6 +1652,7 @@ li.task-row:focus-within .delete-mark {
 .paper-datetime { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); align-items: flex-start; }
 .paper-picker { display: inline-block; vertical-align: top; }
 .paper-field,
+.paper-radio,
 .paper-page button {
   font: inherit;
   font-family: var(--font-hand-neat);
@@ -1668,8 +1669,10 @@ li.task-row:focus-within .delete-mark {
 }
 .paper-field.empty { color: var(--ink-faint); }
 .paper-field:active,
+.paper-radio:active,
 .paper-page button:active { transform: scale(0.96); }
 .paper-field:focus-visible,
+.paper-radio:focus-visible,
 .paper-page button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .paper-page {
   display: grid;
@@ -1688,6 +1691,30 @@ li.task-row:focus-within .delete-mark {
 .paper-month { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .paper-month-name { font-family: var(--font-hand); font-size: var(--text-xl); }
 .paper-step { min-width: var(--tap); min-height: var(--tap); font-size: var(--text-xl); }
+/* Paper radios (the sheet's When): a word with a hand-drawn ring before it; the
+   chosen one's ring is filled in the pen's ink. */
+.paper-radios { display: grid; }
+.paper-radio {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  text-align: left;
+}
+.paper-radio::before {
+  content: "";
+  flex: none;
+  width: 1.1em;
+  height: 1.1em;
+  border: 2px solid var(--ink-faint);
+  border-radius: 55% 45% 50% 50% / 50% 55% 45% 50%;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+.paper-radio.picked::before {
+  border-color: var(--accent);
+  background: radial-gradient(circle, var(--accent) 0 40%, transparent 45%);
+}
+.paper-radio.picked { color: var(--accent); }
 .paper-weekdays,
 .paper-days { display: grid; grid-template-columns: repeat(7, minmax(var(--tap), 1fr)); text-align: center; }
 .paper-weekdays { color: var(--ink-faint); font-size: var(--text-sm); }
@@ -1718,6 +1745,8 @@ li.task-row:focus-within .delete-mark {
 @media (prefers-reduced-motion: reduce) {
   .paper-page { animation: none; }
   .paper-field,
+  .paper-radio,
+  .paper-radio::before,
   .paper-page button { transition: none; }
 }
 
