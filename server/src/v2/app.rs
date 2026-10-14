@@ -2049,14 +2049,9 @@ mod tests {
     /// sees it that way.
     #[test]
     fn a_done_occurrence_stays_done_after_a_restart() {
-        let path = std::env::temp_dir().join(format!(
-            "rambl-series-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        ));
+        // Its own folder: removing it must never touch the shared temp dir.
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("rambl.db");
         let store = crate::v2::store::SqliteStore::open(&path).expect("open database");
         let mut app = App::new(store, Arc::new(FixedClock(sunday_night())));
         let created = app
@@ -2088,7 +2083,6 @@ mod tests {
             row(&after, &format!("{id}:2026-10-12")).done,
             "the exception survives a restart"
         );
-        std::fs::remove_dir_all(path.parent().unwrap()).ok();
     }
 
     /// A skipped day has no row at all; a moved one sits at its new time under its
