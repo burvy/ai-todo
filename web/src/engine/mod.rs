@@ -33,6 +33,9 @@ mod tests {
     /// is overdue, the hour he hears), not to time a movement.
     const DAY_TIME: [&str; 3] = ["brain.rs", "tasks/mod.rs", "week.rs"];
 
+    /// Files still on the browser's own timers until the scrap moves (core step 6).
+    const TIMERS_PENDING: [&str; 1] = ["scrap.rs"];
+
     fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("read web/src").flatten() {
             let path = entry.path();
@@ -55,6 +58,7 @@ mod tests {
             ["set_", "interval"].concat(),
             ["Interval", "::new"].concat(),
         ];
+        let timers = [["gloo_", "timers"].concat(), ["set_", "timeout"].concat()];
         let clock = ["Date", "::now"].concat();
         let mut found = Vec::new();
         for path in files {
@@ -72,13 +76,20 @@ mod tests {
                     found.push(format!("{name}: {token}"));
                 }
             }
+            if !TIMERS_PENDING.contains(&name.as_str()) {
+                for token in &timers {
+                    if text.contains(token.as_str()) {
+                        found.push(format!("{name}: {token}"));
+                    }
+                }
+            }
             if text.contains(clock.as_str()) && !DAY_TIME.contains(&name.as_str()) {
                 found.push(format!("{name}: {clock}"));
             }
         }
         assert!(
             found.is_empty(),
-            "a private loop or clock outside the engine (use engine::on_tick, next_frame, every or now): {found:?}"
+            "a private loop, timer or clock outside the engine (use engine::on_tick, next_frame, every, after, wait or now): {found:?}"
         );
     }
 }

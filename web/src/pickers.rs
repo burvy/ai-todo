@@ -121,18 +121,15 @@ pub(crate) fn join_datetime(day: &str, time: &str) -> String {
 /// Moves focus to the element in `scope` the page marks as its roving stop, once
 /// the browser has laid the page out.
 fn focus_roving(scope: NodeRef<leptos::html::Div>) {
-    set_timeout(
-        move || {
-            if let Some(stop) = scope
-                .get_untracked()
-                .and_then(|el| el.query_selector("[tabindex='0']").ok().flatten())
-                .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
-            {
-                let _ = stop.focus();
-            }
-        },
-        std::time::Duration::ZERO,
-    );
+    crate::engine::after(0.0, move || {
+        if let Some(stop) = scope
+            .get_untracked()
+            .and_then(|el| el.query_selector("[tabindex='0']").ok().flatten())
+            .and_then(|el| el.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let _ = stop.focus();
+        }
+    });
 }
 
 /// Whether focus leaving the picker closes its page: only when it really went somewhere
@@ -267,7 +264,7 @@ pub fn PaperDate(
     let go = move |day: NaiveDate, refocus: bool| {
         rebuilding.set(true);
         cursor.set(day);
-        set_timeout(move || rebuilding.set(false), std::time::Duration::ZERO);
+        crate::engine::after(0.0, move || rebuilding.set(false));
         if refocus {
             focus_roving(scope);
         }
