@@ -416,13 +416,18 @@ working hours where the task's length fits without overlapping another slip. **L
 it**, Esc or turning back to the list leaves the task where it was; the page stays
 on the planner. The note floats over the planner's foot (the grid never moves for it)
 and slides up into place and back down out of sight rather than popping; it never fades. One day of a
-repeating series moves as that day only, as a dragged slip does. Choices for a slip
-Rambo is dropped on in the planner (move, longer or shorter, take it off) are
-(planned).
-b. Drop Rambo on a task, choose Move, then tap an hour or the "Next free" scrap.
+repeating series moves as that day only, as a dragged slip does.
+Rambo dropped on a slip in the planner asks about its time: **Move** (the same wait
+for an hour), **Longer** and **Shorter**, a quarter hour each way, never past the
+longest a task may be and never under a quarter hour. The slip stretches at once and
+the new length is saved. One day of a repeating series is only offered Move. Taking a
+slip off the planner is (planned).
+b. Drop Rambo on a task, choose Move, then tap an hour or the "Next free" scrap. Drop
+him on a slip in the planner and choose Longer.
 c. Code: `web/src/rambo.rs:Rambo` sets `move_request`; `web/src/lib.rs:App` turns
 the page; `web/src/placing.rs:PlacingNote, next_free`;
-`web/src/week.rs:WeekGrid, place_at`.
+`web/src/week.rs:WeekGrid, place_at, slip_at, stretch`;
+`web/src/mascot.rs:Asked, offered`; `web/src/placing.rs:stretched`.
 
 ### 8. A new task on an empty hour
 a. Drop Rambo on an hour of the planner with nothing placed there and he stays on it,
