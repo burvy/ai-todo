@@ -35,8 +35,6 @@ pub(crate) fn Rambo(
     capture_text: RwSignal<String>,
     /// Capture form: Rambo calls requestSubmit on release
     form_ref: NodeRef<leptos::html::Form>,
-    /// Set to the task he was dropped on when you choose "Move": the planner places it
-    move_request: RwSignal<Option<TaskId>>,
     /// The task whose edit sheet is open, if any: listening for an edit ends with it
     open_sheet: RwSignal<Option<TaskId>>,
     /// The nest button: Rambo measures its bounding box to know where home is
@@ -533,7 +531,7 @@ pub(crate) fn Rambo(
                 chosen();
             }
             mascot::Choice::Move => {
-                move_request.set(Some(TaskId(task_id)));
+                events.push(rambl_web_core::events::Event::MoveAsked { id: task_id });
                 chosen();
             }
             mascot::Choice::Done => {
