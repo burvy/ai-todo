@@ -31,7 +31,7 @@ time zone rather than the server's.
 b. Type a phrase with a date or time, such as `call Sam tomorrow at 3`; the result
 appears in the task and week view.
 c. Code: `web/src/api.rs:timezone`; `crates/core/src/lib.rs:LocalContext`;
-`crates/dates/src/lib.rs:candidates, resolve, pinned_start, due_by, when`.
+`crates/dates/src/lib.rs:candidates, resolve, pinned_start, when_from`.
 
 ### 4. Non-tasks are filtered
 a. Chit-chat, observations and wishes do not become tasks. With no Jev key the offline
@@ -242,7 +242,7 @@ d. Nothing pops in or out. The only thing on main that fades is ink (it appears 
 and fades out over `INK_FADE_OUT_MS`); nothing else
 fades (the page rip and its tape were cut, item h). Everything else moves: a done or
 deleted row flies to the pin, a taped-back task flies back from it, the rows below slide up
-to close a gap (`ROW_SLIDE_OMEGA`), the edit sheet slides up from below the screen and
+to close a gap (`ROW_SLIDE_OMEGA`), the edit sheet slides up from below the screen (centred by auto margins, so a tall one never starts above it) and
 back down before it closes, Escape too (`PAPER_SLIDE_OMEGA`), a crumpled strip drops away, and Rambo's ask bubble grows
 out of him and folds back into him over `ASK_FOLD_MS` before it leaves the page, at full
 opacity throughout.
@@ -354,7 +354,7 @@ b. Drop Rambo on a slip in the planner and choose **Take off** (III.7). The UI t
 shows why a task is in the list but not on the week is (planned). Covered by
 scheduler, store and server tests.
 c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
-`web/src/week.rs:take_off, place_at`; `crates/web-core/src/week.rs:placed`; `web/src/api.rs:PatchTaskBody::off_planner`;
+`web/src/week.rs:take_off, place_at`; `crates/web-core/src/week.rs:placed`; `crates/web-core/src/body.rs:PatchTaskBody::off_planner`;
 `crates/scheduler/src/plan.rs:plan`; `server/src/v2/app/tasks.rs:patch`;
 `server/src/v2/store/schema.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
 
@@ -427,7 +427,7 @@ the box empties. Whatever its words, what you send there becomes a task at that 
 it is made as you worded it, never checked by the judge. Dropped on a placed task, or
 at a time the clock skips that day, he does not start one.
 b. Turn to the planner, drag Rambo onto an empty hour, then speak or type a title.
-c. Code: `web/src/rambo.rs:Rambo, free_hour_under`; `web/src/week.rs:hour_at, free_at,
+c. Code: `web/src/rambo.rs:Rambo, free_hour_under`; `web/src/week.rs:hour_at`; `crates/web-core/src/planner.rs:free_at,
 hour_prefill_text`; `web/src/capture.rs:CaptureBox, noted`;
 `crates/web-core/src/mascot/state.rs:State::Noting, Event::DropHour`; `crates/web-core/src/mascot/ask.rs:asking_dismissed_by`.
 
@@ -654,7 +654,7 @@ a. The API key, port, database path and default time zone are configured by
 environment variables rather than a settings screen.
 b. Not visible; see the environment table in `docs/ARCHITECTURE.md`.
 c. Code: `server/src/v2/mod.rs:app_from_env`;
-`server/src/v2/http.rs:jev_daily_cap_from_env, zone_from_env`.
+`server/src/v2/http.rs:Caps::from_env, zone_from_env`.
 
 ### 5. Task order and overdue state
 a. New tasks appear newest first (docs/ARCHITECTURE.md 4.1). Unfinished tasks past their
@@ -665,7 +665,7 @@ c. Code: `server/src/v2/app/tasks.rs:create, add_drafts`, `server/src/v2/app/imp
 `server/src/v2/app/snapshot.rs:sort_tasks`;
 `crates/scheduler/src/plan.rs:plan` (overdue detection and priority placement);
 `web/src/tasks/mod.rs:is_overdue, TaskList` (overdue badge);
-`web/src/brain.rs:142` (emits `TaskOverdue`);
+`web/src/brain.rs:Controller` (emits `TaskOverdue`);
 `crates/rambl-brain/src/lib.rs:Event::TaskOverdue`;
 `crates/rambl-brain/content/lines.toml` (overdue teasing lines).
 
@@ -764,8 +764,8 @@ c. Code: `crates/judge/src/lib.rs:ClauseQuestion, ClauseAnswer`;
 ### 3. Daily fallback cap
 a. After the per-user daily Jev cap, capture continues with the deterministic judge.
 b. Not visible; configure `RAMBL_JEV_DAILY_CAP` and capture past the limit.
-c. Code: `server/src/v2/http.rs:jev_daily_cap_from_env, over_jev_cap`;
-`server/src/v2/app.rs:captures_today`.
+c. Code: `server/src/v2/http.rs:Caps::for_plan`; `server/src/v2/http/ramble.rs:capture`;
+`server/src/v2/store.rs:captures_today`.
 
 ## X. SCHEDULER
 
@@ -817,7 +817,7 @@ c. Code: `server/src/v2/store/sqlite.rs:SqliteStore`; `server/src/v2/store/schem
 ### 2. Imported-event identity
 a. An imported event keeps its external UID so re-import can update it.
 b. Not visible; import the same `.ics` twice.
-c. Code: `crates/core/src/lib.rs:Task.external_uid`;
+c. Code: `crates/core/src/lib.rs:Task`;
 `server/src/v2/store.rs:find_by_uid`; `server/src/v2/app/import.rs:import`.
 
 ### 3. In-memory test store
