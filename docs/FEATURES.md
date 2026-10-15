@@ -299,7 +299,7 @@ list. The slip shows the task's title in the handwriting font and its start time
 truncated with an ellipsis when the block is too narrow. Drag a slip and it stays under
 your pointer where you took it.
 b. Open the **Week** panel and scroll through the grid; drag a slip and let go.
-c. Code: `web/src/week.rs:WeekGrid` (the slip's grab offset is kept in `week.rs`);
+c. Code: `web/src/week.rs:WeekGrid`; the slip's grab offset in `crates/web-core/src/week.rs:SlipDrag`;
 `web/src/gear_menu.rs:GearMenu`; `crates/web-core/src/settings.rs:Settings`;
 `web/theme.css` (`.placement::before`, `--slip-cut`, `--slip-tear`).
 
@@ -353,7 +353,7 @@ b. Drop Rambo on a slip in the planner and choose **Take off** (III.7). The UI t
 shows why a task is in the list but not on the week is (planned). Covered by
 scheduler, store and server tests.
 c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
-`web/src/week.rs:take_off, place_at`; `web/src/api.rs:PatchTaskBody::off_planner`;
+`web/src/week.rs:take_off, place_at`; `crates/web-core/src/week.rs:placed`; `web/src/api.rs:PatchTaskBody::off_planner`;
 `crates/scheduler/src/plan.rs:plan`; `server/src/v2/app/tasks.rs:patch`;
 `server/src/v2/store/schema.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
 
@@ -411,7 +411,8 @@ him on a slip in the planner and choose Longer, or Take off.
 c. Code: `web/src/rambo.rs:Rambo` pushes `Event::MoveAsked`; `web/src/week.rs:WeekGrid`
 takes it, holds the waiting task and turns the page; `web/src/placing.rs:PlacingNote`; `crates/web-core/src/placing.rs:next_free`;
 `web/src/week.rs:WeekGrid, place_at, slip_at, stretch, take_off`;
-`crates/web-core/src/mascot.rs:Asked, offered`; `crates/web-core/src/placing.rs:stretched`.
+`crates/web-core/src/mascot.rs:Asked, offered`; `crates/web-core/src/placing.rs:stretched`;
+`crates/web-core/src/week.rs:placed, stretch_of, slip_moves_to`.
 
 ### 8. A new task on an empty hour
 a. Drop Rambo on an hour of the planner with nothing placed there and he stays on it,

@@ -1,8 +1,6 @@
 use chrono::{DateTime, Timelike, Utc};
 use leptos::portal::Portal;
 use leptos::prelude::*;
-#[cfg(target_arch = "wasm32")]
-use todo_core::When;
 #[cfg(not(target_arch = "wasm32"))]
 use todo_core::{Clock, SystemClock};
 use todo_core::{LocalContext, Placement, Snapshot, TaskId};
@@ -12,38 +10,7 @@ use crate::tuning::{HOUR_PX, SHORT_SLIP_PX};
 use crate::{clock, settings::Settings};
 pub(crate) use rambl_web_core::planner::*;
 use rambl_web_core::store::Command;
-
-/// A task being dragged by its grip: who it is, where the finger is, and where on
-/// the slip it took hold. Where it may land is drawn from `landing`; the drop's
-/// `updated_at` guard is looked up from the snapshot when the slip lands, so a
-/// still fresh edit always wins.
-#[derive(Clone, Debug)]
-struct Drag {
-    id: TaskId,
-    title: String,
-    x: f64,
-    y: f64,
-    /// The finger's offset from the slip's top-left corner when it was lifted.
-    grab: (f64, f64),
-}
-
-impl Drag {
-    /// The ghost's top-left corner in viewport pixels: the slip stays under the
-    /// finger at the very spot it was taken.
-    fn ghost_corner(&self) -> (f64, f64) {
-        (self.x - self.grab.0, self.y - self.grab.1)
-    }
-}
-
-/// How far a phone finger must hold still before its slip lifts onto it, so
-/// a plain vertical drag still scrolls the paper (the mouse lifts at once).
-#[cfg(target_arch = "wasm32")]
-const PRESS_HOLD_MS: u32 = 250;
-
-/// How far a not-yet-lifted finger may slide before we call it a scroll and
-/// disarm the lift.
-#[cfg(target_arch = "wasm32")]
-const PRESS_SLOP_PX: f64 = 10.0;
+use rambl_web_core::week::{self as model, SlipDrag};
 
 #[component]
 pub fn WeekGrid(
@@ -108,7 +75,7 @@ pub fn WeekGrid(
         let _ = (grid, s);
     });
     // The paper slip: a dragged task and where the finger is.
-    let drag = RwSignal::new(None::<Drag>);
+    let drag = RwSignal::new(None::<SlipDrag>);
     // Where it would land: day + minutes, drawn as a faint slot outline.
     let landing = RwSignal::new(None::<Slot>);
     // Esc puts a slip in hand back down: cancel, never commit.
@@ -451,7 +418,7 @@ fn press_cell(event: &leptos::ev::PointerEvent) -> Option<web_sys::HtmlElement> 
 }
 
 /// Arms a long-press on one empty hour cell. Holding still for
-/// `LONG_PRESS_MS` pre-fills the capture box with that slot and focuses it;
+/// `tuning::LONG_PRESS_MS` pre-fills the capture box with that slot and focuses it;
 /// any release, leave, cancel or move unstamps the cell quietly.
 #[cfg(target_arch = "wasm32")]
 fn long_press_start(
@@ -465,7 +432,7 @@ fn long_press_start(
             return;
         };
         let _ = cell.set_attribute("data-press", "armed");
-        crate::engine::after(f64::from(LONG_PRESS_MS), move || {
+        crate::engine::after(f64::from(crate::tuning::LONG_PRESS_MS), move || {
             use wasm_bindgen::JsCast;
             let armed = cell.get_attribute("data-press").as_deref() == Some("armed");
             let _ = cell.remove_attribute("data-press");
@@ -501,10 +468,6 @@ fn long_press_stop(event: leptos::ev::PointerEvent) {
         let _ = cell.remove_attribute("data-press");
     }
 }
-
-/// How long an empty hour must be held before the capture box pre-fills.
-#[cfg(target_arch = "wasm32")]
-const LONG_PRESS_MS: u32 = 600;
 
 // On a native build (tests, tooling) the hour cells do not recognise a
 // pointer: the page only exists in a browser.
@@ -664,7 +627,7 @@ fn PlacementBlock(
     placement: Placement,
     snapshot: ReadSignal<Snapshot>,
     settings: ReadSignal<Settings>,
-    drag: RwSignal<Option<Drag>>,
+    drag: RwSignal<Option<SlipDrag>>,
     landing: RwSignal<Option<Slot>>,
     mascot_state: ReadSignal<crate::mascot::State>,
 ) -> impl IntoView {
@@ -707,7 +670,7 @@ fn PlacementBlock(
         };
         let title = task.title.clone();
         drop(snap);
-        drag.set(Some(Drag {
+        drag.set(Some(SlipDrag {
             id: down_id.clone(),
             title,
             x,
@@ -778,10 +741,13 @@ fn PlacementBlock(
                 let press = press.clone();
                 let lift = lift.clone();
                 let mut hold = crate::engine::Guard::default();
-                hold.keep(crate::engine::after(f64::from(PRESS_HOLD_MS), move || {
-                    press.borrow_mut().take();
-                    lift(x, y, grab);
-                }));
+                hold.keep(crate::engine::after(
+                    f64::from(crate::tuning::PRESS_HOLD_MS),
+                    move || {
+                        press.borrow_mut().take();
+                        lift(x, y, grab);
+                    },
+                ));
                 hold
             };
             if let Some(p) = press.borrow_mut().as_mut() {
@@ -811,7 +777,7 @@ fn PlacementBlock(
                 p.slide += (dx.powi(2) + dy.powi(2)).sqrt();
                 p.x = x;
                 p.y = y;
-                if p.slide <= PRESS_SLOP_PX {
+                if !model::press_scrolls(p.slide) {
                     // A tremble: the hold stays armed.
                     return;
                 }
@@ -854,20 +820,10 @@ fn PlacementBlock(
             drag.set(None);
             let landing_slot = landing.get_untracked();
             landing.set(None);
-            let Some(slot) = landing_slot else {
-                return;
-            };
-            // Dropped where it already sat: nothing to change.
             let ctx = planner_context(&snapshot.get_untracked().tz);
-            let local_start = ctx.local(placement.start);
-            let current = Slot {
-                day: day_index(placement.start, &ctx),
-                minutes: local_start.hour() as u16 * 60 + local_start.minute() as u16,
-            };
-            if slot == current {
-                return;
+            if let Some(slot) = model::slip_moves_to(placement.start, &ctx, landing_slot) {
+                place_at(&end_id, slot, snapshot, store);
             }
-            place_at(&end_id, slot, snapshot, store);
         }
     };
 
@@ -939,45 +895,15 @@ fn PlacementBlock(
 /// Starts task `id` at `slot`, as a dropped slip or a tapped hour says.
 #[cfg(target_arch = "wasm32")]
 fn place_at(id: &TaskId, slot: Slot, snapshot: ReadSignal<Snapshot>, store: Store) {
-    let snap = snapshot.get_untracked();
-    let ctx = planner_context(&snap.tz);
-    let Some(instant) = drop_start(&ctx, slot.day, slot.minutes) else {
-        store.set_error.set(Some(
-            "The clock skips that time that day (daylight change), so it cannot start then.".into(),
-        ));
-        return;
-    };
-    // The guard stays fresh from the last snapshot the page saw: if the
-    // task changed elsewhere meanwhile, the server refuses the move.
-    let Some(updated_at) = snap
-        .tasks
-        .iter()
-        .find(|task| task.id == *id)
-        .map(|task| task.updated_at)
-    else {
-        return;
-    };
-    // One day of a repeating series is a 'moved' exception on the series,
-    // never a task PATCH: the row here is one expanded occurrence of the
-    // whole rule, and its id names the original local date.
-    let occurrence = occurrence_of(id);
-    let id = id.clone();
-    let command = match occurrence {
-        Some((series, date)) => Command::MoveOccurrence {
-            series,
-            date,
-            to: When::At(instant),
-        },
-        None => {
-            // Placed, a task taken off the planner is back on it.
-            let body = crate::api::PatchTaskBody::new()
-                .when(When::At(instant))
-                .off_planner(false)
-                .updated_at(updated_at);
-            Command::Patch(id.clone(), body)
+    let placed =
+        snapshot.with_untracked(|snap| model::placed(snap, &planner_context(&snap.tz), id, slot));
+    match placed {
+        model::Placed::Send(command) => store.dispatch(command),
+        model::Placed::SkippedTime => {
+            store.set_error.set(Some(model::SKIPPED_TIME_NOTE.into()));
         }
-    };
-    store.dispatch(command);
+        model::Placed::Gone => {}
+    }
 }
 
 /// What sits under a point: the planner day column (from data-day) and the
@@ -1066,25 +992,17 @@ pub(crate) fn stretch(
     snapshot: ReadSignal<Snapshot>,
     store: Store,
 ) {
-    let Some((from, updated_at)) = snapshot.with_untracked(|snap| {
-        snap.tasks
-            .iter()
-            .find(|task| task.id == *id)
-            .map(|task| (task.duration_min, task.updated_at))
-    }) else {
+    let Some(stretched) = snapshot.with_untracked(|snap| model::stretch_of(snap, id, stretch))
+    else {
         return;
     };
-    let to = crate::placing::stretched(from, stretch);
-    if to == from {
-        return;
-    }
     #[cfg(target_arch = "wasm32")]
-    resize_slip(id, from, to);
+    resize_slip(id, stretched.from, stretched.to);
     let id = id.clone();
     wasm_bindgen_futures::spawn_local(async move {
         let body = crate::api::PatchTaskBody::new()
-            .duration_min(to)
-            .updated_at(updated_at);
+            .duration_min(stretched.to)
+            .updated_at(stretched.updated_at);
         if store.send(Command::Patch(id.clone(), body)).await.is_some() {
             // The saved plan draws the slip anew; it carries on from the height it
             // had reached instead of starting at its new one. The store has just shown
@@ -1101,7 +1019,7 @@ pub(crate) fn stretch(
         } else {
             // Refused, the slip goes back to the length it still has.
             #[cfg(target_arch = "wasm32")]
-            unstretch_slip(&id, from, to);
+            unstretch_slip(&id, stretched.from, stretched.to);
         }
     });
 }
@@ -1111,12 +1029,7 @@ pub(crate) fn stretch(
 /// days at once, and the week is drawn without them once that has run and the change
 /// is saved; refused, they slide back.
 pub(crate) fn take_off(id: &TaskId, snapshot: ReadSignal<Snapshot>, store: Store) {
-    let Some(updated_at) = snapshot.with_untracked(|snap| {
-        snap.tasks
-            .iter()
-            .find(|task| task.id == *id)
-            .map(|task| task.updated_at)
-    }) else {
+    let Some(updated_at) = snapshot.with_untracked(|snap| model::edit_guard(snap, id)) else {
         return;
     };
     #[cfg(target_arch = "wasm32")]
@@ -1262,24 +1175,6 @@ fn placement_label(snapshot: &Snapshot, task_id: &TaskId) -> String {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_dragged_slip_stays_under_the_finger_where_it_was_taken() {
-        let drag = |x, y, grab| super::Drag {
-            id: todo_core::TaskId("t1".into()),
-            title: "Lab report".into(),
-            x,
-            y,
-            grab,
-        };
-        // Taken 12px in and 16px down, the ghost's corner keeps that offset wherever
-        // the finger goes, including off the planner's left and top edges.
-        for (x, y) in [(575.0, 174.0), (1745.0, 1000.0), (5.0, 3.0)] {
-            let (left, top) = drag(x, y, (12.0, 16.0)).ghost_corner();
-            assert_eq!((x - left, y - top), (12.0, 16.0));
-        }
-        assert_eq!(drag(40.0, 50.0, (0.0, 0.0)).ghost_corner(), (40.0, 50.0));
-    }
-
     use super::*;
     use chrono::TimeZone;
 
