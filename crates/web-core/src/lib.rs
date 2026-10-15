@@ -14,6 +14,7 @@ pub mod mascot;
 pub mod pen;
 pub mod placing;
 pub mod planner;
+pub mod rambo;
 pub mod row;
 pub mod settings;
 pub mod store;
