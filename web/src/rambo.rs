@@ -21,7 +21,6 @@ pub(crate) fn Rambo(
     /// next task starts then
     noting_at: RwSignal<Option<crate::capture::NotedHour>>,
     state: ReadSignal<mascot::State>,
-    set_state: WriteSignal<mascot::State>,
     talking: ReadSignal<bool>,
     set_talking: WriteSignal<bool>,
     snapshot: ReadSignal<Snapshot>,
@@ -160,11 +159,10 @@ pub(crate) fn Rambo(
     // Where he is drawn: his body in the engine's world (`engine::World`), which hops,
     // rides after the finger, keeps his notice beat and times his splat and daze. Once
     // a frame the page reads where the nest and his spot (`pen_pos`) are, steps the
-    // world and writes what it draws. His brain state goes both ways: the rest of the
-    // page sets `state`, and the world's own timers and landings set it back.
-    let world = std::rc::Rc::new(std::cell::RefCell::new(crate::engine::World::new(
-        pen_pos.get_untracked(),
-    )));
+    // world and writes what it draws. The world owns his state (ARCHITECTURE 8A.5):
+    // this view tells it events, and `state` mirrors what it answers.
+    let rambo_world = expect_context::<crate::rambo_world::RamboWorld>();
+    let world = rambo_world.world();
     // His pose on top of where he is: lean, size, sink, the writing pose
     // (`engine::look`). With `shown`, his button's only transform.
     let look = RwSignal::new(world.borrow().look());
@@ -225,9 +223,7 @@ pub(crate) fn Rambo(
                     );
                 });
             }
-            if brain != state.get_untracked() {
-                set_state.set(brain);
-            }
+            rambo_world.show(&brain);
             if shown.get_untracked() != draw.pos {
                 shown.set(draw.pos);
             }
@@ -321,7 +317,7 @@ pub(crate) fn Rambo(
             }
             _ => mascot::Event::DropEmpty,
         };
-        set_state.set(mascot::transition(&before, event));
+        rambo_world.tell(event);
     };
     // The paper he lies on drags him as it scrolls (Interview 1 item 2): slowly he rides
     // along on it; faster than he can hold on, he is flung with it, and the throw does
@@ -338,7 +334,7 @@ pub(crate) fn Rambo(
             }
             crate::engine::Swept::Flung(vel) => {
                 sweeper.borrow_mut().throw(vel);
-                set_state.set(mascot::transition(&before, mascot::Event::Swept));
+                rambo_world.tell(mascot::Event::Swept);
             }
         }
     });
@@ -519,12 +515,7 @@ pub(crate) fn Rambo(
         let mascot::State::Asking { task_id, .. } = state.get_untracked() else {
             return;
         };
-        let chosen = move || {
-            set_state.set(mascot::transition(
-                &state.get_untracked(),
-                mascot::Event::Choose,
-            ))
-        };
+        let chosen = move || rambo_world.tell(mascot::Event::Choose);
         match choice {
             mascot::Choice::Edit => {
                 let id = TaskId(task_id);
@@ -598,10 +589,7 @@ pub(crate) fn Rambo(
         // A microphone that cannot listen sends him home, unless words are typed: then
         // Enter still sends them at this hour.
         let give_up = move || {
-            set_state.set(mascot::transition(
-                &mascot::State::Noting,
-                mascot::Event::Return,
-            ));
+            rambo_world.tell(mascot::Event::Return);
         };
         let session = speech::Session::start(
             std::rc::Rc::default(),
@@ -663,10 +651,7 @@ pub(crate) fn Rambo(
         let finger = std::rc::Rc::new(std::cell::RefCell::new(gesture::Recognizer::new()));
         let on_bubble = std::rc::Rc::new(std::cell::Cell::new(false));
         let never_mind = move || {
-            set_state.set(mascot::transition(
-                &state.get_untracked(),
-                mascot::Event::Return,
-            ));
+            rambo_world.tell(mascot::Event::Return);
         };
         let sample = |ev: &leptos::ev::PointerEvent, pointer| gesture::Sample {
             pointer,
@@ -793,7 +778,7 @@ pub(crate) fn Rambo(
             *finger.borrow_mut() = held;
             let below = rambo.get_bounding_client_rect().height() * mascot::NIB_BELOW;
             nib_below.set(below);
-            set_state.set(mascot::transition(&before, event));
+            rambo_world.tell(event);
             pen_pos.set(watch.at);
             start_stroke((watch.at.0, watch.at.1 + below), watch.t);
             let _ = rambo.set_pointer_capture(watch.id);
@@ -1011,7 +996,7 @@ pub(crate) fn Rambo(
                         t: ev.time_stamp(),
                         id: ev.pointer_id(),
                     });
-                    set_state.set(after.clone());
+                    rambo_world.tell(mascot::Event::Grab);
                     if after == mascot::State::Dragging {
                         pen_pos.set(held_spot(&ev, (gx, gy)));
                     }
@@ -1117,7 +1102,7 @@ pub(crate) fn Rambo(
                             // Tap (no drag): submit the form (sends typed text) and go home
                             let _ = form.request_submit();
                         }
-                        set_state.set(mascot::transition(&before, mascot::Event::Release));
+                        rambo_world.tell(mascot::Event::Release);
                         return;
                     }
                     *grab_state_up.borrow_mut() = None;
@@ -1141,7 +1126,7 @@ pub(crate) fn Rambo(
                         if mascot::put_back(&before, &after) {
                             set_brain_event.set(Some(rambl_brain::Event::PutBack));
                         }
-                        set_state.set(after);
+                        rambo_world.tell(mascot::Event::DropNest);
                         return;
                     }
                     // Dropped on an empty planner hour, he notes a new task that starts then.
@@ -1153,7 +1138,7 @@ pub(crate) fn Rambo(
                         )
                     {
                         noting_at.set(Some(at));
-                        set_state.set(mascot::transition(&before, mascot::Event::DropHour));
+                        rambo_world.tell(mascot::Event::DropHour);
                         return;
                     }
                     // A listening Rambo dropped on a task row asks what to do with it.
@@ -1163,10 +1148,7 @@ pub(crate) fn Rambo(
                         let task_id = row.get_attribute("data-id").unwrap_or_default();
                         let task_title = row.get_attribute("data-title").unwrap_or_default();
                         asked_on.set(mascot::Asked::Row);
-                        set_state.set(mascot::transition(
-                            &before,
-                            mascot::Event::DropTask { task_id, title: task_title },
-                        ));
+                        rambo_world.tell(mascot::Event::DropTask { task_id, title: task_title });
                         return;
                     }
                     // Dropped on a slip in the planner, he asks about its time.
@@ -1174,10 +1156,7 @@ pub(crate) fn Rambo(
                         && let Some((id, title, repeats)) = crate::week::slip_at(client_x, client_y)
                     {
                         asked_on.set(mascot::Asked::Slip { repeats });
-                        set_state.set(mascot::transition(
-                            &before,
-                            mascot::Event::DropTask { task_id: id.0, title },
-                        ));
+                        rambo_world.tell(mascot::Event::DropTask { task_id: id.0, title });
                         return;
                     }
                     release_on_page(flick);
@@ -1204,10 +1183,7 @@ pub(crate) fn Rambo(
                         mascot::State::Inking => {
                             // The browser took the gesture over: he lands where he
                             // is, like a drop on the page.
-                            set_state.set(mascot::transition(
-                                &state.get_untracked(),
-                                mascot::Event::DropEmpty,
-                            ));
+                            rambo_world.tell(mascot::Event::DropEmpty);
                         }
                         _ => {}
                     }
@@ -1218,9 +1194,9 @@ pub(crate) fn Rambo(
                     ev.prevent_default();
                     if talking.get_untracked() {
                         stop_speech_key();
-                        set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Release));
+                        rambo_world.tell(mascot::Event::Release);
                     } else if mascot::listens_on_grab(&state.get_untracked()) {
-                        set_state.set(mascot::transition(&state.get_untracked(), mascot::Event::Grab));
+                        rambo_world.tell(mascot::Event::Grab);
                         set_talking.set(true);
                         start_speech_key();
                     }
