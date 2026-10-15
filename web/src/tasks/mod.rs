@@ -345,6 +345,35 @@ fn is_wet(written: StoredValue<Vec<(TaskId, f64)>>, id: &TaskId) -> bool {
     })
 }
 
+/// What a tap on a row does.
+#[derive(Debug, PartialEq, Eq)]
+enum Tapped {
+    /// Its ink is still wet: the finger smears it, wherever on the row it lands.
+    Smudge,
+    /// Dry, on the title: the row opens to edit.
+    Open,
+    /// Dry, anywhere else on the row.
+    Nothing,
+}
+
+fn tapped(wet: bool, on_title: bool) -> Tapped {
+    match (wet, on_title) {
+        (true, _) => Tapped::Smudge,
+        (false, true) => Tapped::Open,
+        (false, false) => Tapped::Nothing,
+    }
+}
+
+/// Whether a point on the screen is on a row's title: what lies under the point, which
+/// `elementFromPoint` finds whatever holds the pointer. The click itself cannot say,
+/// because the row captures the pointer on press and the click then lands on the row.
+fn on_title(x: f64, y: f64) -> bool {
+    leptos::prelude::document()
+        .element_from_point(x as f32, y as f32)
+        .and_then(|el| el.closest(".task-open").ok().flatten())
+        .is_some()
+}
+
 /// A tap at `tap` (on the screen) on row `id` while its ink is wet smears it there.
 fn smudge_if_wet(
     written: StoredValue<Vec<(TaskId, f64)>>,
@@ -522,7 +551,13 @@ pub(crate) fn TaskList(
             let now = scrap::row_tops();
             let slide = rested.with_value(|before| scrap::rows_to_slide(before, &now));
             rested.set_value(now);
-            scrap::slide_rows(&slide);
+            // A hole where a row tore out stays open for a while: the rows below wait
+            // where they were, and close it when it heals.
+            if crate::rip_ui::hole_open() {
+                scrap::hold_rows(&slide);
+            } else {
+                scrap::slide_rows(&slide);
+            }
             scrap::fly_rows_back();
         });
     });
@@ -742,10 +777,19 @@ pub(crate) fn TaskList(
                                 };
                                 let dragged = TaskId(row_id);
                                 match outcome {
-                                    // A tap belongs to the controls, which answer
-                                    // it themselves; a scroll and a backed-out
-                                    // swipe leave the list exactly as it was.
-                                    row::Release::Tap => smudge_if_wet(written, smudges, &dragged, (x, y)),
+                                    // A tap on a control never reaches here (the
+                                    // row does not take that press); a scroll and a
+                                    // backed-out swipe leave the list as it was.
+                                    row::Release::Tap => {
+                                        let wet = is_wet(written, &dragged);
+                                        match tapped(wet, on_title(x, y)) {
+                                            Tapped::Smudge => {
+                                                smudge_if_wet(written, smudges, &dragged, (x, y))
+                                            }
+                                            Tapped::Open => open_editor(&dragged),
+                                            Tapped::Nothing => {}
+                                        }
+                                    }
                                     row::Release::Scroll | row::Release::SnapBack => {}
                                     row::Release::Done => {
                                         let task_id = TaskId(drop_task_id_clone.clone());
@@ -830,14 +874,17 @@ pub(crate) fn TaskList(
                             }
                         }
                     >
+                        // Reached by Tab, Enter or Space opens the row as a tap on it
+                        // does; a key leaves no fingerprint, so wet ink does not stop it.
                         <span
                             class="task-open"
-                            on:click={
+                            tabindex="0"
+                            role="button"
+                            on:keydown={
                                 let id = task.id.clone();
-                                // Wet, a tap smudges the ink (the row's release does
-                                // that) instead of opening the row.
-                                move |_| {
-                                    if !is_wet(written, &id) {
+                                move |ev: leptos::ev::KeyboardEvent| {
+                                    if matches!(ev.key().as_str(), "Enter" | " ") {
+                                        ev.prevent_default();
                                         open_editor(&id);
                                     }
                                 }
@@ -1361,6 +1408,18 @@ mod tests {
 
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn a_tap_on_a_dry_title_opens_the_row_and_wet_ink_only_smudges() {
+        assert_eq!(tapped(false, true), Tapped::Open);
+        assert_eq!(tapped(false, false), Tapped::Nothing);
+        assert_eq!(
+            tapped(true, true),
+            Tapped::Smudge,
+            "wet, the row does not open"
+        );
+        assert_eq!(tapped(true, false), Tapped::Smudge);
+    }
 
     #[test]
     fn a_new_sheet_starts_empty_with_the_default_length_and_no_day() {

@@ -65,6 +65,8 @@ thread_local! {
 pub fn note_departure(id: &str) {
     if let Some(spot) = row_spot(id) {
         DEPARTURES.with(|noted| noted.borrow_mut().insert(id.to_owned(), spot));
+        // The row tears out of the page: a hole shows the planner, and Rambo tapes it.
+        crate::rip_ui::row_out(spot);
     }
 }
 
@@ -408,6 +410,61 @@ pub fn slide_rows(moved: &[(String, i32)]) {
             "transition",
             &format!("transform {ROW_CLOSE_MS}ms var(--ease-out, ease-out)"),
         );
+        let _ = style.set_property("transform", "none");
+    }
+}
+
+/// Rows to keep where they were while a hole is open: like `slide_rows`, but each row
+/// stays `up` px lower than it rests (on top of any hold it is already under) until
+/// `release_rows`, so none slides up into the hole.
+pub fn hold_rows(moved: &[(String, i32)]) {
+    let Some(doc) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    for (id, up) in moved {
+        let Some(row) = doc
+            .query_selector(&format!("li[data-id=\"{id}\"]"))
+            .ok()
+            .flatten()
+            .and_then(|row| row.dyn_into::<web_sys::HtmlElement>().ok())
+        else {
+            continue;
+        };
+        let held = row
+            .get_attribute("data-held")
+            .and_then(|held| held.parse::<i32>().ok())
+            .unwrap_or(0)
+            + up;
+        let _ = row.set_attribute("data-held", &held.to_string());
+        let _ = row.class_list().add_1("held-open");
+        let style = row.style();
+        let _ = style.set_property("transition", "none");
+        let _ = style.set_property("transform", &format!("translateY({held}px)"));
+    }
+}
+
+/// The hole has healed: the rows kept where they were slide up into place (at once with
+/// reduced motion). Called by the `Ripper`, which only the browser has.
+#[cfg(target_arch = "wasm32")]
+pub fn release_rows() {
+    let Some(doc) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let held = doc.get_elements_by_class_name("held-open");
+    let rows: Vec<web_sys::HtmlElement> = (0..held.length())
+        .filter_map(|n| held.item(n)?.dyn_into::<web_sys::HtmlElement>().ok())
+        .collect();
+    let motion = !crate::mascot::prefers_reduced_motion();
+    for row in rows {
+        let _ = row.remove_attribute("data-held");
+        let _ = row.class_list().remove_1("held-open");
+        let style = row.style();
+        let transition = if motion {
+            format!("transform {ROW_CLOSE_MS}ms var(--ease-out, ease-out)")
+        } else {
+            "none".to_owned()
+        };
+        let _ = style.set_property("transition", &transition);
         let _ = style.set_property("transform", "none");
     }
 }
