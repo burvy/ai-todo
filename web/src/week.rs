@@ -187,6 +187,41 @@ pub fn WeekGrid(
     // On the earliest day a right swipe has no days left to scroll, so the page takes it
     // (turner.rs turns back to the list); the class tells the browser to let it through.
     let (at_earliest, set_at_earliest) = signal(true);
+    // The bookmark ribbon (ribbon.rs) hangs at today's column, or at the edge today
+    // went past, kept up with the paper as it scrolls.
+    let (ribbon_left, set_ribbon_left) = signal(0.0_f64);
+    let (ribbon_top, set_ribbon_top) = signal(0.0_f64);
+    let hang_ribbon = move || {
+        #[cfg(target_arch = "wasm32")]
+        if let Some((left, top)) = grid_ref.get_untracked().and_then(|grid| ribbon_spot(&grid)) {
+            set_ribbon_left.set(left);
+            set_ribbon_top.set(top);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = (set_ribbon_left, set_ribbon_top);
+    };
+    // It finds today again whenever the days change, and whenever the paper changes
+    // size: laid out, shown by a phone's page turn, or the window resized.
+    Effect::new(move |_| {
+        let _ = settings.with(|s| s.days);
+        crate::engine::next_frame(hang_ribbon);
+    });
+    #[cfg(target_arch = "wasm32")]
+    Effect::new(move |_| {
+        if let Some(grid) = grid_ref.get() {
+            on_resized(&grid, hang_ribbon);
+        }
+    });
+    // Pulled, the paper slides back to today, at the hour the planner opens on.
+    let back_to_today = Callback::new(move |()| {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(grid) = grid_ref.get_untracked() {
+            let s = settings.get_untracked();
+            let opens = planner_open_minutes(current_minutes(), s.start_hour, s.end_hour);
+            let top = f64::from(now_line_top(opens, s.start_hour, HOUR_PX));
+            slide_to(grid.into(), (0.0, top));
+        }
+    });
     let on_scroll = move |_: leptos::ev::Event| {
         #[cfg(target_arch = "wasm32")]
         if let Some(grid) = grid_ref.get() {
@@ -194,6 +229,7 @@ pub fn WeekGrid(
         }
         #[cfg(not(target_arch = "wasm32"))]
         let _ = set_at_earliest;
+        hang_ribbon();
     };
     // The waiting task lands where it is told, and the planner stops waiting.
     let place = Callback::new(move |slot: Slot| {
@@ -237,6 +273,7 @@ pub fn WeekGrid(
             </div>
             <crate::PageFoot page=1 turn=turn_back />
             <crate::placing::PlacingNote snapshot settings move_request place />
+            <crate::ribbon::Ribbon left=ribbon_left top=ribbon_top back=back_to_today />
             <div
                 class="week-scroll"
                 class:at-earliest=at_earliest
@@ -462,6 +499,68 @@ fn long_press_stop(_: leptos::ev::PointerEvent) {}
 /// One hour of the week grid, in CSS pixels. The .hour rule in index.html has the same
 /// height, so the current-time line can be placed from the clock.
 const HOUR_PX: f32 = 64.0;
+
+/// Where the bookmark ribbon hangs on the planner page (its left and top, in px from the
+/// page's top left): just inside today's column, held at the planner's visible edges
+/// when today is scrolled away, its top tucked under the top of the paper.
+#[cfg(target_arch = "wasm32")]
+fn ribbon_spot(grid: &web_sys::HtmlDivElement) -> Option<(f64, f64)> {
+    let page = grid.closest(".planner-page").ok()??.get_bounding_client_rect();
+    let paper = grid.get_bounding_client_rect();
+    let today = grid
+        .query_selector(".day[data-day='0']")
+        .ok()??
+        .get_bounding_client_rect();
+    let ribbon = grid
+        .closest(".planner-page")
+        .ok()??
+        .query_selector(".bookmark-ribbon")
+        .ok()??
+        .get_bounding_client_rect();
+    // Today's column starts past the hours' gutter when the paper is at its left.
+    let gutter = today.left() + f64::from(grid.scroll_left()) - paper.left();
+    let left = crate::ribbon::hang_left(
+        today.right() - page.left(),
+        ribbon.width(),
+        paper.left() - page.left() + gutter,
+        paper.right() - page.left() - 1.5 * ribbon.width(),
+    );
+    Some((left, paper.top() - page.top()))
+}
+
+/// Calls `resized` whenever `paper` changes size, for as long as the page lives.
+#[cfg(target_arch = "wasm32")]
+fn on_resized(paper: &web_sys::Element, resized: impl Fn() + 'static) {
+    use wasm_bindgen::JsCast as _;
+    let listener = wasm_bindgen::closure::Closure::<dyn Fn()>::new(resized);
+    if let Ok(observer) = web_sys::ResizeObserver::new(listener.as_ref().unchecked_ref()) {
+        observer.observe(paper);
+    }
+    listener.forget();
+}
+
+/// Slides the paper to `to` (its scroll left and top) over `RIBBON_GLIDE_MS` on the
+/// engine's loop, or at once with reduced motion.
+#[cfg(target_arch = "wasm32")]
+fn slide_to(paper: web_sys::HtmlElement, to: (f64, f64)) {
+    if crate::mascot::prefers_reduced_motion() {
+        paper.set_scroll_left(to.0 as i32);
+        paper.set_scroll_top(to.1 as i32);
+        return;
+    }
+    let from = (f64::from(paper.scroll_left()), f64::from(paper.scroll_top()));
+    let began = crate::engine::now();
+    crate::engine::on_tick(move |tick| {
+        let ms = tick.now - began;
+        paper.set_scroll_left(crate::ribbon::glide(from.0, to.0, ms).round() as i32);
+        paper.set_scroll_top(crate::ribbon::glide(from.1, to.1, ms).round() as i32);
+        if ms >= crate::tuning::RIBBON_GLIDE_MS {
+            crate::engine::Flow::Stop
+        } else {
+            crate::engine::Flow::Go
+        }
+    });
+}
 
 /// How far down the hour rows the current time sits. The rows start at start_hour.
 fn now_line_top(now_minutes: u16, start_hour: u8, hour_px: f32) -> f32 {
