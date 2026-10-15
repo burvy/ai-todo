@@ -95,6 +95,13 @@ refreshes the complete snapshot. An edit made from a stale copy of a task (it ch
 device since this page loaded it) is refused with `409 stale_update`; the page keeps what the server has.
 b. Type a task and tap the nest or press Enter (there is no Add button); swipe a row right to
 finish it, or use the row's x to delete it.
+On a phone the **+** at the bar's left (a torn scrap beside the box) adds a task by hand: it opens
+the edit sheet, headed "New task", on a blank form (no title, 30 minutes, anytime, no repeat). Save
+needs a title and a length and makes the task with `POST /api/v1/tasks` (or a weekly series, if
+days are ticked); the task exists only from Save, so Cancel and Esc leave nothing behind. Its Done
+and x buttons are hidden, since there is nothing yet to finish or delete. A desk, with room to
+ramble, has no +. Code: `web/src/capture.rs:CaptureBox` (the button), `web/src/tasks/mod.rs:blank_form,
+new_task_draft, DRAFT_ID`, `web/src/api.rs:create_task`.
 c. Code: `web/src/capture.rs:CaptureBox`; `web/src/tasks/mod.rs:TaskList`;
 `web/src/api.rs:capture_text, patch_task, delete_task`;
 `server/src/v2/http.rs:capture, update, remove`.
@@ -219,7 +226,8 @@ the page in the page's flow.
 c. The nest is one box in the bottom-right corner of the capture bar, square-ish and fully
 on screen (`--nest-w` by `--nest-h`). Rambo sits in it, his tip behind the nest's front rim,
 which is a second layer drawn over him (`.nest::before` is the back, `.nest-rim` the front).
-Tapping the nest submits the box.
+Tapping the nest submits the box. On a phone, when the keyboard opens the capture bar rides
+up on top of it, with the nest and Rambo in it, and goes back down when it closes.
 d. Nothing pops in or out. The only thing on main that fades is ink (it appears over `INK_FADE_MS`
 and fades out over `INK_FADE_OUT_MS`); the one other thing allowed to fade is Rambo's
 tape patch and the tear it mends (item g). Everything else moves: a done or
@@ -239,9 +247,9 @@ planner page shows through it live (its own slips and lines, not a picture), in 
 hole reads as a hole even where the planner is empty paper. On a phone the
 planner already lies under the list; on a desk, where the two pages are a spread side by side,
 it slides under the list for as long as the tear lasts (`TEAR_SLIDE_MS`) and slides back: a day
-column (the first with a slip) is brought under where the tear starts, and an hour line to its
-level, computed from the tear's place (`rip::slide_px`, `lift_px`), so the hole shows hour
-lines and column rules and not just the planner's hour labels.
+column (the first with a slip) is brought under where the tear starts (`rip::slide_px`). On
+both, an hour line of that column is brought to the tear's level (`rip::lift_px`), so the hole
+shows hour lines and column rules and not just the planner's hour labels or bare paper.
 The tear follows the finger, never goes back, stops short of the pin's column, and never
 touches a task's words: a press too near a row tears nothing (`rip::lane`). One tear at a
 time. When the finger lets go Rambo notices, hops to the tear and tapes it: a strip of tape

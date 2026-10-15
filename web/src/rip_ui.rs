@@ -204,7 +204,6 @@ mod imp {
                         );
                         let lift = rip::lift_px(
                             torn.is_some(),
-                            phone(),
                             f64::from(planner.offset_top()),
                             tear_y,
                             &columns,

@@ -108,6 +108,8 @@ pub fn App() -> impl IntoView {
     // When Rambo was dropped on an empty planner hour, that hour as a date phrase: the
     // capture box's next task starts then.
     let noting_at = RwSignal::new(None::<String>);
+    // The + was tapped: the list opens its sheet on a new task
+    let new_task = RwSignal::new(false);
     // The task whose edit sheet is open: the list owns it, Rambo listens while it is
     let open_sheet = RwSignal::new(None::<TaskId>);
     // The scrap a swiped-out row leaves in the corner, to tape it back
@@ -167,6 +169,7 @@ pub fn App() -> impl IntoView {
     view! {
         <div class="capture-slot">
             <CaptureBox
+                new_task
                 form_ref
                 nest_ref
                 set_snapshot=set_snapshot
@@ -229,7 +232,7 @@ pub fn App() -> impl IntoView {
                     move |_| ripper.scrolled()
                 }
             >
-                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request open_sheet scraps />
+                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request new_task open_sheet scraps />
                 <scrap::ScrapCorner snapshot scraps set_snapshot set_error />
                 // Ink laid on the list: part of the page, so it scrolls and turns with it.
                 <inklayer::InkLayer strokes on=ink::Surface::List />
