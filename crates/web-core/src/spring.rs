@@ -8,26 +8,26 @@
 /// How a spring pulls: `omega` is its quickness (radians per second), `zeta` its damping
 /// (1 settles without overshoot; below that it swings past its end and back).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Pull {
-    pub(crate) omega: f64,
-    pub(crate) zeta: f64,
+pub struct Pull {
+    pub omega: f64,
+    pub zeta: f64,
 }
 
 /// A value on a damped spring: `x` where it is, `v` its speed per second.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct Spring1 {
-    pub(crate) x: f64,
-    pub(crate) v: f64,
+pub struct Spring1 {
+    pub x: f64,
+    pub v: f64,
 }
 
 impl Spring1 {
-    pub(crate) fn new(x: f64, v: f64) -> Self {
+    pub fn new(x: f64, v: f64) -> Self {
         Spring1 { x, v }
     }
 
     /// `dt` seconds pulled toward `target`, with `accel` more pushing it (per second
     /// squared): the speed first, then the place, so the step stays stable.
-    pub(crate) fn step(&mut self, target: f64, pull: Pull, accel: f64, dt: f64) {
+    pub fn step(&mut self, target: f64, pull: Pull, accel: f64, dt: f64) {
         let spring =
             -pull.omega * pull.omega * (self.x - target) - 2.0 * pull.zeta * pull.omega * self.v;
         self.v += (spring + accel) * dt;
@@ -35,12 +35,12 @@ impl Spring1 {
     }
 
     /// A kick of `dv` to its speed, which never ends past `cap` either way.
-    pub(crate) fn kick(&mut self, dv: f64, cap: f64) {
+    pub fn kick(&mut self, dv: f64, cap: f64) {
         self.v = (self.v + dv).clamp(-cap, cap);
     }
 
     /// Whether it is within `near` of `target` and slower than `slow`: at rest.
-    pub(crate) fn settled(&self, target: f64, near: f64, slow: f64) -> bool {
+    pub fn settled(&self, target: f64, near: f64, slow: f64) -> bool {
         (self.x - target).abs() < near && self.v.abs() < slow
     }
 }
