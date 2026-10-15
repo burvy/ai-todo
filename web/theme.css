@@ -1324,9 +1324,9 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   translate: 0 calc((1 - var(--open, 1)) * var(--ask-tuck));
 }
 
-/* On its way out of him, and folding back in, it is behind him and takes no touch. */
-.ask.tucked,
-.ask.folding {
+/* On its way out of him, and folding back in, it is behind him and takes no touch
+   (rambo::bubble_tucked: folding is tucked too). */
+.ask.tucked {
   z-index: var(--layer-behind);
   pointer-events: none;
 }

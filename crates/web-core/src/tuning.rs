@@ -21,6 +21,10 @@ pub const BUBBLE_EDGE_PX: f64 = 8.0;
 /// refusal takes its place. Safe range 4000 to 12000: shorter and a two-clause note is
 /// gone before it is read, longer and it hides what he says next.
 pub const REFUSAL_SAY_MS: f64 = 7000.0;
+/// How far out of Rambo his growing ask bubble must be (0 tucked, 1 at its place) before
+/// it comes in front of him and takes a tap. Safe range 0.8 to 1.0: lower and it jumps
+/// in front while still small, 1.0 and the choices wait for the spring's last pixel.
+pub const ASK_OUT_AT: f64 = 0.9;
 /// How long a slip taken off the planner takes to slide out of its day, in ms; the
 /// week is drawn without it no sooner. Safe range 180 to 400: shorter and it pops,
 /// longer and the planner waits on it.

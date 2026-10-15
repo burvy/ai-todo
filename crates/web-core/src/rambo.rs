@@ -286,9 +286,26 @@ pub fn bubble_offset(centre_x: f64, width: f64, screen: f64, edge: f64) -> f64 {
     fitted - left
 }
 
+/// Whether his ask bubble, `open` of the way out of him (0 tucked, 1 at its place), is
+/// still tucked: behind him and taking no tap. Growing out, it is until it is nearly
+/// there (`ASK_OUT_AT`); folding back in, it is at once, so a tap meant for the page
+/// never lands on a bubble on its way out.
+pub fn bubble_tucked(folding: bool, open: f64) -> bool {
+    folding || open < crate::tuning::ASK_OUT_AT
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_bubble_takes_a_tap_only_once_it_is_nearly_out_and_not_folding() {
+        assert!(bubble_tucked(false, 0.0), "just asked");
+        assert!(bubble_tucked(false, crate::tuning::ASK_OUT_AT - 0.01));
+        assert!(!bubble_tucked(false, crate::tuning::ASK_OUT_AT));
+        assert!(!bubble_tucked(false, 1.0), "at its place");
+        assert!(bubble_tucked(true, 1.0), "folding from its place");
+    }
 
     fn hour() -> NotedHour {
         NotedHour {
