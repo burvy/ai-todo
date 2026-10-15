@@ -370,10 +370,12 @@ deadline, and the scheduler leaves it alone until it is placed again, because it
 reported in `Plan::off_planner` rather than as unplaced. This outranks a pin, so an
 `At` task taken off the planner leaves the week too. Set it with
 `PATCH /api/v1/tasks/{id}` and `{"off_planner": true}`.
-b. Not visible yet: the bubble button that calls it is (planned), and the UI that
+Placing it again (Move from the bubble, or a dropped slip) puts it back on the planner.
+b. Drop Rambo on a slip in the planner and choose **Take off** (III.7). The UI that
 shows why a task is in the list but not on the week is (planned). Covered by
 scheduler, store and server tests.
 c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
+`web/src/week.rs:take_off, place_at`; `web/src/api.rs:PatchTaskBody::off_planner`;
 `crates/scheduler/src/lib.rs:plan`; `server/src/v2/app.rs:patch`;
 `server/src/v2/store.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
 
@@ -420,13 +422,14 @@ repeating series moves as that day only, as a dragged slip does.
 Rambo dropped on a slip in the planner asks about its time: **Move** (the same wait
 for an hour), **Longer** and **Shorter**, a quarter hour each way, never past the
 longest a task may be and never under a quarter hour. The slip stretches at once and
-the new length is saved. One day of a repeating series is only offered Move. Taking a
-slip off the planner is (planned).
+the new length is saved. **Take off** takes the task off the planner (4a): its slip
+slides sideways out of its day and the week is drawn without it, while the task stays
+in the list. One day of a repeating series is only offered Move.
 b. Drop Rambo on a task, choose Move, then tap an hour or the "Next free" scrap. Drop
-him on a slip in the planner and choose Longer.
+him on a slip in the planner and choose Longer, or Take off.
 c. Code: `web/src/rambo.rs:Rambo` sets `move_request`; `web/src/lib.rs:App` turns
 the page; `web/src/placing.rs:PlacingNote, next_free`;
-`web/src/week.rs:WeekGrid, place_at, slip_at, stretch`;
+`web/src/week.rs:WeekGrid, place_at, slip_at, stretch, take_off`;
 `web/src/mascot.rs:Asked, offered`; `web/src/placing.rs:stretched`.
 
 ### 8. A new task on an empty hour

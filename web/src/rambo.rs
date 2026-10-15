@@ -572,6 +572,10 @@ pub(crate) fn Rambo(
                 crate::week::stretch(&TaskId(task_id), stretch, snapshot, set_snapshot, set_error);
                 chosen();
             }
+            mascot::Choice::Off => {
+                crate::week::take_off(&TaskId(task_id), snapshot, set_snapshot, set_error);
+                chosen();
+            }
         }
     };
 

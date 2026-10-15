@@ -1086,8 +1086,10 @@ fn place_at(
                 crate::api::move_series_occurrence(&series_id, date, When::At(instant)).await
             }
             None => {
+                // Placed, a task taken off the planner is back on it.
                 let body = crate::api::PatchTaskBody::new()
                     .when(When::At(instant))
+                    .off_planner(false)
                     .updated_at(updated_at);
                 crate::api::patch_task(&id, body).await
             }
@@ -1224,6 +1226,60 @@ pub(crate) fn stretch(
             Err(e) => set_error.set(Some(format!("Resize failed: {e}"))),
         }
     });
+}
+
+/// Takes task `id` off the planner (`Task::off_planner`): it stays in the list, and the
+/// scheduler leaves it alone until it is placed again. Its slips slide out of their
+/// days at once, and the week is drawn without them once that has run and the change
+/// is saved; refused, they slide back.
+pub(crate) fn take_off(
+    id: &TaskId,
+    snapshot: ReadSignal<Snapshot>,
+    set_snapshot: WriteSignal<Snapshot>,
+    set_error: WriteSignal<Option<String>>,
+) {
+    let Some(updated_at) = snapshot.with_untracked(|snap| {
+        snap.tasks
+            .iter()
+            .find(|task| task.id == *id)
+            .map(|task| task.updated_at)
+    }) else {
+        return;
+    };
+    #[cfg(target_arch = "wasm32")]
+    slide_off(id, true);
+    let began = crate::engine::now();
+    let id = id.clone();
+    wasm_bindgen_futures::spawn_local(async move {
+        let body = crate::api::PatchTaskBody::new()
+            .off_planner(true)
+            .updated_at(updated_at);
+        let saved = crate::api::patch_task(&id, body).await;
+        let left = f64::from(crate::tuning::SLIP_OFF_MS) - (crate::engine::now() - began);
+        if left > 0.0 {
+            gloo_timers::future::TimeoutFuture::new(left.ceil() as u32).await;
+        }
+        match saved {
+            Ok(new_snapshot) => set_snapshot.set(new_snapshot),
+            Err(e) => {
+                #[cfg(target_arch = "wasm32")]
+                slide_off(&id, false);
+                set_error.set(Some(format!("Taking it off failed: {e}")));
+            }
+        }
+    });
+}
+
+/// Slides task `id`'s slips out of their days (`off`), or back in.
+#[cfg(target_arch = "wasm32")]
+fn slide_off(id: &TaskId, off: bool) {
+    for slip in slips_of(id) {
+        let _ = slip.style().set_property(
+            "--slip-off-ms",
+            &format!("{}ms", crate::tuning::SLIP_OFF_MS),
+        );
+        let _ = slip.class_list().toggle_with_force("slip-off", off);
+    }
 }
 
 /// Task `id`'s slips on the page.

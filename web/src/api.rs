@@ -255,6 +255,9 @@ pub struct PatchTaskBody {
     pub priority: Option<todo_core::Priority>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<todo_core::Source>,
+    /// Taken off the planner on purpose, or put back on it (`Task::off_planner`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub off_planner: Option<bool>,
     /// The task's `updated_at` as this page last saw it; the server refuses the edit if
     /// the task has changed since.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -287,6 +290,11 @@ impl PatchTaskBody {
 
     pub fn duration_min(mut self, duration_min: u16) -> Self {
         self.duration_min = Some(duration_min);
+        self
+    }
+
+    pub fn off_planner(mut self, off_planner: bool) -> Self {
+        self.off_planner = Some(off_planner);
         self
     }
 
