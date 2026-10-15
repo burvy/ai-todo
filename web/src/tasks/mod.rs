@@ -19,7 +19,7 @@ use fields::{
     EditWhen, WEEKDAY_CHOICES, due_display, local_input_value, series_from_dialog,
     series_patch_from_dialog, toggled_day, typed_when,
 };
-use rambl_web_core::store::Command;
+use rambl_web_core::store::{Command, Mark};
 
 /// The order the server wants after moving `dragged` to `slot` beside `target`,
 /// or `None` when the drop is not a reorder at all.
@@ -315,9 +315,10 @@ pub async fn delete_with_scribble(
     task_id: &todo_core::TaskId,
     snapshot: ReadSignal<Snapshot>,
     scraps: RwSignal<Vec<scrap::Scrap>>,
-) -> Result<todo_core::Snapshot, api::ApiError> {
+    store: crate::store::Store,
+) -> bool {
     on_delete_requested(task_id.clone()).await;
-    delete_scribbled(task_id, snapshot, scraps).await
+    delete_scribbled(task_id, snapshot, scraps, store).await
 }
 
 /// Delete a task whose row is already scribbled out (the swipe drew the ink
@@ -326,16 +327,17 @@ pub async fn delete_scribbled(
     task_id: &todo_core::TaskId,
     snapshot: ReadSignal<Snapshot>,
     scraps: RwSignal<Vec<scrap::Scrap>>,
-) -> Result<todo_core::Snapshot, api::ApiError> {
-    let delete = async {
-        match occurrence_parts(&task_id.0) {
-            Some((series, date)) => {
-                api::mark_occurrence(series, &date.to_string(), "skipped").await
-            }
-            None => api::delete_task(task_id).await,
-        }
+    store: crate::store::Store,
+) -> bool {
+    let command = match occurrence_parts(&task_id.0) {
+        Some((series, date)) => Command::MarkOccurrence {
+            series: series.to_owned(),
+            date: date.to_string(),
+            mark: Mark::Skipped,
+        },
+        None => Command::DeleteTask(task_id.clone()),
     };
-    scrap::delete_and_lay(task_id, snapshot, scraps, delete).await
+    scrap::delete_and_lay(task_id, snapshot, scraps, store.send(command)).await
 }
 
 /// Whether row `id` is wet: Rambo wrote it less than `INK_WET_MS` ago.
@@ -714,13 +716,10 @@ pub(crate) fn TaskList(
                                 ev.prevent_default();
                                 ev.stop_propagation();
                                 let task_id_clone = task_id_clone.clone();
-                                let set_snapshot_clone = set_snapshot;
                                 wasm_bindgen_futures::spawn_local(async move {
                                     // Rambo crosses the title out first; the task
                                     // only leaves once the ink has dried.
-                                    if let Ok(new_snap) = delete_with_scribble(&task_id_clone, snapshot, scraps).await {
-                                        set_snapshot_clone.set(new_snap);
-                                    }
+                                    delete_with_scribble(&task_id_clone, snapshot, scraps, store).await;
                                 });
                             }
                         };
@@ -1062,23 +1061,18 @@ pub(crate) fn TaskList(
                                                     let Some((series, date)) = occ.clone() else {
                                                         return;
                                                     };
-                                                    let set_snapshot = set_snapshot;
-                                                    let set_error = set_error;
                                                     wasm_bindgen_futures::spawn_local(async move {
                                                         // Done and Undone are the same button on
                                                         // this date: marked writes the exception,
                                                         // un-marked clears it.
-                                                        let result = if task_done {
-                                                            api::clear_occurrence(&series, &date.to_string()).await
+                                                        let date = date.to_string();
+                                                        let command = if task_done {
+                                                            Command::ClearOccurrence { series, date }
                                                         } else {
-                                                            api::mark_occurrence(&series, &date.to_string(), "done").await
+                                                            Command::MarkOccurrence { series, date, mark: Mark::Done }
                                                         };
-                                                        match result {
-                                                            Ok(snapshot) => {
-                                                                set_snapshot.set(snapshot);
-                                                                set_editing_task.set(None);
-                                                            }
-                                                            Err(e) => set_error.set(Some(series_note(&e))),
+                                                        if store.send(command).await {
+                                                            set_editing_task.set(None);
                                                         }
                                                     });
                                                 }
@@ -1092,15 +1086,14 @@ pub(crate) fn TaskList(
                                                     let Some((series, date)) = occ.clone() else {
                                                         return;
                                                     };
-                                                    let set_snapshot = set_snapshot;
-                                                    let set_error = set_error;
                                                     wasm_bindgen_futures::spawn_local(async move {
-                                                        match api::mark_occurrence(&series, &date.to_string(), "skipped").await {
-                                                            Ok(snapshot) => {
-                                                                set_snapshot.set(snapshot);
-                                                                set_editing_task.set(None);
-                                                            }
-                                                            Err(e) => set_error.set(Some(series_note(&e))),
+                                                        let command = Command::MarkOccurrence {
+                                                            series,
+                                                            date: date.to_string(),
+                                                            mark: Mark::Skipped,
+                                                        };
+                                                        if store.send(command).await {
+                                                            set_editing_task.set(None);
                                                         }
                                                     });
                                                 }
@@ -1117,15 +1110,9 @@ pub(crate) fn TaskList(
                                                     if !confirmed("Delete this series and every day still to come?") {
                                                         return;
                                                     }
-                                                    let set_snapshot = set_snapshot;
-                                                    let set_error = set_error;
                                                     wasm_bindgen_futures::spawn_local(async move {
-                                                        match api::delete_series(&series).await {
-                                                            Ok(snapshot) => {
-                                                                set_snapshot.set(snapshot);
-                                                                set_editing_task.set(None);
-                                                            }
-                                                            Err(e) => set_error.set(Some(series_note(&e))),
+                                                        if store.send(Command::DeleteSeries(series)).await {
+                                                            set_editing_task.set(None);
                                                         }
                                                     });
                                                 }
@@ -1149,15 +1136,10 @@ pub(crate) fn TaskList(
                                                     ) else {
                                                         return;
                                                     };
-                                                    let set_snapshot = set_snapshot;
-                                                    let set_error = set_error;
                                                     wasm_bindgen_futures::spawn_local(async move {
-                                                        match api::patch_series(&series_id, patch).await {
-                                                            Ok(snapshot) => {
-                                                                set_snapshot.set(snapshot);
-                                                                set_editing_task.set(None);
-                                                            }
-                                                            Err(e) => set_error.set(Some(series_note(&e))),
+                                                        let command = Command::PatchSeries { series: series_id, patch };
+                                                        if store.send(command).await {
+                                                            set_editing_task.set(None);
                                                         }
                                                     });
                                                 }
@@ -1197,8 +1179,7 @@ pub(crate) fn TaskList(
                                                 // The row is behind the dialog, but it
                                                 // is the user's row: it gets crossed
                                                 // out like any other delete.
-                                                if let Ok(new_snap) = delete_with_scribble(&task_id, snapshot, scraps).await {
-                                                    set_snapshot.set(new_snap);
+                                                if delete_with_scribble(&task_id, snapshot, scraps, store).await {
                                                     set_editing_task.set(None);
                                                 }
                                             });
@@ -1232,35 +1213,22 @@ pub(crate) fn TaskList(
                                                 ) else {
                                                     return;
                                                 };
-                                                let set_snapshot = set_snapshot;
-                                                let set_error = set_error;
                                                 wasm_bindgen_futures::spawn_local(async move {
-                                                    match api::create_series(body).await {
-                                                        Ok(snapshot) => {
-                                                            set_snapshot.set(snapshot);
-                                                            // The series takes over: drop the
-                                                            // one-off row it grew out of. Not
-                                                            // crossed out - the user never
-                                                            // deleted it, it was absorbed.
-                                                            let absorbed = if is_draft(&task_id) {
-                                                                Ok(None)
-                                                            } else {
-                                                                api::delete_task(&task_id).await.map(Some)
-                                                            };
-                                                            if let Ok(dropped) = absorbed {
-                                                                if let Some(snapshot) = dropped {
-                                                                    set_snapshot.set(snapshot);
-                                                                }
-                                                            } else {
-                                                                set_error.set(Some(
-                                                                    "The weekly series was made, but the old row stayed — delete it if you don't want it twice."
-                                                                        .to_owned(),
-                                                                ));
-                                                            }
-                                                            set_editing_task.set(None);
-                                                        }
-                                                        Err(e) => set_error.set(Some(series_note(&e))),
+                                                    if !store.send(Command::CreateSeries(body)).await {
+                                                        return;
                                                     }
+                                                    // The series takes over: drop the one-off row it
+                                                    // grew out of. Not crossed out - the user never
+                                                    // deleted it, it was absorbed.
+                                                    if !is_draft(&task_id)
+                                                        && !store.send(Command::DeleteTask(task_id)).await
+                                                    {
+                                                        set_error.set(Some(
+                                                            "The weekly series was made, but the old row stayed — delete it if you don't want it twice."
+                                                                .to_owned(),
+                                                        ));
+                                                    }
+                                                    set_editing_task.set(None);
                                                 });
                                                 return;
                                             }
@@ -1280,12 +1248,8 @@ pub(crate) fn TaskList(
                                                     return;
                                                 };
                                                 wasm_bindgen_futures::spawn_local(async move {
-                                                    match api::create_task(&made).await {
-                                                        Ok(snapshot) => {
-                                                            set_snapshot.set(snapshot);
-                                                            set_editing_task.set(None);
-                                                        }
-                                                        Err(e) => set_error.set(Some(series_note(&e))),
+                                                    if store.send(Command::CreateTask(made)).await {
+                                                        set_editing_task.set(None);
                                                     }
                                                 });
                                                 return;

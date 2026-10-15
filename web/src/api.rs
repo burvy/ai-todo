@@ -232,7 +232,7 @@ pub struct CaptureTextBody {
     pub text: String,
 }
 
-pub use rambl_web_core::body::{PatchTaskBody, ReviseBody};
+pub use rambl_web_core::body::{PatchTaskBody, ReviseBody, SeriesBody, SeriesPatchBody};
 
 /// Body for reordering tasks.
 #[derive(Clone, Debug, Serialize)]
@@ -471,37 +471,6 @@ pub async fn export_calendar() -> Result<String, ApiError> {
         .text()
         .await
         .map_err(|e| ApiError::Decode(e.to_string()))
-}
-
-/// Body for `POST /api/v1/series` — make a thing repeat weekly
-/// (docs/ARCHITECTURE.md 7.1). Dates and times travel as `YYYY-MM-DD` / `HH:MM`
-/// strings, the spelling chrono's serde uses on the server.
-#[derive(Clone, Debug, Serialize)]
-pub struct SeriesBody {
-    pub title: String,
-    pub duration_min: u16,
-    /// chrono weekday names, Monday-first: `["Mon", "Thu"]`.
-    pub weekdays: Vec<Weekday>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub time_of_day: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub until: Option<String>,
-}
-
-/// Body for `PATCH /api/v1/series/{id}`: absent fields stay as they are. The
-/// time and end date are always sent, because the dialog holds the whole rule:
-/// `null` clears them (docs/ARCHITECTURE.md 7.1), so an emptied field ends the
-/// series' fixed time or end date.
-#[derive(Clone, Debug, Default, Serialize)]
-pub struct SeriesPatchBody {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration_min: Option<u16>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub weekdays: Option<Vec<Weekday>>,
-    pub time_of_day: Option<String>,
-    pub until: Option<String>,
 }
 
 /// `POST /api/v1/series`: create a weekly series. Answers with the snapshot,

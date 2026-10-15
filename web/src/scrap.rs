@@ -478,28 +478,29 @@ fn sway_deg(ticket: u32) -> i32 {
     (ticket * 37 % 9) as i32 - 4
 }
 
-/// Delete `task_id` with `delete`, then lay its scrap. The undo is read from the
-/// list before the delete, so it tapes the row back as the list held it.
+/// Delete `task_id` with `delete` (which answers whether the server took it), then lay
+/// its scrap. The undo is read from the list before the delete, so it tapes the row back
+/// as the list held it.
 pub async fn delete_and_lay<F>(
     task_id: &todo_core::TaskId,
     snapshot: ReadSignal<Snapshot>,
     scraps: RwSignal<Vec<Scrap>>,
     delete: F,
-) -> Result<Snapshot, api::ApiError>
+) -> bool
 where
-    F: std::future::Future<Output = Result<Snapshot, api::ApiError>>,
+    F: std::future::Future<Output = bool>,
 {
     let undo = snapshot.with_untracked(|held| undo_for(held, &task_id.0));
     // Where the row stands now, before the list loses it: the scrap flies from there.
     let from = row_spot(&task_id.0);
-    let result = delete.await;
-    if result.is_ok() {
+    let deleted = delete.await;
+    if deleted {
         crate::sound::play(crate::sound::Cue::Delete);
+        if let Some((title, undo)) = undo {
+            lay(scraps, title, undo, from);
+        }
     }
-    if let (Ok(_), Some((title, undo))) = (&result, undo) {
-        lay(scraps, title, undo, from);
-    }
-    result
+    deleted
 }
 
 /// Tape the scrap's task back, then show the list the server answers with. The
