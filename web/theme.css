@@ -1228,7 +1228,6 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   pointer-events: none;
 }
 
-.brain-line,
 /* While he listens the light is turned down a little over everything but him, his
    nest's rim and his bubble (Interview 1 item 12). A light dims, so this is a fade. It
    never takes a touch: what is under it is still what a drop or a tap lands on. */
@@ -1367,6 +1366,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   }
 }
 
+.brain-line,
 .talking {
   font-family: var(--font-heading);
   font-style: italic;
@@ -1375,6 +1375,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 
 /* Brain lines inside the paper bubble (Phyllis's styles). */
 .brain-line {
+  position: relative; /* nudged by its `left` and `top` off a screen edge (rambo.rs) */
   display: inline-block;
   max-width: 100%;
   padding: var(--space-3);
@@ -1382,6 +1383,15 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   border: 1px solid var(--rule);
   border-radius: 12px;
   box-shadow: var(--shadow);
+}
+
+/* Why a change was not saved: longer than a brain line, so it wraps, never wider than
+   the screen less its gutters. */
+.refusal-line {
+  width: max-content;
+  max-width: min(16rem, calc(100vw - 2 * var(--space-2)));
+  white-space: normal;
+  text-align: left;
 }
 
 /* Rambo's ask: a small speech bubble above him (Interview 4, item 8). Tapping

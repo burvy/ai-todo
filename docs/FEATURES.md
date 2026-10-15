@@ -178,7 +178,7 @@ ARCHITECTURE.md 7.1 lists reordering them as out of scope). A slip dropped where
 no row is goes to the end.
 h. The new order shows the moment the row is dropped, before the server answers. If
 the server refuses it, the list goes back to the last order the server confirmed, is
-reloaded, and the page says why (the same note an edit gives). A slower answer to an
+reloaded, and Rambo says why in his bubble (the same note an edit gives). A slower answer to an
 earlier change never puts an older list back.
 i. Code: `crates/web-core/src/row.rs` (the gesture rules, unit-tested) and `web/src/row.rs`'s `dom` module
 (pointer events); `web/src/tasks/mod.rs:reorder_ids`, the row's handlers;

@@ -46,6 +46,24 @@ pub(crate) fn Rambo(
     // Edits go through the store, which shows the reply and explains a refusal.
     let store = expect_context::<crate::store::Store>();
     let events = expect_context::<crate::events::Queue>();
+    // Why a change was not saved, in his bubble whatever his brain's mode, until it has
+    // been up `REFUSAL_SAY_MS` or a newer refusal takes its place.
+    let refusal_line = RwSignal::new(None::<String>);
+    let refusal_ends = StoredValue::new_local(None::<crate::engine::Handle>);
+    Effect::new(move |_| {
+        events.track();
+        let Some(note) = events.take_all(rambl_web_core::events::refused).pop() else {
+            return;
+        };
+        refusal_line.set(Some(note));
+        let ends = crate::engine::after(tuning::REFUSAL_SAY_MS, move || refusal_line.set(None));
+        if let Some(earlier) = refusal_ends
+            .try_update_value(|at| at.replace(ends))
+            .flatten()
+        {
+            earlier.stop();
+        }
+    });
     // Where he is drawn, and how squashed by a hop: see the hop mover below.
     let shown = RwSignal::new(pen_pos.get_untracked());
     let squash = RwSignal::new(0.0_f64);
@@ -124,6 +142,7 @@ pub(crate) fn Rambo(
         }
         // A line he starts or stops saying moves what the bubble sits on.
         brain_speech.track();
+        refusal_line.track();
         let shown_bubble = asked.with(Option::is_some);
         let (shift, below) = bubble_ref
             .get()
@@ -150,6 +169,34 @@ pub(crate) fn Rambo(
             });
         bubble_shift.set(shift);
         bubble_below.set(below);
+    });
+
+    // His line slides in from a screen edge rather than run off it, and near the top
+    // it drops below him, as the ask does.
+    let line_ref = NodeRef::<leptos::html::Span>::new();
+    let line_shift = RwSignal::new((0.0_f64, 0.0_f64));
+    Effect::new(move |_| {
+        refusal_line.track();
+        brain_speech.track();
+        let shift = line_ref
+            .get()
+            .zip(screen_width())
+            .map_or((0.0, 0.0), |(line, screen)| {
+                let (width, height) = (
+                    f64::from(line.offset_width()),
+                    f64::from(line.offset_height()),
+                );
+                let (x, y) = shown.get();
+                let his_h = rambo_height();
+                let edge = tuning::BUBBLE_EDGE_PX;
+                let drop = if opens_below(y - his_h / 2.0, height, edge) {
+                    his_h + height + 2.0 * edge
+                } else {
+                    0.0
+                };
+                (bubble_offset(x, width, screen, edge), drop)
+            });
+        line_shift.set(shift);
     });
 
     // Where he is drawn: his body in the engine's world (`engine::World`), which hops,
@@ -1213,7 +1260,16 @@ pub(crate) fn Rambo(
             })}
             // Speech bubble: inside the button so it follows Rambo everywhere
             <span class="mascot-status" aria-live="polite">
-                {move || brain_speech.get().map(|line| view! { <span class="brain-line">{line}</span> })}
+                // A refusal is news, so it is said over whatever his brain was saying.
+                {move || refusal_line.get().or_else(|| brain_speech.get()).map(|line| view! {
+                    <span
+                        class="brain-line"
+                        class:refusal-line=move || refusal_line.with(Option::is_some)
+                        node_ref=line_ref
+                        style:left=move || format!("{:.1}px", line_shift.get().0)
+                        style:top=move || format!("{:.1}px", line_shift.get().1)
+                    >{line}</span>
+                })}
                 {move || match asked.get() {
                     Some(title) => view! {
                         <span
@@ -1623,6 +1679,32 @@ mod tests {
             "a quiet pause is not a failure"
         );
         assert!(!gives_up(None, ""));
+    }
+
+    #[test]
+    fn what_he_says_stays_in_his_bubble_and_shows() {
+        // A rule once slipped in after `.brain-line,` and gave every line the listening
+        // dimmer's `position: fixed` and `opacity: 0`: nothing he said could be seen.
+        let css: String = include_str!("../theme.css")
+            .split("/*")
+            .enumerate()
+            .map(|(at, part)| match at {
+                0 => part,
+                _ => part.split_once("*/").map_or("", |(_, rest)| rest),
+            })
+            .collect();
+        let hiding: Vec<_> = css
+            .split('}')
+            .filter_map(|rule| rule.rsplit_once('{'))
+            .filter(|(selectors, _)| {
+                selectors
+                    .split(',')
+                    .any(|selector| matches!(selector.trim(), ".brain-line" | ".refusal-line"))
+            })
+            .filter(|(_, body)| body.contains("position: fixed") || body.contains("opacity: 0"))
+            .map(|(selectors, _)| selectors.trim().to_owned())
+            .collect();
+        assert!(hiding.is_empty(), "a rule hides his line: {hiding:?}");
     }
 
     /// Rambo and the nest's rim are fixed layers placed by measuring the nest, so they
