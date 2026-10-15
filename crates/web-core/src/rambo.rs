@@ -130,6 +130,54 @@ fn on_page(before: &State, flick: Option<Vec2>, reduced_motion: bool) -> (Event,
     }
 }
 
+/// What picking him up does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grabbed {
+    /// He is carried: held still, he listens; a drag only carries him.
+    Carried,
+    /// Dazed, he writes: the drag is ink from his nib.
+    Writing,
+}
+
+/// Picking him up, as `before`: `None` while his pen is busy or when a grab changes
+/// nothing (splatting, on his way home, asking).
+pub fn grabbed(before: &State) -> Option<Grabbed> {
+    if mascot::pen_busy(before) {
+        return None;
+    }
+    match mascot::transition(before, Event::Grab) {
+        State::Dragging => Some(Grabbed::Carried),
+        State::Inking => Some(Grabbed::Writing),
+        _ => None,
+    }
+}
+
+/// What his key does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Keyed {
+    /// He was listening: he stops and is released.
+    StopsListening,
+    /// He is picked up and listens.
+    Listens,
+    /// Nothing, but the key is still his.
+    Nothing,
+}
+
+/// Space or Enter on him, as `before`, `talking` or not; any other `key` is not his
+/// (`None`), so the page keeps it.
+pub fn keyed(key: &str, talking: bool, before: &State) -> Option<Keyed> {
+    if key != " " && key != "Enter" {
+        return None;
+    }
+    Some(if talking {
+        Keyed::StopsListening
+    } else if mascot::listens_on_grab(before) {
+        Keyed::Listens
+    } else {
+        Keyed::Nothing
+    })
+}
+
 /// Whether a bubble `height` tall would run off the top of the screen sitting on
 /// something whose top is at `sits_on` (his status line, above him), keeping
 /// `edge` pixels clear: then it opens below him instead.
@@ -332,6 +380,44 @@ mod tests {
             event_of(released(&State::Dragging, MOVED, Under::default)),
             Event::DropEmpty
         );
+    }
+
+    #[test]
+    fn he_is_carried_from_home_and_a_throw_and_writes_when_dazed() {
+        assert_eq!(grabbed(&State::Home), Some(Grabbed::Carried));
+        assert_eq!(grabbed(&State::Thrown), Some(Grabbed::Carried), "caught");
+        assert_eq!(grabbed(&State::WritingRow), Some(Grabbed::Carried));
+        assert_eq!(grabbed(&State::Dazed), Some(Grabbed::Writing));
+    }
+
+    #[test]
+    fn a_busy_pen_or_a_grab_that_changes_nothing_is_not_a_grab() {
+        for before in [
+            State::Flying,
+            State::WritingCaret,
+            State::Splatting,
+            State::Skittering,
+            State::Covered,
+        ] {
+            assert_eq!(grabbed(&before), None, "{before:?}");
+        }
+    }
+
+    #[test]
+    fn space_or_enter_starts_and_stops_his_listening() {
+        assert_eq!(keyed(" ", false, &State::Home), Some(Keyed::Listens));
+        assert_eq!(keyed("Enter", false, &State::Home), Some(Keyed::Listens));
+        assert_eq!(
+            keyed(" ", true, &State::Dragging),
+            Some(Keyed::StopsListening)
+        );
+        assert_eq!(
+            keyed("Enter", false, &State::Dazed),
+            Some(Keyed::Nothing),
+            "dazed, he does not listen"
+        );
+        assert_eq!(keyed("a", false, &State::Home), None);
+        assert_eq!(keyed("Escape", true, &State::Dragging), None);
     }
 
     #[test]
