@@ -30,6 +30,11 @@ pub(crate) fn hold(key: &str, start: u64, handle: Handle) {
     LOOP.with(|lp| lp.borrow_mut().hold(key, start, handle));
 }
 
+/// Stops the job of `key`, if there is one (it never calls its `done`).
+pub(crate) fn cancel(key: &str) {
+    LOOP.with(|lp| lp.borrow_mut().cancel(key));
+}
+
 /// Lets go of `key`'s job when it ends, unless a newer start holds the key.
 pub(crate) fn release(key: &str, start: u64) {
     LOOP.with(|lp| lp.borrow_mut().release(key, start));

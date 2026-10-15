@@ -20,7 +20,7 @@ use crate::tasks::occurrence_parts;
 use crate::tuning::{
     BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGE_PX, PIN_EDGES, PIN_ROOM_PX, ROW_SLIDE_OMEGA,
     SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX, STRIP_GAP_PX,
-    STRIP_H_PX,
+    STRIP_H_PX, STRIP_RELEASE_OMEGA,
 };
 use rambl_web_core::events::{Event, any_row_back, row_back, row_left};
 use rambl_web_core::store::Command;
@@ -570,6 +570,34 @@ async fn tape_back(scrap: Scrap, scraps: RwSignal<Vec<Scrap>>, store: Store) {
     scraps.update(|pile| *pile = after_tape(std::mem::take(pile), scrap.ticket, taken));
 }
 
+/// Let go of a dragged strip: `offset` (how far the finger had pulled it) runs back to
+/// nothing on a spring, `homing` true meanwhile so the style sheet's own transition stays
+/// off. With reduced motion it is back at once.
+fn swing_home(id: &str, offset: RwSignal<(f64, f64)>, homing: RwSignal<bool>) {
+    let (x, y) = offset.get_untracked();
+    if crate::mascot::prefers_reduced_motion() || x.hypot(y) < ROW_NEAR_PX {
+        offset.set((0.0, 0.0));
+        return;
+    }
+    homing.set(true);
+    let pull = crate::engine::Pull {
+        omega: STRIP_RELEASE_OMEGA,
+        zeta: 1.0,
+    };
+    crate::engine::glide_keyed(
+        id,
+        [x, y],
+        [0.0; 2],
+        pull,
+        ROW_NEAR_PX,
+        move |[x, y]| offset.set((x, y)),
+        move || {
+            offset.set((0.0, 0.0));
+            homing.set(false);
+        },
+    );
+}
+
 /// The pin's side of the list's page, where the scraps hang. Nothing is drawn while there is
 /// none. Each scrap is kept by its ticket, so a new one arriving does not replay the others.
 #[component]
@@ -611,6 +639,9 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                     let dragging = RwSignal::new(false);
                     let binned = RwSignal::new(false);
                     let just_dragged = StoredValue::new(false);
+                    // The strip swinging back to the pin after a let go: the page drives
+                    // `offset` (the style sheet's transition is off meanwhile).
+                    let homing = RwSignal::new(false);
                     let task_id = StoredValue::new(hung.id.clone());
                     let deletable = occurrence_parts(&hung.id.0).is_none();
                     let rank_id = hung.id.clone();
@@ -628,7 +659,7 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                             style:--hang=style
                             style:--drag-x=move || format!("{}px", offset.get().0)
                             style:--drag-y=move || format!("{}px", offset.get().1)
-                            class:dragging=move || dragging.get()
+                            class:dragging=move || dragging.get() || homing.get()
                             class:over-bin=move || binned.get() && dragging.get()
                             class:binned=move || binned.get() && !dragging.get()
                             style:--depth=move || edge_depth(rank.get().unwrap_or(PIN_EDGES)).to_string()
@@ -640,6 +671,8 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                             title="Tap to tape it back"
                             on:pointerdown=move |event: leptos::ev::PointerEvent| {
                                 if top.get_untracked() {
+                                    crate::engine::cancel(&task_id.get_value().0);
+                                    homing.set(false);
                                     grip.set_value(Some((f64::from(event.client_x()), f64::from(event.client_y()))));
                                     just_dragged.set_value(false);
                                     // Moves go to the strip even once the finger has left it.
@@ -680,19 +713,19 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                                             // Refused: the scrap comes back off the bin.
                                             if store.send(Command::DeleteTask(id)).await.is_none() {
                                                 binned.set(false);
-                                                offset.set((0.0, 0.0));
+                                                swing_home(&task_id.get_value().0, offset, homing);
                                             }
                                         });
                                     });
                                 } else {
-                                    offset.set((0.0, 0.0));
+                                    swing_home(&task_id.get_value().0, offset, homing);
                                 }
                             }
                             on:pointercancel=move |_| {
                                 grip.set_value(None);
                                 dragging.set(false);
                                 binned.set(false);
-                                offset.set((0.0, 0.0));
+                                swing_home(&task_id.get_value().0, offset, homing);
                             }
                             on:click=move |_| {
                                 if just_dragged.get_value() {
