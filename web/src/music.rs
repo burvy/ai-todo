@@ -34,10 +34,18 @@ thread_local! {
     /// The one audio element, kept so a later call resumes it rather than layering a second.
     static PLAYER: std::cell::RefCell<Option<web_sys::HtmlAudioElement>> =
         const { std::cell::RefCell::new(None) };
-    /// Where Rambo listens: the music runs through this analyser on its way out, and the
-    /// context it lives in, resumed on a press like the music itself.
-    static EAR: std::cell::RefCell<Option<(web_sys::AudioContext, web_sys::AnalyserNode)>> =
-        const { std::cell::RefCell::new(None) };
+    /// Where Rambo listens.
+    static EAR: std::cell::RefCell<Option<Ear>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The music runs through `analyser` on its way out; `context` is what it lives in,
+/// resumed on a press like the music itself; `samples` is read into on every frame, kept
+/// so that no frame allocates one.
+#[cfg(target_arch = "wasm32")]
+struct Ear {
+    context: web_sys::AudioContext,
+    analyser: web_sys::AnalyserNode,
+    samples: Vec<f32>,
 }
 
 /// How loud the music playing now is (0 to 1), or `None` when none plays. The analyser
@@ -50,11 +58,12 @@ pub fn level() -> Option<f64> {
         return None;
     }
     EAR.with(|ear| {
-        let ear = ear.borrow();
-        let (_, analyser) = ear.as_ref()?;
-        let mut samples = vec![0.0_f32; analyser.fft_size() as usize];
-        analyser.get_float_time_domain_data(&mut samples);
-        Some(loudness(&samples) / crate::tuning::MUSIC_VOLUME)
+        let mut ear = ear.borrow_mut();
+        let Ear {
+            analyser, samples, ..
+        } = ear.as_mut()?;
+        analyser.get_float_time_domain_data(samples);
+        Some(loudness(samples) / crate::tuning::MUSIC_VOLUME)
     })
 }
 
@@ -85,7 +94,14 @@ fn listen_to(audio: &web_sys::HtmlAudioElement) {
     {
         return;
     }
-    EAR.with(|ear| *ear.borrow_mut() = Some((context, analyser)));
+    let samples = vec![0.0; analyser.fft_size() as usize];
+    EAR.with(|ear| {
+        *ear.borrow_mut() = Some(Ear {
+            context,
+            analyser,
+            samples,
+        })
+    });
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -110,8 +126,8 @@ pub fn sync(preset: SoundPreset) {
         }
         // A press is when a browser lets the ear's context run, as it lets music play.
         EAR.with(|ear| {
-            if let Some((context, _)) = ear.borrow().as_ref() {
-                let _ = context.resume();
+            if let Some(ear) = ear.borrow().as_ref() {
+                let _ = ear.context.resume();
             }
         });
         if let Some(audio) = slot.as_ref() {

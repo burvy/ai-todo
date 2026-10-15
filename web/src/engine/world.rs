@@ -381,6 +381,15 @@ impl World {
             && self.nest.at_rest()
     }
 
+    /// Whether he would dance to music now: settled in his nest, not tapping his nib, and
+    /// with motion allowed. Only then is the music worth listening to.
+    pub(crate) fn can_dance(&self, reduced_motion: bool) -> bool {
+        self.rambo.brain == State::Home
+            && self.rambo.settled_home
+            && self.rambo.tapping.is_none()
+            && !reduced_motion
+    }
+
     /// The music plays this loud now (0 to 1), or none plays: he dances to it while he
     /// sits in his nest.
     pub(crate) fn hear(&mut self, level: Option<f64>) {
@@ -412,11 +421,7 @@ impl World {
             self.rambo.written_ms += STEP_MS;
         }
         self.tap_nib();
-        // He dances only settled in his nest, not while he taps his nib, and never with less motion asked for.
-        let dancing = self.rambo.brain == State::Home
-            && self.rambo.settled_home
-            && self.rambo.tapping.is_none()
-            && !anchors.reduced_motion;
+        let dancing = self.can_dance(anchors.reduced_motion);
         if let Some(beat) = self.dance.hear(self.heard.filter(|_| dancing), STEP_MS) {
             self.nest.bounce(beat);
         }
@@ -1168,6 +1173,23 @@ mod tests {
         };
         let (sag, left, right) = danced(&mut calm, 700.0, 3000.0, &less);
         assert_eq!((sag, left, right), (0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn he_could_dance_only_settled_at_home_and_only_music_heard_keeps_the_loop_awake() {
+        let mut world = World::new(NEST);
+        world.advance(steps(SETTLES_MS), &anchors(NEST));
+        assert!(world.at_rest(), "hearing nothing, he rests");
+        world.hear(Some(0.2));
+        assert!(!world.at_rest(), "hearing music, he dances");
+        world.hear(None);
+        assert!(world.can_dance(false));
+        assert!(!world.can_dance(true), "not with reduced motion");
+        world.tell(Event::Grab);
+        assert!(!world.can_dance(false), "not held");
+        let mut writing = World::new(NEST);
+        writing.tell(Event::WriteCaret);
+        assert!(!writing.can_dance(false), "not writing");
     }
 
     #[test]

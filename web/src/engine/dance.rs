@@ -49,17 +49,28 @@ impl Dance {
         self.armed = !above || (self.armed && beat.is_none());
         if let Some(strength) = beat {
             self.since_ms = 0.0;
-            self.side = if self.side > 0.0 { -1.0 } else { 1.0 };
+            // A beat pushes the swing he is in, as a hand on a swing does; the spring
+            // brings him back. Only from still does a beat start him, to the other side.
+            self.side = if self.lean_v.abs() >= STILL * DANCE_OMEGA {
+                self.lean_v.signum()
+            } else if self.side > 0.0 {
+                -1.0
+            } else {
+                1.0
+            };
             let cap = DANCE_LEAN_MAX_DEG * DANCE_OMEGA;
             self.lean_v = (self.lean_v + self.side * strength * DANCE_LEAN_KICK).clamp(-cap, cap);
         }
-        self.step_lean(dt_ms / 1000.0);
+        // With no music to hear he comes to rest at once, as a dancer stops: critically
+        // damped, not swinging on for seconds.
+        let damping = if level > 0.0 { DANCE_DAMPING } else { 1.0 };
+        self.step_lean(dt_ms / 1000.0, damping);
         beat
     }
 
-    fn step_lean(&mut self, dt_s: f64) {
-        let accel = -DANCE_OMEGA * DANCE_OMEGA * self.lean
-            - 2.0 * DANCE_DAMPING * DANCE_OMEGA * self.lean_v;
+    fn step_lean(&mut self, dt_s: f64, damping: f64) {
+        let accel =
+            -DANCE_OMEGA * DANCE_OMEGA * self.lean - 2.0 * damping * DANCE_OMEGA * self.lean_v;
         self.lean_v += accel * dt_s;
         self.lean = (self.lean + self.lean_v * dt_s).clamp(-DANCE_LEAN_MAX_DEG, DANCE_LEAN_MAX_DEG);
     }
@@ -130,6 +141,22 @@ mod tests {
                 last = Some(step);
             }
         }
+    }
+
+    #[test]
+    fn a_beat_pushes_the_swing_he_is_in_never_against_it() {
+        // A quick run of notes, then slow ones: every beat he hears goes with his swing.
+        let mut dance = Dance::default();
+        let mut pushed = 0;
+        for level in notes(120.0, 6000.0, 0.3).chain(notes(700.0, 6000.0, 0.3)) {
+            let before = dance.lean_v;
+            if dance.hear(level, DT).is_some() && before.abs() > 1.0 {
+                assert_eq!(dance.lean_v.signum(), before.signum(), "{dance:?}");
+                assert!(dance.lean_v.abs() >= before.abs() - 1.0, "{dance:?}");
+                pushed += 1;
+            }
+        }
+        assert!(pushed > 5, "beats came while he swung: {pushed}");
     }
 
     #[test]

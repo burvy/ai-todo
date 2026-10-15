@@ -176,6 +176,7 @@ pub(crate) fn Rambo(
     let ticking = std::rc::Rc::new(std::cell::Cell::new(false));
     let thrower = world.clone();
     let sweeper = world.clone();
+    let listener = world.clone();
     let wake = move || {
         if ticking.replace(true) {
             return;
@@ -194,7 +195,13 @@ pub(crate) fn Rambo(
             let (brain, draw, posed, at_rest, laid, nest_moved) = {
                 let mut world = world.borrow_mut();
                 world.adopt(state.get_untracked());
-                world.hear(crate::music::level());
+                // The music is heard only when he could dance to it, so the rest of the
+                // time nothing reads it and his loop may sleep.
+                let level = world
+                    .can_dance(anchors.reduced_motion)
+                    .then(crate::music::level)
+                    .flatten();
+                world.hear(level);
                 world.advance(tick.steps, &anchors);
                 crate::engine::set_push(world.leaf_push());
                 (
@@ -270,25 +277,29 @@ pub(crate) fn Rambo(
             wake();
         }
     });
-    // With music on he listens for it now and then, and wakes to dance when it plays;
-    // while it plays his loop keeps hearing it. Picking another preset stops the listening.
+    // With music on he listens for it now and then, and wakes to dance when it plays and
+    // he could dance; while he dances his loop keeps hearing it. Picking another preset
+    // stops the listening.
     let listening = std::rc::Rc::new(std::cell::Cell::new(0_u32));
     Effect::new({
-        let wake = wake.clone();
+        let (wake, world) = (wake.clone(), listener);
         move |_| {
             if view_settings.with(|s| s.sound) != settings::SoundPreset::Music {
                 return;
             }
             let ticket = listening.get().wrapping_add(1);
             listening.set(ticket);
-            let (wake, listening) = (wake.clone(), listening.clone());
+            let (wake, listening, world) = (wake.clone(), listening.clone(), world.clone());
             crate::engine::every(tuning::DANCE_LISTEN_MS, move || {
                 let still_music = listening.get() == ticket
                     && view_settings.with_untracked(|s| s.sound) == settings::SoundPreset::Music;
                 if !still_music {
                     return crate::engine::Flow::Stop;
                 }
-                if crate::music::level().is_some() {
+                let could_dance = world
+                    .try_borrow()
+                    .is_ok_and(|world| world.can_dance(mascot::prefers_reduced_motion()));
+                if could_dance && crate::music::level().is_some() {
                     wake();
                 }
                 crate::engine::Flow::Go

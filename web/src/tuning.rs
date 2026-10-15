@@ -46,14 +46,17 @@ pub const DANCE_FLOOR: f64 = 0.003;
 /// The shortest gap between two beats he moves to, in ms. Safe range 180 to 500.
 pub const DANCE_MIN_GAP_MS: f64 = 250.0;
 /// His sway: how stiff (rad/s) and how damped (a share of critical), how hard a full
-/// beat kicks it (degrees/s), and the most it leans (degrees). Safe ranges 4 to 10,
-/// 0.2 to 0.6, 20 to 80 and 3 to 10.
-pub const DANCE_OMEGA: f64 = 6.0;
-pub const DANCE_DAMPING: f64 = 0.35;
-pub const DANCE_LEAN_KICK: f64 = 40.0;
+/// beat kicks it (degrees/s), and the most it leans (degrees). Loose and slow, so the
+/// swing carries from one note to the next and the notes swell it: a period of about
+/// 2 s that takes about 3 s to die away. Safe ranges 2 to 5, 0.08 to 0.3, 8 to 30 and
+/// 3 to 10.
+pub const DANCE_OMEGA: f64 = 3.0;
+pub const DANCE_DAMPING: f64 = 0.12;
+pub const DANCE_LEAN_KICK: f64 = 15.0;
 pub const DANCE_LEAN_MAX_DEG: f64 = 6.0;
-/// How hard a full beat bounces the nest under him, in px/s of sag. Safe range 10 to 50.
-pub const DANCE_BOUNCE_KICK: f64 = 30.0;
+/// How hard a full beat bounces the nest under him, in px/s of sag: he bobs on it, a
+/// few px on a phone. Safe range 30 to 90.
+pub const DANCE_BOUNCE_KICK: f64 = 60.0;
 /// How often a sleeping Rambo checks whether the music has started, in ms. Safe range
 /// 250 to 1000.
 pub const DANCE_LISTEN_MS: f64 = 500.0;

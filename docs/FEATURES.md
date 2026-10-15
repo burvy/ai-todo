@@ -485,8 +485,8 @@ scribble, the page turn, the crumple; no voice), **Every touch answers** (the de
 also a tick on every button and a swish when a ramble is sent) and **Everything + music**
 (the same cues, plus calm piano under them: two public-domain recordings, looped softly,
 started by the first press after the choice). While it plays, Rambo dances to it in his
-nest: he listens to how loud the music is, and every note's attack sways him to the other
-side and bounces the nest under him; when it stops, both settle. He dances only at home,
+nest: he listens to how loud the music is, and every note's attack pushes his slow
+side-to-side swing and bobs him in the nest; when it stops, both settle. He dances only at home,
 never while held, flying or writing, and not with reduced motion. It replaces the old Sounds on/off
 flag: a stored "off" stays Off, a stored "on" becomes every touch. With reduced motion
 on, the tick and the page sound are dropped.
