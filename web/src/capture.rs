@@ -114,6 +114,8 @@ pub(crate) fn CaptureBox(
     pen_queue: RwSignal<Vec<TaskId>>,
     set_typing: WriteSignal<bool>,
     set_error: WriteSignal<Option<String>>,
+    /// Set when you tap the +: the list opens its sheet on a new task.
+    new_task: RwSignal<bool>,
 ) -> impl IntoView {
     let (text, set_text) = signal(String::new());
 
@@ -302,6 +304,13 @@ pub(crate) fn CaptureBox(
 
     view! {
         <form node_ref=form_ref class="capture" on:submit=handle_submit>
+            // For a task you would rather write out than ramble: the same sheet an edit uses.
+            <button
+                type="button"
+                class="add-by-hand"
+                aria-label="Add a task by hand"
+                on:click=move |_| new_task.set(true)
+            >"+"</button>
             <input
                 node_ref=input_ref
                 prop:value=text
