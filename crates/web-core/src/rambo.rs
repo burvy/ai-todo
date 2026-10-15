@@ -69,10 +69,10 @@ pub enum Released {
 /// (`under`, looked up only when it decides anything). The nest wins over everything;
 /// carried, an empty hour, then a row, then a slip; otherwise he lands on the page.
 pub fn released(before: &State, how: LetGo, under: impl FnOnce() -> Under) -> Released {
-    let carried = *before == State::Dragging;
-    if !carried && *before != State::Inking {
+    let Some(hold) = held(before) else {
         return Released::NotHeld;
-    }
+    };
+    let carried = hold == Grabbed::Carried;
     if !how.moved {
         return Released::Tapped {
             submit: carried && !how.listening,
@@ -130,7 +130,8 @@ fn on_page(before: &State, flick: Option<Vec2>, reduced_motion: bool) -> (Event,
     }
 }
 
-/// What picking him up does.
+/// How he is held: what picking him up does, and what the finger does while it holds
+/// him.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Grabbed {
     /// He is carried: held still, he listens; a drag only carries him.
@@ -139,17 +140,27 @@ pub enum Grabbed {
     Writing,
 }
 
-/// Picking him up, as `before`: `None` while his pen is busy or when a grab changes
-/// nothing (splatting, on his way home, asking).
-pub fn grabbed(before: &State) -> Option<Grabbed> {
-    if mascot::pen_busy(before) {
-        return None;
-    }
-    match mascot::transition(before, Event::Grab) {
+/// How he is held as `state`, if he is. Moved, carried he rides above the finger and
+/// writing his nib follows it; when the browser takes the finger, he lands where he is.
+pub fn held(state: &State) -> Option<Grabbed> {
+    match state {
         State::Dragging => Some(Grabbed::Carried),
         State::Inking => Some(Grabbed::Writing),
         _ => None,
     }
+}
+
+/// Picking him up, as `before`: `None` while his pen is busy or when a grab changes
+/// nothing (already held, splatting, on his way home, asking).
+pub fn grabbed(before: &State) -> Option<Grabbed> {
+    if mascot::pen_busy(before) {
+        return None;
+    }
+    let after = mascot::transition(before, Event::Grab);
+    if after == *before {
+        return None;
+    }
+    held(&after)
 }
 
 /// What his key does.
@@ -433,6 +444,22 @@ mod tests {
             State::Covered,
         ] {
             assert_eq!(grabbed(&before), None, "{before:?}");
+        }
+    }
+
+    #[test]
+    fn a_press_while_he_is_held_is_not_a_new_grab() {
+        // A finger whose lift was lost presses again: he stays held as he was.
+        assert_eq!(grabbed(&State::Dragging), None);
+        assert_eq!(grabbed(&State::Inking), None);
+    }
+
+    #[test]
+    fn only_dragging_and_inking_are_held() {
+        assert_eq!(held(&State::Dragging), Some(Grabbed::Carried));
+        assert_eq!(held(&State::Inking), Some(Grabbed::Writing));
+        for state in [State::Home, State::Dazed, State::Thrown, State::Flying] {
+            assert_eq!(held(&state), None, "{state:?}");
         }
     }
 

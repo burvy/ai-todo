@@ -1057,10 +1057,10 @@ pub(crate) fn Rambo(
                 let nib_below = nib_below.clone();
                 let other_finger = other_finger.clone();
                 move |ev: leptos::ev::PointerEvent| {
-                    let held = state.get_untracked();
-                    if !matches!(held, mascot::State::Dragging | mascot::State::Inking)
-                        || other_finger(&ev)
-                    {
+                    let Some(hold) = model::held(&state.get_untracked()) else {
+                        return;
+                    };
+                    if other_finger(&ev) {
                         return;
                     }
                     *moved_move.borrow_mut() = true;
@@ -1076,12 +1076,12 @@ pub(crate) fn Rambo(
                     {
                         still_move.set(false);
                     }
-                    pen_pos.set(match held {
+                    pen_pos.set(match hold {
                         // Writing, his nib is at the finger; carried, he rides above it.
-                        mascot::State::Inking => (x, y),
-                        _ => held_spot(&ev, (x, y)),
+                        model::Grabbed::Writing => (x, y),
+                        model::Grabbed::Carried => held_spot(&ev, (x, y)),
                     });
-                    if held == mascot::State::Inking {
+                    if hold == model::Grabbed::Writing {
                         let below = nib_below.get();
                         let page = list_page();
                         strokes.update(|strokes| {
@@ -1194,19 +1194,16 @@ pub(crate) fn Rambo(
                         t: ev.time_stamp(),
                         id: ev.pointer_id(),
                     });
-                    match state.get_untracked() {
-                        mascot::State::Dragging => {
-                            hold_cancel.set(hold_cancel.get().wrapping_add(1));
-                            stop_speech_cancel();
-                            rambo_world.tell(mascot::Event::DropEmpty);
-                        }
-                        mascot::State::Inking => {
-                            // The browser took the gesture over: he lands where he
-                            // is, like a drop on the page.
-                            rambo_world.tell(mascot::Event::DropEmpty);
-                        }
-                        _ => {}
+                    // The browser took the gesture over: he lands where he is, like a
+                    // drop on the page, and carried he stops listening first.
+                    let Some(hold) = model::held(&state.get_untracked()) else {
+                        return;
+                    };
+                    if hold == model::Grabbed::Carried {
+                        hold_cancel.set(hold_cancel.get().wrapping_add(1));
+                        stop_speech_cancel();
                     }
+                    rambo_world.tell(mascot::Event::DropEmpty);
                 }
             }
             on:keydown=move |ev| {
