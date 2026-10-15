@@ -168,7 +168,6 @@ mod tests {
         })
     }
 
-    /// The note names why the edit failed, not whether the reload after it worked.
     #[test]
     fn a_capture_hands_back_what_it_made_only_when_taken() {
         let snapshot: Snapshot =
@@ -184,6 +183,7 @@ mod tests {
         );
     }
 
+    /// The note names why the edit failed, not whether the reload after it worked.
     #[test]
     fn a_refused_edit_says_why() {
         let stale = server(ErrorCode::StaleUpdate);
