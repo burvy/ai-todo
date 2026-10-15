@@ -210,7 +210,7 @@ async fn fly(
     event: mascot::Event,
 ) {
     set_state.set(mascot::transition(&state.get_untracked(), event.clone()));
-    gloo_timers::future::TimeoutFuture::new(crate::tuning::FLY_MS).await;
+    crate::engine::wait(f64::from(crate::tuning::FLY_MS)).await;
     set_state.set(mascot::transition(&state.get_untracked(), event));
 }
 
@@ -312,7 +312,7 @@ async fn touch_down(rambo: Option<&web_sys::CssStyleDeclaration>) {
     let mut ms = 0;
     while ms < WRITE_SETTLE_MS {
         set_hand(rambo, pen::touch_down(ms));
-        gloo_timers::future::TimeoutFuture::new(INK_TICK_MS).await;
+        crate::engine::wait(f64::from(INK_TICK_MS)).await;
         ms += INK_TICK_MS;
     }
     set_hand(rambo, Hand::REST);
@@ -437,12 +437,12 @@ pub async fn write_row_title(
                     let mut ms = 0;
                     while ms < WRITE_FLICK_MS {
                         set_hand(rambo, pen::flick(ms, hand));
-                        gloo_timers::future::TimeoutFuture::new(INK_TICK_MS).await;
+                        crate::engine::wait(f64::from(INK_TICK_MS)).await;
                         ms += INK_TICK_MS;
                     }
                     set_hand(rambo, Hand::REST);
                     row.class_list().add_1("meta-inked").ok();
-                    gloo_timers::future::TimeoutFuture::new(WRITE_FINISH_MS).await;
+                    crate::engine::wait(f64::from(WRITE_FINISH_MS)).await;
                     break;
                 }
                 elapsed += INK_TICK_MS;
@@ -462,7 +462,7 @@ pub async fn write_row_title(
                 if let Some(at) = pen::stroke_at(&glyphs, elapsed) {
                     nib_to(at);
                 }
-                gloo_timers::future::TimeoutFuture::new(crate::tuning::FLY_MS).await;
+                crate::engine::wait(f64::from(crate::tuning::FLY_MS)).await;
                 set_state.set(mascot::transition(
                     &state.get_untracked(),
                     mascot::Event::WriteRow,
@@ -471,7 +471,7 @@ pub async fn write_row_title(
             }
             Beat::Finish => break,
         }
-        gloo_timers::future::TimeoutFuture::new(INK_TICK_MS).await;
+        crate::engine::wait(f64::from(INK_TICK_MS)).await;
     }
     if let Some(sound) = scratch {
         sound.stop();
