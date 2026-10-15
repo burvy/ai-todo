@@ -75,8 +75,22 @@ pub(crate) fn PlacingNote(
         }
     });
     let open = move || to_place.with(Option::is_some);
+    // How far the note is in sight: it slides up into it and back down out of it.
+    let shown_by = RwSignal::new(0.0_f64);
+    Effect::new(move |_| {
+        let to = if open() { 1.0 } else { 0.0 };
+        if shown_by.get_untracked() != to {
+            crate::slide::show("placing-note", shown_by, to, || {});
+        }
+    });
     view! {
-        <div class="placing-note" class:open=open inert=move || !open() role="status">
+        <div
+            class="placing-note"
+            class:gone=move || shown_by.get() == 0.0
+            style:--shown=move || format!("{:.4}", shown_by.get())
+            inert=move || !open()
+            role="status"
+        >
             {move || shown.get().map(|(title, offer)| view! {
                 <span class="ask-question">"Where does "<q>{title}</q>" go? Tap an hour."</span>
                 <span class="ask-choices">

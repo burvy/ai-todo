@@ -11,19 +11,34 @@ use leptos::prelude::*;
 /// ribbon's own), where the band is empty because a day's name is written at its left.
 /// It is today's while that spot is in sight between `lo` and `hi`, the paper's visible
 /// edges; with today scrolled away, the first day whose spot is, so it waits at the
-/// paper's edge and still covers no name. Held at `hi` if none is.
+/// paper's edge and still covers no name. Held at `hi` if none is. Also gives the day it
+/// hangs on (its place in `day_rights`), `None` when held.
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn hang_left(
     day_rights: impl IntoIterator<Item = f64>,
     width: f64,
     lo: f64,
     hi: f64,
-) -> f64 {
+) -> (Option<usize>, f64) {
     day_rights
         .into_iter()
         .map(|right| right - 1.5 * width)
-        .find(|spot| *spot >= lo)
-        .map_or(hi, |spot| spot.min(hi.max(lo)))
+        .enumerate()
+        .find(|(_, spot)| *spot >= lo)
+        .map_or((None, hi), |(day, spot)| (Some(day), spot.min(hi.max(lo))))
+}
+
+/// How far the head, drawn at `drawn`, is left behind when it is hung anew at `left` on
+/// `day`, having hung on `was` (`None` before it is first hung): the gap a hop to another
+/// day leaves, which then eases away. On the same day it moves with the paper, with none.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn hop_slack(
+    was: Option<Option<usize>>,
+    day: Option<usize>,
+    drawn: f64,
+    left: f64,
+) -> Option<f64> {
+    was.filter(|was| *was != day).map(|_| drawn - left)
 }
 
 /// Where a slide back to today is `ms` into its [`crate::tuning::RIBBON_GLIDE_MS`], from `from` to
@@ -76,12 +91,17 @@ mod tests {
             let rights: Vec<f64> = (1..=7)
                 .map(|day| f64::from(day) * column - f64::from(scroll))
                 .collect();
-            let at = hang_left(rights.iter().copied(), width, lo, hi);
+            let (day, at) = hang_left(rights.iter().copied(), width, lo, hi);
             assert!((lo..=hi).contains(&at), "in sight: {scroll}");
             // Always just inside some day's right edge, where its band has no name.
             assert!(
                 rights.iter().any(|right| at == right - 1.5 * width),
                 "inside a column's right edge: {scroll}"
+            );
+            assert_eq!(
+                day.map(|day| rights[day] - 1.5 * width),
+                Some(at),
+                "names the day it hangs on: {scroll}"
             );
             if rights[0] - 1.5 * width >= lo {
                 assert_eq!(at, rights[0] - 1.5 * width, "on today's column: {scroll}");
@@ -91,9 +111,19 @@ mod tests {
         }
         assert_eq!(
             hang_left([], width, lo, hi),
-            hi,
+            (None, hi),
             "no days: held at the edge"
         );
+    }
+
+    /// Scrolled, the head keeps up with the paper; only a hop to another day (today gone
+    /// past the edge) leaves a gap to ease, and the first hanging has nothing to ease from.
+    #[test]
+    fn the_head_eases_only_when_it_hops_to_another_day() {
+        assert_eq!(hop_slack(None, Some(0), 0.0, 300.0), None, "first hung");
+        assert_eq!(hop_slack(Some(Some(2)), Some(2), 300.0, 290.0), None);
+        assert_eq!(hop_slack(Some(Some(0)), Some(1), 4.0, 100.0), Some(-96.0));
+        assert_eq!(hop_slack(Some(Some(6)), None, 340.0, 360.0), Some(-20.0));
     }
 
     /// The tail is cloth on the page: the slips lie over it and a finger goes through it
