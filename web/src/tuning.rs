@@ -557,6 +557,10 @@ const _: () = assert!(WRITE_MAX_MS < WRITE_HOLD_MAX_MS);
 /// How far a swipe to the right must travel before it is a rip, in px. Safe range 16
 /// to 48: less and a sloppy tap tears the page, more and a rip feels ignored.
 pub const RIP_MIN_PX: f64 = 24.0;
+/// How many finished rows may wait for a hole while one is open. A row beyond this leaves
+/// without a tear of its own, so the list is never held open for long. Safe range 1 to 4:
+/// each waiting row adds one repair (`rip::total_ms`) to how long the rows below stay put.
+pub const RIP_MAX_WAITING_HOLES: usize = 2;
 /// How steep a finger's drag may be, as a share of its sideways travel (rise over run), before
 /// a touch on a list that scrolls is left to the scroll and not torn. Safe range 1 to 3: the
 /// browser takes a mostly vertical drag for a scroll before the page sees a rip.
