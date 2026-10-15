@@ -219,7 +219,8 @@ the page in the page's flow.
 c. The nest is one box in the bottom-right corner of the capture bar, square-ish and fully
 on screen (`--nest-w` by `--nest-h`). Rambo sits in it, his tip behind the nest's front rim,
 which is a second layer drawn over him (`.nest::before` is the back, `.nest-rim` the front).
-Tapping the nest submits the box.
+Tapping the nest submits the box. On a phone, when the keyboard opens the capture bar rides
+up on top of it, with the nest and Rambo in it, and goes back down when it closes.
 d. Nothing pops in or out. The only thing on main that fades is ink (it appears over `INK_FADE_MS`
 and fades out over `INK_FADE_OUT_MS`); the one other thing allowed to fade is Rambo's
 tape patch and the tear it mends (item g). Everything else moves: a done or

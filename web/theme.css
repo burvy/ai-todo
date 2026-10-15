@@ -833,11 +833,14 @@ li.task-row:focus-within .delete-mark {
 
 /* --- Capture box: a fixed bar at the bottom edge, under the thumb --- */
 
+/* On a phone the keyboard covers the bottom of the screen; the bar, and the nest with
+   Rambo in it, ride up on top of it (Interview 1 item 8; capture.rs sets
+   --keyboard-inset from the visual viewport). */
 .capture {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--keyboard-inset, 0px);
   z-index: var(--layer-capture);
   display: flex;
   gap: var(--space-2);

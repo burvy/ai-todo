@@ -84,6 +84,62 @@ fn noted(at: Option<&str>, title: &str) -> String {
     }
 }
 
+/// How much of the bottom of the layout a phone's keyboard covers, in px: the layout's
+/// height below the visible part of the page (`visible_top` + `visible_height`, the
+/// visual viewport). Never negative: a page scrolled past its end hides nothing. A
+/// pinch-zoomed page (`scale` above 1) shows less of itself without any keyboard, so
+/// it covers nothing either: the keyboard never zooms the page.
+fn keyboard_inset(layout_height: f64, visible_top: f64, visible_height: f64, scale: f64) -> f64 {
+    match (scale - 1.0).abs() < 0.01 {
+        true => (layout_height - visible_top - visible_height).max(0.0),
+        false => 0.0,
+    }
+}
+
+/// Keeps `--keyboard-inset` on the page's root the height a phone's keyboard covers, so
+/// the capture bar (and the nest, and Rambo in it) sits on top of the keyboard rather
+/// than under it (Interview 1 item 8). Rambo follows his nest on the same events.
+fn ride_the_keyboard() {
+    use wasm_bindgen::JsCast;
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let Some(visible) = window.visual_viewport() else {
+        return;
+    };
+    let follow = {
+        let visible = visible.clone();
+        move || {
+            let layout = window
+                .inner_height()
+                .ok()
+                .and_then(|height| height.as_f64())
+                .unwrap_or_default();
+            let inset = keyboard_inset(
+                layout,
+                visible.offset_top(),
+                visible.height(),
+                visible.scale(),
+            );
+            if let Some(root) = window
+                .document()
+                .and_then(|doc| doc.document_element())
+                .and_then(|root| root.dyn_into::<web_sys::HtmlElement>().ok())
+            {
+                let _ = root
+                    .style()
+                    .set_property("--keyboard-inset", &format!("{inset:.0}px"));
+            }
+        }
+    };
+    let listener = wasm_bindgen::closure::Closure::<dyn Fn()>::new(follow);
+    for event in ["resize", "scroll"] {
+        let _ = visible.add_event_listener_with_callback(event, listener.as_ref().unchecked_ref());
+    }
+    // The capture bar lives as long as the page, and so does its listener.
+    listener.forget();
+}
+
 /// The note when a capture was not added, naming it so it is never silently lost.
 fn capture_note(title: &str, error: &api::ApiError) -> String {
     match error {
@@ -134,6 +190,7 @@ pub(crate) fn CaptureBox(
         }
         now
     });
+    ride_the_keyboard();
 
     // Rambo's whisper: the placeholder is the rotating prompt. Read the index
     // before the node ref so a ref that loads later can't drop a swap.
@@ -324,6 +381,51 @@ pub(crate) fn CaptureBox(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_keyboard_inset_is_what_the_visible_page_leaves_uncovered_at_the_bottom() {
+        // No keyboard: the visible page is the whole layout.
+        assert_eq!(keyboard_inset(844.0, 0.0, 844.0, 1.0), 0.0);
+        // A 336 px keyboard over a 844 px page.
+        assert_eq!(keyboard_inset(844.0, 0.0, 508.0, 1.0), 336.0);
+        // Scrolled up inside the layout as the keyboard opens (iOS): only what is below
+        // the visible part is covered.
+        assert_eq!(keyboard_inset(844.0, 120.0, 508.0, 1.0), 216.0);
+        // Pinch-zoomed to twice the size, half the page shows, and no keyboard is there.
+        assert_eq!(keyboard_inset(844.0, 0.0, 422.0, 2.0), 0.0);
+        // Overscrolled, the visible part can reach past the layout's end: nothing is
+        // covered, never a negative inset.
+        let mut seed = 5_u64;
+        for _ in 0..1000 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let layout = 300.0 + (seed >> 40) as f64 % 900.0;
+            let top = (seed >> 20) as f64 % 400.0;
+            let height = 50.0 + (seed >> 30) as f64 % 1000.0;
+            let inset = keyboard_inset(layout, top, height, 1.0);
+            assert!(inset >= 0.0);
+            assert!(inset <= layout, "never more than the page");
+            if top + height >= layout {
+                assert_eq!(inset, 0.0);
+            }
+        }
+    }
+
+    #[test]
+    fn the_capture_bar_sits_on_the_keyboard() {
+        let css = include_str!("../theme.css");
+        let rule = css
+            .split(
+                "
+.capture {",
+            )
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("theme.css styles .capture");
+        assert!(
+            rule.contains("bottom: var(--keyboard-inset, 0px)"),
+            "{rule}"
+        );
+    }
 
     #[test]
     fn whisper_rotation_visits_every_line_then_wraps() {
