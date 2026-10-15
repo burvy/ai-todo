@@ -610,6 +610,14 @@ pub(crate) fn Rambo(
             return;
         }
         voice::cancel();
+        // A microphone that cannot listen sends him home, unless words are typed: then
+        // Enter still sends them at this hour.
+        let give_up = move || {
+            set_state.set(mascot::transition(
+                &mascot::State::Noting,
+                mascot::Event::Return,
+            ));
+        };
         let session = speech::Session::start(
             std::rc::Rc::default(),
             move |heard| capture_text.set(heard),
@@ -625,14 +633,26 @@ pub(crate) fn Rambo(
             },
             // Typing the task instead of saying it is not a failure to hear one.
             move |note: Option<String>| {
+                let quit = gives_up(note.as_deref(), &typed_in_box());
                 if note.as_deref() != Some(speech::NO_SPEECH_NOTE) {
                     set_error.set(note);
                 }
+                if quit && state.get_untracked() == mascot::State::Noting {
+                    give_up();
+                }
             },
         );
-        if let Ok(session) = session {
-            *note_session.borrow_mut() = Some(session);
-            set_talking.set(true);
+        match session {
+            Ok(session) => {
+                *note_session.borrow_mut() = Some(session);
+                set_talking.set(true);
+            }
+            Err(note) => {
+                set_error.set(Some(note));
+                if typed_in_box().trim().is_empty() {
+                    give_up();
+                }
+            }
         }
     });
 
@@ -1501,6 +1521,28 @@ fn free_hour_under(
     })
 }
 
+/// Whether a speech note means he cannot listen any more. Anything but "no speech" does:
+/// that one is just a quiet pause, and typing the task instead is fine.
+fn mic_failed(note: Option<&str>) -> bool {
+    note.is_some_and(|note| note != speech::NO_SPEECH_NOTE)
+}
+
+/// Whether he gives up his note: the microphone failed and nothing is typed, so there is
+/// nothing to send. Typed words keep him Noting, where Enter sends them at that hour.
+fn gives_up(note: Option<&str>, typed: &str) -> bool {
+    mic_failed(note) && typed.trim().is_empty()
+}
+
+/// The words typed in the capture box so far; empty off the page.
+fn typed_in_box() -> String {
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|doc| doc.query_selector(".capture input").ok().flatten())
+        .and_then(|el| el.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .map(|input| input.value())
+        .unwrap_or_default()
+}
+
 fn row_under(x: f64, y: f64) -> Option<web_sys::Element> {
     let doc = web_sys::window()?.document()?;
     doc.elements_from_point(x as f32, y as f32)
@@ -1605,7 +1647,32 @@ fn bubble_offset(centre_x: f64, width: f64, screen: f64, edge: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{bubble_offset, opens_below};
+    use super::{bubble_offset, gives_up, mic_failed, opens_below};
+    use crate::speech::{NO_SPEECH_NOTE, UNAVAILABLE_NOTE};
+
+    #[test]
+    fn a_microphone_that_cannot_listen_sends_him_home_but_a_quiet_one_does_not() {
+        assert!(mic_failed(Some("Microphone permission was denied.")));
+        assert!(mic_failed(Some(UNAVAILABLE_NOTE)));
+        assert!(!mic_failed(Some(NO_SPEECH_NOTE)));
+        assert!(!mic_failed(None));
+    }
+
+    #[test]
+    fn a_microphone_failure_keeps_him_noting_while_words_are_typed() {
+        let failure = Some("Microphone permission was denied.");
+        assert!(gives_up(failure, ""));
+        assert!(gives_up(failure, "   "), "spaces are not words");
+        assert!(
+            !gives_up(failure, "Lab report"),
+            "typed words keep him Noting"
+        );
+        assert!(
+            !gives_up(Some(NO_SPEECH_NOTE), ""),
+            "a quiet pause is not a failure"
+        );
+        assert!(!gives_up(None, ""));
+    }
 
     /// Rambo and the nest's rim are fixed layers placed by measuring the nest, so they
     /// follow the keyboard only if he measures again when the inset changes. He watches

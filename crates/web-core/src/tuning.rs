@@ -115,13 +115,8 @@ pub const INK_WIDTH_EASE: f64 = 0.15;
 pub const INK_TAPER_PX: f64 = 10.0;
 /// The end of a stroke in Rambo's own tint, in px. Safe range 6 to 30.
 pub const INK_TAIL_PX: f64 = 20.0;
-/// The bookmark ribbon (`ribbon.rs`): how far it must stretch before letting go takes
-/// the planner back to today, the most it stretches, how far a finger may tremble and
-/// still tap it, all in px; and how long the slide back to today takes, in ms. Safe
-/// ranges 20 to 60, 50 to 120, 4 to 12, and 250 to 700 (shorter jumps, longer drags).
-pub const RIBBON_PULL_PX: f64 = 36.0;
-pub const RIBBON_PULL_MAX_PX: f64 = 80.0;
-pub const RIBBON_TAP_PX: f64 = 6.0;
+/// How long the bookmark ribbon's slide back to today takes (`ribbon.rs`), in ms. Safe
+/// range 250 to 700 (shorter jumps, longer drags).
 pub const RIBBON_GLIDE_MS: f64 = 450.0;
 /// How long fresh ink takes to dry, in ms, and how much of it shows once dry.
 /// Safe ranges 300 to 2000 ms and 0.6 to 0.95.
@@ -551,52 +546,3 @@ const _: () = assert!(WRITE_MIN_MS < WRITE_MAX_MS);
 const _: () = assert!(WRITE_TOUCHDOWN_MS <= WRITE_SETTLE_MS);
 // A title that is merely slow to write is never cut short as "waited too long".
 const _: () = assert!(WRITE_MAX_MS < WRITE_HOLD_MAX_MS);
-
-// ---- The page rips (web/src/rip.rs)
-
-/// How far a swipe to the right must travel before it is a rip, in px. Safe range 16
-/// to 48: less and a sloppy tap tears the page, more and a rip feels ignored.
-pub const RIP_MIN_PX: f64 = 24.0;
-/// How many finished rows may wait for a hole while one is open. A row beyond this leaves
-/// without a tear of its own, so the list is never held open for long. Safe range 1 to 4:
-/// each waiting row adds one repair (`rip::total_ms`) to how long the rows below stay put.
-pub const RIP_MAX_WAITING_HOLES: usize = 2;
-/// How steep a finger's drag may be, as a share of its sideways travel (rise over run), before
-/// a touch on a list that scrolls is left to the scroll and not torn. Safe range 1 to 3: the
-/// browser takes a mostly vertical drag for a scroll before the page sees a rip.
-pub const RIP_SCROLL_SLOPE: f64 = 1.5;
-/// How wide the hole opens in the middle of the tear, in px. Safe range 8 to 28: it
-/// has to be wide enough to see the planner through.
-pub const RIP_GAP_PX: f64 = 22.0;
-/// How far the ragged edge of each lip wanders, in px, and how far apart its corners
-/// are. Safe ranges 0 to 6 and 6 to 16.
-pub const RIP_JAG_PX: f64 = 3.5;
-pub const RIP_JAG_STEP_PX: f64 = 9.0;
-/// On a phone, how far inside the tear's start a day's left edge is brought, in px, so the
-/// day edge (and a slip's edge and first word) cross the slit. Safe range 8 to 20: less than
-/// `RIP_MIN_PX`, so even the shortest tear has it inside.
-pub const TEAR_EDGE_IN_PX: f64 = 16.0;
-/// How near the screen's edge the tear may reach, in px. Safe range 8 to 32.
-pub const RIP_EDGE_PX: f64 = 12.0;
-/// The tape: its length across the tear and how often one is laid along it, in px,
-/// and how far off square a hand lays it, in degrees. Safe ranges 36 to 80, 60 to 140
-/// and 0 to 20.
-pub const TAPE_LEN_PX: f64 = 54.0;
-pub const TAPE_EVERY_PX: f64 = 90.0;
-pub const TAPE_SKEW_DEG: f64 = 12.0;
-/// The repair's clock, in ms. The tape goes on this long after the finger lets go (long
-/// enough for him to notice and hop over), takes `TAPE_LAY_MS` to lay, lies untouched
-/// `TEAR_HOLD_MS`, and then tape and tear fade together over `TEAR_FADE_MS`. Safe
-/// ranges 600 to 2000, 200 to 600, 1000 to 10000 and 600 to 3000.
-pub const TAPE_AT_MS: u32 = 1100;
-pub const TAPE_LAY_MS: u32 = 350;
-pub const TEAR_HOLD_MS: u32 = 4000;
-pub const TEAR_FADE_MS: u32 = 1500;
-/// How long the planner takes to slide under the list on a desk while a page is torn, and
-/// back, in ms; the page reads it as `--tear-slide-ms`. Safe range 150 to 500.
-pub const TEAR_SLIDE_MS: u32 = 280;
-/// How long he stays at the tear, in ms: until the tape is on, and a moment more to
-/// look it over, so he is never walking off with the tape half laid.
-pub const MEND_MS: u32 = TAPE_AT_MS + TAPE_LAY_MS + 300;
-
-const _: () = assert!(RIP_GAP_PX / 2.0 + RIP_JAG_PX < 20.0);

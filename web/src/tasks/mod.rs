@@ -18,6 +18,7 @@ use fields::{
     EditWhen, WEEKDAY_CHOICES, due_display, local_input_value, series_from_dialog,
     series_patch_from_dialog, toggled_day, typed_when,
 };
+use rambl_web_core::store::Command;
 
 /// The order the server wants after moving `dragged` to `slot` beside `target`,
 /// or `None` when the drop is not a reorder at all.
@@ -421,6 +422,7 @@ pub(crate) fn TaskList(
 ) -> impl IntoView {
     #[cfg(not(target_arch = "wasm32"))]
     let _ = pen_pos;
+    let store = expect_context::<crate::store::Store>();
     let (editing_task, set_editing_task) = (open_sheet.read_only(), open_sheet.write_only());
     // Rows Rambo has written and when (`engine::now`): wet for a while, and a tap then
     // smudges the ink instead of opening the row (`smudge.rs`).
@@ -551,13 +553,7 @@ pub(crate) fn TaskList(
             let now = scrap::row_tops();
             let slide = rested.with_value(|before| scrap::rows_to_slide(before, &now));
             rested.set_value(now);
-            // A hole where a row tore out stays open for a while: the rows below wait
-            // where they were, and close it when it heals.
-            if crate::rip_ui::hole_open() {
-                scrap::hold_rows(&slide);
-            } else {
-                scrap::slide_rows(&slide);
-            }
+            scrap::slide_rows(&slide);
             scrap::fly_rows_back();
         });
     });
@@ -828,12 +824,7 @@ pub(crate) fn TaskList(
                                         let Some(new_order) = new_order else {
                                             return;
                                         };
-                                        let set_snapshot = set_snapshot_clone;
-                                        wasm_bindgen_futures::spawn_local(async move {
-                                            if let Ok(new_snap) = api::reorder_tasks(new_order).await {
-                                                set_snapshot.set(new_snap);
-                                            }
-                                        });
+                                        store.dispatch(Command::Reorder(new_order));
                                     }
                                 }
                             }
@@ -1390,6 +1381,20 @@ mod tests {
         );
         assert!(text.contains("line-height: var(--line-pitch)"), "{text}");
         assert!(text.contains("padding: 0"), "{text}");
+    }
+
+    /// A horizontal swipe on the open edit sheet is the page's to ignore: without this the
+    /// browser takes it as its history "back" and leaves the app for a blank page.
+    #[test]
+    fn a_stray_swipe_never_becomes_the_browsers_back() {
+        // The file is CRLF in a Windows checkout and LF in Git.
+        let css = include_str!("../../theme.css").replace("\r\n", "\n");
+        let rule = css
+            .split("html,\nbody {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("theme.css has an html, body rule");
+        assert!(rule.contains("overscroll-behavior-x: none"), "{rule}");
     }
 
     /// FRONTEND-PLAN 1.8 item 7: the edit sheet is a real modal (focus trapped, page

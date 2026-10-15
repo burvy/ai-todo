@@ -142,6 +142,7 @@
   --lamp-left: var(--space-2);
   --lamp-bottom: 0px;
   --layer-behind: -1;
+  --layer-ribbon-tail: 1; /* the bookmark ribbon's tail, on the hours under the slips */
   --layer-page: 2; /* ink, curl, placements, a lifted row, the desktop pin column */
   --layer-sticky: 4; /* day names */
   --layer-capture: 6; /* the capture bar, the landing: above the sticky things that scroll or sit beside it */
@@ -162,7 +163,7 @@
   --layer-lifted: 99; /* a strip being carried, above its neighbours */
 
   /* The page turn (docs/FRONTEND-PLAN.md; web/src/bend.rs). Looks only: the numbers
-     that decide a turn are in web/src/tuning.rs. */
+     that decide a turn are in crates/web-core/src/tuning.rs. */
   /* Shadows are black in both modes: dark paper has light ink, so mixing from the ink
      would glow. Only the ridge's highlight comes from the paper. */
   --bend-shade: color-mix(in srgb, black 22%, transparent);
@@ -180,8 +181,9 @@
   --flip-shade: color-mix(in srgb, black 34%, transparent);
   --flip-cast-w: 4rem; /* how far the leaf's shadow reaches onto the page under it */
 
-  /* The bookmark ribbon's length at rest (web/src/ribbon.rs); a pull adds to it, as far
-     as RIBBON_PULL_MAX_PX in web/src/tuning.rs. */
+  /* The bookmark ribbon (web/src/ribbon.rs): its width, and its tail's length below the
+     day names. */
+  --ribbon-w: 18px;
   --ribbon-rest: 46px;
 
   /* Motion. */
@@ -308,6 +310,13 @@
   font-style: normal;
   font-weight: 700;
   font-display: swap;
+}
+
+/* A swipe right that nothing on the page takes (one that lands on the edit sheet, say) must
+   not reach the browser, which reads it as "back" and leaves the app for the page before it. */
+html,
+body {
+  overscroll-behavior-x: none;
 }
 
 body {
@@ -1187,153 +1196,16 @@ li.task-row:focus-within .delete-mark {
   z-index: var(--layer-turn-under);
 }
 
-/* A torn list page (web/src/rip.rs, rip_ui.rs): the planner lies beneath the list on a phone,
-   hidden; while a tear lasts it shows, under the list, which is paper with the slit cut out of
-   it, so what shows through the hole is the live planner. The texture is fixed to the screen so
-   it does not shift where it was the body's. */
-/* A list that fits its page has nothing to scroll (rip_ui.rs keeps `.fits`): a finger can tear
-   it in any direction, up and down too, and the browser does not take the drag for a pan. */
-.tasks-pane.fits {
-  touch-action: none;
-}
-
-main.torn > .tasks-pane {
-  z-index: var(--layer-turn-front);
-  background-color: var(--paper);
-  background-image: var(--texture-paper);
-  background-attachment: fixed;
-}
-
-main.torn > .planner-page {
-  z-index: var(--layer-turn-under);
-  pointer-events: none;
-}
-
-/* The hole is a slit a few lines tall, and the planner's own rules are meant to sit quietly on
-   a whole page: for the length of a tear they are drawn firmer, so what shows through the hole
-   reads as the live planner (an hour line, a day's edge) and not as bare paper. */
-main.torn > .planner-page .hour {
-  border-top-color: color-mix(in srgb, var(--ink) 55%, transparent);
-}
-
-main.torn > .planner-page .day {
-  border-left-color: color-mix(in srgb, var(--ink) 55%, transparent);
-}
-
-/* On a desk the two pages are a spread, side by side. For the length of a tear the planner
-   slides left under the list (rip_ui.rs sets its transform), so the hole shows it there too.
-   The list is always the upper of the two, so the planner sliding back never crosses over it. */
+/* On a desk the two pages are a spread, side by side, and the list is the upper of the two. */
 @media (min-width: 701px) {
   main > .planner-page {
     position: relative;
     z-index: var(--layer-turn-under);
-    transition: transform var(--tear-slide-ms, 280ms) ease-in-out;
   }
 
   main > .tasks-pane {
     position: relative;
     z-index: var(--layer-turn-front);
-  }
-}
-
-@media (max-width: 700px) {
-  main.torn[data-pane="0"] > .planner-page {
-    display: flex;
-  }
-}
-
-/* Over both pages, taking no pointer: the paper that heals the hole, and the tape. It is
-   in the list page's coordinates, moved with its scroll (`.tear-sheet`). */
-.tear-layer {
-  position: absolute;
-  inset: 0;
-  z-index: var(--layer-turn-fx);
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.tear-sheet {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 0;
-  height: 0;
-}
-
-/* The torn edge reads as an edge: a dark line with a pale fibre line just inside, and a soft
-   shadow the planner is cast on. It goes with the tear. */
-.tear-heal {
-  position: absolute;
-  left: 0;
-  top: 0;
-  overflow: visible;
-}
-
-/* What lies under the paper is in shade, so a hole reads as a hole even where the planner is
-   empty paper: a darker, cooler tone over whatever the planner shows there. */
-.tear-shade {
-  fill: color-mix(in srgb, var(--ink) 14%, transparent);
-}
-
-.tear-edge {
-  fill: none;
-  stroke: var(--ink);
-  stroke-width: 1.4;
-  stroke-linejoin: round;
-  stroke-opacity: 0.45;
-  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 35%));
-}
-
-/* The paper that heals the hole: fades in over the hole as the repair ends, so the tear
-   fades away (with the tape, the one thing besides ink that fades). */
-.tear-fill {
-  fill: var(--paper);
-  opacity: 0;
-}
-
-.tear-layer.released .tear-fill {
-  animation: tear-heal var(--tear-fade) linear calc(var(--tape-at) + var(--tape-lay) + var(--tear-hold)) forwards;
-}
-
-.tear-layer.released .tear-shade,
-.tear-layer.released .tear-edge {
-  animation: tear-fade var(--tear-fade) linear calc(var(--tape-at) + var(--tape-lay) + var(--tear-hold)) forwards;
-}
-
-/* A strip of tape across the tear: laid from one end, then it fades with the tear. */
-.tape {
-  display: none;
-  position: absolute;
-  height: 22px;
-  translate: -50% -50%;
-  rotate: var(--tape-angle);
-  background: color-mix(in srgb, var(--tape-colour, #d9c27a) 70%, transparent);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 8%);
-  clip-path: inset(0 100% 0 0);
-}
-
-.tear-layer.released .tape {
-  display: block;
-  animation:
-    tape-lay var(--tape-lay) ease-out var(--tape-at) forwards,
-    tear-fade var(--tear-fade) linear calc(var(--tape-at) + var(--tape-lay) + var(--tear-hold)) forwards;
-}
-
-@keyframes tape-lay {
-  to {
-    clip-path: inset(0 0 0 0);
-  }
-}
-
-@keyframes tear-fade {
-  to {
-    opacity: 0;
-  }
-}
-
-@keyframes tear-heal {
-  to {
-    opacity: 1;
   }
 }
 
@@ -2220,29 +2092,53 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   }
 }
 
-/* The bookmark ribbon (web/src/ribbon.rs): a satin ribbon hanging from the top of the
-   planner at today's column, its tail cut in a notch. Pulled, it stretches with the
-   finger (--pull) and springs back once let go. */
-.bookmark-ribbon {
-  position: absolute;
-  z-index: var(--layer-note);
-  width: 18px;
-  height: calc(var(--ribbon-rest) + var(--pull, 0px));
-  padding: 0;
-  border: 0;
+/* The bookmark ribbon (web/src/ribbon.rs), a satin ribbon in two parts. The head is the
+   control: it sticks out of the band of day names at today's column (its height is the
+   band's), above the names. The tail lies on today's hours under the slips, from the
+   band's foot down, cut in a notch; it takes no touch. A tap on the head slides the
+   planner back to today. Scrolled, the tail slides under the band and the head keeps
+   sticking out. */
+.bookmark-ribbon,
+.ribbon-tail {
+  width: var(--ribbon-w);
   background:
     linear-gradient(90deg, rgba(0, 0, 0, 0.18), transparent 30%, rgba(255, 255, 255, 0.22) 55%, transparent 75%, rgba(0, 0, 0, 0.2)),
     var(--ribbon, #9b2c2c);
-  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 7px), 0 100%);
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
-  cursor: grab;
-  touch-action: none;
-  transition: height var(--dur) var(--arrive-ease), left var(--dur) var(--arrive-ease);
 }
 
-.bookmark-ribbon.pulling {
-  cursor: grabbing;
-  transition: none;
+.bookmark-ribbon {
+  position: absolute;
+  z-index: var(--layer-note);
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  transition: left var(--dur) var(--arrive-ease);
+}
+
+/* The head is only as tall as the band, so a finger gets a --tap wide target that reaches
+   left over today's own band (its name is plain text) and down the gap above the hours;
+   never up (the capture bar, a phone's page foot) and never onto a slip. */
+.bookmark-ribbon::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: calc(-1 * var(--space-1));
+  left: calc(var(--ribbon-w) - var(--tap));
+}
+
+/* .hours stops a --space-1 short of the day's right edge, where the head is measured
+   from; the tail starts a --space-1 up, at the band's foot. */
+.ribbon-tail {
+  position: absolute;
+  z-index: var(--layer-ribbon-tail);
+  top: calc(-1 * var(--space-1));
+  right: calc(var(--ribbon-w) / 2 - var(--space-1));
+  height: var(--ribbon-rest);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 7px), 0 100%);
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
+  pointer-events: none;
 }
 
 .bookmark-ribbon:focus-visible {

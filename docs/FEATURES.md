@@ -95,6 +95,8 @@ refreshes the complete snapshot. An edit made from a stale copy of a task (it ch
 device since this page loaded it) is refused with `409 stale_update`; the page keeps what the server has.
 b. Type a task and tap the nest or press Enter (there is no Add button); swipe a row right to
 finish it, or use the row's x to delete it.
+A sideways swipe that lands on the open edit sheet does nothing: `html` and `body` take
+`overscroll-behavior-x: none`, so the browser never reads it as "back" and leaves the app.
 On a phone the **+** at the bar's left (a torn scrap beside the box) adds a task by hand: it opens
 the edit sheet, headed "New task", on a blank form (no title, 30 minutes, anytime, no repeat). Save
 needs a title and a length and makes the task with `POST /api/v1/tasks` (or a weekly series, if
@@ -140,7 +142,7 @@ of time the page is in view; up to `SCRAP_MAX` (two quick deletes leave two, eac
 back its own task; a third sends the oldest away). Tap one and the task is taped back as
 it was (`POST /api/v1/tasks/restore`; a repeat's day has its skip cleared), otherwise it
 slides away. Paper slides and never fades. The rows below a row that left slide up to close the
-gap (`ROW_CLOSE_MS`), never jump. A deleted scrap lands below the stack, never on it. Times and counts are in `web/src/tuning.rs`;
+gap (`ROW_CLOSE_MS`), never jump. A deleted scrap lands below the stack, never on it. Times and counts are in `crates/web-core/src/tuning.rs`;
 the pin is `web/src/scrap.rs`.
 e. A finger that slides before the hold is a **scroll**, and the row keeps its
 hands off it. That is also what keeps the gestures apart from the page flip: a
@@ -158,7 +160,7 @@ finger, the leaf darkens as it turns away, and it throws a shadow on the page un
 (black in light and dark). Letting go past a share of the width or in a flick finishes
 the turn; short of that the leaf falls back and rebounds a little. The note's turn runs on a fixed time, slow, quick, slow, the same both ways. With reduced motion it
 slides. Geometry, the leaf's spring and decisions: `web/src/flip.rs` (tested); browser
-side: `web/src/flip_turner.rs`; numbers in `web/src/tuning.rs` (`FLIP_*`), looks in
+side: `web/src/flip_turner.rs`; numbers in `crates/web-core/src/tuning.rs` (`FLIP_*`), looks in
 `web/theme.css` `--flip-*` and `.flip-*`. The leaf moves on a spring with a speed of its own,
 so a flick carries on at the speed of the finger. The two pages lie stacked in one cell
 (the list over the planner, `main[data-pane]` names the one showing), so there is no scroll
@@ -174,8 +176,13 @@ g. Rows for series occurrences are not reorderable: a drag that starts or lands
 on one does nothing (occurrences share the series' row, not a slot of their own —
 ARCHITECTURE.md 7.1 lists reordering them as out of scope). A slip dropped where
 no row is goes to the end.
-h. Code: `web/src/row.rs` (the gesture rules, unit-tested) and its `dom` module
+h. The new order shows the moment the row is dropped, before the server answers. If
+the server refuses it, the list goes back to the last order the server confirmed, is
+reloaded, and the page says why (the same note an edit gives). A slower answer to an
+earlier change never puts an older list back.
+i. Code: `web/src/row.rs` (the gesture rules, unit-tested) and its `dom` module
 (pointer events); `web/src/tasks/mod.rs:reorder_ids`, the row's handlers;
+`crates/web-core/src/store.rs` (`Command::Reorder`) and `web/src/store.rs`;
 `web/src/api.rs:reorder_tasks`; `server/src/v2/http.rs:reorder`;
 `server/src/v2/app.rs:reorder`.
 
@@ -195,7 +202,7 @@ c. Code: `web/src/rambo.rs:Rambo`, which sets `edit_request` for
 release (`tasks/mod.rs:tapped, on_title`), since the row holds the pointer from the press; `web/src/mascot.rs:Choice, asking_dismissed_by`; `web/src/api.rs:patch_task`.
 d. The sheet's days and times are picked on the paper's own pickers (handwritten
 numbers, keyboard reachable, the paper's 12- or 24-hour clock), never the browser's:
-`web/src/pickers.rs:PaperDate, PaperTime, PaperDateTime`; numbers in `web/src/tuning.rs`.
+`web/src/pickers.rs:PaperDate, PaperTime, PaperDateTime`; numbers in `crates/web-core/src/tuning.rs`.
 
 ### 5. Labels and priorities
 a. Tasks carry one of six labels and one of four priorities.
@@ -234,8 +241,8 @@ which is a second layer drawn over him (`.nest::before` is the back, `.nest-rim`
 Tapping the nest submits the box. On a phone, when the keyboard opens the capture bar rides
 up on top of it, with the nest and Rambo in it, and goes back down when it closes.
 d. Nothing pops in or out. The only thing on main that fades is ink (it appears over `INK_FADE_MS`
-and fades out over `INK_FADE_OUT_MS`); the one other thing allowed to fade is Rambo's
-tape patch and the tear it mends (item h). Everything else moves: a done or
+and fades out over `INK_FADE_OUT_MS`); nothing else
+fades (the page rip and its tape were cut, item h). Everything else moves: a done or
 deleted row flies to the pin, a taped-back task flies back from it, the rows below slide up
 to close a gap (`ROW_CLOSE_MS`), a crumpled strip drops away, and Rambo's ask bubble grows
 out of him and folds back into him over `ASK_FOLD_MS` before it leaves the page, at full
@@ -257,64 +264,9 @@ bottom edge. A second writing line so a long ramble wraps, and a slight tilt, ar
 paper cut-out x that scribbles the text out and lays down a fresh scrap is *(planned)*.
 g. Code: `web/src/lib.rs:App, PageFoot`; `web/src/week.rs:WeekGrid` (the planner page, the
 gear); `web/src/scrap.rs` (the pin); `web/theme.css` (`.capture`, `.nest`, `.nest-rim`, the
-phone block with `100dvh`); numbers in `web/src/tuning.rs`.
-h. **The page rips.** A drag in **any direction** on bare paper of the list page (a finger on a
-phone, a mouse drag on a desk; not on a task; at least `RIP_MIN_PX`) tears the page along the
-drag: right, down, up, diagonal. It is a straight tear from where the finger went down to
-where it has gone furthest, and it never closes up again (`Tear::follow`). The page keeps two
-gestures of its own (`rip::is_page_gesture`): a swipe back to the left (no steeper than it is
-long) turns the page, and a finger going mostly up or down (steeper than `RIP_SCROLL_SLOPE`) on
-a list that scrolls is scrolling it. A list that fits its page has nothing to scroll, so the
-page is marked `.fits` (`touch-action: none`, kept by `rip_ui::keep_fit`) and a finger can tear
-it up or down too; a mouse never scrolls. The tapes lie across the tear whichever way it runs. The tear is a real hole, a ragged slit up to `RIP_GAP_PX` wide: the
-planner page shows through it live (its own slips and lines, not a picture), in shade, so the
-hole reads as a hole even where the planner is empty paper. The planner is brought to the
-tear while it lasts (`rip::slide_px`, `lift_px`, `TEAR_SLIDE_MS`): the first day column with a
-slip (else today's) is put under the tear, and an hour line (a slip, on a phone) across it. On a
-desk, where the two pages are a spread side by side, it slides under the list and back, its
-column's middle under where the tear starts, an hour line to the tear's level (never more than
-half a gap). On a phone the planner lies under the list already; the column's left edge is
-brought `TEAR_EDGE_IN_PX` inside the tear's start and its nearest slip across the tear, so a
-day edge and a slip's edge and first word show in the slit. While a tear lasts the planner's hour
-lines and day edges are drawn firmer (`main.torn` in theme.css).
-The tear follows the finger, stops short of the pin's column, the page's edge and any task's
-words (`rip::reach_towards`, so a tear towards a row stops short of it), and a press too near a
-row tears nothing (`rip::starts_on_paper`). One tear at a
-time. When the finger lets go Rambo notices, hops to the tear and tapes it: a strip of tape
-every `TAPE_EVERY_PX` across it is laid from one end over `TAPE_LAY_MS`, `TAPE_AT_MS` after
-the finger lets go. After `TEAR_HOLD_MS` the tape and the tear fade away together over
-`TEAR_FADE_MS`, the one thing besides ink that fades; Rambo has hopped home by then. Only a
-resting Rambo (in his nest) goes; a busy one leaves the repair to the page. He is grumpy
-while he mends a rip made in bare paper (`Pose::Sulking`, `State::Mending { annoyed: true }`).
-The tear is cleared by a one-shot on the engine's clock (`engine::every`), with everything
-else that moves. Try it: swipe or drag right across the empty part of the list page.
-h. **A finished row tears out of the page.** When a task is scribbled out (the swipe, or the
-bubble's Done) and its row flies to the tack, the row tears out of the page where it stood: a
-**strip** as tall as the row (less its ragged edge, so the rules above and below stay whole),
-from end to end of the row with short ragged ends (`Tear::out_of_row`, `Profile::Strip`; a hand
-rip keeps the pinched slit, `Profile::Slit`). It shows the live planner beneath: the planner is
-slid so its day grid lies under the whole of the hole (`rip::slide_over`) and an hour line (a
-slip, on a phone) is lifted through its middle (`rip::lift_px`), so day edges and an hour line
-read in it. Then Rambo hops there and tapes it, and it fades with the tape, all on the same
-clock as a rip (`rip_ui::row_out`, `Ripper::tear_out`). He is **not** annoyed by it
-(`State::Mending { annoyed: false }`, his usual face); the rip on bare paper still annoys him.
-The hole is on the page's clock, not Rambo's: it stays open for the length of a rip's repair
-(`rip::total_ms`) and closes by itself even if he is busy and never comes. The rows below wait
-where they were while the hole is open (`scrap::hold_rows`) so none slides into it, and slide up
-when it heals (`scrap::release_rows`). One tear at a time: a second row finished while a hole is
-open waits its turn and tears out where it stood when the first has healed (the rows
-below stay put until the last hole has healed). Up to `RIP_MAX_WAITING_HOLES` (2) rows wait,
-kept by id and by their place in the page, so scrolling does not move their hole, which is
-measured again from the row that stood above it, so a row added or removed above does not
-shift it; one that is back on the page by its turn (undone), or whose task is no longer done
-(deleted from the pin), is skipped, and without a list page the queue is dropped
-and the held rows let go. A row beyond the cap just leaves. If the server refuses the done, the row stays under a hole that heals like any
-tear (rare).
-Code: `web/src/rip.rs` (the rules: `is_rip`, `is_page_gesture`, `starts_on_paper`, `Tear::outline`, `sheet_path`,
-`slide_px`; pure and tested), `web/src/rip_ui.rs:Ripper, TearLayer` (the pointer, the hole,
-the tape), `web/src/mascot.rs:State::Mending, Event::Mend`, `web/src/scrap.rs:hold_rows`, `web/theme.css` (`main.torn`,
-`.tear-layer`, `.tape`); numbers in `web/src/tuning.rs` (`RIP_*`, `TAPE_*`, `TEAR_*`,
-`MEND_MS`).
+phone block with `100dvh`); numbers in `crates/web-core/src/tuning.rs`.
+h. **The page rip was cut** (2026-10-15, ARCHITECTURE §8A.3): a drag on bare paper does nothing, and a
+finished row flies to the pin while the rows below slide up into its place (`scrap::slide_rows`).
 
 ### 9. The list paper is lightly lined
 a. The list page is ruled like a notebook's, ruled before anything is written on it: one grid
@@ -336,7 +288,7 @@ a. The planner shows a configurable number of days and a scrollable 24-hour rang
 Each placement block shows the task's title in the handwriting font and its start time,
 truncated with an ellipsis when the block is too narrow.
 b. Open the **Week** panel and scroll through the grid.
-c. Code: `web/src/week.rs:WeekGrid`; `web/src/settings.rs:GearMenu, Settings`.
+c. Code: `web/src/week.rs:WeekGrid`; `web/src/settings.rs:GearMenu`; `crates/web-core/src/settings.rs:Settings`.
 
 ### 2. One server snapshot
 a. The task list and planner use the same server snapshot, so a task cannot show
@@ -415,7 +367,7 @@ it rides up with the bar over the keyboard), so no page is under it.
 b. Tap the lamp (or pick Light or Dark in the gear menu) and watch the new paper slide
 down; reload and see the choice kept.
 c. Code: `web/src/lamp.rs:DeskLamp, switch_to`; `web/theme.css` (`.desk-lamp`,
-`.lamp-sheet`); `web/src/tuning.rs:LAMP_SLIDE_MS`. The art: `web/assets/lamp/ABOUT.md`.
+`.lamp-sheet`); `crates/web-core/src/tuning.rs:LAMP_SLIDE_MS`. The art: `web/assets/lamp/ABOUT.md`.
 
 ### 6. Parchment theme
 a. The page is aged paper: warm palette, serif headings, a tiled paper texture that switches to a dark variant in dark mode.
@@ -460,17 +412,18 @@ hour_prefill_text`; `web/src/capture.rs:CaptureBox, noted`;
 `web/src/mascot.rs:State::Noting, Event::DropHour, asking_dismissed_by`.
 
 ### 9. The bookmark ribbon marks today
-a. A satin ribbon hangs from under the row of day names at today's column. When
-today is scrolled out of sight it stays at the paper's edge that today went past, the
-way a bookmark sticks out of a closed book. Pull it down past a short stretch (it
-stretches with the finger, ever stiffer) and let go, or tap it, and the paper slides
-back to today, at the hour the planner opens on (about 08:00, or now if later); with reduced motion it jumps
-there at once. A shorter pull springs back and does nothing. The ribbon is drawn in
-CSS; it has no image asset.
-b. Scroll the planner away from today, then pull the ribbon down or tap it.
-c. Code: `web/src/ribbon.rs:Ribbon, pulled, jumps, hang_left, glide`;
-`web/src/week.rs:WeekGrid, ribbon_spot, slide_to`; tuning `RIBBON_*` in
-`web/src/tuning.rs`.
+a. A satin ribbon marks today's column, in two parts. Its head sticks out of the band
+of day names at today's column, right of the name; its tail lies on today's hours
+under the slips, so it never covers a word, and slides under the band as the hours
+scroll. When today is scrolled out of sight the head waits just inside the first column
+still in sight, at the same spot, so it covers no name, the way a bookmark sticks out
+of a closed book. Tap the head and the paper slides back to today, at the hour the
+planner opens on (about 08:00, or now if later); with reduced motion it jumps there at
+once. The ribbon is drawn in CSS; it has no image asset.
+b. Scroll the planner away from today, then tap the ribbon.
+c. Code: `web/src/ribbon.rs:Ribbon, RibbonTail, hang_left, glide`;
+`web/src/week.rs:WeekGrid, ribbon_spot, slide_to`; tuning `RIBBON_GLIDE_MS` in
+`crates/web-core/src/tuning.rs`.
 
 ## IV. RAMBL, THE MASCOT
 
@@ -514,8 +467,8 @@ c. Code: `web/src/rambo.rs:Rambo`; `web/src/engine/world.rs:World, behaviour`;
 `web/src/engine/nest.rs:Nest::tap`;
 `web/src/engine/fling.rs:step, splat_strokes`; `web/src/engine/world.rs:swept`; `web/src/engine/nest.rs:Nest`;
 `web/src/mascot.rs:transition, listens_on_grab,
-put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `web/src/hop.rs:Hop`;
-`web/src/gesture.rs:Recognizer, release_velocity, flung`;
+put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `crates/web-core/src/hop.rs:Hop`;
+`crates/web-core/src/gesture.rs:Recognizer, release_velocity, flung`;
 `web/src/inklayer.rs:InkLayer`; `web/src/ink.rs`;
 `crates/rambl-brain/src/lib.rs:Event::PutBack`.
 
@@ -537,7 +490,7 @@ b. Type a long task and press Enter; pick him up halfway through, then let go. A
 another and tap it as soon as he flies off it.
 c. Code: `web/src/tasks/write.rs:write_row_title`; `web/src/pen.rs:schedule,
 glyphs_of, stroke_at, inked_count, hand, touch_down, flick, beat`; pace and hand in
-`web/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`); wet ink in `web/src/smudge.rs:is_wet,
+`crates/web-core/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`); wet ink in `web/src/smudge.rs:is_wet,
 smear, Smudges` and `web/src/tasks/mod.rs:smudge_if_wet` (`INK_WET_MS`, `SMUDGE_*`),
 the sheen in `web/theme.css` (`.ink-wet`, `ink-dry`).
 
@@ -565,7 +518,7 @@ never while held, flying or writing, and not with reduced motion. It replaces th
 flag: a stored "off" stays Off, a stored "on" becomes every touch. With reduced motion
 on, the tick and the page sound are dropped.
 b. Open the gear menu, pick each preset, then tap a button, turn the page and add a task.
-c. Code: `web/src/sound.rs:Cue, plays, for_change`; `web/src/settings.rs:SoundPreset, with_migrated_sound`;
+c. Code: `web/src/sound.rs:Cue, plays, for_change`; `crates/web-core/src/settings.rs:SoundPreset, with_migrated_sound`;
 `web/src/voice.rs:audible`; `web/src/music.rs:sync, level, loudness`; `web/src/engine/dance.rs:Dance`. Music files: `web/assets/music/ABOUT.md`. Sound files and how to swap one: `web/assets/sounds/ABOUT.md`.
 
 ### 5. Reduced motion
@@ -663,7 +616,7 @@ weekly with interval, daily, daily with interval);
 ### 1. Planner settings
 a. You can choose the first hour, last hour and number of days shown in the planner.
 b. Open the **gear menu** and change the fields.
-c. Code: `web/src/settings.rs:GearMenu, Settings, load, save`.
+c. Code: `web/src/settings.rs:GearMenu, load, save`; `crates/web-core/src/settings.rs:Settings`.
 
 ### 2. Version and calendar export
 a. The gear menu displays the Rambl version and build date and links to an iCalendar export.

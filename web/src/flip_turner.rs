@@ -53,7 +53,7 @@ mod imp {
     use leptos::prelude::*;
 
     use crate::engine::now;
-    use crate::flip::{self, Pull, Settle, Spring, Turn};
+    use crate::flip::{self, Pull, Settle, Spring1, Turn};
     use crate::tuning::{
         BEND_BUTTON_MS, FLIP_FALL_DAMPING, FLIP_FALL_OMEGA, FLIP_FINISH_OMEGA, FLIP_PERSPECTIVE,
     };
@@ -95,7 +95,7 @@ mod imp {
     enum Motion {
         /// Let go of: it carries on at its speed on a spring toward `target`.
         Spring {
-            spring: Spring,
+            spring: Spring1,
             target: f64,
             pull: Pull,
         },
@@ -259,7 +259,7 @@ mod imp {
             );
             let motion = if stage.slide {
                 Motion::Spring {
-                    spring: Spring::new(from, 0.0),
+                    spring: flip::leaf(from, 0.0),
                     target: to,
                     pull: SLIDE_PULL,
                 }
@@ -313,7 +313,7 @@ mod imp {
                     self.run(Flight {
                         stage,
                         motion: Motion::Spring {
-                            spring: Spring::new(stage.turn.open_at(reach / stage.w), speed),
+                            spring: flip::leaf(stage.turn.open_at(reach / stage.w), speed),
                             target: stage.turn.open_after(outcome),
                             pull,
                         },
@@ -444,7 +444,8 @@ mod imp {
                     // any frame rate.
                     for _ in 0..tick.steps {
                         // Rambo caught under the leaf pushes its corner up a little.
-                        spring.step_with_push(
+                        flip::fall(
+                            spring,
                             *target,
                             *pull,
                             crate::engine::push(),
@@ -452,7 +453,7 @@ mod imp {
                         );
                     }
                     self.draw(&flight.stage, spring.x);
-                    spring.at_rest(*target)
+                    flip::at_rest(spring, *target)
                 }
                 Motion::Glide { from, to, ms } => {
                     let share = ((tick.now - flight.began) / *ms).clamp(0.0, 1.0);

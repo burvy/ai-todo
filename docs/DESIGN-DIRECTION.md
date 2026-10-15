@@ -235,7 +235,7 @@ This replaces the earlier interview 3 note that swiping left crosses a task out.
 - **On the list:**
   - Swipe right on a task deletes it: **a scribble-out that follows the finger**, in Rambo's ink. "Scribble-out" replaces "cross-out" and "slash-out".
   - Swipe left turns the page to the planner.
-  - **Swipe right anywhere else on the list page** (not on a task) rips the page a little. Rambo tapes it up, and he is grumpy for a while. The tape and the tear fade away after a while.
+  - (cut 2026-10-15, ARCHITECTURE §8A.3) ~~**Swipe right anywhere else on the list page** (not on a task) rips the page a little. Rambo tapes it up, and he is grumpy for a while. The tape and the tear fade away after a while.~~
 - **On the planner:**
   - Swipe left scrolls to later days.
   - Swipe right inside the planner grid scrolls back.
@@ -250,7 +250,7 @@ This replaces the earlier interview 3 note that swiping left crosses a task out.
 Later steps under the physical principle:
 - **Ink dries:** a new row is glossy for a few seconds, and a tap smudges it.
 - **The nib runs dry:** after a long run of writing, Rambo taps his nib on the dish's rim.
-- **A bookmark ribbon marks today** in the planner; pull it to jump back to today.
+- **A bookmark ribbon marks today** in the planner; tap it to go back to today (its pull was cut, ARCHITECTURE §8A.3).
 - **The scrap undo** above.
 - **A desk lamp is the dark-mode switch:** pull its chain and the night page is laid down.
 

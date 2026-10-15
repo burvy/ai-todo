@@ -57,27 +57,7 @@ pub(crate) fn confirmed(message: &str) -> bool {
 /// refusal from the server is not "could not reach the server" just because the reload
 /// that followed also failed.
 fn refused_note(error: &api::ApiError, reloaded: bool) -> &'static str {
-    match (error, reloaded) {
-        (api::ApiError::Network(_), _) => {
-            "Could not reach the server, so that change was not saved."
-        }
-        (
-            api::ApiError::Server(todo_core::ApiError {
-                code: todo_core::ErrorCode::StaleUpdate,
-                ..
-            }),
-            true,
-        ) => "That task changed elsewhere, so it was reloaded. Try again.",
-        (
-            api::ApiError::Server(todo_core::ApiError {
-                code: todo_core::ErrorCode::StaleUpdate,
-                ..
-            }),
-            false,
-        ) => "That task changed elsewhere. Reload the page to see it.",
-        (_, true) => "That change was not saved. The list was reloaded.",
-        (_, false) => "That change was not saved.",
-    }
+    crate::store::refusal(error).note(reloaded)
 }
 
 /// Where an edit's result goes: the list it replaces and the note that explains a refusal.

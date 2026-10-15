@@ -13,7 +13,7 @@ convention, and the index of where each kind of value lives.
 | Set per deployment | an environment variable; its default is a `DEFAULT_*` constant in `tuning.rs` | `RAMBL_JEV_DAILY_CAP` → `DEFAULT_JEV_DAILY_CAP` |
 | Chosen by each user | a stored user setting; its default is a constant in `tuning.rs` | `DEFAULT_DAY_DEADLINE`, the default for each user's day-only deadline |
 | Content and personality a non-programmer edits | a TOML file in the crate's `content/` folder, compiled in | `crates/rambl-brain/content/personality.toml` |
-| Web behaviour (timings, thresholds) | `web/src/tuning.rs` (started: the time picker's minute step and resting hour, Rambo's writing pace; the rest is planned with the front-end restructure) | `MINUTE_STEP` |
+| Web behaviour (timings, thresholds) | `crates/web-core/src/tuning.rs` (started: the time picker's minute step and resting hour, Rambo's writing pace; the rest is planned with the front-end restructure) | `MINUTE_STEP` |
 | Web look (colours, spacing, radii, animation lengths) | CSS custom properties on `:root` in `web/theme.css`; colours are there today, the rest is planned with the front-end restructure | `--ink`, `--accent` |
 
 A value is never written twice. When a second crate needs it, it moves down to
@@ -45,7 +45,7 @@ pub const DEFAULT_JEV_DAILY_CAP: u32 = 200;
 
 ### On the web
 
-`web/src/tuning.rs` holds the paper pickers' numbers and the page rip's (`RIP_*`, `TAPE_*`, `TEAR_*`, `MEND_MS`) so far. It follows the same rules; a
+`crates/web-core/src/tuning.rs` holds the paper pickers' numbers so far. It follows the same rules; a
 behaviour value lives there and a look value is a CSS token:
 
 ```rust
@@ -94,4 +94,4 @@ obvious:
 | `crates/scheduler` | No values of its own: it plans with the working day and task lengths from `todo_core::tuning` |
 | `crates/rambl-brain/content/personality.toml` | Everything that shapes the mascot: starting moods, how fast they drift, what each event does to them, when he gets restless and how he picks what to do |
 | `crates/judge` | No values of its own: Jev's answer scales follow the label and priority lists in `judge/src/lib.rs` |
-| `web/src/tuning.rs`, `web/theme.css` `:root` | (planned) front-end restructure |
+| `crates/web-core/src/tuning.rs`, `web/theme.css` `:root` | (planned) front-end restructure |

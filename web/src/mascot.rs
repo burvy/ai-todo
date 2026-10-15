@@ -65,10 +65,6 @@ pub enum State {
     /// back onto the page. He is not dazed (only a hard throw dazes him): after
     /// [`COVERED_MS`] he is out and hops home. He cannot be picked up from here.
     Covered,
-    /// Out at a tear in the list page, taping it (`rip.rs`): he hops there, stays until the
-    /// tape is on ([`MEND_MS`]), then hops home. He is `annoyed` by a rip someone made in
-    /// bare paper; not by a row that has torn out of the page, finished.
-    Mending { annoyed: bool },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,16 +107,12 @@ pub enum Event {
     Covered,
     /// He is out from under the leaf (he pushed his way out, or the leaf lifted away).
     Uncovered,
-    /// The page was torn: he goes to tape it, `annoyed` or not.
-    Mend { annoyed: bool },
 }
 
 /// Milliseconds he stays dazed, untouched, before he skitters home on his own.
 pub const DAZED_MS: u32 = 3000;
 /// Milliseconds he is stuck under the leaf, pushing at its corner, before he crawls out.
 pub const COVERED_MS: u32 = 1500;
-/// Milliseconds he stays at a tear, taping it, before he hops home.
-pub use crate::tuning::MEND_MS;
 /// Milliseconds the splat wobble lasts on a hard drop.
 pub const SPLAT_MS: u32 = 400;
 /// Milliseconds Rambo keeps peeking over at you after your last keystroke.
@@ -146,11 +138,6 @@ pub fn transition(state: &State, event: Event) -> State {
         (State::Home, Event::WriteCaret) => State::WritingCaret,
         (State::Home, Event::WriteRow) => State::Flying,
         (State::Home, Event::FlyHome) => State::Home,
-        // A torn page: he goes to tape it. Only a resting Rambo does; one who is busy
-        // elsewhere leaves it to fade.
-        (State::Home, Event::Mend { annoyed }) => State::Mending { annoyed },
-        (State::Mending { .. }, Event::Return) => State::Home,
-        (State::Mending { .. }, Event::Grab | Event::Talk) => State::Dragging,
 
         // Dragging: release, the nest or the page sends him home; drop on a task
         // asks; let go mid-flick throws him (SPEC-ANSWERS item 31).
@@ -379,7 +366,6 @@ pub fn is_off_nest(state: &State) -> bool {
             | State::Inking
             | State::Splatting
             | State::Covered
-            | State::Mending { .. }
             | State::Skittering
             | State::Asking { .. }
             | State::Noting
@@ -420,7 +406,7 @@ pub fn hops_there(state: &State, settled_home: bool) -> bool {
         | State::Asking { .. }
         | State::Noting => false,
         State::Home => !settled_home,
-        State::Flying | State::WritingCaret | State::Skittering | State::Mending { .. } => true,
+        State::Flying | State::WritingCaret | State::Skittering => true,
     }
 }
 
@@ -437,10 +423,6 @@ pub fn notice(before: &State, after: &State) -> Option<Pose> {
         (_, State::Skittering) => Some(Pose::Worried),
         // Called to write, or going home: he looks up, then goes.
         (_, State::Home | State::Flying | State::WritingCaret) => Some(Pose::Teasing),
-        // A torn page puts him out: he looks it over, then goes (a row that has torn out
-        // finished does not, and he just looks up).
-        (_, State::Mending { annoyed: true }) => Some(Pose::Sulking),
-        (_, State::Mending { annoyed: false }) => Some(Pose::Teasing),
         _ => None,
     }
 }
@@ -488,7 +470,6 @@ pub fn rambo_class(state: &State, pose: &str) -> String {
         State::Thrown => " is-thrown",
         State::Dazed => " is-dazed",
         State::Covered => " is-covered",
-        State::Mending { .. } => " is-mending",
         State::Inking => " is-inking",
         State::Splatting => " is-splatting",
         State::Skittering => " is-skittering",
@@ -663,10 +644,6 @@ pub fn pose_for(state: &State, brain_pose: &str, typing: bool) -> Pose {
         State::Dazed => Pose::Lobotomized,
         // Stuck and pushing, not dazed.
         State::Covered => Pose::Worried,
-        // A torn page puts him in a mood: grumpy while he mends it. A row torn out finished
-        // is no trouble: he tapes it with his usual face.
-        State::Mending { annoyed: true } => Pose::Sulking,
-        State::Mending { annoyed: false } => Pose::Idle,
         State::Home | State::Splatting | State::Skittering => {
             if typing {
                 Mood::Peeking.pose()
@@ -826,47 +803,6 @@ mod tests {
                 "a little above the middle of the box"
             );
         }
-    }
-
-    #[test]
-    fn only_a_resting_rambo_goes_to_tape_a_tear() {
-        let annoyed = State::Mending { annoyed: true };
-        assert_eq!(
-            transition(&State::Home, Event::Mend { annoyed: true }),
-            annoyed
-        );
-        for busy in [
-            State::Dazed,
-            State::WritingRow,
-            State::Covered,
-            State::Flying,
-        ] {
-            assert_eq!(
-                transition(&busy, Event::Mend { annoyed: true }),
-                busy,
-                "{busy:?} leaves it to fade"
-            );
-        }
-        assert_eq!(transition(&annoyed, Event::Return), State::Home);
-        assert_eq!(transition(&annoyed, Event::Grab), State::Dragging);
-        assert!(hops_there(&annoyed, false), "he hops to the tear");
-        assert!(is_off_nest(&annoyed));
-        assert_eq!(notice(&State::Home, &annoyed), Some(Pose::Sulking));
-        assert_eq!(pose_for(&annoyed, "home", false), Pose::Sulking);
-    }
-
-    #[test]
-    fn a_row_torn_out_finished_does_not_annoy_him() {
-        let calm = State::Mending { annoyed: false };
-        assert_eq!(
-            transition(&State::Home, Event::Mend { annoyed: false }),
-            calm
-        );
-        assert_eq!(notice(&State::Home, &calm), Some(Pose::Teasing));
-        assert_ne!(pose_for(&calm, "home", false), Pose::Sulking);
-        // He still hops there, tapes it for as long, and goes home.
-        assert!(hops_there(&calm, false));
-        assert_eq!(transition(&calm, Event::Return), State::Home);
     }
 
     #[test]
