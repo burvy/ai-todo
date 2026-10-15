@@ -49,7 +49,6 @@ mod tests {
             ("engine/link.rs", 1),
             ("engine/run.rs", 2),
             ("music.rs", 1),
-            ("scrap.rs", 1),
             ("voice.rs", 1),
         ];
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
