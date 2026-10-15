@@ -6,9 +6,9 @@ mod scribble;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod write;
 
-use chrono::{DateTime, NaiveDate, Weekday};
+use chrono::{NaiveDate, Weekday};
 use leptos::prelude::*;
-use todo_core::{Snapshot, Source, TaskDraft, TaskId, When};
+use todo_core::{Snapshot, Source, TaskId, When};
 
 use crate::clock::Clock;
 use crate::edits::{confirmed, held, patch_and_show, series_note, toggle_done_body};
@@ -23,7 +23,10 @@ use rambl_web_core::store::{Command, Mark};
 #[cfg(target_arch = "wasm32")]
 use rambl_web_core::task_list::let_go;
 pub(crate) use rambl_web_core::task_list::occurrence_parts;
-use rambl_web_core::task_list::{Tapped, is_overdue_at, reorder_ids, tapped};
+use rambl_web_core::task_list::{
+    EditForm, MISSING_TITLE_NOTE, Tapped, blank_form, blank_task, is_draft, is_overdue_at,
+    keep_typed, new_task_draft, reorder_ids, series_of, tapped,
+};
 
 /// What the task list keys a row on: the whole task as the row draws it.
 ///
@@ -48,100 +51,6 @@ impl std::hash::Hash for RowKey {
         // Equal tasks share an id and a version, so this agrees with `eq`.
         self.0.id.hash(state);
         self.0.updated_at.hash(state);
-    }
-}
-
-/// What the edit sheet shows when it opens on the row `id`, or `None` when the
-/// list no longer holds it.
-#[derive(Clone, Debug, PartialEq)]
-struct EditForm {
-    title: String,
-    duration: String,
-    when: EditWhen,
-    datetime: String,
-    weekdays: Vec<Weekday>,
-    until: String,
-    time: String,
-}
-
-/// What the sheet says when Save is pressed with no title.
-const MISSING_TITLE_NOTE: &str = "Give the task a name first.";
-
-/// The id the sheet carries while it holds a task nobody has made yet (the + button). No
-/// server id looks like it, and nothing is stored until Save.
-const DRAFT_ID: &str = "draft";
-
-fn is_draft(id: &TaskId) -> bool {
-    id.0 == DRAFT_ID
-}
-
-/// The task a new sheet is drawn from: only what the sheet shows of a task (its title
-/// line and its zone), none of it the server's. The clock fields are the epoch because
-/// nothing here may read the wall clock, and nothing shows them.
-fn blank_task() -> todo_core::Task {
-    todo_core::Task {
-        id: TaskId(DRAFT_ID.to_owned()),
-        title: String::new(),
-        duration_min: DEFAULT_NEW_MINUTES,
-        when: When::Anytime,
-        done: false,
-        order: 0,
-        label: todo_core::Label::Other,
-        priority: todo_core::Priority::Low,
-        source: Source::Text,
-        created: DateTime::UNIX_EPOCH,
-        updated_at: DateTime::UNIX_EPOCH,
-        due_tz: None,
-        external_uid: None,
-        off_planner: false,
-    }
-}
-
-/// How long a task made by hand lasts until you say otherwise.
-const DEFAULT_NEW_MINUTES: u16 = 30;
-
-/// What the sheet shows when it opens on a new task: an empty title, the default length
-/// and no day or repeat.
-fn blank_form() -> EditForm {
-    EditForm {
-        title: String::new(),
-        duration: DEFAULT_NEW_MINUTES.to_string(),
-        when: EditWhen::Anytime,
-        datetime: String::new(),
-        weekdays: Vec::new(),
-        until: String::new(),
-        time: String::new(),
-    }
-}
-
-/// The task a Save on a new sheet makes, or `None` while it lacks a title or a length.
-fn new_task_draft(title: &str, duration: Option<u16>, when: When) -> Option<TaskDraft> {
-    let title = title.trim();
-    let duration_min = duration.filter(|minutes| *minutes > 0)?;
-    (!title.is_empty()).then(|| TaskDraft {
-        title: title.to_owned(),
-        duration_min,
-        when,
-        label: todo_core::Label::Other,
-        priority: todo_core::Priority::Low,
-        source: Source::Text,
-    })
-}
-
-/// The sheet after a refill: each field takes the server's `fresh` value unless the
-/// user has `typed` in it since the sheet showed `shown`.
-fn keep_typed(shown: &EditForm, typed: EditForm, fresh: EditForm) -> EditForm {
-    fn pick<T: PartialEq>(shown: &T, typed: T, fresh: T) -> T {
-        if typed == *shown { fresh } else { typed }
-    }
-    EditForm {
-        title: pick(&shown.title, typed.title, fresh.title),
-        duration: pick(&shown.duration, typed.duration, fresh.duration),
-        when: pick(&shown.when, typed.when, fresh.when),
-        datetime: pick(&shown.datetime, typed.datetime, fresh.datetime),
-        weekdays: pick(&shown.weekdays, typed.weekdays, fresh.weekdays),
-        until: pick(&shown.until, typed.until, fresh.until),
-        time: pick(&shown.time, typed.time, fresh.time),
     }
 }
 
@@ -170,15 +79,6 @@ fn edit_form(snapshot: &Snapshot, id: &str) -> Option<EditForm> {
             .map(|time| time.format("%H:%M").to_string())
             .unwrap_or_default(),
     })
-}
-
-/// The series a row belongs to, when the row is an occurrence of one.
-fn series_of<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a todo_core::Series> {
-    let (series_id, _) = occurrence_parts(id)?;
-    snapshot
-        .series
-        .iter()
-        .find(|series| series.id.0 == series_id)
 }
 
 /// What ticking a row writes. An ordinary task flips its `done` flag against
@@ -231,7 +131,7 @@ pub(crate) async fn apply_tick(id: &TaskId, action: TickAction, sink: Store) {
 
 #[cfg(target_arch = "wasm32")]
 fn is_overdue(task: &todo_core::Task) -> bool {
-    DateTime::from_timestamp_millis(js_sys::Date::now() as i64)
+    chrono::DateTime::from_timestamp_millis(js_sys::Date::now() as i64)
         .is_some_and(|now| is_overdue_at(task, now))
 }
 
@@ -1311,27 +1211,6 @@ mod tests {
 
     use super::*;
     use chrono::{TimeZone, Utc};
-
-    #[test]
-    fn a_new_sheet_starts_empty_with_the_default_length_and_no_day() {
-        let form = blank_form();
-        assert_eq!(form.title, "");
-        assert_eq!(form.duration, DEFAULT_NEW_MINUTES.to_string());
-        assert_eq!(form.when, EditWhen::Anytime);
-        assert!(form.weekdays.is_empty() && form.until.is_empty() && form.time.is_empty());
-        assert!(is_draft(&blank_task().id));
-        assert!(!is_draft(&TaskId("t1".into())));
-    }
-
-    #[test]
-    fn a_new_task_needs_a_title_and_a_length_and_is_trimmed() {
-        let made = new_task_draft("  Buy stamps ", Some(15), When::Anytime).expect("a task");
-        assert_eq!((made.title.as_str(), made.duration_min), ("Buy stamps", 15));
-        assert_eq!(made.source, Source::Text);
-        assert!(new_task_draft("   ", Some(15), When::Anytime).is_none());
-        assert!(new_task_draft("Buy stamps", None, When::Anytime).is_none());
-        assert!(new_task_draft("Buy stamps", Some(0), When::Anytime).is_none());
-    }
 
     /// A row is drawn again whenever anything it shows changes, and only then.
     #[test]
