@@ -37,6 +37,12 @@ pub const MUSIC_VOLUME: f64 = 0.12;
 pub const LAMP_SHEET_OMEGA: f64 = 18.0;
 /// How long the lamp's cord stays pulled down after a tap, in ms. Safe range 150 to 400.
 pub const LAMP_PULL_MS: u32 = 240;
+/// How far the lamp's cord drops when pulled, in px, and the spring that takes it there and
+/// back: its quickness in radians per second and its damping (below 1 it swings past the
+/// end and back, like a cord let go). Safe ranges 3 to 10 px, 25 to 60 and 0.3 to 0.8.
+pub const LAMP_CORD_DROP_PX: f64 = 6.0;
+pub const LAMP_CORD_OMEGA: f64 = 45.0;
+pub const LAMP_CORD_ZETA: f64 = 0.45;
 /// How quickly a strip flies from its row to its pin, in radians per second, and how
 /// damped (below 1 it swings a little past the pin, like a paper dropped on a table).
 /// Safe ranges 10 to 30 and 0.6 to 1.0: a lower damping swings long past the pin.

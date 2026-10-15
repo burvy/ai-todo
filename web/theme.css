@@ -959,7 +959,6 @@ li.task-row:focus-within .delete-mark {
     3% 66%, 0% 32%
   );
   rotate: -1.5deg;
-  transition: scale var(--dur-fast) var(--arrive-ease);
 }
 
 .add-by-hand:active {
@@ -1315,7 +1314,8 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   opacity: 1;
 }
 
-/* The pull cord hangs from the shade and drops 6px when pulled, then springs back. */
+/* The pull cord hangs from the shade and drops when pulled, then springs back: `lamp.rs`
+   runs `--cord-y` on a spring. */
 .desk-lamp-cord {
   position: absolute;
   top: 36%;
@@ -1325,7 +1325,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   background: var(--ink-soft);
   border-radius: 1.5px;
   transform-origin: top center;
-  transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  transform: translateY(var(--cord-y, 0px));
 }
 
 .desk-lamp-cord::after {
@@ -1337,10 +1337,6 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   height: 8px;
   border-radius: 50%;
   background: var(--accent);
-}
-
-.desk-lamp.pulled .desk-lamp-cord {
-  transform: translateY(6px);
 }
 
 /* The other paper, laid down from the top edge when the switch is pulled: it carries its
@@ -1357,12 +1353,6 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   transform: translateY(-100%);
   visibility: hidden;
   pointer-events: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .desk-lamp-cord {
-    transition: none;
-  }
 }
 
 .brain-line,
@@ -2568,7 +2558,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 
   /* Pressed like a pen nib: the gear tilts while its menu is open. */
   .gear {
-    transition: transform var(--dur) var(--ease), color var(--dur) var(--ease);
+    transition: color var(--dur) var(--ease);
   }
 
   .gear[aria-expanded="true"] {
@@ -2738,7 +2728,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   background: transparent;
   border: none;
   cursor: pointer;
-  transition: transform var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  transition: color var(--dur-fast) var(--ease);
 }
 .paper-field {
   min-height: var(--tap);

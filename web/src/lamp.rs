@@ -79,6 +79,27 @@ pub fn switch_to(theme: Theme) {
     }
 }
 
+/// Pull the cord from `from` to `to` px on a loose spring (it swings a little past, like a
+/// cord let go). One glide at a time: the pull back takes over from a pull still going.
+fn pull_cord(set_cord: WriteSignal<f64>, from: f64, to: f64) {
+    let pull = crate::engine::Pull {
+        omega: crate::tuning::LAMP_CORD_OMEGA,
+        zeta: crate::tuning::LAMP_CORD_ZETA,
+    };
+    crate::engine::glide_keyed(
+        "lamp-cord",
+        [from],
+        [to],
+        pull,
+        CORD_NEAR_PX,
+        move |[y]| set_cord.set(y),
+        move || set_cord.set(to),
+    );
+}
+
+/// How near, in px, the cord must come to its end to count as there.
+const CORD_NEAR_PX: f64 = 0.05;
+
 /// Take the paper to `theme` now, and keep it.
 fn swap(set_settings: WriteSignal<Settings>, settings: ReadSignal<Settings>, theme: Theme) {
     let next = Settings {
@@ -103,8 +124,8 @@ pub fn DeskLamp(
     // top edge in percent of its height (-100 up out of sight, 0 over the page).
     let (sheet_paper, set_sheet_paper) = signal(Theme::Dark);
     let (sheet, set_sheet) = signal(None::<f64>);
-    // The cord is mid-pull.
-    let (pulled, set_pulled) = signal(false);
+    // How far the cord is pulled down, in px.
+    let (cord, set_cord) = signal(0.0_f64);
     // The paper being switched to, from the click until it has landed: the lamp's own
     // light changes at the click, instantly.
     let (going_to, set_going_to) = signal(None::<Theme>);
@@ -126,7 +147,11 @@ pub fn DeskLamp(
         }
         set_going_to.set(Some(theme));
         set_sheet_paper.set(theme);
-        set_pulled.set(true);
+        pull_cord(
+            set_cord,
+            cord.get_untracked(),
+            crate::tuning::LAMP_CORD_DROP_PX,
+        );
         set_sheet.set(Some(SHEET_AWAY));
         // It comes down onto the page; once it covers it, the paper is swapped under it
         // and it goes back up the way it came.
@@ -156,7 +181,7 @@ pub fn DeskLamp(
             timers.keep(down);
             timers.keep(crate::engine::after(
                 f64::from(crate::tuning::LAMP_PULL_MS),
-                move || set_pulled.set(false),
+                move || pull_cord(set_cord, cord.get_untracked(), 0.0),
             ));
         });
     });
@@ -165,7 +190,7 @@ pub fn DeskLamp(
         <button
             type="button"
             class="desk-lamp"
-            class:pulled=move || pulled.get()
+            style:--cord-y=move || format!("{:.2}px", cord.get())
             class:lit=lit
             aria-label=move || lamp_label(settings.get().theme)
             on:click=move |_| switch_to(other_theme(settings.get_untracked().theme))
