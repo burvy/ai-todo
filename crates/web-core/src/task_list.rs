@@ -6,7 +6,7 @@ use chrono::{DateTime, NaiveDate, Utc, Weekday};
 use todo_core::{Label, Priority, Series, Snapshot, Source, Task, TaskDraft, TaskId, When};
 
 use crate::mascot::State;
-use crate::row::Slot;
+use crate::row::{Gesture, Release, Slot};
 use crate::settings::RamblMode;
 use crate::tuning;
 
@@ -199,6 +199,60 @@ pub fn series_of<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a Series> {
         .series
         .iter()
         .find(|series| series.id.0 == series_id)
+}
+
+/// Whether a press on a row may lift it: not while Rambo is dazed, when every hold on
+/// the page draws him to the finger instead.
+pub fn row_lifts(rambo: &State) -> bool {
+    crate::mascot::drawn_over(rambo, &crate::gesture::Gesture::Hold).is_none()
+}
+
+/// Whether the row keeps the finger from the page: only once it is lifted. A press
+/// that is still a tap must not stop the click, and a scroll must not stop the scroll.
+pub fn row_holds_finger(gesture: Option<Gesture>) -> bool {
+    gesture == Some(Gesture::Lifted)
+}
+
+/// What letting go of a row does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowLetGo {
+    /// Nothing: a scroll, a swipe backed out of, a dry tap off the title, or a drop
+    /// that is no reorder.
+    Nothing,
+    /// A tap on wet ink: the finger smears it.
+    Smudge,
+    /// A dry tap on the title: the row opens to edit.
+    Open,
+    /// The swipe went far enough: the task is done.
+    Done,
+    /// A drop in the list: the stored tasks in this order.
+    Reorder(Vec<TaskId>),
+}
+
+/// Letting go of row `dragged` as `release` says, in `snapshot`. What it needs from the
+/// page is looked up only when it decides anything: whether the row's ink is `wet` and
+/// the finger was `on_title` for a tap, and the row and side it was `dropped` on for a
+/// reorder (with none, nothing is sent).
+pub fn row_released(
+    release: Release,
+    dragged: &TaskId,
+    snapshot: &Snapshot,
+    wet: impl FnOnce() -> bool,
+    on_title: impl FnOnce() -> bool,
+    dropped: impl FnOnce() -> Option<(TaskId, Slot)>,
+) -> RowLetGo {
+    match release {
+        Release::Tap => match tapped(wet(), on_title()) {
+            Tapped::Smudge => RowLetGo::Smudge,
+            Tapped::Open => RowLetGo::Open,
+            Tapped::Nothing => RowLetGo::Nothing,
+        },
+        Release::Scroll | Release::SnapBack => RowLetGo::Nothing,
+        Release::Done => RowLetGo::Done,
+        Release::Reorder => dropped()
+            .and_then(|(target, slot)| reorder_ids(snapshot, dragged, &target, slot))
+            .map_or(RowLetGo::Nothing, RowLetGo::Reorder),
+    }
 }
 
 /// Whether Rambo writes the rows queued for his pen (rows the page has just made,
@@ -492,5 +546,85 @@ mod tests {
             "taken elsewhere: he stays"
         );
         assert!(!flies_home_after_row(&State::Home));
+    }
+
+    #[test]
+    fn a_dazed_rambo_takes_the_hold_so_the_row_does_not_lift() {
+        assert!(row_lifts(&State::Home));
+        assert!(row_lifts(&State::Dragging));
+        assert!(!row_lifts(&State::Dazed));
+    }
+
+    #[test]
+    fn only_a_lifted_row_keeps_the_finger() {
+        assert!(row_holds_finger(Some(Gesture::Lifted)));
+        for gesture in [
+            None,
+            Some(Gesture::Pressed),
+            Some(Gesture::Scrolling),
+            Some(Gesture::Swiping),
+        ] {
+            assert!(!row_holds_finger(gesture), "{gesture:?}");
+        }
+    }
+
+    #[test]
+    fn letting_go_of_a_row_looks_up_only_what_decides_it() {
+        let snapshot = fixture();
+        let first = snapshot.tasks[0].id.clone();
+        let never = || -> bool { panic!("not asked") };
+        let nowhere = || -> Option<(TaskId, Slot)> { panic!("not asked") };
+        let tap = |wet: bool, on_title: bool| {
+            row_released(
+                Release::Tap,
+                &first,
+                &snapshot,
+                || wet,
+                || on_title,
+                nowhere,
+            )
+        };
+        assert_eq!(tap(true, false), RowLetGo::Smudge);
+        assert_eq!(tap(false, true), RowLetGo::Open);
+        assert_eq!(tap(false, false), RowLetGo::Nothing);
+        for release in [Release::Scroll, Release::SnapBack] {
+            assert_eq!(
+                row_released(release, &first, &snapshot, never, never, nowhere),
+                RowLetGo::Nothing
+            );
+        }
+        assert_eq!(
+            row_released(Release::Done, &first, &snapshot, never, never, nowhere),
+            RowLetGo::Done
+        );
+    }
+
+    #[test]
+    fn a_drop_reorders_unless_it_lands_on_itself() {
+        let snapshot = fixture();
+        let (first, second) = (snapshot.tasks[0].id.clone(), snapshot.tasks[1].id.clone());
+        let never = || -> bool { panic!("not asked") };
+        let drop_on = |target: &TaskId| {
+            let target = target.clone();
+            row_released(
+                Release::Reorder,
+                &first,
+                &snapshot,
+                never,
+                never,
+                move || Some((target, Slot::After)),
+            )
+        };
+        assert_eq!(
+            drop_on(&second),
+            RowLetGo::Reorder(
+                reorder_ids(&snapshot, &first, &second, Slot::After).expect("a move")
+            )
+        );
+        assert_eq!(drop_on(&first), RowLetGo::Nothing, "on itself");
+        assert!(matches!(
+            row_released(Release::Reorder, &first, &snapshot, never, never, || None),
+            RowLetGo::Nothing
+        ));
     }
 }
