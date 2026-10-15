@@ -113,12 +113,28 @@ impl Store {
     /// list if it took the change (an edit sheet closes only then; the pen writes in the
     /// tasks a capture made), or `None` if it did not.
     pub async fn send(self, command: Command) -> Option<Reply> {
+        self.send_with(command, |_, _| {}).await
+    }
+
+    /// `send`, and `before_show` first: it gets what the server said and the list about to
+    /// be shown, so a view can take its part (the pen writes in what a create made) before
+    /// the rows move. It runs only for a change the server took.
+    pub async fn send_with(
+        self,
+        command: Command,
+        before_show: impl FnOnce(&Reply, &Snapshot),
+    ) -> Option<Reply> {
         let ticket = self.core.try_update_value(|core| core.send(&command))?;
         self.show();
         let (listed, reply) = split(request(command).await);
         let outcome = self
             .core
             .try_update_value(|core| core.answer(ticket, listed))?;
+        if let Some(reply) = &reply
+            && let Some(shown) = self.core.try_with_value(|core| core.snapshot().clone())
+        {
+            before_show(reply, &shown);
+        }
         match outcome {
             Outcome::Shown => {
                 // A note about an earlier refusal must not outlive the change that worked.

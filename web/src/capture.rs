@@ -3,8 +3,8 @@
 use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 
-use crate::{api, mascot, settings};
-use rambl_web_core::store::Command;
+use crate::{mascot, settings};
+use rambl_web_core::store::{Command, Reply};
 
 /// Rambo's whisper: short handwritten prompts the empty capture line cycles
 /// through, one every few seconds, as if he's quietly suggesting what to type.
@@ -86,6 +86,11 @@ fn noted(at: &NotedHour, title: &str) -> todo_core::TaskDraft {
     }
 }
 
+/// The note when a capture was refused: it names the words, so they are never lost silently.
+fn not_added_note(title: &str) -> String {
+    format!("\"{title}\" was not added. Say or type it again.")
+}
+
 /// The tasks in `after` that were not in `before`: what a create just added.
 fn added(before: &Snapshot, after: &Snapshot) -> Vec<TaskId> {
     after
@@ -160,27 +165,11 @@ fn ride_the_keyboard() {
     listener.forget();
 }
 
-/// The note when a capture was not added, naming it so it is never silently lost.
-fn capture_note(title: &str, error: &api::ApiError) -> String {
-    match error {
-        api::ApiError::Network(_) => {
-            format!("Could not reach the server, so \"{title}\" was not added.")
-        }
-        api::ApiError::Server(refusal) => {
-            format!("\"{title}\" was not added: {}", refusal.message)
-        }
-        api::ApiError::Decode(_) => {
-            format!("\"{title}\" may not have been added. Reload to check.")
-        }
-    }
-}
-
 #[component]
 pub(crate) fn CaptureBox(
     form_ref: NodeRef<leptos::html::Form>,
     nest_ref: NodeRef<leptos::html::Button>,
     snapshot: ReadSignal<Snapshot>,
-    set_snapshot: WriteSignal<Snapshot>,
     state: ReadSignal<mascot::State>,
     set_state: WriteSignal<mascot::State>,
     view_settings: ReadSignal<settings::Settings>,
@@ -391,17 +380,18 @@ pub(crate) fn CaptureBox(
             if let Some(hour) = hour {
                 let before = snapshot.get_untracked();
                 wasm_bindgen_futures::spawn_local(async move {
-                    if store
-                        .send(Command::CreateTask(noted(&hour, &title)))
+                    let landed = store
+                        .send_with(
+                            Command::CreateTask(noted(&hour, &title)),
+                            move |_, shown| {
+                                pen_queue.update(|queue| queue.extend(added(&before, shown)));
+                            },
+                        )
                         .await
-                        .is_some()
-                    {
-                        pen_queue.update(|queue| {
-                            queue.extend(added(&before, &snapshot.get_untracked()));
-                        });
-                    } else if text.get_untracked().trim().is_empty() {
-                        // Never lose what was said: it goes back in the box when the box
-                        // is still empty; the store's note says why it was not kept.
+                        .is_some();
+                    // Never lose what was said: it goes back in the box when the box is still
+                    // empty; the store's note says why it was not kept.
+                    if !landed && text.get_untracked().trim().is_empty() {
                         set_text.set(title.clone());
                     }
                     sending.set(false);
@@ -410,28 +400,35 @@ pub(crate) fn CaptureBox(
             }
             wasm_bindgen_futures::spawn_local(async move {
                 // The capture pipeline (docs/ARCHITECTURE.md 5) splits the ramble into
-                // tasks and reads their days, times, labels and priorities.
-                match api::capture_text(&title).await {
-                    Ok(captured) => {
-                        if captured.created.is_empty() {
+                // tasks and reads their days, times, labels and priorities. The store shows
+                // the list it answers with; what it made comes back for the pen to write.
+                // The pen takes its tasks before the rows move, so it writes them as they land.
+                let reply = store
+                    .send_with(Command::Capture(title.clone()), move |reply, _| {
+                        if let Reply::Created(created) = reply {
+                            pen_queue.update(|queue| queue.extend(created.clone()));
+                        }
+                    })
+                    .await;
+                match reply {
+                    Some(Reply::Created(created)) => {
+                        if created.is_empty() {
                             if text.get_untracked().trim().is_empty() {
                                 set_text.set(title.clone());
                             }
                             set_error.set(Some(format!("No task found in \"{title}\".")));
-                        }
-                        if !captured.created.is_empty() {
+                        } else {
                             crate::sound::play(crate::sound::Cue::Send);
                         }
-                        pen_queue.update(|queue| queue.extend(captured.created));
-                        set_snapshot.set(captured.snapshot);
                     }
-                    Err(error) => {
-                        // Never lose what was said: it goes back in the box when the
-                        // box is still empty, and the note names it either way.
+                    // A refusal: the store has shown its own note, which does not name the
+                    // words. Overwrite it with one that does, and put the words back in the
+                    // box when it is still empty.
+                    _ => {
+                        set_error.set(Some(not_added_note(&title)));
                         if text.get_untracked().trim().is_empty() {
                             set_text.set(title.clone());
                         }
-                        set_error.set(Some(capture_note(&title, &error)));
                     }
                 }
                 sending.set(false);
@@ -476,6 +473,7 @@ pub(crate) fn CaptureBox(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api;
 
     #[test]
     fn the_keyboard_inset_is_what_the_visible_page_leaves_uncovered_at_the_bottom() {
@@ -593,26 +591,19 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_capture_names_the_words_it_lost() {
+        assert_eq!(
+            not_added_note("buy milk"),
+            "\"buy milk\" was not added. Say or type it again."
+        );
+    }
+
+    #[test]
     fn what_a_create_added_is_the_tasks_that_were_not_there_before() {
         let after = api::fixture_snapshot();
         let mut before = after.clone();
         let made = before.tasks.remove(1);
         assert_eq!(added(&before, &after), vec![made.id]);
         assert_eq!(added(&after, &after), Vec::<TaskId>::new());
-    }
-
-    #[test]
-    fn a_capture_that_failed_is_named_in_the_note() {
-        let offline = api::ApiError::Network("offline".into());
-        assert!(capture_note("buy milk", &offline).contains("\"buy milk\""));
-        assert!(capture_note("buy milk", &offline).contains("Could not reach the server"));
-        let refused = api::ApiError::Server(todo_core::ApiError {
-            code: todo_core::ErrorCode::Forbidden,
-            message: "this account is paused".into(),
-        });
-        assert_eq!(
-            capture_note("buy milk", &refused),
-            "\"buy milk\" was not added: this account is paused"
-        );
     }
 }
