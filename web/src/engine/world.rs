@@ -492,7 +492,7 @@ impl World {
     }
 
     /// The push he gives the leaf's corner from underneath while he is caught: the page
-    /// steps its spring with it (`Spring::step_with_push`), and it can lift the leaf a
+    /// steps its spring with it (`flip::fall`), and it can lift the leaf a
     /// little but never turn it.
     pub(crate) fn leaf_push(&self) -> Option<crate::flip::Push> {
         (self.rambo.brain == State::Covered).then_some(crate::flip::Push {
@@ -1721,7 +1721,7 @@ mod tests {
 
     #[test]
     fn caught_he_pushes_the_leaf_up_a_little_and_never_turns_it() {
-        use crate::flip::{Pull, Spring};
+        use crate::flip::{Pull, fall};
         let mut world = dropped_at(FELL);
         assert_eq!(world.leaf_push(), None, "no push while he is free");
         world.advance(1, &under(FELL, Some(leaf(0.7, true))));
@@ -1735,9 +1735,9 @@ mod tests {
             omega: crate::tuning::FLIP_FALL_OMEGA,
             zeta: crate::tuning::FLIP_FALL_DAMPING,
         };
-        let mut open = Spring::new(crate::tuning::COVERED_LIFT_REACH / 3.0, 0.0);
+        let mut open = crate::flip::leaf(crate::tuning::COVERED_LIFT_REACH / 3.0, 0.0);
         for _ in 0..240 {
-            open.step_with_push(0.0, pull, Some(push), 1.0 / 60.0);
+            fall(&mut open, 0.0, pull, Some(push), 1.0 / 60.0);
         }
         assert!(
             open.x > 0.05 && open.x <= push.reach + 1e-9,

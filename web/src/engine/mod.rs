@@ -2,6 +2,7 @@
 //! (ARCHITECTURE "The engine"). Jobs run on its frames (`on_tick`, `next_frame`) or
 //! every so often in its time (`every`); the loop sleeps when none is waiting.
 
+mod body;
 mod dance;
 mod fling;
 mod link;
@@ -11,6 +12,7 @@ mod run;
 mod sched;
 mod world;
 
+pub(crate) use body::{Pull, Spring1};
 pub(crate) use fling::Walls;
 pub(crate) use link::{leaf, on_leaf, set_push};
 #[cfg(target_arch = "wasm32")]

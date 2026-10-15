@@ -104,23 +104,11 @@ pub(crate) fn settle(reach: f64, velocity: f64, page_width: f64) -> Settle {
     }
 }
 
-/// How `open` moves once nobody holds the leaf: a damped spring with a speed, pulled toward
-/// where the turn ends. The table (`open` 0) and the spine (`open` 1) are walls: the leaf
-/// meets them and rebounds a little, never passes through.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Spring {
-    pub(crate) x: f64,
-    /// Speed, in `open` per second.
-    pub(crate) v: f64,
-}
-
-/// How a spring pulls: `omega` is its quickness (radians per second), `zeta` its damping
-/// (1 settles without overshoot; below that the leaf swings past its end and back).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Pull {
-    pub(crate) omega: f64,
-    pub(crate) zeta: f64,
-}
+/// How `open` moves once nobody holds the leaf: the engine's damped spring
+/// (`engine::Spring1`), with a speed of its own, pulled toward where the turn ends. The
+/// table (`open` 0) and the spine (`open` 1) are walls: the leaf meets them and rebounds
+/// a little, never passes through.
+pub(crate) use crate::engine::{Pull, Spring1};
 
 /// A push on the leaf from underneath: `accel` in `open` per second squared, and how far
 /// `reach` (0 to 1) it can lift the leaf, short of the turn completing.
@@ -137,52 +125,38 @@ const SUBSTEP: f64 = 1.0 / 240.0;
 const REST_DISTANCE: f64 = 0.002;
 const REST_SPEED: f64 = 0.02;
 
-impl Spring {
-    /// The leaf at `x` (0 to 1) moving at `v`.
-    pub(crate) fn new(x: f64, v: f64) -> Self {
-        Spring {
-            x: x.clamp(0.0, 1.0),
-            v,
+/// The leaf at `x` (0 to 1) moving at `v`.
+pub(crate) fn leaf(x: f64, v: f64) -> Spring1 {
+    Spring1::new(x.clamp(0.0, 1.0), v)
+}
+
+/// Moves `leaf` on by `dt` seconds toward `target` while something may push its free
+/// corner from underneath. The push is an extra acceleration on `open`, and it never
+/// lifts the leaf past its `reach`, so a push cannot complete a turn.
+pub(crate) fn fall(leaf: &mut Spring1, target: f64, pull: Pull, push: Option<Push>, dt: f64) {
+    let mut left = dt.clamp(0.0, 0.1);
+    while left > 0.0 {
+        let h = left.min(SUBSTEP);
+        left -= h;
+        // The push lifts only a leaf that is not yet at its reach: one falling from
+        // beyond it is not held up, it falls onto whatever pushes.
+        let push = push.filter(|push| leaf.x <= push.reach);
+        leaf.step(target, pull, push.map_or(0.0, |push| push.accel), h);
+        if !(0.0..=1.0).contains(&leaf.x) {
+            leaf.x = leaf.x.clamp(0.0, 1.0);
+            leaf.v *= -FLIP_WALL_BOUNCE;
+        }
+        // Lifted to the reach, it stops there: a push cannot complete a turn.
+        if let Some(push) = push.filter(|push| leaf.x > push.reach) {
+            leaf.x = push.reach;
+            leaf.v = leaf.v.min(0.0);
         }
     }
+}
 
-    /// Moves on by `dt` seconds toward `target`.
-    #[cfg(test)]
-    pub(crate) fn step(&mut self, target: f64, pull: Pull, dt: f64) {
-        self.step_with_push(target, pull, None, dt);
-    }
-
-    /// Moves on by `dt` seconds toward `target` while something pushes the leaf's free
-    /// corner from underneath. The push is an extra acceleration on `open`, and it never
-    /// lifts the leaf past its `reach`, so a push cannot complete a turn.
-    pub(crate) fn step_with_push(&mut self, target: f64, pull: Pull, push: Option<Push>, dt: f64) {
-        let mut left = dt.clamp(0.0, 0.1);
-        while left > 0.0 {
-            let h = left.min(SUBSTEP);
-            left -= h;
-            // The push lifts only a leaf that is not yet at its reach: one falling from
-            // beyond it is not held up, it falls onto whatever pushes.
-            let push = push.filter(|push| self.x <= push.reach);
-            let accel = -pull.omega * pull.omega * (self.x - target)
-                - 2.0 * pull.zeta * pull.omega * self.v
-                + push.map_or(0.0, |push| push.accel);
-            self.v += accel * h;
-            self.x += self.v * h;
-            if !(0.0..=1.0).contains(&self.x) {
-                self.x = self.x.clamp(0.0, 1.0);
-                self.v *= -FLIP_WALL_BOUNCE;
-            }
-            // Lifted to the reach, it stops there: a push cannot complete a turn.
-            if let Some(push) = push.filter(|push| self.x > push.reach) {
-                self.x = push.reach;
-                self.v = self.v.min(0.0);
-            }
-        }
-    }
-
-    pub(crate) fn at_rest(&self, target: f64) -> bool {
-        (self.x - target).abs() < REST_DISTANCE && self.v.abs() < REST_SPEED
-    }
+/// Whether `leaf` has come to rest at `target`.
+pub(crate) fn at_rest(leaf: &Spring1, target: f64) -> bool {
+    leaf.settled(target, REST_DISTANCE, REST_SPEED)
 }
 
 /// How far a button's turn has gone at `t` (0 to 1) of its time: nobody holds the page, so
@@ -252,9 +226,9 @@ mod tests {
             accel: 400.0,
             reach: 0.3,
         };
-        let mut leaf = Spring::new(0.0, 0.0);
+        let mut leaf = leaf(0.0, 0.0);
         for _ in 0..240 {
-            leaf.step_with_push(0.0, pull, Some(push), 1.0 / 60.0);
+            fall(&mut leaf, 0.0, pull, Some(push), 1.0 / 60.0);
             assert!(
                 leaf.x <= push.reach + 1e-12,
                 "never past the reach: {}",
@@ -263,9 +237,9 @@ mod tests {
         }
         assert!(leaf.x > 0.1, "it was lifted: {}", leaf.x);
         for _ in 0..240 {
-            leaf.step(0.0, pull, 1.0 / 60.0);
+            fall(&mut leaf, 0.0, pull, None, 1.0 / 60.0);
         }
-        assert!(leaf.at_rest(0.0), "released, it settles flat again");
+        assert!(at_rest(&leaf, 0.0), "released, it settles flat again");
     }
 
     #[test]
@@ -274,7 +248,7 @@ mod tests {
             omega: crate::tuning::FLIP_FALL_OMEGA,
             zeta: crate::tuning::FLIP_FALL_DAMPING,
         };
-        let mut leaf = Spring::new(0.8, -1.0);
+        let mut leaf = leaf(0.8, -1.0);
         let push = Push {
             accel: 400.0,
             reach: 0.3,
@@ -282,7 +256,7 @@ mod tests {
         let mut lowest = leaf.x;
         for _ in 0..60 {
             let before = leaf.x;
-            leaf.step_with_push(0.0, pull, Some(push), 1.0 / 60.0);
+            fall(&mut leaf, 0.0, pull, Some(push), 1.0 / 60.0);
             assert!(before - leaf.x < 0.5, "no jump in one frame");
             lowest = lowest.min(leaf.x);
         }
@@ -298,8 +272,9 @@ mod tests {
             omega: 1.0,
             zeta: 1.0,
         };
-        let mut leaf = Spring::new(0.8, 0.0);
-        leaf.step_with_push(
+        let mut leaf = leaf(0.8, 0.0);
+        fall(
+            &mut leaf,
             0.8,
             pull,
             Some(Push {
@@ -317,10 +292,10 @@ mod tests {
             omega: crate::tuning::FLIP_FALL_OMEGA,
             zeta: crate::tuning::FLIP_FALL_DAMPING,
         };
-        let (mut a, mut b) = (Spring::new(0.6, 1.0), Spring::new(0.6, 1.0));
+        let (mut a, mut b) = (leaf(0.6, 1.0), leaf(0.6, 1.0));
         for _ in 0..30 {
-            a.step(0.0, pull, 1.0 / 60.0);
-            b.step_with_push(0.0, pull, None, 1.0 / 60.0);
+            fall(&mut a, 0.0, pull, None, 1.0 / 60.0);
+            fall(&mut b, 0.0, pull, None, 1.0 / 60.0);
         }
         assert_eq!(a, b);
     }
@@ -475,12 +450,12 @@ mod tests {
 
     /// Steps a spring at 60 frames a second until it rests; returns the frames it took and
     /// every `open` on the way.
-    fn run(mut spring: Spring, target: f64, pull: Pull) -> (usize, Vec<f64>) {
+    fn run(mut spring: Spring1, target: f64, pull: Pull) -> (usize, Vec<f64>) {
         let mut path = vec![spring.x];
         for frame in 1..=600 {
-            spring.step(target, pull, 1.0 / 60.0);
+            fall(&mut spring, target, pull, None, 1.0 / 60.0);
             path.push(spring.x);
-            if spring.at_rest(target) {
+            if at_rest(&spring, target) {
                 return (frame, path);
             }
         }
@@ -493,7 +468,7 @@ mod tests {
             for start in [0.0, 0.2, 0.5, 0.9, 1.0] {
                 for speed in [-6.0, -1.0, 0.0, 1.0, 6.0] {
                     for target in [0.0, 1.0] {
-                        let (frames, path) = run(Spring::new(start, speed), target, pull);
+                        let (frames, path) = run(leaf(start, speed), target, pull);
                         assert!(frames < 600, "{start} {speed} -> {target}: never rests");
                         assert!(
                             path.iter().all(|open| (0.0..=1.0).contains(open)),
@@ -507,12 +482,12 @@ mod tests {
 
     #[test]
     fn a_critically_damped_leaf_never_overshoots_its_end() {
-        let (_, up) = run(Spring::new(0.3, 0.0), 1.0, SETTLE);
+        let (_, up) = run(leaf(0.3, 0.0), 1.0, SETTLE);
         assert!(
             up.windows(2).all(|pair| pair[0] <= pair[1] + 1e-12),
             "monotone"
         );
-        let (_, down) = run(Spring::new(0.6, 0.0), 0.0, SETTLE);
+        let (_, down) = run(leaf(0.6, 0.0), 0.0, SETTLE);
         assert!(
             down.windows(2).all(|pair| pair[0] >= pair[1] - 1e-12),
             "monotone"
@@ -521,15 +496,15 @@ mod tests {
 
     #[test]
     fn a_flick_carries_on_at_its_speed_and_arrives_sooner() {
-        let (rested, _) = run(Spring::new(0.3, 0.0), 1.0, SETTLE);
-        let (flicked, path) = run(Spring::new(0.3, 4.0), 1.0, SETTLE);
+        let (rested, _) = run(leaf(0.3, 0.0), 1.0, SETTLE);
+        let (flicked, path) = run(leaf(0.3, 4.0), 1.0, SETTLE);
         assert!(flicked < rested, "{flicked} frames against {rested}");
         assert!(path[1] - path[0] > 0.3 * 4.0 / 60.0, "starts at its speed");
     }
 
     #[test]
     fn a_page_dropped_short_meets_the_table_and_rebounds_a_little() {
-        let (_, path) = run(Spring::new(0.4, 0.0), 0.0, FALL);
+        let (_, path) = run(leaf(0.4, 0.0), 0.0, FALL);
         let lowest = (0..path.len())
             .min_by(|a, b| path[*a].total_cmp(&path[*b]))
             .expect("a path");
@@ -541,11 +516,11 @@ mod tests {
 
     #[test]
     fn a_slow_frame_is_the_same_motion_as_many_fast_ones() {
-        let mut slow = Spring::new(0.2, 0.0);
-        let mut fast = Spring::new(0.2, 0.0);
-        slow.step(1.0, SETTLE, 0.1);
+        let mut slow = leaf(0.2, 0.0);
+        let mut fast = leaf(0.2, 0.0);
+        fall(&mut slow, 1.0, SETTLE, None, 0.1);
         for _ in 0..6 {
-            fast.step(1.0, SETTLE, 1.0 / 60.0);
+            fall(&mut fast, 1.0, SETTLE, None, 1.0 / 60.0);
         }
         assert!((slow.x - fast.x).abs() < 0.01);
     }
