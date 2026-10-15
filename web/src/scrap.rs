@@ -43,6 +43,23 @@ pub fn fly_offset(row: Spot, hung: Spot) -> (f64, f64) {
     (row_x - hung_x, row_y - hung_y)
 }
 
+/// How far a strip turned `deg` about its top centre (its pivot, where it hangs) lies from
+/// where turning it about its middle would leave it, in px: its middle hangs `half_height`
+/// below the pivot.
+pub fn pivot_shift(deg: f64, half_height: f64) -> (f64, f64) {
+    let turn = deg.to_radians();
+    (-half_height * turn.sin(), half_height * (turn.cos() - 1.0))
+}
+
+/// The angle of a CSS `<n>deg` value, 0 when there is none.
+fn degrees_of(value: &str) -> f64 {
+    value
+        .trim()
+        .strip_suffix("deg")
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or(0.0)
+}
+
 /// Note where the row `id` stands now, for the strip that is about to hang at the pin.
 pub fn note_departure(events: Queue, id: &str) {
     if let Some(from) = row_spot(id) {
@@ -331,6 +348,11 @@ fn fly(scrap: &web_sys::HtmlElement, from: Spot) {
         h: rect.height(),
     };
     let (dx, dy) = fly_offset(from, hung);
+    let half_height = f64::from(scrap.offset_height()) / 2.0;
+    let hang = web_sys::window()
+        .and_then(|window| window.get_computed_style(scrap).ok().flatten())
+        .and_then(|computed| computed.get_property_value("--hang").ok())
+        .map_or(0.0, |value| degrees_of(&value));
     let (style, landed) = (scrap.style(), scrap.style());
     let pull = crate::engine::Pull {
         omega: crate::tuning::SCRAP_FLY_OMEGA,
@@ -343,6 +365,13 @@ fn fly(scrap: &web_sys::HtmlElement, from: Spot) {
         pull,
         FLY_NEAR,
         move |[x, y, turn]| {
+            // The strip turns about its pivot, which would swing its middle off the line
+            // from the row to the pin: shift it back, so it leaves from the row's middle.
+            let ((swing_x, swing_y), (hang_x, hang_y)) = (
+                pivot_shift(hang + turn, half_height),
+                pivot_shift(hang, half_height),
+            );
+            let (x, y) = (x - (swing_x - hang_x), y - (swing_y - hang_y));
             let _ = style.set_property("transition", "none");
             let _ = style.set_property(
                 "transform",
@@ -979,6 +1008,23 @@ mod tests {
             SCRAP_UNDO_MS,
             "paused while taping"
         );
+    }
+
+    #[test]
+    fn a_strip_turned_flat_about_its_pivot_swings_its_middle_up_and_to_the_left() {
+        let (x, y) = pivot_shift(90.0, 56.0);
+        assert!(
+            (x + 56.0).abs() < 1e-9 && (y + 56.0).abs() < 1e-9,
+            "{x} {y}"
+        );
+        assert_eq!(pivot_shift(0.0, 56.0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_hang_is_read_from_its_css_degrees() {
+        assert_eq!(degrees_of(" 3.5deg"), 3.5);
+        assert_eq!(degrees_of("-2deg"), -2.0);
+        assert_eq!(degrees_of(""), 0.0);
     }
 
     #[test]
