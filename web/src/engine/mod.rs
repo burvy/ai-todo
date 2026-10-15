@@ -136,4 +136,118 @@ mod tests {
             "theme.css keyframes differ from the lists above: a new keyframe must be a drawing's own (rule 4), a removed one must leave OWED_KEYFRAMES"
         );
     }
+
+    /// The properties a CSS `transition` may not animate (ARCHITECTURE 8A.2 rule 4): where a
+    /// thing is, how big and how turned. Fades and colours are the style sheet's own.
+    const MOTION_PROPERTIES: [&str; 16] = [
+        "transform",
+        "translate",
+        "rotate",
+        "scale",
+        "left",
+        "right",
+        "top",
+        "bottom",
+        "inset",
+        "width",
+        "height",
+        "max-height",
+        "max-width",
+        "margin",
+        "padding",
+        "clip-path",
+    ];
+
+    /// The transitions that still move or size something, as `selector: property`: each
+    /// goes when its mover joins the world. Delete a line as its transition is deleted.
+    const OWED_TRANSITIONS: [&str; 19] = [
+        // Rambo's ask bubble (rambo.rs, his owner is moving it).
+        ".ask-choice: scale",
+        ".ask.folding: scale",
+        ".ask.folding: translate",
+        ".ask: scale",
+        ".ask: translate",
+        // The planner: a slip's drag and stretch, the placing note, the ribbon.
+        ".bookmark-ribbon: left",
+        ".placement.dragging: rotate",
+        ".placement.dragging: translate",
+        ".placement.stretching: height",
+        ".placing-note.open: translate",
+        ".placing-note: translate",
+        // Strips: the stack's slide, the leaving slide and the press.
+        ".scrap-undo.done: transform",
+        ".scrap-undo.done: translate",
+        ".scrap-undo: transform",
+        // Small feedback and sheets: a press, the lamp's cord, the gear, the edit sheet.
+        ".add-by-hand: scale",
+        ".desk-lamp-cord: transform",
+        ".gear: transform",
+        ".paper-field, .paper-radio, .paper-page button: transform",
+        ".task-dialog: translate",
+    ];
+
+    /// Every `selector: property` the style sheet's transitions animate that is a motion
+    /// property, sorted, without comments.
+    fn motion_transitions(css: &str) -> Vec<String> {
+        let mut plain = String::new();
+        let mut rest = css;
+        while let Some(open) = rest.find("/*") {
+            plain.push_str(&rest[..open]);
+            rest = rest[open..].split_once("*/").map_or("", |(_, after)| after);
+        }
+        plain.push_str(rest);
+        let mut found = Vec::new();
+        for (at, _) in plain.match_indices("transition:") {
+            let Some(open) = plain[..at].rfind('{') else {
+                continue;
+            };
+            let from = plain[..open].rfind(['{', '}']).map_or(0, |i| i + 1);
+            let selector = plain[from..open]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let value = plain[at + "transition:".len()..]
+                .split(';')
+                .next()
+                .unwrap_or("");
+            let (mut depth, mut start, mut parts) = (0_i32, 0, Vec::new());
+            for (i, c) in value.char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    ',' if depth == 0 => {
+                        parts.push(&value[start..i]);
+                        start = i + 1;
+                    }
+                    _ => {}
+                }
+            }
+            parts.push(&value[start..]);
+            for property in parts
+                .iter()
+                .filter_map(|part| part.split_whitespace().next())
+            {
+                if MOTION_PROPERTIES.contains(&property) {
+                    found.push(format!("{selector}: {property}"));
+                }
+            }
+        }
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
+
+    #[test]
+    fn css_transitions_never_move_or_size_a_thing_unless_owed_to_the_world() {
+        let found = motion_transitions(include_str!("../../theme.css"));
+        let mut owed: Vec<String> = OWED_TRANSITIONS
+            .iter()
+            .map(|line| (*line).to_owned())
+            .collect();
+        owed.sort_unstable();
+        assert_eq!(
+            found, owed,
+            "theme.css transitions that move or size something differ from OWED_TRANSITIONS: a new one must be a body in the world (rule 4), a removed one must leave the list"
+        );
+    }
 }
