@@ -205,12 +205,14 @@ function page(cdp, size, errors) {
     await tap(note.x, note.y);
     await waitFor(() => evaluate(`document.querySelector("main")?.dataset.pane === "0"`), 5000, "the list page to show");
   };
+  // The edit sheet stays in the DOM after it closes; its open property says whether it shows.
+  const sheetOpen = () => evaluate(`!!document.querySelector(".task-dialog")?.open`);
   // A sheet an earlier check failed to close would sit over what the next check taps.
   const closeSheet = async () => {
-    if (!(await has(".task-dialog[open]"))) return;
+    if (!(await sheetOpen())) return;
     const cancel = await rectByText(".task-dialog button", "Cancel");
     if (cancel) await tap(cancel.x + cancel.w / 2, cancel.y + cancel.h / 2);
-    await waitFor(async () => !(await has(".task-dialog[open]")), 5000, "the sheet to close");
+    await waitFor(async () => !(await sheetOpen()), 1500, "the sheet to close");
   };
 
   const pointer = async (phase, x, y) => {
@@ -260,7 +262,7 @@ function page(cdp, size, errors) {
     await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
   };
 
-  return { evaluate, rect, rectByText, text, count, has, pointer, settled, drag, tap, type, enter, reload, escape, backToList, closeSheet, screenshot, errors };
+  return { evaluate, rect, rectByText, text, count, has, sheetOpen, pointer, settled, drag, tap, type, enter, reload, escape, backToList, closeSheet, screenshot, errors };
 }
 
 const scenarios = {
@@ -336,15 +338,15 @@ const scenarios = {
     await waitFor(() => p.has("li.task-row .task-open"), 10000, "a row to edit");
     const open = await p.rect("li.task-row .task-open");
     await p.tap(open.x + open.w / 2, open.y + open.h / 2);
-    await waitFor(() => p.has(".task-dialog[open]"), 8000, "the edit sheet");
-    await p.settled(".task-dialog[open]");
+    await waitFor(() => p.sheetOpen(), 8000, "the edit sheet");
     const title = `smoke title ${Date.now() % 100000}`;
     await p.evaluate(`(() => { const i = document.querySelector(".task-dialog label input");
       i.focus(); i.select(); return true; })()`);
     await p.type(title);
     const save = await waitFor(() => p.rectByText(".task-dialog button", "Save"), 5000, "the Save button");
     await p.tap(save.x + save.w / 2, save.y + save.h / 2);
-    await waitFor(async () => !(await p.has(".task-dialog[open]")), 8000, "the sheet to close");
+    // The slide-out takes about 500 ms after Save; the check allows 1500 ms.
+    await waitFor(async () => !(await p.sheetOpen()), 1500, "the sheet to close");
     await waitFor(
       () => p.evaluate(`[...document.querySelectorAll("li.task-row")].some((r) => r.dataset.title === ${JSON.stringify(title)})`),
       8000,
