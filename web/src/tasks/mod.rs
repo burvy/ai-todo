@@ -1392,6 +1392,20 @@ mod tests {
         assert!(text.contains("padding: 0"), "{text}");
     }
 
+    /// A horizontal swipe on the open edit sheet is the page's to ignore: without this the
+    /// browser takes it as its history "back" and leaves the app for a blank page.
+    #[test]
+    fn a_stray_swipe_never_becomes_the_browsers_back() {
+        // The file is CRLF in a Windows checkout and LF in Git.
+        let css = include_str!("../../theme.css").replace("\r\n", "\n");
+        let rule = css
+            .split("html,\nbody {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("theme.css has an html, body rule");
+        assert!(rule.contains("overscroll-behavior-x: none"), "{rule}");
+    }
+
     /// FRONTEND-PLAN 1.8 item 7: the edit sheet is a real modal (focus trapped, page
     /// inert, Escape closes), not a dialog merely given the `open` attribute.
     #[test]
