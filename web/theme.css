@@ -1778,6 +1778,12 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   white-space: nowrap;
 }
 
+/* Longer or shorter from Rambo's bubble (week.rs:stretch), a slip stretches rather
+   than jumps. Only that slip: every other slip takes its new height at once. */
+.placement.stretching {
+  transition: height var(--dur) var(--arrive-ease);
+}
+
 /* A placed task: a wash of ink across the hour lines, marked by its edge.
    The hour rows are positioned too and come later in the document, so without
    a raised layer the slip paints under them and its grip never gets hit by

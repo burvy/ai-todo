@@ -90,6 +90,8 @@ pub(crate) fn Rambo(
     // What the bubble asks about. It outlives the ask by `ASK_FOLD_MS`, the time
     // it takes to fold back into him (`folding`), so it never vanishes in a frame.
     let asked = RwSignal::new(None::<String>);
+    // What he was dropped on, a row or a slip, which decides the bubble's choices.
+    let asked_on = RwSignal::new(mascot::Asked::Row);
     let folding = RwSignal::new(false);
     // Opening, it starts tucked into him until it is measured and placed (above or
     // below him), then grows out to that place.
@@ -560,6 +562,15 @@ pub(crate) fn Rambo(
                     }
                     crate::scrap::forget_departure(&task_id);
                 });
+            }
+            mascot::Choice::Longer | mascot::Choice::Shorter => {
+                let stretch = if choice == mascot::Choice::Longer {
+                    crate::placing::Stretch::Longer
+                } else {
+                    crate::placing::Stretch::Shorter
+                };
+                crate::week::stretch(&TaskId(task_id), stretch, snapshot, set_snapshot, set_error);
+                chosen();
             }
         }
     };
@@ -1139,9 +1150,21 @@ pub(crate) fn Rambo(
                     {
                         let task_id = row.get_attribute("data-id").unwrap_or_default();
                         let task_title = row.get_attribute("data-title").unwrap_or_default();
+                        asked_on.set(mascot::Asked::Row);
                         set_state.set(mascot::transition(
                             &before,
                             mascot::Event::DropTask { task_id, title: task_title },
+                        ));
+                        return;
+                    }
+                    // Dropped on a slip in the planner, he asks about its time.
+                    if before == mascot::State::Dragging
+                        && let Some((id, title, repeats)) = crate::week::slip_at(client_x, client_y)
+                    {
+                        asked_on.set(mascot::Asked::Slip { repeats });
+                        set_state.set(mascot::transition(
+                            &before,
+                            mascot::Event::DropTask { task_id: id.0, title },
                         ));
                         return;
                     }
@@ -1224,11 +1247,11 @@ pub(crate) fn Rambo(
                         >
                             <span class="ask-question">"What about "<q>{title.clone()}</q>"?"</span>
                             <span class="ask-choices">
-                                {mascot::Choice::ALL.map(|choice| view! {
+                                {mascot::offered(asked_on.get_untracked()).iter().map(|&choice| view! {
                                     <button type="button" class="ask-choice" on:click=move |_| choose(choice)>
                                         {choice.label()}
                                     </button>
-                                })}
+                                }).collect_view()}
                             </span>
                         </span>
                     }.into_any(),

@@ -675,7 +675,6 @@ pub(crate) fn local_time_label(
 /// What an occurrence row's id is named from: `"{series_id}:{date}"`, the
 /// original local date of the expansion. `None` for a plain task id, whose
 /// move is a normal task PATCH.
-#[cfg(any(target_arch = "wasm32", test))]
 fn occurrence_of(id: &TaskId) -> Option<(String, chrono::NaiveDate)> {
     let (series_id, date) = id.0.rsplit_once(':')?;
     let date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
@@ -797,6 +796,7 @@ fn PlacementBlock(
 ) -> impl IntoView {
     let task_id = placement.task.clone();
     let label_task_id = task_id.clone();
+    let slip_id = task_id.clone();
     let drag_task_id = task_id.clone();
     // Each handler owns its id clone: none of them may move the shared one.
     #[cfg(target_arch = "wasm32")]
@@ -1031,6 +1031,10 @@ fn PlacementBlock(
             on:pointermove=grip_move
             on:pointerup=grip_end
             on:pointercancel=grip_cancel
+            // Who the slip is, for Rambo dropped on it (`slip_at`).
+            data-id=slip_id.0.clone()
+            data-repeats=occurrence_of(&slip_id).is_some().then_some("")
+            data-title=move || placement_label(&snapshot.get(), &slip_id)
         >
             <span
                 class="placement-grip"
@@ -1100,8 +1104,7 @@ fn place_at(
 #[cfg(target_arch = "wasm32")]
 fn drop_location(x: f64, y: f64) -> Option<(i64, f32)> {
     use wasm_bindgen::JsCast;
-    let document = leptos::prelude::document();
-    let element = document.element_from_point(x as f32, y as f32)?;
+    let element = under(x, y)?;
     let day = element
         .closest(".day")
         .ok()
@@ -1139,10 +1142,7 @@ fn landing_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
 /// planner or over a slip, which is a task of its own.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn hour_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
-    let over_slip = leptos::prelude::document()
-        .element_from_point(x as f32, y as f32)
-        .is_some_and(|el| el.closest(".placement").ok().flatten().is_some());
-    if over_slip {
+    if slip_at(x, y).is_some() {
         return None;
     }
     landing_at(x, y, settings)
@@ -1152,6 +1152,123 @@ pub(crate) fn hour_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn hour_at(_x: f64, _y: f64, _settings: &Settings) -> Option<Slot> {
     None
+}
+
+/// The slip under a point on the screen: the task it is, its title, and whether it is
+/// one day of a repeating series. What Rambo dropped on the planner asks about.
+pub(crate) fn slip_at(x: f64, y: f64) -> Option<(TaskId, String, bool)> {
+    let slip = under(x, y)?.closest(".placement[data-id]").ok().flatten()?;
+    Some((
+        TaskId(slip.get_attribute("data-id")?),
+        slip.get_attribute("data-title").unwrap_or_default(),
+        slip.has_attribute("data-repeats"),
+    ))
+}
+
+/// The topmost element at a point, looking past Rambo: while he is carried he is
+/// under the finger himself, and a hold or a drop means what lies beneath him.
+fn under(x: f64, y: f64) -> Option<web_sys::Element> {
+    use wasm_bindgen::JsCast as _;
+    leptos::prelude::document()
+        .elements_from_point(x as f32, y as f32)
+        .iter()
+        .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+        .find(|el| el.closest(".rambo").ok().flatten().is_none())
+}
+
+/// Makes task `id` a quarter hour longer or shorter (`placing::stretched`): its slip
+/// grows or shrinks on the page at once, and the new length is saved. A length already
+/// at its limit stays as it is.
+pub(crate) fn stretch(
+    id: &TaskId,
+    stretch: crate::placing::Stretch,
+    snapshot: ReadSignal<Snapshot>,
+    set_snapshot: WriteSignal<Snapshot>,
+    set_error: WriteSignal<Option<String>>,
+) {
+    let Some((from, updated_at)) = snapshot.with_untracked(|snap| {
+        snap.tasks
+            .iter()
+            .find(|task| task.id == *id)
+            .map(|task| (task.duration_min, task.updated_at))
+    }) else {
+        return;
+    };
+    let to = crate::placing::stretched(from, stretch);
+    if to == from {
+        return;
+    }
+    #[cfg(target_arch = "wasm32")]
+    resize_slip(id, from, to);
+    let id = id.clone();
+    wasm_bindgen_futures::spawn_local(async move {
+        let body = crate::api::PatchTaskBody::new()
+            .duration_min(to)
+            .updated_at(updated_at);
+        match crate::api::patch_task(&id, body).await {
+            Ok(new_snapshot) => {
+                // The saved plan draws the slip anew; it carries on from the height it
+                // had reached instead of starting at its new one. The redraw runs as a
+                // microtask, so the ease queued after it lands before the next paint:
+                // a frame later, the new slip would show once at its planned height.
+                #[cfg(target_arch = "wasm32")]
+                let reached = slips_of(&id)
+                    .first()
+                    .map(|slip| slip.get_bounding_client_rect().height());
+                set_snapshot.set(new_snapshot);
+                #[cfg(target_arch = "wasm32")]
+                if let Some(reached) = reached {
+                    wasm_bindgen_futures::spawn_local(async move { ease_slip_from(&id, reached) });
+                }
+            }
+            Err(e) => set_error.set(Some(format!("Resize failed: {e}"))),
+        }
+    });
+}
+
+/// Task `id`'s slips on the page.
+#[cfg(target_arch = "wasm32")]
+fn slips_of(id: &TaskId) -> Vec<web_sys::HtmlElement> {
+    use wasm_bindgen::JsCast as _;
+    let slips = leptos::prelude::document().get_elements_by_class_name("placement");
+    (0..slips.length())
+        .filter_map(|i| slips.item(i))
+        .filter_map(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
+        .filter(|slip| slip.get_attribute("data-id").as_deref() == Some(id.0.as_str()))
+        .collect()
+}
+
+/// Grows or shrinks task `id`'s slip on the page from `from` to `to` minutes long, so
+/// it moves the moment it is asked, before the change is saved.
+#[cfg(target_arch = "wasm32")]
+fn resize_slip(id: &TaskId, from: u16, to: u16) {
+    let px = (f32::from(to) - f32::from(from)) / 60.0 * HOUR_PX;
+    for slip in slips_of(id) {
+        let height = slip.get_bounding_client_rect().height() as f32 + px;
+        let _ = slip.class_list().add_1("stretching");
+        let _ = slip
+            .style()
+            .set_property("height", &format!("{:.1}px", height.max(0.0)));
+    }
+}
+
+/// Eases task `id`'s newly drawn slip from `reached` px to the height the plan gives it
+/// (`.stretching`'s height transition, which only a stretched slip has).
+#[cfg(target_arch = "wasm32")]
+fn ease_slip_from(id: &TaskId, reached: f64) {
+    for slip in slips_of(id) {
+        let style = slip.style();
+        let Ok(planned) = style.get_property_value("height") else {
+            continue;
+        };
+        let _ = style.set_property("transition", "none");
+        let _ = style.set_property("height", &format!("{reached:.2}px"));
+        // Lay it out at the height reached before it eases on.
+        let _ = slip.offset_height();
+        let _ = style.remove_property("transition");
+        let _ = slip.class_list().add_1("stretching");
+        let _ = style.set_property("height", &planned);
+    }
 }
 
 /// The paper a not-yet-lifted finger slides over: `main` along its length,
