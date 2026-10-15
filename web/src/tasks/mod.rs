@@ -108,6 +108,9 @@ struct EditForm {
     time: String,
 }
 
+/// What the sheet says when Save is pressed with no title.
+const MISSING_TITLE_NOTE: &str = "Give the task a name first.";
+
 /// The id the sheet carries while it holds a task nobody has made yet (the + button). No
 /// server id looks like it, and nothing is stored until Save.
 const DRAFT_ID: &str = "draft";
@@ -359,6 +362,8 @@ pub(crate) fn TaskList(
     let (edit_when, set_edit_when) = signal(EditWhen::Anytime);
     let (edit_datetime, set_edit_datetime) = signal(String::new());
     let (edit_time_error, set_edit_time_error) = signal::<Option<&'static str>>(None);
+    // Save was pressed with no title: say so rather than do nothing.
+    let (title_missing, set_title_missing) = signal(false);
     // The repeats block (docs/ARCHITECTURE.md 7.1): which weekdays a repeat
     // runs on, and the optional end date and time for a series.
     let edit_weekdays = RwSignal::new(Vec::<Weekday>::new());
@@ -422,6 +427,7 @@ pub(crate) fn TaskList(
         edit_time.set(form.time);
         set_editing_task.set(Some(id.clone()));
         set_edit_time_error.set(None);
+        set_title_missing.set(false);
     };
     Effect::new(move |_| {
         if let Some(id) = edit_request.get() {
@@ -446,6 +452,7 @@ pub(crate) fn TaskList(
         edit_until.set(form.until);
         edit_time.set(form.time);
         set_edit_time_error.set(None);
+        set_title_missing.set(false);
         set_editing_task.set(Some(task.id.clone()));
         draft.set(Some(task));
     });
@@ -845,7 +852,10 @@ pub(crate) fn TaskList(
                                 "Title "
                                 <input
                                     prop:value=edit_title
-                                    on:input=move |event| set_edit_title.set(event_target_value(&event))
+                                    on:input=move |event| {
+                                        set_edit_title.set(event_target_value(&event));
+                                        set_title_missing.set(false);
+                                    }
                                 />
                             </label>
                             <fieldset>
@@ -937,6 +947,9 @@ pub(crate) fn TaskList(
                                     <p class="time-error" role="alert">{message}</p>
                                 })}
                             </fieldset>
+                            })}
+                            {move || title_missing.get().then(|| view! {
+                                <p class="time-error" role="alert">{MISSING_TITLE_NOTE}</p>
                             })}
                             <div class="dialog-actions">
                                 {if recurring {
@@ -1101,6 +1114,10 @@ pub(crate) fn TaskList(
                                             let task_id = task_id.clone();
                                             let title = edit_title.get_untracked().trim().to_string();
                                             let duration = edit_duration.get_untracked().parse::<u16>().ok();
+                                            if title.is_empty() {
+                                                set_title_missing.set(true);
+                                                return;
+                                            }
                                             // Days picked: the task becomes a weekly series
                                             // (docs/ARCHITECTURE.md 7.1), and the When field does
                                             // not apply — a rule carries its own weekly time.
