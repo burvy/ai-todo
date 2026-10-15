@@ -247,9 +247,9 @@ planner page shows through it live (its own slips and lines, not a picture), in 
 hole reads as a hole even where the planner is empty paper. On a phone the
 planner already lies under the list; on a desk, where the two pages are a spread side by side,
 it slides under the list for as long as the tear lasts (`TEAR_SLIDE_MS`) and slides back: a day
-column (the first with a slip) is brought under where the tear starts, and an hour line to its
-level, computed from the tear's place (`rip::slide_px`, `lift_px`), so the hole shows hour
-lines and column rules and not just the planner's hour labels.
+column (the first with a slip) is brought under where the tear starts (`rip::slide_px`). On
+both, an hour line of that column is brought to the tear's level (`rip::lift_px`), so the hole
+shows hour lines and column rules and not just the planner's hour labels or bare paper.
 The tear follows the finger, never goes back, stops short of the pin's column, and never
 touches a task's words: a press too near a row tears nothing (`rip::lane`). One tear at a
 time. When the finger lets go Rambo notices, hops to the tear and tapes it: a strip of tape
