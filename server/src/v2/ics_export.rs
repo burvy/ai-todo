@@ -70,6 +70,7 @@ mod tests {
             updated_at: start,
             due_tz: None,
             external_uid: None,
+            off_planner: false,
         };
         Snapshot {
             tasks: vec![task],
@@ -80,6 +81,7 @@ mod tests {
                     end: start + chrono::Duration::minutes(60),
                 }],
                 unplaced: vec![],
+                off_planner: vec![],
             },
             tz: "America/New_York".into(),
             generated: start,

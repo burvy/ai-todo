@@ -8,12 +8,12 @@ pub(crate) mod write;
 
 use chrono::{DateTime, NaiveDate, Utc, Weekday};
 use leptos::prelude::*;
-use todo_core::{Snapshot, Source, TaskId, When};
+use todo_core::{Snapshot, Source, TaskDraft, TaskId, When};
 
 use crate::clock::Clock;
 use crate::edits::{EditSink, confirmed, held, patch_and_show, series_note, toggle_done_body};
 use crate::pickers::{PaperDate, PaperDateTime, PaperRadios, PaperTime};
-use crate::{api, mascot, row, scrap, settings, tuning, week};
+use crate::{api, mascot, row, scrap, settings, smudge, tuning, week};
 use fields::{
     EditWhen, WEEKDAY_CHOICES, due_display, local_input_value, series_from_dialog,
     series_patch_from_dialog, toggled_day, typed_when,
@@ -106,6 +106,70 @@ struct EditForm {
     weekdays: Vec<Weekday>,
     until: String,
     time: String,
+}
+
+/// What the sheet says when Save is pressed with no title.
+const MISSING_TITLE_NOTE: &str = "Give the task a name first.";
+
+/// The id the sheet carries while it holds a task nobody has made yet (the + button). No
+/// server id looks like it, and nothing is stored until Save.
+const DRAFT_ID: &str = "draft";
+
+fn is_draft(id: &TaskId) -> bool {
+    id.0 == DRAFT_ID
+}
+
+/// The task a new sheet is drawn from: only what the sheet shows of a task (its title
+/// line and its zone), none of it the server's. The clock fields are the epoch because
+/// nothing here may read the wall clock, and nothing shows them.
+fn blank_task() -> todo_core::Task {
+    todo_core::Task {
+        id: TaskId(DRAFT_ID.to_owned()),
+        title: String::new(),
+        duration_min: DEFAULT_NEW_MINUTES,
+        when: When::Anytime,
+        done: false,
+        order: 0,
+        label: todo_core::Label::Other,
+        priority: todo_core::Priority::Low,
+        source: Source::Text,
+        created: DateTime::UNIX_EPOCH,
+        updated_at: DateTime::UNIX_EPOCH,
+        due_tz: None,
+        external_uid: None,
+        off_planner: false,
+    }
+}
+
+/// How long a task made by hand lasts until you say otherwise.
+const DEFAULT_NEW_MINUTES: u16 = 30;
+
+/// What the sheet shows when it opens on a new task: an empty title, the default length
+/// and no day or repeat.
+fn blank_form() -> EditForm {
+    EditForm {
+        title: String::new(),
+        duration: DEFAULT_NEW_MINUTES.to_string(),
+        when: EditWhen::Anytime,
+        datetime: String::new(),
+        weekdays: Vec::new(),
+        until: String::new(),
+        time: String::new(),
+    }
+}
+
+/// The task a Save on a new sheet makes, or `None` while it lacks a title or a length.
+fn new_task_draft(title: &str, duration: Option<u16>, when: When) -> Option<TaskDraft> {
+    let title = title.trim();
+    let duration_min = duration.filter(|minutes| *minutes > 0)?;
+    (!title.is_empty()).then(|| TaskDraft {
+        title: title.to_owned(),
+        duration_min,
+        when,
+        label: todo_core::Label::Other,
+        priority: todo_core::Priority::Low,
+        source: Source::Text,
+    })
 }
 
 /// The sheet after a refill: each field takes the server's `fresh` value unless the
@@ -272,6 +336,41 @@ pub async fn delete_scribbled(
     scrap::delete_and_lay(task_id, snapshot, scraps, delete).await
 }
 
+/// Whether row `id` is wet: Rambo wrote it less than `INK_WET_MS` ago.
+fn is_wet(written: StoredValue<Vec<(TaskId, f64)>>, id: &TaskId) -> bool {
+    let now = crate::engine::now();
+    written.with_value(|rows| {
+        rows.iter()
+            .any(|(row, at)| row == id && smudge::is_wet(now - at))
+    })
+}
+
+/// A tap at `tap` (on the screen) on row `id` while its ink is wet smears it there.
+fn smudge_if_wet(
+    written: StoredValue<Vec<(TaskId, f64)>>,
+    smudges: RwSignal<Vec<smudge::Smudge>>,
+    id: &TaskId,
+    tap: (f64, f64),
+) {
+    if !is_wet(written, id) {
+        return;
+    }
+    let row = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|doc| {
+            doc.query_selector(&format!("li[data-id=\"{}\"]", id.0))
+                .ok()
+                .flatten()
+        });
+    let Some(row) = row else {
+        return;
+    };
+    let rect = row.get_bounding_client_rect();
+    let at = (tap.0 - rect.left(), tap.1 - rect.top());
+    let seed = crate::engine::now().to_bits() as u32 ^ smudges.with_untracked(Vec::len) as u32;
+    smudges.update(|all| all.push(smudge::smear(id.clone(), at, seed)));
+}
+
 #[component]
 pub(crate) fn TaskList(
     snapshot: ReadSignal<Snapshot>,
@@ -284,6 +383,8 @@ pub(crate) fn TaskList(
     pen_pos: RwSignal<(f64, f64)>,
     /// A row to open the edit sheet on, set by Rambo's "Edit".
     edit_request: RwSignal<Option<TaskId>>,
+    /// Set by the + beside the capture box: the sheet opens on a new task.
+    new_task: RwSignal<bool>,
     /// The task whose edit sheet is open; Rambo listens for its change while it is.
     open_sheet: RwSignal<Option<TaskId>>,
     /// The scrap a swiped-out row leaves in the corner, to tape it back.
@@ -292,11 +393,17 @@ pub(crate) fn TaskList(
     #[cfg(not(target_arch = "wasm32"))]
     let _ = pen_pos;
     let (editing_task, set_editing_task) = (open_sheet.read_only(), open_sheet.write_only());
+    // Rows Rambo has written and when (`engine::now`): wet for a while, and a tap then
+    // smudges the ink instead of opening the row (`smudge.rs`).
+    let written = StoredValue::new(Vec::<(TaskId, f64)>::new());
+    let smudges = RwSignal::new(Vec::<smudge::Smudge>::new());
     let (edit_title, set_edit_title) = signal(String::new());
     let (edit_duration, set_edit_duration) = signal(String::new());
     let (edit_when, set_edit_when) = signal(EditWhen::Anytime);
     let (edit_datetime, set_edit_datetime) = signal(String::new());
     let (edit_time_error, set_edit_time_error) = signal::<Option<&'static str>>(None);
+    // Save was pressed with no title: say so rather than do nothing.
+    let (title_missing, set_title_missing) = signal(false);
     // The repeats block (docs/ARCHITECTURE.md 7.1): which weekdays a repeat
     // runs on, and the optional end date and time for a series.
     let edit_weekdays = RwSignal::new(Vec::<Weekday>::new());
@@ -312,6 +419,8 @@ pub(crate) fn TaskList(
     // behind it inert, lifts it into the top layer (above Rambo) and lets Escape
     // close it (the `cancel` event). It follows `editing_task`.
     let sheet = NodeRef::<leptos::html::Dialog>::new();
+    // The task the + sheet is making; it lives here until Save and is never sent before.
+    let draft = RwSignal::new(None::<todo_core::Task>);
     Effect::new(move |_| {
         let wanted = editing_task.get().is_some();
         if let Some(dialog) = sheet.get() {
@@ -358,11 +467,39 @@ pub(crate) fn TaskList(
         edit_time.set(form.time);
         set_editing_task.set(Some(id.clone()));
         set_edit_time_error.set(None);
+        set_title_missing.set(false);
     };
     Effect::new(move |_| {
         if let Some(id) = edit_request.get() {
             edit_request.set(None);
             open_editor(&id);
+        }
+    });
+    // The +: the same sheet, on a blank form.
+    Effect::new(move |_| {
+        if !new_task.get() {
+            return;
+        }
+        new_task.set(false);
+        let form = blank_form();
+        let task = blank_task();
+        shown.set_value(None);
+        set_edit_title.set(form.title);
+        set_edit_duration.set(form.duration);
+        set_edit_when.set(form.when);
+        set_edit_datetime.set(form.datetime);
+        edit_weekdays.set(form.weekdays);
+        edit_until.set(form.until);
+        edit_time.set(form.time);
+        set_edit_time_error.set(None);
+        set_title_missing.set(false);
+        set_editing_task.set(Some(task.id.clone()));
+        draft.set(Some(task));
+    });
+    // Closed, the sheet keeps nothing of a task that was never made.
+    Effect::new(move |_| {
+        if editing_task.get().is_none() {
+            draft.set(None);
         }
     });
     let visible_tasks = move || {
@@ -471,6 +608,21 @@ pub(crate) fn TaskList(
                         ));
                         if let Some(row) = row.as_ref() {
                             write::write_row_title(row, pen_pos, mascot_state, set_state).await;
+                            // The ink he has just laid is wet, and shines until it dries.
+                            let now = crate::engine::now();
+                            written.update_value(|rows| {
+                                rows.retain(|(_, at)| smudge::is_wet(now - at));
+                                rows.push((task_id.clone(), now));
+                            });
+                            if let Some(style) = write::inline_style(row) {
+                                style
+                                    .set_property(
+                                        "--ink-wet-ms",
+                                        &format!("{}ms", tuning::INK_WET_MS),
+                                    )
+                                    .ok();
+                            }
+                            row.class_list().add_1("ink-wet").ok();
                         }
                         // Fly home after this row. A row finished without him (he
                         // was taken elsewhere) leaves him where he is.
@@ -593,7 +745,8 @@ pub(crate) fn TaskList(
                                     // A tap belongs to the controls, which answer
                                     // it themselves; a scroll and a backed-out
                                     // swipe leave the list exactly as it was.
-                                    row::Release::Tap | row::Release::Scroll | row::Release::SnapBack => {}
+                                    row::Release::Tap => smudge_if_wet(written, smudges, &dragged, (x, y)),
+                                    row::Release::Scroll | row::Release::SnapBack => {}
                                     row::Release::Done => {
                                         let task_id = TaskId(drop_task_id_clone.clone());
                                         let set_snapshot = set_snapshot_clone;
@@ -681,7 +834,13 @@ pub(crate) fn TaskList(
                             class="task-open"
                             on:click={
                                 let id = task.id.clone();
-                                move |_| open_editor(&id)
+                                // Wet, a tap smudges the ink (the row's release does
+                                // that) instead of opening the row.
+                                move |_| {
+                                    if !is_wet(written, &id) {
+                                        open_editor(&id);
+                                    }
+                                }
                             }
                         >
                             <span class="pen-title-wrap">
@@ -705,6 +864,7 @@ pub(crate) fn TaskList(
                                 aria-label=format!("Delete {}", task_title)
                             >"×"</button>
                         })}
+                        <smudge::Smudges task=task.id.clone() smudges />
                     </li>
                         }
 
@@ -720,11 +880,18 @@ pub(crate) fn TaskList(
         >
             <form method="dialog">
                 <h3>{move || match editing_task.get() {
+                    Some(id) if is_draft(&id) => "New task",
                     Some(id) if occurrence_parts(&id.0).is_some() => "Edit series",
                     _ => "Edit task",
                 }}</h3>
                 {move || editing_task.get().and_then(|id| {
-                    snapshot.get().tasks.into_iter().find(|task| task.id == id).map(|task| {
+                    snapshot
+                        .get()
+                        .tasks
+                        .into_iter()
+                        .find(|task| task.id == id)
+                        .or_else(|| draft.get().filter(|task| task.id == id))
+                        .map(|task| {
                         let imported = task.source == Source::Calendar;
                         let task_id = task.id.clone();
                         let task_done = task.done;
@@ -748,7 +915,10 @@ pub(crate) fn TaskList(
                                 "Title "
                                 <input
                                     prop:value=edit_title
-                                    on:input=move |event| set_edit_title.set(event_target_value(&event))
+                                    on:input=move |event| {
+                                        set_edit_title.set(event_target_value(&event));
+                                        set_title_missing.set(false);
+                                    }
                                 />
                             </label>
                             <fieldset>
@@ -840,6 +1010,9 @@ pub(crate) fn TaskList(
                                     <p class="time-error" role="alert">{message}</p>
                                 })}
                             </fieldset>
+                            })}
+                            {move || title_missing.get().then(|| view! {
+                                <p class="time-error" role="alert">{MISSING_TITLE_NOTE}</p>
                             })}
                             <div class="dialog-actions">
                                 {if recurring {
@@ -959,6 +1132,7 @@ pub(crate) fn TaskList(
                                     view! {
                                 <button
                                     type="button"
+                                    hidden=is_draft(&task_id)
                                     on:click={
                                         let task_id = task_id.clone();
                                         move |_| {
@@ -977,6 +1151,7 @@ pub(crate) fn TaskList(
                                 >{if task.done { "Undone" } else { "Done" }}</button>
                                 <button
                                     type="button"
+                                    hidden=is_draft(&task_id)
                                     on:click={
                                         let task_id = task_id.clone();
                                         move |_| {
@@ -1002,6 +1177,10 @@ pub(crate) fn TaskList(
                                             let task_id = task_id.clone();
                                             let title = edit_title.get_untracked().trim().to_string();
                                             let duration = edit_duration.get_untracked().parse::<u16>().ok();
+                                            if title.is_empty() {
+                                                set_title_missing.set(true);
+                                                return;
+                                            }
                                             // Days picked: the task becomes a weekly series
                                             // (docs/ARCHITECTURE.md 7.1), and the When field does
                                             // not apply — a rule carries its own weekly time.
@@ -1026,14 +1205,47 @@ pub(crate) fn TaskList(
                                                             // one-off row it grew out of. Not
                                                             // crossed out - the user never
                                                             // deleted it, it was absorbed.
-                                                            if let Ok(snapshot) = api::delete_task(&task_id).await {
-                                                                set_snapshot.set(snapshot);
+                                                            let absorbed = if is_draft(&task_id) {
+                                                                Ok(None)
+                                                            } else {
+                                                                api::delete_task(&task_id).await.map(Some)
+                                                            };
+                                                            if let Ok(dropped) = absorbed {
+                                                                if let Some(snapshot) = dropped {
+                                                                    set_snapshot.set(snapshot);
+                                                                }
                                                             } else {
                                                                 set_error.set(Some(
                                                                     "The weekly series was made, but the old row stayed — delete it if you don't want it twice."
                                                                         .to_owned(),
                                                                 ));
                                                             }
+                                                            set_editing_task.set(None);
+                                                        }
+                                                        Err(e) => set_error.set(Some(series_note(&e))),
+                                                    }
+                                                });
+                                                return;
+                                            }
+                                            if is_draft(&task_id) {
+                                                let when = match typed_when(
+                                                    edit_when.get_untracked(),
+                                                    &edit_datetime.get_untracked(),
+                                                    Some(&blank_task()),
+                                                ) {
+                                                    Ok(when) => when,
+                                                    Err(message) => {
+                                                        set_edit_time_error.set(Some(message));
+                                                        return;
+                                                    }
+                                                };
+                                                let Some(made) = new_task_draft(&title, duration, when) else {
+                                                    return;
+                                                };
+                                                wasm_bindgen_futures::spawn_local(async move {
+                                                    match api::create_task(&made).await {
+                                                        Ok(snapshot) => {
+                                                            set_snapshot.set(snapshot);
                                                             set_editing_task.set(None);
                                                         }
                                                         Err(e) => set_error.set(Some(series_note(&e))),
@@ -1117,6 +1329,27 @@ mod tests {
 
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn a_new_sheet_starts_empty_with_the_default_length_and_no_day() {
+        let form = blank_form();
+        assert_eq!(form.title, "");
+        assert_eq!(form.duration, DEFAULT_NEW_MINUTES.to_string());
+        assert_eq!(form.when, EditWhen::Anytime);
+        assert!(form.weekdays.is_empty() && form.until.is_empty() && form.time.is_empty());
+        assert!(is_draft(&blank_task().id));
+        assert!(!is_draft(&TaskId("t1".into())));
+    }
+
+    #[test]
+    fn a_new_task_needs_a_title_and_a_length_and_is_trimmed() {
+        let made = new_task_draft("  Buy stamps ", Some(15), When::Anytime).expect("a task");
+        assert_eq!((made.title.as_str(), made.duration_min), ("Buy stamps", 15));
+        assert_eq!(made.source, Source::Text);
+        assert!(new_task_draft("   ", Some(15), When::Anytime).is_none());
+        assert!(new_task_draft("Buy stamps", None, When::Anytime).is_none());
+        assert!(new_task_draft("Buy stamps", Some(0), When::Anytime).is_none());
+    }
 
     #[test]
     fn overdue_only_applies_to_incomplete_due_tasks() {
@@ -1321,6 +1554,7 @@ mod tests {
             updated_at: created,
             due_tz: None,
             external_uid: None,
+            off_planner: false,
         });
         snapshot
     }

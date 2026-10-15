@@ -47,7 +47,7 @@ pub fn data_path_from_env() -> std::path::PathBuf {
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
@@ -63,6 +63,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_9,
     MIGRATION_10,
     MIGRATION_11,
+    MIGRATION_12,
 ];
 
 const MIGRATION_1: &str = "
@@ -223,6 +224,11 @@ ALTER TABLE v2_users ADD COLUMN day_deadline TEXT;
 ALTER TABLE v2_users ADD COLUMN day_placement TEXT;
 ";
 
+/// The user took a task off the planner (ARCHITECTURE.md 4.2). The default is 0, so a
+/// row written before the flag existed is still planned, as it always was.
+const MIGRATION_12: &str =
+    "ALTER TABLE v2_tasks ADD COLUMN off_planner INTEGER NOT NULL DEFAULT 0;";
+
 /// How a day-setting time is written in the database and on the wire.
 const DAY_TIME_FORMAT: &str = "%H:%M";
 
@@ -266,7 +272,7 @@ fn hash_plain_sessions(conn: &Connection) -> rusqlite::Result<()> {
 /// be added to the `SELECT` and forgotten in the `INSERT`. The index below is
 /// checked against it by a test.
 const TASK_COLUMNS: &str = "id, title, duration_min, when_kind, when_time, done, \"order\", \
-                            label, priority, source, created, external_uid, updated_at, due_tz";
+                            label, priority, source, created, external_uid, updated_at, due_tz, off_planner";
 
 /// A store that could not answer.
 ///
@@ -1368,7 +1374,7 @@ impl Store for SqliteStore {
             .execute(
                 &format!(
                     "INSERT INTO v2_tasks ({TASK_COLUMNS}, user_id) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16) \
                  ON CONFLICT(id) DO UPDATE SET \
                      title = excluded.title, \
                      duration_min = excluded.duration_min, \
@@ -1382,7 +1388,8 @@ impl Store for SqliteStore {
                      created = excluded.created, \
                      external_uid = excluded.external_uid, \
                      updated_at = excluded.updated_at, \
-                     due_tz = excluded.due_tz \
+                     due_tz = excluded.due_tz, \
+                     off_planner = excluded.off_planner \
                  WHERE v2_tasks.user_id = excluded.user_id"
                 ),
                 params![
@@ -1400,6 +1407,7 @@ impl Store for SqliteStore {
                     task.external_uid,
                     format_ts(task.updated_at),
                     task.due_tz,
+                    i64::from(task.off_planner),
                     user,
                 ],
             )
@@ -2199,6 +2207,7 @@ fn read_task(row: &rusqlite::Row<'_>) -> Result<Task, rusqlite::Error> {
     let created: String = row.get(10)?;
     let updated_at: String = row.get(12)?;
     let due_tz: Option<String> = row.get(13)?;
+    let off_planner: i64 = row.get(14)?;
 
     Ok(Task {
         id: TaskId(row.get(0)?),
@@ -2216,6 +2225,7 @@ fn read_task(row: &rusqlite::Row<'_>) -> Result<Task, rusqlite::Error> {
         updated_at: parse_ts(&updated_at).unwrap_or(DateTime::UNIX_EPOCH),
         due_tz,
         external_uid: row.get(11)?,
+        off_planner: off_planner != 0,
     })
 }
 
@@ -2511,6 +2521,7 @@ mod tests {
             updated_at: at(9),
             due_tz: None,
             external_uid: None,
+            off_planner: false,
         }
     }
 
@@ -2540,6 +2551,21 @@ mod tests {
             stored[0].due_tz.as_deref(),
             Some("America/New_York"),
             "a deadline's zone must survive a round trip"
+        );
+    }
+
+    /// The task's "off the planner" flag (docs/ARCHITECTURE.md 4.2) rides with the task
+    /// through whichever store, and a task without it comes back on the planner.
+    fn off_planner_round_trips(store: &dyn Store) {
+        let mut held = task("held", 0);
+        held.off_planner = true;
+        store.put(USER, held.clone()).unwrap();
+        store.put(USER, task("planned", 1)).unwrap();
+
+        assert!(read(store, &held.id).off_planner, "the flag must survive");
+        assert!(
+            !read(store, &TaskId("planned".into())).off_planner,
+            "a task nobody took off is still planned"
         );
     }
 
@@ -3266,6 +3292,7 @@ mod tests {
         on_disk(users_are_isolated);
         on_disk(store_contract);
         on_disk(due_tz_round_trips);
+        on_disk(off_planner_round_trips);
         on_disk(series_round_trip);
         on_disk(series_are_isolated);
         on_disk(adoption_moves_anonymous_tasks_and_ends_the_id);
@@ -3333,6 +3360,7 @@ mod tests {
         users_are_isolated(&MemoryStore::new());
         store_contract(&MemoryStore::new());
         due_tz_round_trips(&MemoryStore::new());
+        off_planner_round_trips(&MemoryStore::new());
         series_round_trip(&MemoryStore::new());
         series_are_isolated(&MemoryStore::new());
     }
@@ -3342,6 +3370,7 @@ mod tests {
         users_are_isolated(&SqliteStore::open_in_memory().unwrap());
         store_contract(&SqliteStore::open_in_memory().unwrap());
         due_tz_round_trips(&SqliteStore::open_in_memory().unwrap());
+        off_planner_round_trips(&SqliteStore::open_in_memory().unwrap());
         series_round_trip(&SqliteStore::open_in_memory().unwrap());
         series_are_isolated(&SqliteStore::open_in_memory().unwrap());
     }
@@ -4074,6 +4103,51 @@ mod tests {
             )
             .unwrap();
         assert!(has_table, "v2_usage_totals table was created");
+        let version: i64 = store
+            .conn
+            .lock_recover()
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_version_11_database_migrates_onto_the_planner() {
+        let path = unique_temp_dir().join("rambl.db");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        {
+            let conn = database_at(&path, 11);
+            // A v11 row has no off_planner column at all: this is the shape an install
+            // running before the flag wrote, and every one of its tasks was planned.
+            conn.execute_batch(
+                "INSERT INTO v2_users (id, email, name, picture, created_at, plan) VALUES
+                     ('dan', 'd@example.com', 'Dan', NULL, '2026-01-01T00:00:00+00:00', 'free');
+                 INSERT INTO v2_tasks (id, title, duration_min, when_kind, when_time, done,
+                     \"order\", label, priority, source, created, external_uid, updated_at,
+                     due_tz, user_id) VALUES
+                     ('d1', 'Dan task', 30, 'anytime', NULL, 0, 0,
+                      'work', 'medium', 'text', '2026-02-03T04:05:06+00:00', NULL,
+                      '2026-02-03T04:05:06+00:00', NULL, 'dan');",
+            )
+            .unwrap();
+        }
+
+        let store = SqliteStore::open(&path).expect("a v11 database must open and migrate");
+        let dan = store.tasks("dan").unwrap();
+        assert_eq!(dan.len(), 1, "the pre-flag task survives");
+        assert!(
+            !dan[0].off_planner,
+            "a task written before the flag existed is still planned"
+        );
+
+        // And the column is there to be set afterwards, not just read as a default.
+        let mut take_off = dan[0].clone();
+        take_off.off_planner = true;
+        store.put("dan", take_off).unwrap();
+        assert!(store.tasks("dan").unwrap()[0].off_planner);
+
         let version: i64 = store
             .conn
             .lock_recover()

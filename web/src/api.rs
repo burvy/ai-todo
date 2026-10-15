@@ -360,6 +360,21 @@ pub async fn fetch_snapshot(from: &str) -> Result<Snapshot, ApiError> {
         .map_err(|e| ApiError::Decode(e.to_string()))
 }
 
+/// POST /api/v1/tasks: a task made by hand, already shaped, so it skips the capture
+/// pipeline and Jev. Answers with the snapshot.
+pub async fn create_task(draft: &todo_core::TaskDraft) -> Result<Snapshot, ApiError> {
+    Request::post("/api/v1/tasks")
+        .identity()
+        .header("Content-Type", "application/json")
+        .json(draft)
+        .map_err(|e| ApiError::Network(e.to_string()))?
+        .send_checked()
+        .await?
+        .json::<Snapshot>()
+        .await
+        .map_err(|e| ApiError::Decode(e.to_string()))
+}
+
 /// POST /api/v1/capture with text body
 pub async fn capture_text(text: &str) -> Result<CaptureResponse, ApiError> {
     let body = CaptureTextBody {

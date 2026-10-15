@@ -98,6 +98,9 @@ pub struct Patch {
     pub done: Option<bool>,
     pub label: Option<Label>,
     pub priority: Option<Priority>,
+    /// Take the task off the planner, or put it back. Absent leaves it as it is, so
+    /// this is the whole of "off the planner" for a client (ARCHITECTURE.md 4.2).
+    pub off_planner: Option<bool>,
     /// The `updated_at` of the task as the client last saw it. Absent means "don't check".
     pub updated_at: Option<DateTime<Utc>>,
 }
@@ -308,6 +311,9 @@ impl<S: Store> App<S> {
             updated_at: series.created,
             due_tz: occurrence.due_tz.clone(),
             external_uid: None,
+            // An occurrence is on the planner like any other pinned task. Taking one
+            // off clears the day, it does not hide the whole series.
+            off_planner: false,
         }
     }
 
@@ -396,6 +402,7 @@ impl<S: Store> App<S> {
             updated_at: ctx.now,
             due_tz: due_zone(draft.when, tz),
             external_uid: None,
+            off_planner: false,
         };
         self.store
             .put(user, task.clone())
@@ -434,6 +441,9 @@ impl<S: Store> App<S> {
         }
         if let Some(priority) = patch.priority {
             task.priority = priority;
+        }
+        if let Some(off_planner) = patch.off_planner {
+            task.off_planner = off_planner;
         }
         task.updated_at = ctx.now;
         let task = task.clone();
@@ -513,6 +523,7 @@ impl<S: Store> App<S> {
                 updated_at: ctx.now,
                 due_tz: None,
                 external_uid: event.uid.clone(),
+                off_planner: false,
             };
             created.push(task.id.clone());
             tasks.push(task);
@@ -673,6 +684,7 @@ impl<S: Store> App<S> {
                 updated_at: ctx.now,
                 due_tz: due_zone(draft.when, tz),
                 external_uid: None,
+                off_planner: false,
             };
             ids.push(task.id.clone());
             self.store

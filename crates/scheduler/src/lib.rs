@@ -57,6 +57,9 @@ impl Default for WorkingHours {
 /// the free slot closest to the user's usual time ([`usual_time`], else
 /// `hours.day_only_time`). Only when that day has no room does it take the earliest
 /// free slot before the deadline.
+///
+/// A task the user took off the planner ([`todo_core::Task::off_planner`]) gets no slot
+/// at all and is reported in [`todo_core::Plan::off_planner`] rather than `unplaced`.
 pub fn plan(
     tasks: &[todo_core::Task],
     hours: &WorkingHours,
@@ -66,9 +69,17 @@ pub fn plan(
     let mut placements = Vec::new();
     let mut overdue = Vec::new();
     let mut flexible = Vec::new();
+    let mut off_planner = Vec::new();
 
     for (index, task) in tasks.iter().enumerate() {
         if task.done {
+            continue;
+        }
+        // The user took it off the planner: it keeps its place in the list and its
+        // deadline, but no slot is chosen for it and it is not counted as unplaced.
+        // This is asked for, not a lack of room, so it is reported apart (ARCHITECTURE.md 4.2).
+        if task.off_planner {
+            off_planner.push(task.id.clone());
             continue;
         }
         match task.when {
@@ -124,6 +135,7 @@ pub fn plan(
     todo_core::Plan {
         placements,
         unplaced,
+        off_planner,
     }
 }
 
@@ -360,7 +372,14 @@ mod tests {
             updated_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
             due_tz: None,
             external_uid: None,
+            off_planner: false,
         }
+    }
+
+    /// The same task, but the user took it off the planner.
+    fn off(mut task: todo_core::Task) -> todo_core::Task {
+        task.off_planner = true;
+        task
     }
 
     #[test]
@@ -466,6 +485,130 @@ mod tests {
     }
 
     #[test]
+    fn a_task_taken_off_the_planner_is_named_in_its_own_bucket() {
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        let context = ctx(
+            Utc.with_ymd_and_hms(2026, 1, 5, 7, 0, 0).unwrap(),
+            chrono_tz::UTC,
+        );
+        let result = plan(
+            &[
+                off(task("aside", 60, When::Anytime, 0)),
+                task("wanted", 60, When::Anytime, 1),
+            ],
+            &hours,
+            &context,
+        );
+        assert_eq!(
+            result.off_planner,
+            vec![todo_core::TaskId("aside".into())],
+            "asked for, so reported apart from the overflow"
+        );
+        assert!(
+            !result.unplaced.contains(&todo_core::TaskId("aside".into())),
+            "off the planner is not the same as out of room"
+        );
+        assert_eq!(
+            result
+                .placements
+                .iter()
+                .map(|placement| placement.task.0.as_str())
+                .collect::<Vec<_>>(),
+            vec!["wanted"]
+        );
+    }
+
+    #[test]
+    fn taking_a_task_off_the_planner_frees_the_room_it_would_have_taken() {
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        let context = ctx(
+            Utc.with_ymd_and_hms(2026, 1, 5, 7, 0, 0).unwrap(),
+            chrono_tz::UTC,
+        );
+        let where_next_lands = |blocker: todo_core::Task| {
+            plan(
+                &[blocker, task("next", 60, When::Anytime, 1)],
+                &hours,
+                &context,
+            )
+            .placements
+            .into_iter()
+            .find(|placement| placement.task.0 == "next")
+            .map(|placement| placement.start)
+            .expect("the next task is on the week")
+        };
+        let eight = Utc.with_ymd_and_hms(2026, 1, 5, 8, 0, 0).unwrap();
+        let noon = Utc.with_ymd_and_hms(2026, 1, 5, 12, 0, 0).unwrap();
+        assert_eq!(
+            where_next_lands(task("blocker", 240, When::Anytime, 0)),
+            noon,
+            "the four-hour task above it holds the morning"
+        );
+        assert_eq!(
+            where_next_lands(off(task("blocker", 240, When::Anytime, 0))),
+            eight,
+            "a task off the planner never takes the morning, so the next one starts at eight"
+        );
+    }
+
+    #[test]
+    fn a_pinned_task_taken_off_the_planner_leaves_the_week() {
+        // The flag is the user's decision about the week, and it outranks a pin:
+        // otherwise the task would still be there and "off the planner" would be a lie.
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        let pinned = Utc.with_ymd_and_hms(2026, 1, 5, 11, 0, 0).unwrap();
+        let result = plan(
+            &[off(task("pinned", 60, When::At(pinned), 0))],
+            &hours,
+            &ctx(
+                Utc.with_ymd_and_hms(2026, 1, 5, 7, 0, 0).unwrap(),
+                chrono_tz::UTC,
+            ),
+        );
+        assert!(result.placements.is_empty());
+        assert_eq!(result.off_planner, vec![todo_core::TaskId("pinned".into())]);
+    }
+
+    #[test]
+    fn a_done_task_taken_off_the_planner_is_still_only_off_it() {
+        // Done comes first: a finished task is not on the week whatever else is true,
+        // so it is neither placed nor reported as off the planner.
+        let hours = WorkingHours::every_day(
+            chrono_tz::UTC,
+            NaiveTime::from_hms_opt(8, 0, 0).unwrap(),
+            NaiveTime::from_hms_opt(18, 0, 0).unwrap(),
+        );
+        let mut finished = off(task("finished", 60, When::Anytime, 0));
+        finished.done = true;
+        let result = plan(
+            &[finished],
+            &hours,
+            &ctx(
+                Utc.with_ymd_and_hms(2026, 1, 5, 7, 0, 0).unwrap(),
+                chrono_tz::UTC,
+            ),
+        );
+        assert!(result.placements.is_empty());
+        assert!(result.unplaced.is_empty());
+        assert!(
+            result.off_planner.is_empty(),
+            "it is done; there is nothing left to place"
+        );
+    }
+
+    #[test]
     fn impossible_flexible_task_is_unplaced() {
         let hours = WorkingHours::every_day(
             chrono_tz::UTC,
@@ -534,7 +677,14 @@ mod tests {
                     ),
                     _ => When::Anytime,
                 };
-                task(&format!("task-{index}"), duration, when, index)
+                let made = task(&format!("task-{index}"), duration, when, index);
+                // One task in four has been taken off the planner, so the generator
+                // covers the skip and the three-bucket invariant below.
+                if generator.next(4) == 0 {
+                    off(made)
+                } else {
+                    made
+                }
             })
             .collect()
     }
@@ -1012,8 +1162,16 @@ mod tests {
                 .map(|placement| &placement.task)
                 .collect();
             let unplaced_ids: std::collections::HashSet<_> = first.unplaced.iter().collect();
+            let off_ids: std::collections::HashSet<_> = first.off_planner.iter().collect();
+            // Every task the planner was given lands in exactly one bucket: on the
+            // week, in the overflow, or off the planner on purpose.
             assert!(placed_ids.is_disjoint(&unplaced_ids));
-            assert_eq!(placed_ids.len() + unplaced_ids.len(), tasks.len());
+            assert!(placed_ids.is_disjoint(&off_ids));
+            assert!(unplaced_ids.is_disjoint(&off_ids));
+            assert_eq!(
+                placed_ids.len() + unplaced_ids.len() + off_ids.len(),
+                tasks.len()
+            );
 
             for placement in &first.placements {
                 let task = by_id[&placement.task];

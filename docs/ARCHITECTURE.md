@@ -45,11 +45,12 @@ pub enum When { Anytime, DueBy(DateTime<Utc>), At(DateTime<Utc>) } // At = fixed
 pub struct Task { id: TaskId, title: String, duration_min: u16, when: When, done: bool,
                   order: i64, label: Label, priority: Priority, source: Source, created: DateTime<Utc>,
                   updated_at: DateTime<Utc>, due_tz: Option<String>,
-                  external_uid: Option<String> }   // iCalendar UID for imported events
+                  external_uid: Option<String>,   // iCalendar UID for imported events
+                  off_planner: bool }             // the user took it off the week (4.2)
 
 pub struct TaskDraft { title, duration_min, when, label, priority, source }      // no id
 pub struct Placement { task: TaskId, start: DateTime<Utc>, end: DateTime<Utc> }
-pub struct Plan { placements: Vec<Placement>, unplaced: Vec<TaskId> }
+pub struct Plan { placements: Vec<Placement>, unplaced: Vec<TaskId>, off_planner: Vec<TaskId> }
 pub struct Snapshot { tasks: Vec<Task>, plan: Plan, tz: String, generated: DateTime<Utc> }
 pub struct ApiError { code: ErrorCode, message: String }
 ```
@@ -63,6 +64,27 @@ pub struct ApiError { code: ErrorCode, message: String }
 New tasks receive the highest position in the list, so the list is newest first. The scheduler still fills time in list order; a deadline takes precedence over list position. `When::At` is an absolute instant, like a calendar event. `When::DueBy` stores the user's time zone at capture time as part of the due date, so the intended local deadline is preserved if the user later travels.
 
 An unfinished task past its `DueBy` remains in the list marked **Overdue**. The scheduler places it in the next free slot, and Rambo teases the user about it.
+
+### 4.2 Off the planner
+
+`Task::off_planner` is the user saying *not this week*: the task stays in the list with its
+deadline and its label, and the scheduler gives it no slot until the flag is cleared. It is a
+flag and not a `When` variant, because the task keeps its `when` — a `DueBy` task taken off the
+planner is still due then, it just is not being scheduled towards it.
+
+The scheduler reports these tasks in `Plan::off_planner`, apart from `unplaced`, because the two
+mean opposite things to the UI: `unplaced` is "wanted on the week, no room left", and
+`off_planner` is "not asked for". Every unfinished task the planner is given lands in exactly one
+of the three buckets.
+
+The flag outranks a pin: an `At` task taken off the planner leaves the week rather than staying
+where it was pinned, because "off the planner" that still shows on the planner is a lie. A task
+that is already done is only done — the flag does not report it anywhere.
+
+Set it with `PATCH /api/v1/tasks/{id}` and `{"off_planner": true|false}`; an absent field leaves
+it alone. It is stored as `v2_tasks.off_planner` (`INTEGER NOT NULL DEFAULT 0`), and `0` is what
+every task written before the column existed reads as, so an old install plans exactly what it
+planned before.
 
 ## 5. Capture pipeline (`crates/capture`)
 
@@ -95,7 +117,7 @@ Anonymous users do not sign in. Their account and tasks are deleted after 30 day
 | `GET /api/v1/snapshot?from=YYYY-MM-DD&days=7` | none | `Snapshot`. The window bounds the plan (today and 7 days by default); the task list is always the whole list, and pinned tasks keep their placement whatever the window is. |
 | `POST /api/v1/capture` | `{text}` or multipart `file` (pdf, eml, txt) | `{created: [id], snapshot, jev_fallback}`. `jev_fallback` is true once the user is past `RAMBL_JEV_DAILY_CAP` captures today (200 by default), when Jev is not called and `FakeJudge` judges instead. |
 | `POST /api/v1/tasks` | `TaskDraft` | `Snapshot` |
-| `PATCH /api/v1/tasks/{id}` | any of `title, duration_min, when, done, label, priority`, plus `updated_at` (the version the page last saw) | `Snapshot`; `409 stale_update` if the task changed since `updated_at` |
+| `PATCH /api/v1/tasks/{id}` | any of `title, duration_min, when, done, label, priority, off_planner` (4.2), plus `updated_at` (the version the page last saw) | `Snapshot`; `409 stale_update` if the task changed since `updated_at` |
 | `POST /api/v1/tasks/{id}/revise` | `{instruction}` (goes through the capture pipeline for one clause) | `Snapshot` |
 | `POST /api/v1/tasks/restore` | `Task` as it was before its delete (the scrap undo); stored under a fresh id with the create checks; its place is kept within one step of the list, an unknown deadline zone is re-anchored, a future `created` is clamped to now and `external_uid` is dropped; a repeat's day is refused | `Snapshot` |
 | `PUT /api/v1/tasks/order` | `{ids: [...]}` (full order) | `Snapshot` |
@@ -221,7 +243,7 @@ Everything on the page that moves runs on one loop with one animation clock. `en
 
 The pen character (`web/assets/rambo/`) is named **Rambo**. He rests in his nest, the dish at the end of the text box.
 
-- **Nest and pen are separate:** the nest is drawn in two layers (`web/assets/nest/`): its back on the nest button, which sits in the page, behind Rambo; its front rim as a fixed layer of its own (`.nest-rim`) in front of him, placed on the nest's centre as he measures it. Their order is data in `:root` (`--layer-capture` < `--layer-rambo` < `--layer-nest-rim`); at home he rests `--nest-sink` below the centre, his tip inside the rim; Rambo is a `position: fixed` layer whose one transform the engine writes (`engine::Look::transform`: where he is, then his pose), so carrying him away never carries the dish. At home he follows the nest: he measures it again on any scroll (window or panes), resize, page size change and once the fonts load (`web/src/rambo.rs:on_page_moved`), and on the way home he aims at where the nest is now. No CSS rule may move the button: no transform, animation, translate, rotate or scale on it (a test in `mascot.rs` checks theme.css). Moods animate only the drawing inside it. While he listens (`talking`), `.listening-dim` turns the light down over the whole screen at `--layer-dim`, between the page's notes and him (`--listening-dim`, eased over `--listening-dim-ms`, at once with reduced motion); it has `pointer-events: none`, so drops and taps still land on what is under it.
+- **Nest and pen are separate:** the nest is drawn in two layers (`web/assets/nest/`): its back on the nest button, which sits in the page, behind Rambo; its front rim as a fixed layer of its own (`.nest-rim`) in front of him, placed on the nest's centre as he measures it. Their order is data in `:root` (`--layer-capture` < `--layer-rambo` < `--layer-nest-rim`); at home he rests `--nest-sink` below the centre, his tip inside the rim; Rambo is a `position: fixed` layer whose one transform the engine writes (`engine::Look::transform`: where he is, then his pose), so carrying him away never carries the dish. At home he follows the nest: he measures it again on any scroll (window or panes), resize, page size change, the phone's keyboard opening or closing, and once the fonts load (`web/src/rambo.rs:on_page_moved`), and on the way home he aims at where the nest is now. On a phone the keyboard covers the bottom of the screen: `capture.rs:ride_the_keyboard` sets `--keyboard-inset` on the root from the visual viewport (`keyboard_inset`: the layout's height below the visible part, 0 when pinch-zoomed), and the fixed capture bar sits that far up, so the nest, its rim and Rambo ride up above the keyboard and back down when it closes. No CSS rule may move the button: no transform, animation, translate, rotate or scale on it (a test in `mascot.rs` checks theme.css). Moods animate only the drawing inside it. While he listens (`talking`), `.listening-dim` turns the light down over the whole screen at `--layer-dim`, between the page's notes and him (`--listening-dim`, eased over `--listening-dim-ms`, at once with reduced motion); it has `pointer-events: none`, so drops and taps still land on what is under it.
 - **Only to rows on screen:** the pen flies to write a new row only when that row shows on screen (`pen::on_screen`); a row on the other pane of a phone, or scrolled away, is shown without him.
 
 - **Writing pen:** while typing, Rambo's pen follows the caret in the capture box. Two seconds after typing stops, the pen flies home. When new tasks are created, the pen visits each new row and writes its title under the nib, glyph by glyph, a glyph being a grapheme cluster so an accent or an emoji is one (`pen::glyphs_of`, `pen::schedule`, paced by `WRITE_PER_GLYPH_MS` between `WRITE_MIN_MS` and `WRITE_MAX_MS`), one span a glyph whose ink fades in over `INK_FADE_MS` as the nib passes its middle (`pen::stroke_at`, `pen::inked_count`), so wrapped lines need nothing of their own. His hand presses through each glyph, lifts over each word gap and wobbles a little, moving smoothly from one glyph into the next (`pen::hand`); he touches down when he lands (`pen::touch_down`) and flicks off as the last letter closes (`pen::flick`). The row's meta (duration, day and time) stays hidden while he writes and inks in after the flick. His lean while writing is the `--write-lean` token in theme.css, worn through his pose (`engine::look`). Anything the user does (a grab, typing, the row leaving the screen) pauses the ink, and he returns to finish it from home (`pen::beat`); a row is never written twice, and a reload shows titles whole.

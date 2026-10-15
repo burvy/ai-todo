@@ -54,6 +54,35 @@ fn task_added(current: &Snapshot, previous: Option<&Snapshot>) -> bool {
         .any(|t| !t.id.0.contains(':') && !known.contains(t.id.0.as_str()))
 }
 
+/// Pure: whether a task was just ticked: an id that is done now and was not
+/// done in the last snapshot the server answered. Ids and not counts, so
+/// un-ticking one task while ticking another still counts, and `None` until
+/// then, so a reload that finds ticked tasks is not a task being finished.
+fn task_done(current: &Snapshot, previous: Option<&Snapshot>) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    let done_before: HashSet<&str> = previous
+        .tasks
+        .iter()
+        .filter(|t| t.done)
+        .map(|t| t.id.0.as_str())
+        .collect();
+    current
+        .tasks
+        .iter()
+        .any(|t| t.done && !done_before.contains(t.id.0.as_str()))
+}
+
+/// Pure: whether the last task just went away. `None` until the server has
+/// answered, so a reload onto an empty list is not the list emptying.
+fn list_emptied(current: &Snapshot, previous: Option<&Snapshot>) -> bool {
+    let Some(previous) = previous else {
+        return false;
+    };
+    current.tasks.is_empty() && !previous.tasks.is_empty()
+}
+
 /// Say `line`: the bubble and the voice are one thing. With a voice it goes when
 /// the voice is done, plus a beat. Without one there is nothing to wait for, so it
 /// holds on its own; it is then the only channel the line has. Exactly one timer,
@@ -167,9 +196,8 @@ pub fn Controller(
     // and treating it as one is what made him greet every page load with a new
     // task.
     let placeholder = snapshot.get_untracked();
-    let previous = Rc::new(RefCell::new(placeholder.clone()));
-    // The last snapshot the server answered, and so what an addition is
-    // measured against. `None` until then.
+    // The last snapshot the server answered, and so what a change is measured
+    // against. `None` until then: the server's first answer is not news either.
     let loaded = Rc::new(RefCell::new(None::<Snapshot>));
     let teased = Rc::new(RefCell::new(HashSet::new()));
 
@@ -195,18 +223,17 @@ pub fn Controller(
     Effect::new({
         let brain = brain.clone();
         let rng = rng.clone();
-        let previous = previous.clone();
         let loaded = loaded.clone();
         let teased = teased.clone();
         let mouth = mouth.clone();
         move |_| {
             let current = snapshot.get();
-            let old = previous.replace(current.clone());
-            let added = if current == placeholder {
-                false
+            let answered = if current == placeholder {
+                None
             } else {
-                task_added(&current, loaded.replace(Some(current.clone())).as_ref())
+                loaded.replace(Some(current.clone()))
             };
+            let answered = answered.as_ref();
             let now = Utc
                 .timestamp_millis_opt(js_sys::Date::now() as i64)
                 .single()
@@ -221,14 +248,11 @@ pub fn Controller(
                     t.insert(id.clone());
                 }
             }
-            let event = if added {
+            let event = if task_added(&current, answered) {
                 Some(Event::TaskAdded)
-            } else if current.tasks.iter().any(|task| task.done)
-                && current.tasks.iter().filter(|task| task.done).count()
-                    > old.tasks.iter().filter(|task| task.done).count()
-            {
+            } else if task_done(&current, answered) {
                 Some(Event::TaskDone)
-            } else if current.tasks.is_empty() {
+            } else if list_emptied(&current, answered) {
                 Some(Event::ListEmpty)
             } else if !newly.is_empty() {
                 Some(Event::TaskOverdue)
@@ -313,6 +337,7 @@ mod overdue_tests {
             updated_at: at,
             due_tz: None,
             external_uid: None,
+            off_planner: false,
         }
     }
 
@@ -387,6 +412,7 @@ mod added_tests {
             updated_at: now,
             due_tz: None,
             external_uid: None,
+            off_planner: false,
         }
     }
 
@@ -430,5 +456,86 @@ mod added_tests {
     fn an_unchanged_snapshot_is_not_an_addition() {
         let snapshot = snapshot_of(&["a", "b"]);
         assert!(!task_added(&snapshot, Some(&snapshot)));
+    }
+}
+
+#[cfg(test)]
+mod load_tests {
+    use super::*;
+    use todo_core::{Plan, Task, TaskId};
+
+    fn task(id: &str, done: bool) -> Task {
+        let now = Utc::now();
+        Task {
+            id: TaskId(id.into()),
+            title: id.into(),
+            duration_min: 30,
+            when: When::Anytime,
+            done,
+            order: 0,
+            label: todo_core::Label::Work,
+            priority: todo_core::Priority::Medium,
+            source: todo_core::Source::Text,
+            created: now,
+            updated_at: now,
+            due_tz: None,
+            external_uid: None,
+            off_planner: false,
+        }
+    }
+
+    fn snapshot_of(tasks: &[(&str, bool)]) -> Snapshot {
+        Snapshot {
+            tasks: tasks.iter().map(|&(id, done)| task(id, done)).collect(),
+            plan: Plan::default(),
+            tz: "UTC".into(),
+            generated: Utc::now(),
+            series: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_reload_with_ticked_tasks_finishes_nothing() {
+        assert!(!task_done(&snapshot_of(&[("a", true), ("b", false)]), None));
+    }
+
+    #[test]
+    fn a_reload_onto_an_empty_list_empties_nothing() {
+        assert!(!list_emptied(&snapshot_of(&[]), None));
+    }
+
+    #[test]
+    fn a_task_ticked_now_is_finished() {
+        let before = snapshot_of(&[("a", false)]);
+        assert!(task_done(&snapshot_of(&[("a", true)]), Some(&before)));
+    }
+
+    #[test]
+    fn unticking_one_and_ticking_another_finishes_one() {
+        let before = snapshot_of(&[("a", true), ("b", false)]);
+        let after = snapshot_of(&[("a", false), ("b", true)]);
+        assert_eq!(
+            before.tasks.iter().filter(|t| t.done).count(),
+            after.tasks.iter().filter(|t| t.done).count()
+        );
+        assert!(task_done(&after, Some(&before)));
+    }
+
+    #[test]
+    fn an_unticked_task_is_not_finished_again() {
+        let snapshot = snapshot_of(&[("a", true)]);
+        assert!(!task_done(&snapshot, Some(&snapshot)));
+    }
+
+    #[test]
+    fn the_last_task_leaving_empties_the_list() {
+        let before = snapshot_of(&[("a", false)]);
+        assert!(list_emptied(&snapshot_of(&[]), Some(&before)));
+    }
+
+    #[test]
+    fn a_list_that_was_already_empty_stays_quiet() {
+        let before = snapshot_of(&[]);
+        assert!(!list_emptied(&snapshot_of(&[]), Some(&before)));
     }
 }

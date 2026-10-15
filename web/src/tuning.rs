@@ -18,6 +18,10 @@ pub const BUBBLE_EDGE_PX: f64 = 8.0;
 /// pops, longer and the page waits on it.
 pub const ASK_FOLD_MS: u32 = 180;
 
+/// How loud the background music plays, 0 to 1. Safe range 0.05 to 0.25: the music is
+/// a bed under the cues (whose own volumes are 0.2 to 0.42), not a track to listen to.
+pub const MUSIC_VOLUME: f64 = 0.12;
+
 const _: () = assert!(60 % MINUTE_STEP == 0);
 
 // ---- What a finger means (web/src/gesture.rs, VISION-AUDIT item 3): one slop and
@@ -72,6 +76,14 @@ pub const INK_TAIL_PX: f64 = 20.0;
 /// Safe ranges 300 to 2000 ms and 0.6 to 0.95.
 pub const INK_DRY_MS: f64 = 900.0;
 pub const INK_DRY_ALPHA: f64 = 0.75;
+/// How long a row Rambo has just written stays wet: glossy, and smudged by a tap
+/// (`smudge.rs`), in ms. Safe range 2000 to 8000: shorter and nobody catches it wet,
+/// longer and a tap meant to open the row smudges it instead.
+pub const INK_WET_MS: f64 = 4000.0;
+/// How far a fingertip drags wet ink, in px, and in how many blots. Safe ranges 8 to
+/// 24 px (past that it reads as a scribble) and 4 to 10 blots.
+pub const SMUDGE_REACH_PX: f64 = 14.0;
+pub const SMUDGE_BLOBS: u32 = 7;
 /// The thinnest a stroke gets, as a dab's radius in px: a nib's hairline. It keeps
 /// the quickest cross-stroke wider than the dab spacing, so it never breaks into
 /// dots. Safe range 0.5 to 1.0, above half of `INK_STEP_PX`.

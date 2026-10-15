@@ -95,6 +95,13 @@ refreshes the complete snapshot. An edit made from a stale copy of a task (it ch
 device since this page loaded it) is refused with `409 stale_update`; the page keeps what the server has.
 b. Type a task and tap the nest or press Enter (there is no Add button); swipe a row right to
 finish it, or use the row's x to delete it.
+On a phone the **+** at the bar's left (a torn scrap beside the box) adds a task by hand: it opens
+the edit sheet, headed "New task", on a blank form (no title, 30 minutes, anytime, no repeat). Save
+needs a title and a length and makes the task with `POST /api/v1/tasks` (or a weekly series, if
+days are ticked); the task exists only from Save, so Cancel and Esc leave nothing behind. Its Done
+and x buttons are hidden, since there is nothing yet to finish or delete. A desk, with room to
+ramble, has no +. Code: `web/src/capture.rs:CaptureBox` (the button), `web/src/tasks/mod.rs:blank_form,
+new_task_draft, DRAFT_ID`, `web/src/api.rs:create_task`.
 c. Code: `web/src/capture.rs:CaptureBox`; `web/src/tasks/mod.rs:TaskList`;
 `web/src/api.rs:capture_text, patch_task, delete_task`;
 `server/src/v2/http.rs:capture, update, remove`.
@@ -219,7 +226,8 @@ the page in the page's flow.
 c. The nest is one box in the bottom-right corner of the capture bar, square-ish and fully
 on screen (`--nest-w` by `--nest-h`). Rambo sits in it, his tip behind the nest's front rim,
 which is a second layer drawn over him (`.nest::before` is the back, `.nest-rim` the front).
-Tapping the nest submits the box.
+Tapping the nest submits the box. On a phone, when the keyboard opens the capture bar rides
+up on top of it, with the nest and Rambo in it, and goes back down when it closes.
 d. Nothing pops in or out. The only thing on main that fades is ink (it appears over `INK_FADE_MS`
 and fades out over `INK_FADE_OUT_MS`); the one other thing allowed to fade is Rambo's
 tape patch and the tear it mends (item g). Everything else moves: a done or
@@ -239,9 +247,9 @@ planner page shows through it live (its own slips and lines, not a picture), in 
 hole reads as a hole even where the planner is empty paper. On a phone the
 planner already lies under the list; on a desk, where the two pages are a spread side by side,
 it slides under the list for as long as the tear lasts (`TEAR_SLIDE_MS`) and slides back: a day
-column (the first with a slip) is brought under where the tear starts, and an hour line to its
-level, computed from the tear's place (`rip::slide_px`, `lift_px`), so the hole shows hour
-lines and column rules and not just the planner's hour labels.
+column (the first with a slip) is brought under where the tear starts (`rip::slide_px`). On
+both, an hour line of that column is brought to the tear's level (`rip::lift_px`), so the hole
+shows hour lines and column rules and not just the planner's hour labels or bare paper.
 The tear follows the finger, never goes back, stops short of the pin's column, and never
 touches a task's words: a press too near a row tears nothing (`rip::lane`). One tear at a
 time. When the finger lets go Rambo notices, hops to the tear and tapes it: a strip of tape
@@ -305,6 +313,19 @@ a. A task that cannot fit is reported as unplaced rather than silently dropped.
 b. Not visible; covered by scheduler and server tests.
 c. Code: `crates/core/src/lib.rs:Placement, Plan`;
 `server/src/v2/app.rs:plan`.
+
+### 4a. Taking a task off the planner
+a. A task can be taken off the planner on purpose: it stays in the list with its
+deadline, and the scheduler leaves it alone until it is placed again, because it is
+reported in `Plan::off_planner` rather than as unplaced. This outranks a pin, so an
+`At` task taken off the planner leaves the week too. Set it with
+`PATCH /api/v1/tasks/{id}` and `{"off_planner": true}`.
+b. Not visible yet: the bubble button that calls it is (planned), and the UI that
+shows why a task is in the list but not on the week is (planned). Covered by
+scheduler, store and server tests.
+c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
+`crates/scheduler/src/lib.rs:plan`; `server/src/v2/app.rs:patch`;
+`server/src/v2/store.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
 
 ### 5. Light and dark paper
 a. The paper is Light or Dark by the reader's own choice in the gear menu, not by
@@ -397,10 +418,19 @@ up, typing a new capture, turning the page or scrolling the row away): the ink
 waits at the letter he reached, and once he is home and can see the row he flies
 back and carries on. A row left waiting `WRITE_HOLD_MAX_MS` simply shows its title,
 and a reload always shows titles whole.
-b. Type a long task and press Enter; pick him up halfway through, then let go.
+The ink he has just written is wet for `INK_WET_MS` (4 s): a little darker, with a
+sheen along the top of its strokes, drying to the page's ink. A tap on the row while
+it is wet smudges it: the fingertip drags a small smear of the row's ink a little way
+to the right of where it touched, and the row does not open. The smear is ink and
+stays (until the row is redrawn or the page reloads); drying is the only change ink
+makes on its own. Once dry, a tap does what it always did.
+b. Type a long task and press Enter; pick him up halfway through, then let go. Add
+another and tap it as soon as he flies off it.
 c. Code: `web/src/tasks/write.rs:write_row_title`; `web/src/pen.rs:schedule,
 glyphs_of, stroke_at, inked_count, hand, touch_down, flick, beat`; pace and hand in
-`web/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`).
+`web/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`); wet ink in `web/src/smudge.rs:is_wet,
+smear, Smudges` and `web/src/tasks/mod.rs:smudge_if_wet` (`INK_WET_MS`, `SMUDGE_*`),
+the sheen in `web/theme.css` (`.ink-wet`, `ink-dry`).
 
 ### 4. Drop actions
 a. Dropping Rambo on a task opens a small bubble with Edit, Move and Done, drawn as
@@ -409,6 +439,19 @@ b. Drag the pen onto a task row and choose an action.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:Choice, asking_dismissed_by`;
 `web/src/api.rs:patch_task`. Move sets `move_request`; the planner places the task
 (III.7).
+
+### 4a. Sound presets
+a. The gear menu's **Sound** picks one of four: **Off** (silence; Rambo does not speak
+aloud), **A quiet desk** (only the noises paper and ink really make: the nib, the
+scribble, the page turn, the crumple; no voice), **Every touch answers** (the default:
+also a tick on every button and a swish when a ramble is sent) and **Everything + music**
+(the same cues, plus calm piano under them: two public-domain recordings, looped softly,
+started by the first press after the choice). It replaces the old Sounds on/off
+flag: a stored "off" stays Off, a stored "on" becomes every touch. With reduced motion
+on, the tick and the page sound are dropped.
+b. Open the gear menu, pick each preset, then tap a button, turn the page and add a task.
+c. Code: `web/src/sound.rs:Cue, plays`; `web/src/settings.rs:SoundPreset, with_migrated_sound`;
+`web/src/voice.rs:audible`; `web/src/music.rs:sync`. Music files: `web/assets/music/ABOUT.md`. Sound files and how to swap one: `web/assets/sounds/ABOUT.md`.
 
 ### 5. Reduced motion
 a. With reduced motion enabled, Rambo returns immediately instead of animating.

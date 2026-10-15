@@ -1279,6 +1279,18 @@ fn on_page_moved(moved: impl Fn() + Copy + 'static) {
     {
         observer.observe(&root);
     }
+    // A phone's keyboard opening or closing moves the capture bar and his nest with it
+    // (`capture.rs:ride_the_keyboard`); he measures again once the bar has moved.
+    if let Some(visible) = window.visual_viewport() {
+        let after_layout = wasm_bindgen::closure::Closure::<dyn Fn()>::new(move || {
+            crate::engine::next_frame(moved)
+        });
+        for event in ["resize", "scroll"] {
+            let _ = visible
+                .add_event_listener_with_callback(event, after_layout.as_ref().unchecked_ref());
+        }
+        after_layout.forget();
+    }
     // Rambo lives as long as the page, and so do his listeners.
     listener.forget();
     wasm_bindgen_futures::spawn_local(async move {

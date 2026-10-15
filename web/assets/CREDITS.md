@@ -5,6 +5,12 @@ drawn as SVG by AI agents, sounds synthesized by code) and carries no external
 claim. All of it is placeholder, to be replaced by hand-made work (see
 `README.md` and `art/GUIDE.md`).
 
+## Music (`web/assets/music/`)
+
+Chopin, Nocturne Op. 15 no. 1, performed by Luke Faulkner (Musopen, CC0), and Satie,
+Gymnopedie no. 1, performed by Robin Alciatore (Musopen, public domain), both from
+Wikimedia Commons, re-encoded to small MP3. Links and detail: `music/ABOUT.md`.
+
 ## Sounds (`web/assets/sounds/`)
 
 Every file below is a short cut (times given as `start+length` from the source

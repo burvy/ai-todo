@@ -204,9 +204,11 @@ pub fn slide_px(
 /// How far down the planner moves, so that an hour line of the column the hole shows lies
 /// across the tear's level `tear_y` instead of between two lines: the nearest mark is
 /// brought to the tear. Negative is up; `planner_top` is the planner page's
-/// top in the page's coordinates. It is no more than half the gap between marks.
-pub fn lift_px(torn: bool, phone: bool, planner_top: f64, tear_y: f64, columns: &[Column]) -> f64 {
-    if !torn || phone {
+/// top in the page's coordinates. It is no more than half the gap between marks. A phone
+/// needs it as much as a desk: its hole is a slit a few px tall, and between two hour lines
+/// it would show bare paper.
+pub fn lift_px(torn: bool, planner_top: f64, tear_y: f64, columns: &[Column]) -> f64 {
+    if !torn {
         return 0.0;
     }
     pick(columns)
@@ -427,34 +429,18 @@ mod tests {
         // Hour lines every 64 px from 40, the planner's top at 100, the tear at 450: the
         // lines lie at 140, 204, ..., 460, and the nearest is 460, 10 px below the tear.
         let lines: Vec<f64> = (0..8).map(|i| 40.0 + 64.0 * f64::from(i)).collect();
-        let lift = lift_px(true, false, 100.0, 450.0, &column(false, &lines));
+        let lift = lift_px(true, 100.0, 450.0, &column(false, &lines));
         assert_eq!(lift, -10.0);
         // A slip is chosen over the lines.
-        assert_eq!(
-            lift_px(true, false, 100.0, 450.0, &column(true, &[300.0])),
-            50.0
-        );
+        assert_eq!(lift_px(true, 100.0, 450.0, &column(true, &[300.0])), 50.0);
         // Never more than half the gap.
         for tear_y in 300..400 {
-            let lift = lift_px(
-                true,
-                false,
-                100.0,
-                f64::from(tear_y),
-                &column(false, &lines),
-            );
+            let lift = lift_px(true, 100.0, f64::from(tear_y), &column(false, &lines));
             assert!(lift.abs() <= 32.0, "tear {tear_y}: {lift}");
         }
-        // Whole page, phone, or nothing to show: it does not move.
-        assert_eq!(
-            lift_px(false, false, 100.0, 450.0, &column(false, &lines)),
-            0.0
-        );
-        assert_eq!(
-            lift_px(true, true, 100.0, 450.0, &column(false, &lines)),
-            0.0
-        );
-        assert_eq!(lift_px(true, false, 100.0, 450.0, &[]), 0.0);
+        // Whole page, or nothing to show: it does not move.
+        assert_eq!(lift_px(false, 100.0, 450.0, &column(false, &lines)), 0.0);
+        assert_eq!(lift_px(true, 100.0, 450.0, &[]), 0.0);
     }
 
     #[test]

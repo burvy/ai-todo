@@ -11,6 +11,7 @@ pub mod hop;
 pub mod ink;
 pub mod inklayer;
 pub mod mascot;
+pub mod music;
 pub mod pen;
 pub mod pickers;
 pub mod rip;
@@ -34,6 +35,7 @@ mod placing;
 mod rambo;
 mod rip_ui;
 mod scrap;
+mod smudge;
 mod tasks;
 #[cfg(target_arch = "wasm32")]
 mod turn_util;
@@ -108,6 +110,8 @@ pub fn App() -> impl IntoView {
     // When Rambo was dropped on an empty planner hour, that hour as a date phrase: the
     // capture box's next task starts then.
     let noting_at = RwSignal::new(None::<String>);
+    // The + was tapped: the list opens its sheet on a new task
+    let new_task = RwSignal::new(false);
     // The task whose edit sheet is open: the list owns it, Rambo listens while it is
     let open_sheet = RwSignal::new(None::<TaskId>);
     // The scrap a swiped-out row leaves in the corner, to tape it back
@@ -116,6 +120,28 @@ pub fn App() -> impl IntoView {
     let form_ref = NodeRef::<leptos::html::Form>::new();
     // Nest ref so Rambo (independent fixed layer) can measure where to sit at home
     let nest_ref = NodeRef::<leptos::html::Button>::new();
+
+    // Every touch answers: a press on any button ticks, and a page that turns rustles.
+    // What actually plays is the gear menu's Sound preset (sound.rs).
+    window_event_listener(leptos::ev::pointerdown, move |event| {
+        if let Some(target) = event
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+            && target.closest("button").ok().flatten().is_some()
+        {
+            sound::play(sound::Cue::Tap);
+        }
+        // The first press after Music is picked is the gesture a browser waits for.
+        music::sync(view_settings.get_untracked().sound);
+    });
+    Effect::new(move |_| music::sync(view_settings.get().sound));
+    Effect::new(move |previous: Option<u8>| {
+        let now = pane.get();
+        if previous.is_some_and(|before| before != now) {
+            sound::play(sound::Cue::Page);
+        }
+        now
+    });
 
     window_event_listener(leptos::ev::keydown, move |event| {
         if event.key() == " "
@@ -148,6 +174,7 @@ pub fn App() -> impl IntoView {
     view! {
         <div class="capture-slot">
             <CaptureBox
+                new_task
                 form_ref
                 nest_ref
                 set_snapshot=set_snapshot
@@ -165,7 +192,7 @@ pub fn App() -> impl IntoView {
         {move || error.get().map(|e| view! {
             <div class="error page-note" aria-live="polite">{e}</div>
         })}
-        <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event audible=Signal::derive(move || voice::audible(view_settings.get().sounds, view_settings.get().rambo_talks)) quiet=Signal::derive(move || mascot::speaks_later(&mascot_state.get()) || pen_queue.with(|queue| !queue.is_empty())) set_speech=set_brain_speech set_pose=set_brain_pose />
+        <brain::Controller snapshot mode=Signal::derive(move || view_settings.get().mode) event=brain_event set_event=set_brain_event audible=Signal::derive(move || voice::audible(view_settings.get().sound, view_settings.get().rambo_talks)) quiet=Signal::derive(move || mascot::speaks_later(&mascot_state.get()) || pen_queue.with(|queue| !queue.is_empty())) set_speech=set_brain_speech set_pose=set_brain_pose />
         <main
                 node_ref=main_ref
                 data-pane=move || pane.get().to_string()
@@ -210,7 +237,7 @@ pub fn App() -> impl IntoView {
                     move |_| ripper.scrolled()
                 }
             >
-                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request open_sheet scraps />
+                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request new_task open_sheet scraps />
                 <scrap::ScrapCorner snapshot scraps set_snapshot set_error />
                 // Ink laid on the list: part of the page, so it scrolls and turns with it.
                 <inklayer::InkLayer strokes on=ink::Surface::List />
