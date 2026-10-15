@@ -7,9 +7,9 @@ use todo_core::{LocalContext, Snapshot, TaskId, When};
 
 use crate::body::PatchTaskBody;
 use crate::placing::{Stretch, stretched};
-use crate::planner::{Slot, day_index, drop_start, occurrence_of};
+use crate::planner::{Slot, day_index, drop_start, occurrence_of, placement_style};
 use crate::store::Command;
-use crate::tuning::PRESS_SLOP_PX;
+use crate::tuning::{HOUR_PX, PRESS_SLOP_PX};
 
 /// A slip lifted onto a finger: which task, its title, where the finger is, and where
 /// on the slip it took hold. Where it may land is drawn from the planner under the
@@ -30,6 +30,23 @@ impl SlipDrag {
     pub fn ghost_corner(&self) -> (f64, f64) {
         (self.x - self.grab.0, self.y - self.grab.1)
     }
+}
+
+/// A slip's ghost let go: the slip it was, the slot it goes to (`None`: back to the
+/// slip's own place), and where it is drawn on its way. Paper, not a picture: it springs
+/// to where it goes and stays there until the slip is drawn under it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LetGoGhost {
+    pub drag: SlipDrag,
+    pub to: Option<Slot>,
+    pub at: (f64, f64),
+}
+
+/// Where a slip placed at `minutes` starts on the screen, in a day whose hours box has
+/// its top-left corner at `hours`, in a working day from `start_hour` to `end_hour`.
+pub fn slot_corner(hours: (f64, f64), minutes: u16, start_hour: u8, end_hour: u8) -> (f64, f64) {
+    let (top, _) = placement_style(minutes, minutes, start_hour, HOUR_PX, end_hour);
+    (hours.0, hours.1 + f64::from(top))
 }
 
 /// Whether a finger that has not lifted its slip yet, having slid `slide` px in all, is
@@ -167,6 +184,25 @@ mod tests {
             assert_eq!((x - left, y - top), (12.0, 16.0));
         }
         assert_eq!(drag(40.0, 50.0, (0.0, 0.0)).ghost_corner(), (40.0, 50.0));
+    }
+
+    #[test]
+    fn a_slot_starts_where_a_slip_placed_there_would() {
+        let hours = (300.0, 120.0);
+        assert_eq!(
+            slot_corner(hours, 8 * 60, 8, 20),
+            hours,
+            "the day's first hour"
+        );
+        assert_eq!(
+            slot_corner(hours, 9 * 60 + 30, 8, 20),
+            (300.0, 120.0 + 1.5 * f64::from(HOUR_PX))
+        );
+        assert_eq!(
+            slot_corner(hours, 7 * 60, 8, 20),
+            hours,
+            "before the day starts it is held at its top, as the slip is"
+        );
     }
 
     #[test]

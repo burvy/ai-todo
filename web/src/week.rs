@@ -78,6 +78,8 @@ pub fn WeekGrid(
     let drag = RwSignal::new(None::<SlipDrag>);
     // Where it would land: day + minutes, drawn as a faint slot outline.
     let landing = RwSignal::new(None::<Slot>);
+    // The ghost of a slip let go, on its way to where it goes.
+    let let_go = RwSignal::new(None::<model::LetGoGhost>);
     // Esc puts a slip in hand back down: cancel, never commit.
     #[cfg(target_arch = "wasm32")]
     {
@@ -375,7 +377,7 @@ pub fn WeekGrid(
                                     placements_on_day(&snapshot.plan.placements, i64::from(day), &ctx)
                                 }
                                 key=placement_key let:placement>
-                                <PlacementBlock placement snapshot settings drag landing mascot_state />
+                                <PlacementBlock placement snapshot settings drag landing let_go mascot_state />
                             </For>
                                 <For each=hours key=|hour| *hour let:hour>
                                     <div
@@ -405,30 +407,38 @@ pub fn WeekGrid(
             // page carries a transform (its slide), and a fixed child of a transformed
             // box is placed against that box, far off the pointer.
             <Portal>
-            {move || drag.get().map(|d| view! {
-                <div
-                    class="drag-ghost"
-                    style={
-                        let (left, top) = d.ghost_corner();
-                        format!("left: {left:.1}px; top: {top:.1}px;")
+            // Held, it is on the finger; let go, it springs to where it goes.
+            {move || {
+                let (d, (left, top), slot) = match drag.get() {
+                    Some(d) => {
+                        let corner = d.ghost_corner();
+                        (d, corner, landing.get())
                     }
-                    aria-hidden="true"
-                >
-                    <strong>{d.title.clone()}</strong>
-                    // The time the slip would get, live as the finger moves it.
-                    <span class="ghost-time">
-                        {move || {
-                            landing.get().map(|slot| {
+                    None => {
+                        let ghost = let_go.get()?;
+                        (ghost.drag, ghost.at, ghost.to)
+                    }
+                };
+                Some(view! {
+                    <div
+                        class="drag-ghost"
+                        style=format!("left: {left:.1}px; top: {top:.1}px;")
+                        aria-hidden="true"
+                    >
+                        <strong>{d.title}</strong>
+                        // The time the slip would get, live as the finger moves it.
+                        <span class="ghost-time">
+                            {slot.map(|slot| {
                                 let ctx = planner_context(&snapshot.get().tz);
                                 let weekday = (ctx.today() + chrono::Duration::days(slot.day))
                                     .format("%a")
                                     .to_string();
                                 clock::format_day_time(&weekday, slot.minutes, settings.get().clock)
-                            })
-                        }}
-                    </span>
-                </div>
-            })}
+                            })}
+                        </span>
+                    </div>
+                })
+            }}
             </Portal>
         </section>
     }
@@ -659,6 +669,7 @@ fn PlacementBlock(
     settings: ReadSignal<Settings>,
     drag: RwSignal<Option<SlipDrag>>,
     landing: RwSignal<Option<Slot>>,
+    let_go: RwSignal<Option<model::LetGoGhost>>,
     mascot_state: ReadSignal<crate::mascot::State>,
 ) -> impl IntoView {
     #[cfg(target_arch = "wasm32")]
@@ -838,7 +849,7 @@ fn PlacementBlock(
     #[cfg(target_arch = "wasm32")]
     let grip_end = {
         let press = press.clone();
-        move |_event: leptos::ev::PointerEvent| {
+        move |event: leptos::ev::PointerEvent| {
             // Whatever else this release was, the hold is off.
             press.borrow_mut().take();
             let Some(d) = drag.get_untracked() else {
@@ -851,26 +862,54 @@ fn PlacementBlock(
             let landing_slot = landing.get_untracked();
             landing.set(None);
             let ctx = planner_context(&snapshot.get_untracked().tz);
-            if let Some(slot) = model::slip_moves_to(placement.start, &ctx, landing_slot) {
-                place_at(&end_id, slot, snapshot, store);
-            }
+            let to = model::slip_moves_to(placement.start, &ctx, landing_slot);
+            let home = own_corner(&event);
+            let Some(slot) = to else {
+                // Where it sat, or off the planner: the ghost goes back to its slip.
+                let_ghost_go(let_go, d, None, home, move || {});
+                return;
+            };
+            let target = slot_screen_corner(slot, &settings.get_untracked()).unwrap_or(home);
+            // It is gone once it has landed and the plan shows the slip there, whichever
+            // comes last; refused, it goes back to its slip.
+            let waiting = std::rc::Rc::new(std::cell::Cell::new(2_u8));
+            let finish = {
+                let (waiting, d) = (waiting.clone(), d.clone());
+                move || {
+                    waiting.set(waiting.get().saturating_sub(1));
+                    if waiting.get() == 0 {
+                        clear_ghost(let_go, &d);
+                    }
+                }
+            };
+            let_ghost_go(let_go, d.clone(), Some(slot), target, finish.clone());
+            let id = end_id.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                if place(&id, slot, snapshot, store).await {
+                    finish();
+                } else {
+                    let_ghost_go(let_go, d, None, home, move || {});
+                }
+            });
         }
     };
 
     #[cfg(target_arch = "wasm32")]
     let grip_cancel = {
         let press = press.clone();
-        move |_| {
+        move |event: leptos::ev::PointerEvent| {
             press.borrow_mut().take();
-            if drag.get_untracked().is_some_and(|d| d.id == cancel_id) {
+            if let Some(d) = drag.get_untracked().filter(|d| d.id == cancel_id) {
                 drag.set(None);
                 landing.set(None);
+                // The browser took the finger: the ghost goes back to its slip.
+                let_ghost_go(let_go, d, None, own_corner(&event), move || {});
             }
         }
     };
     // On a native build the patch paths never run; keep the unused-shelf silent.
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (&drag, &landing, &mascot_state);
+    let _ = (&drag, &landing, &let_go, &mascot_state);
     #[cfg(not(target_arch = "wasm32"))]
     let (grip_down, grip_move, grip_end, grip_cancel) = (
         |_: leptos::ev::PointerEvent| {},
@@ -922,18 +961,112 @@ fn PlacementBlock(
     }
 }
 
-/// Starts task `id` at `slot`, as a dropped slip or a tapped hour says.
+/// Starts task `id` at `slot`, as a tapped hour says.
 #[cfg(target_arch = "wasm32")]
 fn place_at(id: &TaskId, slot: Slot, snapshot: ReadSignal<Snapshot>, store: Store) {
+    let id = id.clone();
+    wasm_bindgen_futures::spawn_local(async move {
+        place(&id, slot, snapshot, store).await;
+    });
+}
+
+/// Starts task `id` at `slot`, and answers whether the plan now shows it there.
+#[cfg(target_arch = "wasm32")]
+async fn place(id: &TaskId, slot: Slot, snapshot: ReadSignal<Snapshot>, store: Store) -> bool {
     let placed =
         snapshot.with_untracked(|snap| model::placed(snap, &planner_context(&snap.tz), id, slot));
     match placed {
-        model::Placed::Send(command) => store.dispatch(command),
+        model::Placed::Send(command) => store.send(command).await.is_some(),
         model::Placed::SkippedTime => {
             store.set_error.set(Some(model::SKIPPED_TIME_NOTE.into()));
+            false
         }
-        model::Placed::Gone => {}
+        model::Placed::Gone => false,
     }
+}
+
+/// Lets slip `drag`'s ghost go: it springs from where it is drawn to the corner `at`
+/// (on its way to `to`, or back to its slip), then runs `done`; back at its slip, it
+/// is gone. Each slip's ghost glides on its own key, and only the ghost of this very
+/// let-go is drawn or cleared by it, so a slip lifted meanwhile is never touched.
+#[cfg(target_arch = "wasm32")]
+fn let_ghost_go(
+    let_go: RwSignal<Option<model::LetGoGhost>>,
+    drag: SlipDrag,
+    to: Option<Slot>,
+    at: (f64, f64),
+    done: impl FnOnce() + 'static,
+) {
+    let from = let_go
+        .with_untracked(|ghost| {
+            ghost
+                .as_ref()
+                .filter(|ghost| ghost.drag == drag)
+                .map(|ghost| ghost.at)
+        })
+        .unwrap_or_else(|| drag.ghost_corner());
+    let key = format!("drag-ghost:{}", drag.id.0);
+    let_go.set(Some(model::LetGoGhost {
+        drag: drag.clone(),
+        to,
+        at: from,
+    }));
+    let drawn = drag.clone();
+    crate::slide::slide_all(
+        &key,
+        [from.0, from.1],
+        [at.0, at.1],
+        SLIDE_NEAR_PX,
+        move |[x, y]| {
+            let_go.update(|ghost| {
+                if let Some(ghost) = ghost.as_mut().filter(|ghost| ghost.drag == drawn) {
+                    ghost.at = (x, y);
+                }
+            });
+        },
+        move || {
+            if to.is_none() {
+                clear_ghost(let_go, &drag);
+            }
+            done();
+        },
+    );
+}
+
+/// Takes slip `drag`'s let-go ghost off the page, if it is still the one shown.
+#[cfg(target_arch = "wasm32")]
+fn clear_ghost(let_go: RwSignal<Option<model::LetGoGhost>>, drag: &SlipDrag) {
+    if let_go.with_untracked(|ghost| ghost.as_ref().is_some_and(|ghost| ghost.drag == *drag)) {
+        let_go.set(None);
+    }
+}
+
+/// The top-left corner of the slip an event is on: where its ghost goes back to.
+#[cfg(target_arch = "wasm32")]
+fn own_corner(event: &leptos::ev::PointerEvent) -> (f64, f64) {
+    use wasm_bindgen::JsCast as _;
+    event
+        .current_target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .map_or((0.0, 0.0), |slip| {
+            let rect = slip.get_bounding_client_rect();
+            (rect.left(), rect.top())
+        })
+}
+
+/// Where a slip placed at `slot` would start on the screen, if its day is on the page.
+#[cfg(target_arch = "wasm32")]
+fn slot_screen_corner(slot: Slot, settings: &Settings) -> Option<(f64, f64)> {
+    let hours = leptos::prelude::document()
+        .query_selector(&format!(".day[data-day=\"{}\"] .hours", slot.day))
+        .ok()??
+        .get_bounding_client_rect();
+    Some(model::slot_corner(
+        (hours.left(), hours.top()),
+        slot.minutes,
+        settings.start_hour,
+        settings.end_hour,
+    ))
 }
 
 /// What sits under a point: the planner day column (from data-day) and the

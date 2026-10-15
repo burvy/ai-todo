@@ -298,7 +298,7 @@ Each placed task is a **torn paper slip** laid on the hour lines: raised paper w
 page grain, a brass edge on the left and a torn right edge, like the scraps in the task
 list. The slip shows the task's title in the handwriting font and its start time,
 truncated with an ellipsis when the block is too narrow. Drag a slip and it stays under
-your pointer where you took it.
+your pointer where you took it; let go, its ghost springs to the hour it was dropped on and stays until the slip is drawn there, or springs back onto the slip when it goes nowhere or the move is refused.
 b. Open the **Week** panel and scroll through the grid; drag a slip and let go.
 c. Code: `web/src/week.rs:WeekGrid`; the slip's grab offset in `crates/web-core/src/week.rs:SlipDrag`;
 `web/src/gear_menu.rs:GearMenu`; `crates/web-core/src/settings.rs:Settings`;
