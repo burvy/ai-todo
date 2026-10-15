@@ -138,8 +138,10 @@ mod tests {
     }
 
     /// The properties a CSS `transition` may not animate (ARCHITECTURE 8A.2 rule 4): where a
-    /// thing is, how big and how turned. Fades and colours are the style sheet's own.
-    const MOTION_PROPERTIES: [&str; 16] = [
+    /// thing is, how big and how turned. Fades and colours are the style sheet's own. `all`
+    /// counts, so a catch-all transition cannot hide a movement.
+    const MOTION_PROPERTIES: [&str; 17] = [
+        "all",
         "transform",
         "translate",
         "rotate",
@@ -196,44 +198,64 @@ mod tests {
         }
         plain.push_str(rest);
         let mut found = Vec::new();
-        for (at, _) in plain.match_indices("transition:") {
-            let Some(open) = plain[..at].rfind('{') else {
-                continue;
-            };
-            let from = plain[..open].rfind(['{', '}']).map_or(0, |i| i + 1);
-            let selector = plain[from..open]
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-            let value = plain[at + "transition:".len()..]
-                .split(';')
-                .next()
-                .unwrap_or("");
-            let (mut depth, mut start, mut parts) = (0_i32, 0, Vec::new());
-            for (i, c) in value.char_indices() {
-                match c {
-                    '(' => depth += 1,
-                    ')' => depth -= 1,
-                    ',' if depth == 0 => {
-                        parts.push(&value[start..i]);
-                        start = i + 1;
-                    }
-                    _ => {}
+        // `transition: <property> <time> ...` (one part per property) and
+        // `transition-property: <property>, ...`.
+        for (key, shorthand) in [("transition:", true), ("transition-property:", false)] {
+            for (at, _) in plain.match_indices(key) {
+                if plain[..at].ends_with(|c: char| c.is_alphanumeric() || c == '-') {
+                    continue;
                 }
-            }
-            parts.push(&value[start..]);
-            for property in parts
-                .iter()
-                .filter_map(|part| part.split_whitespace().next())
-            {
-                if MOTION_PROPERTIES.contains(&property) {
-                    found.push(format!("{selector}: {property}"));
+                let Some(open) = plain[..at].rfind('{') else {
+                    continue;
+                };
+                let from = plain[..open].rfind(['{', '}']).map_or(0, |i| i + 1);
+                let selector = plain[from..open]
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let value = plain[at + key.len()..].split(';').next().unwrap_or("");
+                let (mut depth, mut start, mut parts) = (0_i32, 0, Vec::new());
+                for (i, c) in value.char_indices() {
+                    match c {
+                        '(' => depth += 1,
+                        ')' => depth -= 1,
+                        ',' if depth == 0 => {
+                            parts.push(&value[start..i]);
+                            start = i + 1;
+                        }
+                        _ => {}
+                    }
+                }
+                parts.push(&value[start..]);
+                for part in parts {
+                    let property = if shorthand {
+                        part.split_whitespace().next()
+                    } else {
+                        Some(part.trim())
+                    };
+                    if let Some(property) = property.filter(|p| MOTION_PROPERTIES.contains(p)) {
+                        found.push(format!("{selector}: {property}"));
+                    }
                 }
             }
         }
         found.sort_unstable();
         found.dedup();
         found
+    }
+
+    #[test]
+    fn the_transition_scan_reads_shorthands_longhands_and_all() {
+        let css = ".a { transition: all 1s; }
+                   .b { transition: opacity 1s, transform 1s cubic-bezier(0.1, 0.2, 0.3, 0.4); }
+                   .c { transition-property: color, height; transition-duration: 1s; }
+                   .d { transition: color 1s; transition: none; }
+                   /* .e { transition: left 1s; } */
+                   .f { -webkit-transition: top 1s; }";
+        assert_eq!(
+            motion_transitions(css),
+            [".a: all", ".b: transform", ".c: height"]
+        );
     }
 
     #[test]
