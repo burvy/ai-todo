@@ -7,7 +7,7 @@ use todo_core::{LocalContext, Snapshot, TaskId, When};
 
 use crate::body::PatchTaskBody;
 use crate::placing::{Stretch, stretched};
-use crate::planner::{Slot, day_index, drop_start, occurrence_of, placement_style};
+use crate::planner::{Slot, day_index, drop_start, occurrence_of, placement_style, snapped_minute};
 use crate::store::Command;
 use crate::tuning::{HOUR_PX, PRESS_SLOP_PX};
 
@@ -29,6 +29,13 @@ impl SlipDrag {
     /// finger at the very spot it was taken.
     pub fn ghost_corner(&self) -> (f64, f64) {
         (self.x - self.grab.0, self.y - self.grab.1)
+    }
+
+    /// The point whose time the slip lands on: the ghost's top edge, in the day column
+    /// under the finger, so a slip let go where it was taken lands where it sat however
+    /// low on it the finger took hold.
+    pub fn landing_point(&self) -> (f64, f64) {
+        (self.x, self.y - self.grab.1)
     }
 }
 
@@ -57,7 +64,8 @@ pub fn press_scrolls(slide: f64) -> bool {
 }
 
 /// Where a slip that starts at `start` goes when let go over `landing`: nowhere off
-/// the planner, nor where it already sits.
+/// the planner, nor where it already sits. A drop lands on a quarter hour, so a slip
+/// off the quarter (one planned at 9:04) sits on the quarter it rounds to.
 pub fn slip_moves_to(
     start: DateTime<Utc>,
     ctx: &LocalContext,
@@ -66,7 +74,7 @@ pub fn slip_moves_to(
     let local = ctx.local(start);
     let current = Slot {
         day: day_index(start, ctx),
-        minutes: local.hour() as u16 * 60 + local.minute() as u16,
+        minutes: snapped_minute(f32::from(local.hour() as u16 * 60 + local.minute() as u16)) as u16,
     };
     landing.filter(|slot| *slot != current)
 }
@@ -241,6 +249,26 @@ mod tests {
             ..here
         };
         assert_eq!(slip_moves_to(start, &ctx, Some(later)), Some(later));
+        let off_quarter = start + chrono::Duration::minutes(4);
+        assert_eq!(
+            slip_moves_to(off_quarter, &ctx, Some(here)),
+            None,
+            "a slip at 10:04 dropped on 10:00 is where it sits"
+        );
+        assert_eq!(slip_moves_to(off_quarter, &ctx, Some(later)), Some(later));
+    }
+
+    #[test]
+    fn a_slip_lands_where_its_top_is_not_where_the_finger_is() {
+        let held = SlipDrag {
+            id: TaskId("t".into()),
+            title: String::new(),
+            x: 310.0,
+            y: 250.0,
+            grab: (10.0, 50.0),
+        };
+        assert_eq!(held.landing_point(), (310.0, 200.0));
+        assert_eq!(held.landing_point().1, held.ghost_corner().1);
     }
 
     #[test]

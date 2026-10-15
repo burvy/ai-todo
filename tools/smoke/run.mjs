@@ -274,10 +274,18 @@ const scenarios = {
     const slip = await waitFor(() => p.evaluate(SLIP_IN_SIGHT), 15000, "a slip on the planner");
     const top = () => p.evaluate(`document.querySelector(".week-scroll .placement[data-id='${slip.id}']")?.getBoundingClientRect().top ?? null`);
     const from = { x: slip.x, y: slip.y };
-    // Dropped where it sat: the ghost springs back to it and the slip stays.
-    await p.drag(from, { x: from.x, y: from.y + 2 }, 4);
+    // Picked up, carried off and brought back: dropped where it sat, the ghost springs back
+    // to it and the slip stays.
+    await p.pointer("down", from.x, from.y);
+    for (const dy of [5, 10, 15, 20, 15, 10, 5, 1]) {
+      await p.pointer("move", from.x, from.y + dy);
+      await sleep(16);
+    }
+    if (!(await p.has(".drag-ghost"))) throw new Error("no ghost while the slip is carried");
+    await p.pointer("up", from.x, from.y + 1);
     await waitFor(async () => !(await p.has(".drag-ghost")), 5000, "the ghost back on its slip");
-    if (Math.abs((await top()) - slip.top) > 3) throw new Error("a slip dropped where it sat moved");
+    const back = await top();
+    if (Math.abs(back - slip.top) > 3) throw new Error(`a slip dropped where it sat moved (${slip.top} to ${back})`);
     // Dragged two hours down: the ghost rides the pointer, is still drawn the moment it is
     // let go (it springs to the slot, it does not vanish), and the slip lands there.
     await p.pointer("down", from.x, from.y);

@@ -154,7 +154,7 @@ pub fn WeekGrid(
                     scroller.set_scroll_left(scroller.scroll_left() - dx as i32);
                 }
                 // The paper under the finger has moved: re-find its slot.
-                landing.set(landing_at(d.x, d.y, &settings.get_untracked()));
+                landing.set(landing_of(&d, &settings.get_untracked()));
             }
             crate::engine::Flow::Go
         });
@@ -841,8 +841,8 @@ fn PlacementBlock(
             }
             d.x = x;
             d.y = y;
-            drag.set(Some(d.clone()));
-            landing.set(landing_at(x, y, &settings.get_untracked()));
+            landing.set(landing_of(&d, &settings.get_untracked()));
+            drag.set(Some(d));
         }
     };
 
@@ -1091,12 +1091,26 @@ fn drop_location(x: f64, y: f64) -> Option<(i64, f32)> {
 }
 
 /// The slot a point is over, day and snapped minute, or None when the point
-/// is off the planner. What the held slip's outline and its own drop use.
+/// is off the planner. What a tap and Rambo's drop use.
 #[cfg(target_arch = "wasm32")]
 fn landing_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
+    slot_at(x, y, y, settings)
+}
+
+/// Where a held slip lands: the day under the finger, the time at the ghost's top
+/// (`SlipDrag::landing_point`). What its outline and its own drop use.
+#[cfg(target_arch = "wasm32")]
+fn landing_of(drag: &SlipDrag, settings: &Settings) -> Option<Slot> {
+    let (x, top) = drag.landing_point();
+    slot_at(x, drag.y, top, settings)
+}
+
+/// The slot in the day column under (`x`, `y`) at the time drawn at `top`.
+#[cfg(target_arch = "wasm32")]
+fn slot_at(x: f64, y: f64, top: f64, settings: &Settings) -> Option<Slot> {
     let location = drop_location(x, y)?;
     let minutes = drop_minute(
-        y as f32 - location.1,
+        top as f32 - location.1,
         settings.start_hour,
         settings.end_hour,
         HOUR_PX,
