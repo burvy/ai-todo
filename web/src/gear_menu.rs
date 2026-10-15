@@ -1,7 +1,5 @@
 use crate::clock::Clock;
-use crate::settings::{
-    MAX_DAYS, PageTurn, Pen, RamblMode, Settings, SoundPreset, Theme, apply_theme, save,
-};
+use crate::settings::{MAX_DAYS, Pen, RamblMode, Settings, SoundPreset, Theme, apply_theme, save};
 use leptos::prelude::*;
 use todo_core::DaySettings;
 
@@ -168,7 +166,6 @@ pub fn GearMenu(
     };
     let set_pen = move |pen: Pen| change(&|s| s.pen = pen);
     let set_clock = move |clock: Clock| change(&|s| s.clock = clock);
-    let set_page_turn = move |page_turn: PageTurn| change(&|s| s.page_turn = page_turn);
 
     let close = move |_| set_open.set(false);
 
@@ -225,18 +222,6 @@ pub fn GearMenu(
                                     class:active=move || settings.get().clock == clock
                                     on:click=move |_| set_clock(clock)
                                 >{clock.label()}</button>
-                            </For>
-                        </div>
-                        <h3>"Page turn"</h3>
-                        <div class="gear-choices" role="group" aria-label="Page turn">
-                            <For each=|| [PageTurn::Realistic, PageTurn::Fast] key=|t| *t let:page_turn>
-                                <button
-                                    type="button"
-                                    role="radio"
-                                    aria-checked=move || (settings.get().page_turn == page_turn).to_string()
-                                    class:active=move || settings.get().page_turn == page_turn
-                                    on:click=move |_| set_page_turn(page_turn)
-                                >{page_turn.label()}</button>
                             </For>
                         </div>
                         <h3>"Sound"</h3>

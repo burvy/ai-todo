@@ -68,24 +68,6 @@ impl Theme {
     }
 }
 
-/// How a page turns on a phone: the whole page swinging like a book's (`Realistic`, the
-/// default) or the corner-fold bend (`Fast`), which is cheaper to draw.
-#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PageTurn {
-    #[default]
-    Realistic,
-    Fast,
-}
-
-impl PageTurn {
-    pub fn label(self) -> &'static str {
-        match self {
-            PageTurn::Realistic => "Realistic",
-            PageTurn::Fast => "Fast",
-        }
-    }
-}
-
 /// How much the page makes noise, the gear menu's Sound choice. It replaces the old
 /// on/off flag: off became `Off`, on became `Touch`.
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,7 +119,6 @@ const DEFAULTS: Settings = Settings {
     rambo_talks: true,
     pen: Pen::FountainPen,
     clock: Clock::Twelve,
-    page_turn: PageTurn::Realistic,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,10 +145,6 @@ pub struct Settings {
     /// either way; this only decides whether there is a voice with it.
     #[serde(default = "rambo_talks_on")]
     pub rambo_talks: bool,
-    /// How a page turns on a phone (`PageTurn`); a stored setting from before this
-    /// existed gets the book flip.
-    #[serde(default)]
-    pub page_turn: PageTurn,
 }
 
 fn rambo_talks_on() -> bool {
@@ -198,7 +175,6 @@ impl Settings {
             sound: self.sound,
             clock: self.clock,
             rambo_talks: self.rambo_talks,
-            page_turn: self.page_turn,
         }
     }
 
@@ -297,15 +273,11 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_setting_from_before_the_page_turn_choice_gets_the_book_flip() {
-        let stored = Settings::parse_or_default(r#"{"start_hour":8,"end_hour":18,"days":7}"#);
-        assert_eq!(stored.page_turn, PageTurn::Realistic);
-        let fast = Settings {
-            page_turn: PageTurn::Fast,
-            ..Settings::default()
-        };
-        let round_trip = Settings::parse_or_default(&serde_json::to_string(&fast).unwrap());
-        assert_eq!(round_trip.page_turn, PageTurn::Fast, "a choice is kept");
+    fn a_stored_page_turn_choice_from_when_there_were_two_is_ignored() {
+        let stored = Settings::parse_or_default(
+            r#"{"start_hour":9,"end_hour":18,"days":7,"page_turn":"Fast"}"#,
+        );
+        assert_eq!(stored.start_hour, 9, "the rest of the setting is kept");
     }
 
     #[test]

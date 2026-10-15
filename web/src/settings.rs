@@ -1,6 +1,4 @@
-pub use rambl_web_core::settings::{
-    MAX_DAYS, PageTurn, Pen, RamblMode, Settings, SoundPreset, Theme,
-};
+pub use rambl_web_core::settings::{MAX_DAYS, Pen, RamblMode, Settings, SoundPreset, Theme};
 
 /// Light/Dark set `data-theme` on the page; the attribute is always present
 /// (index.html bakes in the light default), so the OS is never followed.

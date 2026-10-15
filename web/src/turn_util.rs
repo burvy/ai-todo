@@ -1,4 +1,4 @@
-//! Small browser helpers the two page turns share (`flip_turner.rs`, `fold_turner.rs`).
+//! Small browser helpers the page turn uses (`flip_turner.rs`).
 
 use leptos::prelude::*;
 use wasm_bindgen::JsCast;

@@ -148,8 +148,8 @@ e. A finger that slides before the hold is a **scroll**, and the row keeps its
 hands off it. That is also what keeps the gestures apart from the page flip: a
 swipe left is never this row's to delete, so it reaches the panes and turns the
 page (DESIGN-DECISIONS 3).
-f. On a phone the whole page turns **like a book's, hinged on its left edge** (the default
-Page turn; `Fast` is the corner bend below): swipe left
+f. On a phone the whole page turns **like a book's, hinged on its left edge** (the only
+page turn): swipe left
 on the list, or swipe right on the planner (outside its grid, or on empty paper while the
 grid is at its earliest day), or tap the note at the page's foot ("planner on the next page", "task list on the previous
 page"). The list is the leaf: forward, its
@@ -164,10 +164,8 @@ side: `web/src/flip_turner.rs`; numbers in `crates/web-core/src/tuning.rs` (`FLI
 `web/theme.css` `--flip-*` and `.flip-*`. The leaf moves on a spring with a speed of its own,
 so a flick carries on at the speed of the finger. The two pages lie stacked in one cell
 (the list over the planner, `main[data-pane]` names the one showing), so there is no scroll
-row between them. The gear's **Page turn** setting picks `Realistic` (this) or `Fast`, the
-older corner bend (`web/src/fold.rs`, `fold_turner.rs`, `--bend-*`): swipe the corner and
-the page folds along the line halfway to the finger. `web/src/turner.rs` picks one for each
-gesture; in `Fast` too the list is the only leaf and back is the fold run the other way.
+row between them. There is no setting for it: the corner bend and the gear's Page turn
+choice are gone.
 The pages fill the screen edge to edge on a phone (safe areas are page padding). On the
 earliest day the grid takes `touch-action: pan-y pan-right` and `overscroll-behavior-x:
 none`, so a swipe to the right is the page's (never the grid stretching) and a swipe to

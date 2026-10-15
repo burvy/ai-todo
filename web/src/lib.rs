@@ -27,9 +27,6 @@ mod engine;
 mod events;
 mod flip;
 mod flip_turner;
-#[cfg(any(target_arch = "wasm32", test))]
-mod fold;
-mod fold_turner;
 mod placing;
 mod rambo;
 mod rambo_world;
@@ -39,7 +36,6 @@ mod smudge;
 mod tasks;
 #[cfg(target_arch = "wasm32")]
 mod turn_util;
-mod turner;
 
 use crate::capture::CaptureBox;
 use crate::rambo::Rambo;
@@ -80,11 +76,10 @@ pub fn App() -> impl IntoView {
     lamp::provide_switch();
     let main_ref = NodeRef::<leptos::html::Main>::new();
     let (pane, set_pane) = signal(0_u8);
-    // The page turn (turner.rs): the list lies over the planner and turns like a book's page,
-    // hinged on its left, or bends from a corner, as the gear's Page turn setting says. The
-    // page showing is `pane`; the turn names the page that lands.
+    // The page turn (flip_turner.rs): the list lies over the planner and turns like a book's
+    // page, hinged on its left. The page showing is `pane`; the turn names the page that lands.
     let fx_ref = NodeRef::<leptos::html::Div>::new();
-    let turner = turner::Turner::new(main_ref, fx_ref, pane, set_pane, view_settings);
+    let turner = flip_turner::Turner::new(main_ref, fx_ref, pane, set_pane);
     let (mascot_state, set_mascot_state) = signal(mascot::State::Home);
     let (talking, set_talking) = signal(false);
     let (typing, set_typing) = signal(false);
@@ -229,18 +224,11 @@ pub fn App() -> impl IntoView {
                 })
                 pane
             />
-            // What a turning page draws over the two panes, hidden until a turn: for the
-            // book flip, the light on the leaf and the shadow it throws on the page under it
-            // (flip-*); for the corner bend, the shadow it casts, the curl's rise and the
-            // lifted flap with its own shadow (bend-*).
+            // What a turning page draws over the two panes, hidden until a turn: the light on
+            // the leaf and the shadow it throws on the page under it.
             <div class="bend-fx" node_ref=fx_ref aria-hidden="true">
                 <div class="flip-sheen"></div>
                 <div class="flip-cast"></div>
-                <div class="bend-away"><i class="bend-strip bend-cast"></i></div>
-                <div class="bend-kept"><i class="bend-strip bend-rise"></i></div>
-                <div class="bend-shadow bend-shadow-far"></div>
-                <div class="bend-shadow bend-shadow-near"></div>
-                <div class="bend-flap"><i class="bend-strip bend-ridge"></i></div>
             </div>
         </main>
         // The desk lamp, the dark-mode switch.
