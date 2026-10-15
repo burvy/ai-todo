@@ -626,7 +626,7 @@ b. Import a `.ics` with `RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO` and check that t
 snapshot contains one series that fires every other Monday.
 c. Code: `server/src/v2/ics_import.rs:parse_calendar, rrule_series`;
 `server/src/v2/app.rs:import_series`; `crates/core/src/lib.rs:Recurrence, Series`.
-Tests: `server/src/v2/ics_import.rs` (hand-written `.ics` strings for weekly,
+Tests: `server/src/v2/ics_import/tests.rs` (hand-written `.ics` strings for weekly,
 weekly with interval, daily, daily with interval);
 `crates/core/src/lib.rs` (covers math for interval and daily).
 
