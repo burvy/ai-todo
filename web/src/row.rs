@@ -190,12 +190,11 @@ pub mod dom {
                 svg.class_list().add_1("lifting").ok();
             }
             let row = row.clone();
-            gloo_timers::callback::Timeout::new(ms, move || {
+            crate::engine::after(f64::from(ms), move || {
                 if lift_clears(lifted, stroke_on(&row)) {
                     remove_ink(&row);
                 }
-            })
-            .forget();
+            });
         }
     }
 
@@ -260,8 +259,7 @@ pub mod dom {
         // A finger that never moves still picks the row up when the hold runs
         // out, so the lift cannot depend on a pointermove arriving.
         let presses = presses.clone();
-        wasm_bindgen_futures::spawn_local(async move {
-            gloo_timers::future::TimeoutFuture::new(HOLD_MS).await;
+        crate::engine::after(f64::from(HOLD_MS), move || {
             let lifted = match presses.borrow_mut().as_mut() {
                 Some(p) if p.gesture == Gesture::Pressed && p.lifts => {
                     p.gesture = Gesture::Lifted;

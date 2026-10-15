@@ -1,6 +1,5 @@
 //! Rambo the pen: dragging, flying, landing on a row, and listening.
 
-use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
@@ -35,8 +34,6 @@ pub(crate) fn Rambo(
     capture_text: RwSignal<String>,
     /// Capture form: Rambo calls requestSubmit on release
     form_ref: NodeRef<leptos::html::Form>,
-    /// Set to the task he was dropped on when you choose "Edit": the list opens its sheet
-    edit_request: RwSignal<Option<TaskId>>,
     /// Set to the task he was dropped on when you choose "Move": the planner places it
     move_request: RwSignal<Option<TaskId>>,
     /// The task whose edit sheet is open, if any: listening for an edit ends with it
@@ -468,7 +465,7 @@ pub(crate) fn Rambo(
             move |on| {
                 set_talking.set(on);
                 if !on {
-                    send_heard_edit(editing, heard, snapshot, store, edit_request, open_sheet);
+                    send_heard_edit(editing, heard, snapshot, store, events, open_sheet);
                 }
             },
             // Silence is fine here: the sheet is open, so typing the change works too.
@@ -522,7 +519,7 @@ pub(crate) fn Rambo(
         match choice {
             mascot::Choice::Edit => {
                 let id = TaskId(task_id);
-                edit_request.set(Some(id.clone()));
+                events.push(rambl_web_core::events::Event::EditAsked { id: id.0.clone() });
                 listen_for_edit(id);
                 chosen();
             }
@@ -1010,15 +1007,14 @@ pub(crate) fn Rambo(
                         still.set(true);
                         let (hold, still) = (hold.clone(), still.clone());
                         let start = start_speech_down.clone();
-                        Timeout::new(mascot::LISTEN_HOLD_MS, move || {
+                        crate::engine::after(f64::from(mascot::LISTEN_HOLD_MS), move || {
                             if hold.get() == ticket
                                 && still.get()
                                 && state.get_untracked() == mascot::State::Dragging
                             {
                                 start();
                             }
-                        })
-                        .forget();
+                        });
                     } else if let Some(rambo) = rambo_ref.get() {
                         // Dazed: this drag writes, starting where the nib is now.
                         let below = rambo.get_bounding_client_rect().height() * mascot::NIB_BELOW;
@@ -1286,7 +1282,7 @@ fn send_heard_edit(
     heard: RwSignal<String>,
     snapshot: ReadSignal<Snapshot>,
     sink: crate::store::Store,
-    edit_request: RwSignal<Option<TaskId>>,
+    events: crate::events::Queue,
     open_sheet: RwSignal<Option<TaskId>>,
 ) {
     let Some(id) = editing.try_update(Option::take).flatten() else {
@@ -1302,7 +1298,7 @@ fn send_heard_edit(
     wasm_bindgen_futures::spawn_local(async move {
         if revise_and_show(&id, body, sink).await {
             // Fill the sheet again from the result; fields typed meanwhile are kept.
-            edit_request.set(Some(id));
+            events.push(rambl_web_core::events::Event::EditAsked { id: id.0 });
         }
     });
 }

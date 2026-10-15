@@ -415,7 +415,6 @@ pub(crate) fn TaskList(
     pen_queue: RwSignal<Vec<TaskId>>,
     pen_pos: RwSignal<(f64, f64)>,
     /// A row to open the edit sheet on, set by Rambo's "Edit".
-    edit_request: RwSignal<Option<TaskId>>,
     /// Set by the + beside the capture box: the sheet opens on a new task.
     new_task: RwSignal<bool>,
     /// The task whose edit sheet is open; Rambo listens for its change while it is.
@@ -505,9 +504,9 @@ pub(crate) fn TaskList(
         set_title_missing.set(false);
     };
     Effect::new(move |_| {
-        if let Some(id) = edit_request.get() {
-            edit_request.set(None);
-            open_editor(&id);
+        events.track();
+        if let Some(id) = events.take_all(rambl_web_core::events::edit_asked).pop() {
+            open_editor(&TaskId(id));
         }
     });
     // The +: the same sheet, on a blank form.
@@ -633,7 +632,7 @@ pub(crate) fn TaskList(
                         // He flies to the row where it is on each frame, not where
                         // it was when he set off.
                         let following = row.clone().map(|row| write::follow_row(row, pen_pos));
-                        gloo_timers::future::TimeoutFuture::new(crate::tuning::FLY_MS).await;
+                        crate::engine::wait(f64::from(crate::tuning::FLY_MS)).await;
                         if let Some(following) = following {
                             following.stop();
                         }
@@ -666,7 +665,7 @@ pub(crate) fn TaskList(
                                 &mascot::State::WritingRow,
                                 mascot::Event::FlyHome,
                             ));
-                            gloo_timers::future::TimeoutFuture::new(crate::tuning::FLY_MS).await;
+                            crate::engine::wait(f64::from(crate::tuning::FLY_MS)).await;
                             set_state.set(mascot::transition(
                                 &mascot_state.get_untracked(),
                                 mascot::Event::FlyHome,
@@ -794,7 +793,7 @@ pub(crate) fn TaskList(
                                         wasm_bindgen_futures::spawn_local(async move {
                                             // The swipe drew the ink; it finishes across the row,
                                             // and the row, done, tears off and flies to the pin.
-                                            gloo_timers::future::TimeoutFuture::new(tuning::SCRIBBLE_FINISH_MS).await;
+                                            crate::engine::wait(f64::from(tuning::SCRIBBLE_FINISH_MS)).await;
                                             scrap::note_departure(events, &task_id.0);
                                             if let Some(action) = snapshot.with_untracked(|s| tick_action(s, &task_id.0)) {
                                                 apply_tick(&task_id, action, store).await;
