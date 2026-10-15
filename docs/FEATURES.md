@@ -298,6 +298,19 @@ the tape), `web/src/mascot.rs:State::Mending, Event::Mend`, `web/src/scrap.rs:ho
 `.tear-layer`, `.tape`); numbers in `web/src/tuning.rs` (`RIP_*`, `TAPE_*`, `TEAR_*`,
 `MEND_MS`).
 
+### 9. The list paper is lightly lined
+a. The list page is ruled like a notebook's, ruled before anything is written on it: one grid
+of faint rules from the top of the list down to the foot of the page and out under the pin's
+column, every `--line-pitch`. Each row is laid on it: a row is a whole number of pitches tall
+(its text's line height is the pitch), so a one-line title sits on one rule and a title that
+wraps takes two, each line on its own rule, and every rule below stays where it was. The
+planner keeps its own grid. The rules are a token (`--paper-line`, fainter than the rules that
+divide things, with its own dark value). The paper fills what is left of the page and never
+makes it longer.
+b. Add a few tasks, one with a long title: the rows stand on lines that carry on to the page's
+foot, with the long title on two, in light and dark paper, on a phone and on a desk.
+c. Code: `web/theme.css` (`--paper-line`, `--line-pitch`, `.task-list`, `.task-open`).
+
 ## III. WEEK PLANNER
 
 ### 1. Scrollable week view
@@ -369,15 +382,16 @@ c. Code: `web/theme.css` (`:root` and `:root[data-theme="dark"]`);
 
 ### 5a. The desk lamp
 a. A small desk lamp is the dark-mode switch. Tapping it pulls its cord: a sheet of the
-other paper is laid down from the top edge over the page, the page's own paper is swapped
-under it, and the sheet is taken away on the next frame. The page is swapped out; nothing
-fades. The lamp is dark by day and lit by night (by night its light falls on the corner of
-the page), and its own light changes at the tap. The gear menu's Light and Dark choices
-use the same switch, so there is one behaviour; only with reduced motion does the paper
-change at once. It is the same stored Theme setting as ever, and the page still never
-follows the OS. On a desk the lamp stands on the bottom edge of the screen in the bottom
-left corner, clear of the capture box and the gear; on a phone it stands at the foot, just
-above the capture bar.
+other paper is laid down from the top edge over the whole desk (Rambo and his nest too), the
+page's own paper is swapped under it, and the sheet lifts back off the way it came. The page
+is swapped out; nothing fades. The lamp is dark by day and lit by night (by night its light
+falls on the corner of the page), and its own light changes at the tap. The gear menu's
+Light and Dark choices use the same switch, so there is one behaviour, and the menu closes
+on the pick; only with reduced motion does the paper change at once. It is the same stored
+Theme setting as ever, and the page still never follows the OS. On a desk the lamp stands on
+the bottom edge of the screen in the bottom left corner, clear of the capture box and the
+gear; on a phone it stands in the left end of the capture bar (the bar keeps clear of it, and
+it rides up with the bar over the keyboard), so no page is under it.
 b. Tap the lamp (or pick Light or Dark in the gear menu) and watch the new paper slide
 down; reload and see the choice kept.
 c. Code: `web/src/lamp.rs:DeskLamp, switch_to`; `web/theme.css` (`.desk-lamp`,
@@ -411,8 +425,9 @@ listening, for a new task that starts then (snapped to the quarter hour): the ca
 box takes the focus and asks for it ("A task for today 14:30"). Say it, and it is sent
 as you stop speaking; or type it and press Enter or tap the nest. Tapping or clicking
 anywhere off the capture box, him included, or Esc, is never mind: nothing is created and
-the box empties. Dropped on a placed task, or at a time the clock skips that day, he
-does not start one.
+the box empties. Whatever its words, what you send there becomes a task at that hour:
+it is made as you worded it, never checked by the judge. Dropped on a placed task, or
+at a time the clock skips that day, he does not start one.
 b. Turn to the planner, drag Rambo onto an empty hour, then speak or type a title.
 c. Code: `web/src/rambo.rs:Rambo, free_hour_under`; `web/src/week.rs:hour_at, free_at,
 hour_prefill_text`; `web/src/capture.rs:CaptureBox, noted`;
@@ -446,7 +461,8 @@ row), he holds on to the paper as it scrolls: a slow scroll carries him along wi
 and one faster than he can hold on flings him with the page, a throw like any other,
 so a hard enough one smacks him into the edge of the screen. A throw that comes into the bottom-right corner
 is caught by his nest, however hard: no daze and no ink, he hops in. The nest is
-soft: it sags under him as he lands (deeper the harder he was thrown), rocks as he
+soft: it sags under him as he lands, visibly, and deeper the harder he comes down (a
+long hop or a hard throw), taking a moment to settle, rocks as he
 leaves or lands to one side, and settles; with reduced motion it stays still. He leans into where he hops, and eases from
 one pose into the next, never snapping. After a long stretch of writing his nib runs dry:
 home again, he tips toward the nest's rim and taps it there a few times, the nest
@@ -500,12 +516,15 @@ aloud), **A quiet desk** (only the noises paper and ink really make: the nib, th
 scribble, the page turn, the crumple; no voice), **Every touch answers** (the default:
 also a tick on every button and a swish when a ramble is sent) and **Everything + music**
 (the same cues, plus calm piano under them: two public-domain recordings, looped softly,
-started by the first press after the choice). It replaces the old Sounds on/off
+started by the first press after the choice). While it plays, Rambo dances to it in his
+nest: he listens to how loud the music is, and every note's attack pushes his slow
+side-to-side swing and bobs him in the nest; when it stops, both settle. He dances only at home,
+never while held, flying or writing, and not with reduced motion. It replaces the old Sounds on/off
 flag: a stored "off" stays Off, a stored "on" becomes every touch. With reduced motion
 on, the tick and the page sound are dropped.
 b. Open the gear menu, pick each preset, then tap a button, turn the page and add a task.
 c. Code: `web/src/sound.rs:Cue, plays`; `web/src/settings.rs:SoundPreset, with_migrated_sound`;
-`web/src/voice.rs:audible`; `web/src/music.rs:sync`. Music files: `web/assets/music/ABOUT.md`. Sound files and how to swap one: `web/assets/sounds/ABOUT.md`.
+`web/src/voice.rs:audible`; `web/src/music.rs:sync, level, loudness`; `web/src/engine/dance.rs:Dance`. Music files: `web/assets/music/ABOUT.md`. Sound files and how to swap one: `web/assets/sounds/ABOUT.md`.
 
 ### 5. Reduced motion
 a. With reduced motion enabled, Rambo returns immediately instead of animating.

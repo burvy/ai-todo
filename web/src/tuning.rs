@@ -29,6 +29,38 @@ pub const LAMP_SLIDE_MS: u32 = 340;
 /// How long the lamp's cord stays pulled down after a tap, in ms. Safe range 150 to 400.
 pub const LAMP_PULL_MS: u32 = 240;
 
+// Rambo's dance to that music (`engine/dance.rs`): he hears each note's attack in how
+// loud the music is, and every beat kicks his sway and bounces the nest.
+
+/// How quickly he follows the music's loudness, and how slowly he remembers it, in ms: a
+/// note's attack is the quick one rising above the slow one. Safe ranges 15 to 60 and
+/// 250 to 800.
+pub const DANCE_FAST_MS: f64 = 30.0;
+pub const DANCE_SLOW_MS: f64 = 400.0;
+/// How far above lately's loudness a sound must rise to be a beat. Safe range 1.2 to 2.5:
+/// lower and he twitches at every swell, higher and only the loudest chords move him. At
+/// 1.35 the Nocturne (the first track) moves him about every 1.6 s; at 1.5, half as often.
+pub const DANCE_ONSET_RATIO: f64 = 1.35;
+/// Softer than this is silence to him (loudness, 0 to 1). Safe range 0.001 to 0.01.
+pub const DANCE_FLOOR: f64 = 0.003;
+/// The shortest gap between two beats he moves to, in ms. Safe range 180 to 500.
+pub const DANCE_MIN_GAP_MS: f64 = 250.0;
+/// His sway: how stiff (rad/s) and how damped (a share of critical), how hard a full
+/// beat kicks it (degrees/s), and the most it leans (degrees). Loose and slow, so the
+/// swing carries from one note to the next and the notes swell it: a period of about
+/// 2 s that takes about 3 s to die away. Safe ranges 2 to 5, 0.08 to 0.3, 8 to 30 and
+/// 3 to 10.
+pub const DANCE_OMEGA: f64 = 3.0;
+pub const DANCE_DAMPING: f64 = 0.12;
+pub const DANCE_LEAN_KICK: f64 = 15.0;
+pub const DANCE_LEAN_MAX_DEG: f64 = 6.0;
+/// How hard a full beat bounces the nest under him, in px/s of sag: he bobs on it, a
+/// few px on a phone. Safe range 30 to 90.
+pub const DANCE_BOUNCE_KICK: f64 = 60.0;
+/// How often a sleeping Rambo checks whether the music has started, in ms. Safe range
+/// 250 to 1000.
+pub const DANCE_LISTEN_MS: f64 = 500.0;
+
 const _: () = assert!(60 % MINUTE_STEP == 0);
 
 // ---- What a finger means (web/src/gesture.rs, VISION-AUDIT item 3): one slop and
@@ -383,22 +415,22 @@ pub const FLING_SPLAT_REACH_PX: f64 = 26.0;
 // The nest (`engine/nest.rs`, SPEC-ANSWERS items 15-17): a soft dish on two damped
 // springs, its sag in px and its rock in degrees.
 
-/// How stiff the dish is, in rad/s. Safe range 10 to 25: softer and it wallows,
-/// stiffer and it only twitches.
-pub const NEST_OMEGA: f64 = 16.0;
+/// How stiff the dish is, in rad/s. Safe range 7 to 16: softer and it wallows,
+/// stiffer and it only twitches (16 read as no give at all: QA round 3).
+pub const NEST_OMEGA: f64 = 10.0;
 /// How quickly its swing dies, as a share of critical damping. Safe range 0.2 to 0.6:
 /// lower and it wobbles on, higher and it never bounces.
-pub const NEST_DAMPING: f64 = 0.3;
+pub const NEST_DAMPING: f64 = 0.25;
 /// The deepest it sags, in px, and the most it rocks, in degrees, however hard he
 /// lands. Safe ranges 3 to 10 and 2 to 6.
-pub const NEST_SAG_MAX_PX: f64 = 6.0;
+pub const NEST_SAG_MAX_PX: f64 = 10.0;
 pub const NEST_ROCK_MAX_DEG: f64 = 4.0;
-/// How hard he comes down in it at the end of a hop home, in px/s of sag. Safe range
-/// 30 to 90.
-pub const NEST_LAND_KICK: f64 = 60.0;
-/// The extra sag a caught throw adds per px/ms of its speed, in px/s. Safe range 10 to
-/// 40.
-pub const NEST_CATCH_KICK_PER_PX_MS: f64 = 20.0;
+/// How much the dish gives under him: px/s of sag for each px/s he is still falling (a
+/// hop's last drop, a throw's speed) as he comes down in it, so a hard landing sags it
+/// deep and a soft one a little. Safe range 0.06 to 0.2.
+pub const NEST_IMPACT_SAG: f64 = 0.12;
+/// The least a landing sags it, in px/s, however softly he settles. Safe range 20 to 60.
+pub const NEST_LAND_KICK: f64 = 40.0;
 /// How far a landing off its middle tips it, in degrees per px off. Safe range 0.02 to
 /// 0.1.
 pub const NEST_ROCK_PER_PX: f64 = 0.05;

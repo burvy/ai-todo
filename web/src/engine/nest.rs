@@ -9,7 +9,7 @@
 
 use super::world::Vec2;
 use crate::tuning::{
-    DRY_NIB_TAP_KICK, DRY_NIB_TAP_ROCK, NEST_CATCH_KICK_PER_PX_MS, NEST_DAMPING, NEST_LAND_KICK,
+    DRY_NIB_TAP_KICK, DRY_NIB_TAP_ROCK, NEST_DAMPING, NEST_IMPACT_SAG, NEST_LAND_KICK,
     NEST_LEAVE_KICK, NEST_OMEGA, NEST_ROCK_MAX_DEG, NEST_ROCK_PER_PX, NEST_SAG_MAX_PX,
 };
 
@@ -68,10 +68,11 @@ impl Nest {
         self.rock.x = self.rock.x.clamp(-NEST_ROCK_MAX_DEG, NEST_ROCK_MAX_DEG);
     }
 
-    /// He comes down in it `off` px right of its middle: it sags under him, and tips
-    /// toward the side he landed on.
-    pub(crate) fn land(&mut self, off: f64) {
-        self.sag.kick(NEST_LAND_KICK, NEST_SAG_MAX_PX);
+    /// He comes down in it `off` px right of its middle, still falling at `impact` px/s:
+    /// it sags under him, deeper the harder he lands, and tips toward the side he
+    /// landed on.
+    pub(crate) fn land(&mut self, off: f64, impact: f64) {
+        self.sag.kick(give(impact), NEST_SAG_MAX_PX);
         self.rock
             .kick(off * NEST_ROCK_PER_PX * NEST_OMEGA, NEST_ROCK_MAX_DEG);
     }
@@ -79,10 +80,7 @@ impl Nest {
     /// A throw comes down in it at `speed` px per ms, heading `dx` across: a bigger sag
     /// the faster he comes, tipped the way he was going.
     pub(crate) fn catch(&mut self, speed: f64, dx: f64) {
-        self.sag.kick(
-            NEST_LAND_KICK + speed * NEST_CATCH_KICK_PER_PX_MS,
-            NEST_SAG_MAX_PX,
-        );
+        self.sag.kick(give(speed * 1000.0), NEST_SAG_MAX_PX);
         self.rock
             .kick(dx.signum() * NEST_LEAVE_KICK, NEST_ROCK_MAX_DEG);
     }
@@ -93,6 +91,12 @@ impl Nest {
         self.rock.kick(-DRY_NIB_TAP_ROCK, NEST_ROCK_MAX_DEG);
     }
 
+    /// He bounces in it to a beat of `strength` (0 to 1).
+    pub(crate) fn bounce(&mut self, strength: f64) {
+        self.sag
+            .kick(strength * crate::tuning::DANCE_BOUNCE_KICK, NEST_SAG_MAX_PX);
+    }
+
     /// He leaves it heading `dx` across: it springs up as his weight goes and rocks
     /// the other way.
     pub(crate) fn leave(&mut self, dx: f64) {
@@ -100,6 +104,11 @@ impl Nest {
         self.rock
             .kick(-dx.signum() * NEST_LEAVE_KICK, NEST_ROCK_MAX_DEG);
     }
+}
+
+/// How fast the dish starts to sag, in px/s, under him coming down at `impact` px/s.
+fn give(impact: f64) -> f64 {
+    (impact.abs() * NEST_IMPACT_SAG).max(NEST_LAND_KICK)
 }
 
 #[cfg(test)]
@@ -145,7 +154,7 @@ mod tests {
     #[test]
     fn a_landing_sags_it_then_it_settles_back_level() {
         let mut nest = Nest::default();
-        nest.land(0.0);
+        nest.land(0.0, 0.0);
         let mut deepest: f64 = 0.0;
         for _ in 0..30 {
             nest.step(DT);
@@ -171,13 +180,38 @@ mod tests {
             }
             nest.offset().1
         };
-        assert!(tipped(&|nest| nest.land(10.0)) > 0.0);
-        assert!(tipped(&|nest| nest.land(-10.0)) < 0.0);
+        assert!(tipped(&|nest| nest.land(10.0, 300.0)) > 0.0);
+        assert!(tipped(&|nest| nest.land(-10.0, 300.0)) < 0.0);
         assert!(
             tipped(&|nest| nest.leave(-50.0)) > 0.0,
             "leaving left, it rocks right"
         );
         assert!(tipped(&|nest| nest.leave(50.0)) < 0.0);
+    }
+
+    #[test]
+    fn a_harder_landing_sags_it_deeper_and_a_settle_still_gives() {
+        let deepest = |impact: f64| {
+            let mut nest = Nest::default();
+            nest.land(0.0, impact);
+            (0..120)
+                .map(|_| {
+                    nest.step(DT);
+                    nest.offset().0
+                })
+                .fold(0.0, f64::max)
+        };
+        let mut seeded = Seeded(9);
+        for _ in 0..100 {
+            let soft = seeded.unit().abs() * 1500.0;
+            let hard = soft + 1.0 + seeded.unit().abs() * 1500.0;
+            assert!(deepest(hard) >= deepest(soft), "{hard} vs {soft}");
+        }
+        assert!(
+            deepest(0.0) > 2.0,
+            "even settling in, it gives: {}",
+            deepest(0.0)
+        );
     }
 
     #[test]
@@ -207,7 +241,7 @@ mod tests {
             let mut nest = Nest::default();
             for _ in 0..8 {
                 match (seeded.unit() * 3.0).abs() as u8 {
-                    0 => nest.land(seeded.unit() * 40.0),
+                    0 => nest.land(seeded.unit() * 40.0, seeded.unit().abs() * 3000.0),
                     1 => nest.leave(seeded.unit()),
                     _ => nest.catch(seeded.unit().abs() * 4.0, seeded.unit()),
                 }

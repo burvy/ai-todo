@@ -14,6 +14,16 @@ pub fn wanted(preset: SoundPreset) -> bool {
     preset == SoundPreset::Music
 }
 
+/// How loud a stretch of the music is: the root mean square of its samples (-1 to 1),
+/// 0 for none. What Rambo hears to dance to (`engine::Dance`).
+pub fn loudness(samples: &[f32]) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let sum: f64 = samples.iter().map(|s| f64::from(*s) * f64::from(*s)).sum();
+    (sum / samples.len() as f64).sqrt()
+}
+
 /// The track after `index`, wrapping to the first after the last.
 pub fn next_track(index: usize) -> usize {
     (index + 1) % TRACKS.len()
@@ -24,6 +34,74 @@ thread_local! {
     /// The one audio element, kept so a later call resumes it rather than layering a second.
     static PLAYER: std::cell::RefCell<Option<web_sys::HtmlAudioElement>> =
         const { std::cell::RefCell::new(None) };
+    /// Where Rambo listens.
+    static EAR: std::cell::RefCell<Option<Ear>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The music runs through `analyser` on its way out; `context` is what it lives in,
+/// resumed on a press like the music itself; `samples` is read into on every frame, kept
+/// so that no frame allocates one.
+#[cfg(target_arch = "wasm32")]
+struct Ear {
+    context: web_sys::AudioContext,
+    analyser: web_sys::AnalyserNode,
+    samples: Vec<f32>,
+}
+
+/// How loud the music playing now is (0 to 1), or `None` when none plays. The analyser
+/// hears it after its volume is turned down, so this undoes that: how loud the recording
+/// is, whatever `MUSIC_VOLUME` is set to.
+#[cfg(target_arch = "wasm32")]
+pub fn level() -> Option<f64> {
+    let playing = PLAYER.with(|slot| slot.borrow().as_ref().is_some_and(|audio| !audio.paused()));
+    if !playing {
+        return None;
+    }
+    EAR.with(|ear| {
+        let mut ear = ear.borrow_mut();
+        let Ear {
+            analyser, samples, ..
+        } = ear.as_mut()?;
+        analyser.get_float_time_domain_data(samples);
+        Some(loudness(samples) / crate::tuning::MUSIC_VOLUME)
+    })
+}
+
+/// Off the browser no music plays.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn level() -> Option<f64> {
+    None
+}
+
+/// Runs `audio` through an analyser on its way out, so Rambo can hear it. Without Web
+/// Audio the music still plays straight out, and he simply does not dance.
+#[cfg(target_arch = "wasm32")]
+fn listen_to(audio: &web_sys::HtmlAudioElement) {
+    let Ok(context) = web_sys::AudioContext::new() else {
+        return;
+    };
+    let (Ok(source), Ok(analyser)) = (
+        context.create_media_element_source(audio),
+        context.create_analyser(),
+    ) else {
+        return;
+    };
+    analyser.set_fft_size(1024);
+    if source.connect_with_audio_node(&analyser).is_err()
+        || analyser
+            .connect_with_audio_node(&context.destination())
+            .is_err()
+    {
+        return;
+    }
+    let samples = vec![0.0; analyser.fft_size() as usize];
+    EAR.with(|ear| {
+        *ear.borrow_mut() = Some(Ear {
+            context,
+            analyser,
+            samples,
+        })
+    });
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -46,6 +124,12 @@ pub fn sync(preset: SoundPreset) {
             }
             return;
         }
+        // A press is when a browser lets the ear's context run, as it lets music play.
+        EAR.with(|ear| {
+            if let Some(ear) = ear.borrow().as_ref() {
+                let _ = ear.context.resume();
+            }
+        });
         if let Some(audio) = slot.as_ref() {
             if audio.paused() {
                 let _ = audio.play();
@@ -61,6 +145,7 @@ pub fn sync(preset: SoundPreset) {
         };
         audio.set_src(&track_url(0));
         audio.set_volume(crate::tuning::MUSIC_VOLUME);
+        listen_to(&audio);
         let next = std::rc::Rc::new(std::cell::Cell::new(0_usize));
         let on_end = {
             let audio = audio.clone();
@@ -91,6 +176,16 @@ mod tests {
         for preset in SoundPreset::ALL {
             assert_eq!(wanted(preset), preset == SoundPreset::Music, "{preset:?}");
         }
+    }
+
+    #[test]
+    fn loudness_is_the_root_mean_square_of_the_samples() {
+        assert_eq!(loudness(&[]), 0.0);
+        assert_eq!(loudness(&[0.0; 64]), 0.0);
+        assert!((loudness(&[0.5, -0.5, 0.5, -0.5]) - 0.5).abs() < 1e-9);
+        // A sine at full scale is 1/sqrt(2) loud, whatever its pitch.
+        let sine: Vec<f32> = (0..1024).map(|i| (i as f32 * 0.37).sin()).collect();
+        assert!((loudness(&sine) - std::f64::consts::FRAC_1_SQRT_2).abs() < 0.01);
     }
 
     #[test]
