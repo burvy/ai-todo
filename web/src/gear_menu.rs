@@ -134,6 +134,12 @@ pub fn GearMenu(
         save(next);
         apply_theme(next.theme);
     };
+    // One setting changed; every other one stays as it is now.
+    let change = move |edit: &dyn Fn(&mut Settings)| {
+        let mut next = settings.get();
+        edit(&mut next);
+        update(next);
+    };
 
     // The stored choice wins over the OS from the first paint on.
     Effect::new(move |_| apply_theme(settings.get().theme));
@@ -146,45 +152,23 @@ pub fn GearMenu(
         set_open.set(false);
     };
     let set_sound = move |sound: SoundPreset| {
-        update(Settings {
-            sound,
-            ..settings.get()
-        });
+        change(&|s| s.sound = sound);
         // A quiet desk cuts him off mid-sentence too, not just the next one.
         if !sound.allows_voice() {
             crate::voice::cancel();
         }
     };
     let toggle_rambo_talks = move || {
-        let next = Settings {
-            rambo_talks: !settings.get().rambo_talks,
-            ..settings.get()
-        };
-        update(next);
+        let talks = !settings.get().rambo_talks;
+        change(&|s| s.rambo_talks = talks);
         // Turning him off mid-sentence should stop the sentence, not the next one.
-        if !next.rambo_talks || !next.sound.allows_voice() {
+        if !talks || !settings.get().sound.allows_voice() {
             crate::voice::cancel();
         }
     };
-    let set_pen = move |pen: Pen| {
-        update(Settings {
-            pen,
-            ..settings.get()
-        })
-    };
-    let set_clock = move |clock: Clock| {
-        update(Settings {
-            clock,
-            ..settings.get()
-        })
-    };
-
-    let set_page_turn = move |page_turn: PageTurn| {
-        update(Settings {
-            page_turn,
-            ..settings.get()
-        })
-    };
+    let set_pen = move |pen: Pen| change(&|s| s.pen = pen);
+    let set_clock = move |clock: Clock| change(&|s| s.clock = clock);
+    let set_page_turn = move |page_turn: PageTurn| change(&|s| s.page_turn = page_turn);
 
     let close = move |_| set_open.set(false);
 
@@ -296,7 +280,7 @@ pub fn GearMenu(
                                     "lobotomized" => RamblMode::Lobotomized,
                                     _ => RamblMode::Interactive,
                                 };
-                                update(Settings { mode, ..settings.get() });
+                                change(&|s| s.mode = mode);
                             }>
                                 <option value="interactive" selected=move || settings.get().mode == RamblMode::Interactive>"Interactive"</option>
                                 <option value="instant" selected=move || settings.get().mode == RamblMode::Instant>"Instant"</option>
@@ -309,7 +293,7 @@ pub fn GearMenu(
                             <input type="number" min="0" max="23" prop:value=move || settings.get().start_hour
                                 on:change=move |event| {
                                     if let Ok(hour) = event_target_value(&event).parse() {
-                                        update(Settings { start_hour: hour, ..settings.get() });
+                                        change(&|s| s.start_hour = hour);
                                     }
                                 } />
                         </label>
@@ -318,7 +302,7 @@ pub fn GearMenu(
                             <input type="number" min="1" max="24" prop:value=move || settings.get().end_hour
                                 on:change=move |event| {
                                     if let Ok(hour) = event_target_value(&event).parse() {
-                                        update(Settings { end_hour: hour, ..settings.get() });
+                                        change(&|s| s.end_hour = hour);
                                     }
                                 } />
                         </label>
@@ -327,7 +311,7 @@ pub fn GearMenu(
                             <input type="number" min="1" max=MAX_DAYS.to_string() prop:value=move || settings.get().days
                                 on:change=move |event| {
                                     if let Ok(days) = event_target_value(&event).parse() {
-                                        update(Settings { days, ..settings.get() });
+                                        change(&|s| s.days = days);
                                     }
                                 } />
                         </label>
