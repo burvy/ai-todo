@@ -8,7 +8,7 @@
 
 use crate::body::{PatchTaskBody, ReviseBody, SeriesBody, SeriesPatchBody};
 use chrono::NaiveDate;
-use todo_core::{Snapshot, Source, TaskDraft, TaskId, When};
+use todo_core::{Snapshot, Source, Task, TaskDraft, TaskId, When};
 
 /// What a view asks the store to change.
 #[derive(Clone, Debug, PartialEq)]
@@ -27,6 +27,8 @@ pub enum Command {
     },
     /// A task made by hand, already shaped.
     CreateTask(TaskDraft),
+    /// A just-deleted task taped back exactly as it was.
+    RestoreTask(Task),
     /// A stored task removed. (A day of a repeat is [`Command::MarkOccurrence`] skipped.)
     DeleteTask(TaskId),
     /// A task made to repeat weekly.
@@ -91,6 +93,7 @@ impl Command {
             | Command::Revise(..)
             | Command::MoveOccurrence { .. }
             | Command::CreateTask(_)
+            | Command::RestoreTask(_)
             | Command::DeleteTask(_)
             | Command::CreateSeries(_)
             | Command::PatchSeries { .. }
@@ -542,6 +545,7 @@ mod tests {
                 date: NaiveDate::from_ymd_opt(2026, 10, 16).expect("a date"),
                 to: When::Anytime,
             },
+            Command::RestoreTask(start.tasks[0].clone()),
             Command::DeleteTask(task),
             Command::DeleteSeries("s1".into()),
             Command::MarkOccurrence {
