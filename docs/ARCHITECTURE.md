@@ -402,7 +402,7 @@ The engine reads the signal back each tick (`world.adopt(state)`, `rambo.rs:199`
 1. `World::tell` with its tests, and the handle. `rambo.rs`'s own writes go through it, and the tick's adopt is removed.
 2. `capture.rs`, `tasks/mod.rs` and `tasks/write.rs` go through the handle. `set_mascot_state` is deleted, with the guard test.
 3. After that, the component splits listed in step 4 (`Rambo`, `TaskList`, `WeekGrid` as `web-core` models plus thin views), one PR each.
-4. **Position has one owner too (planned).** `pen_pos` has eight writers in `rambo.rs` (six), `capture.rs` (two) and `tasks/write.rs` (one). The world derives where he is from his state (an anchor: the nest, the caret, a row, or the point under his finger when held or dropped), and a single resolver in the view measures it and sets the position. `pen_pos` goes away. A scroll, a page turn or the phone keyboard re-resolves it, so he cannot be stranded off screen.
+4. **Position has one owner too (planned).** `pen_pos` has nine writers in `rambo.rs` (six, one of them an `update`), `capture.rs` (two) and `tasks/write.rs` (one). The world derives where he is from his state (an anchor: the nest, the caret, a row, or the point under his finger when held or dropped), and a single resolver in the view measures it and sets the position. `pen_pos` goes away. A scroll, a page turn or the phone keyboard re-resolves it, so he cannot be stranded off screen.
 
 Behaviour stays unchanged throughout.
 

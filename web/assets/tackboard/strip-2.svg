@@ -1,9 +1,0 @@
-<!-- PLACEHOLDER: replace me, see web/assets/README.md. Torn task strip, corner fold on the right. -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 46" role="img" aria-label="torn paper strip with a folded corner">
-  <path fill="#FCFAF4" stroke="#A7865D" stroke-width="1" stroke-linejoin="round"
-        d="M2 9 L12 5 L24 8 L36 4 L50 8 L64 4 L78 8 L92 4 L106 8 L120 4 L134 8 L148 4 L162 8 L172 5 L180 8 L180 12 L192 15 L198 20 L198 36 L190 40 L178 36 L166 41 L152 37 L140 41 L126 37 L112 41 L98 37 L84 41 L70 37 L56 41 L42 37 L28 41 L16 37 L8 40 L2 36 Z"/>
-  <path fill="#ECD7AF" stroke="#A7865D" stroke-width="1" stroke-linejoin="round" d="M180 8 L198 20 L184 18 Z"/>
-  <path fill="none" stroke="#5D4732" stroke-width="1.6" stroke-linecap="round" opacity=".55"
-        d="M13 24 C 46 27.5, 82 20.5, 116 24 S 168 27, 176 23"/>
-  <path fill="none" stroke="#A7865D" stroke-width=".8" opacity=".5" d="M2 15 H198 M2 31 H190"/>
-</svg>
