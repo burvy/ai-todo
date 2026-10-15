@@ -492,6 +492,13 @@ pub fn lift_px(torn: bool, phone: bool, planner_top: f64, tear_y: f64, columns: 
         .unwrap_or(0.0)
 }
 
+/// How far a slide has come, `0.0` to `1.0`, `progress` of the way through its time: it
+/// starts and ends gently, like a sheet drawn up by hand.
+pub fn eased(progress: f64) -> f64 {
+    let p = progress.clamp(0.0, 1.0);
+    p * p * (3.0 - 2.0 * p)
+}
+
 /// When the page is whole again, in ms after the finger let go.
 pub const fn total_ms() -> u32 {
     TAPE_AT_MS + TAPE_LAY_MS + TEAR_HOLD_MS + TEAR_FADE_MS
@@ -539,6 +546,15 @@ mod tests {
         // Nobody due: nothing comes out.
         queue.push(waiting("gone", 0.0));
         assert_eq!(queue.next_due(|_| false), None);
+    }
+
+    #[test]
+    fn a_slide_starts_and_ends_gently() {
+        assert_eq!(eased(0.0), 0.0);
+        assert_eq!(eased(1.0), 1.0);
+        assert_eq!(eased(0.5), 0.5);
+        assert!(eased(0.1) < 0.1 && eased(0.9) > 0.9);
+        assert_eq!((eased(-1.0), eased(2.0)), (0.0, 1.0));
     }
 
     #[test]

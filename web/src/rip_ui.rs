@@ -200,6 +200,32 @@ mod imp {
         waiting: RefCell<rip::HoleQueue>,
     }
 
+    /// The one place the page's slide-up is driven: `apply` is called every frame with how far
+    /// the slide has come (`0.0` to `1.0`, eased: `rip::eased`) and `done` once it has arrived.
+    /// A `duration` of 0 arrives at once. The motion lives behind this function, so it can move
+    /// onto the shared physics module (`engine/body.rs`) without touching its callers.
+    fn slide(duration: f64, mut apply: impl FnMut(f64) + 'static, done: impl FnOnce() + 'static) {
+        let started = std::cell::Cell::new(None::<f64>);
+        let mut done = Some(done);
+        crate::engine::on_tick(move |tick| {
+            let start = started.get().unwrap_or(tick.now);
+            started.set(Some(start));
+            let progress = if duration > 0.0 {
+                ((tick.now - start) / duration).min(1.0)
+            } else {
+                1.0
+            };
+            apply(rip::eased(progress));
+            if progress < 1.0 {
+                return crate::engine::Flow::Go;
+            }
+            if let Some(done) = done.take() {
+                done();
+            }
+            crate::engine::Flow::Stop
+        });
+    }
+
     impl Ripper {
         pub(crate) fn new(
             main: NodeRef<leptos::html::Main>,
@@ -587,33 +613,25 @@ mod imp {
             } else {
                 f64::from(crate::tuning::RIP_BAND_CLOSE_MS)
             };
-            let (started, moved) = (std::cell::Cell::new(None::<f64>), std::cell::Cell::new(0.0));
+            let moved = std::cell::Cell::new(0.0);
             let (ripper, tear) = (self.clone(), tear.clone());
-            crate::engine::on_tick(move |tick| {
-                let start = started.get().unwrap_or(tick.now);
-                started.set(Some(start));
-                let progress = if duration > 0.0 {
-                    ((tick.now - start) / duration).min(1.0)
-                } else {
-                    1.0
-                };
-                // Eased: it starts and ends gently, like a sheet drawn up by hand.
-                let eased = progress * progress * (3.0 - 2.0 * progress);
-                let to = closing.amount * eased;
-                crate::scrap::step_close(&closing, to - moved.get());
-                moved.set(to);
-                closed.set(if closing.amount > 0.0 {
-                    to.min(gap)
-                } else {
-                    gap * eased
-                });
-                if progress < 1.0 {
-                    return crate::engine::Flow::Go;
-                }
-                closed.set(gap);
-                ripper.mend(&tear, false);
-                crate::engine::Flow::Stop
-            });
+            slide(
+                duration,
+                move |eased| {
+                    let to = closing.amount * eased;
+                    crate::scrap::step_close(&closing, to - moved.get());
+                    moved.set(to);
+                    closed.set(if closing.amount > 0.0 {
+                        to.min(gap)
+                    } else {
+                        gap * eased
+                    });
+                },
+                move || {
+                    closed.set(gap);
+                    ripper.mend(&tear, false);
+                },
+            );
         }
 
         /// The repair: Rambo goes to the tear (put out by it, or not), tapes it, and the tear
