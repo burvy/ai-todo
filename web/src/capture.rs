@@ -380,17 +380,18 @@ pub(crate) fn CaptureBox(
             if let Some(hour) = hour {
                 let before = snapshot.get_untracked();
                 wasm_bindgen_futures::spawn_local(async move {
-                    if store
-                        .send(Command::CreateTask(noted(&hour, &title)))
+                    let landed = store
+                        .send_with(
+                            Command::CreateTask(noted(&hour, &title)),
+                            move |_, shown| {
+                                pen_queue.update(|queue| queue.extend(added(&before, shown)));
+                            },
+                        )
                         .await
-                        .is_some()
-                    {
-                        pen_queue.update(|queue| {
-                            queue.extend(added(&before, &snapshot.get_untracked()));
-                        });
-                    } else if text.get_untracked().trim().is_empty() {
-                        // Never lose what was said: it goes back in the box when the box
-                        // is still empty; the store's note says why it was not kept.
+                        .is_some();
+                    // Never lose what was said: it goes back in the box when the box is still
+                    // empty; the store's note says why it was not kept.
+                    if !landed && text.get_untracked().trim().is_empty() {
                         set_text.set(title.clone());
                     }
                     sending.set(false);
@@ -401,7 +402,15 @@ pub(crate) fn CaptureBox(
                 // The capture pipeline (docs/ARCHITECTURE.md 5) splits the ramble into
                 // tasks and reads their days, times, labels and priorities. The store shows
                 // the list it answers with; what it made comes back for the pen to write.
-                match store.send(Command::Capture(title.clone())).await {
+                // The pen takes its tasks before the rows move, so it writes them as they land.
+                let reply = store
+                    .send_with(Command::Capture(title.clone()), move |reply, _| {
+                        if let Reply::Created(created) = reply {
+                            pen_queue.update(|queue| queue.extend(created.clone()));
+                        }
+                    })
+                    .await;
+                match reply {
                     Some(Reply::Created(created)) => {
                         if created.is_empty() {
                             if text.get_untracked().trim().is_empty() {
@@ -411,7 +420,6 @@ pub(crate) fn CaptureBox(
                         } else {
                             crate::sound::play(crate::sound::Cue::Send);
                         }
-                        pen_queue.update(|queue| queue.extend(created));
                     }
                     // A refusal: the store has shown its own note, which does not name the
                     // words. Overwrite it with one that does, and put the words back in the
