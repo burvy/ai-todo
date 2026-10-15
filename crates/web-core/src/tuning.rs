@@ -492,6 +492,10 @@ const _: () = assert!(HOP_HEIGHT_PX <= HOP_HEIGHT_MAX_PX);
 /// so the ink never jumps a letter and the pen never looks stalled. Safe range 8
 /// to 33.
 pub const INK_TICK_MS: u32 = 16;
+/// The most one writing step may advance the pen, in ms. A step is the time really passed
+/// since the last, so the pen keeps its speed at any frame rate; this stops a tab that
+/// slept from throwing the pen far ahead. Safe range 2 to 8 times `INK_TICK_MS`.
+pub const INK_STEP_MAX_MS: u32 = 4 * INK_TICK_MS;
 /// His flight between two spots (caret, row, home), in ms: the notice beat, then
 /// his hops. Safe range 300 to 700.
 pub const FLY_MS: u32 = 450;

@@ -306,14 +306,22 @@ fn set_hand(rambo: Option<&web_sys::CssStyleDeclaration>, hand: Hand) {
     }
 }
 
+/// Wait one tick and give the time that really passed since `last`, which it moves on by
+/// that much (`pen::step_between`).
+async fn tick(last: &mut f64) -> u32 {
+    crate::engine::wait(f64::from(INK_TICK_MS)).await;
+    let (step, next) = pen::step_between(*last, crate::engine::now());
+    *last = next;
+    step
+}
+
 /// Land: the nib touches down and the dip settles, then he rests a beat before
 /// the first stroke.
 async fn touch_down(rambo: Option<&web_sys::CssStyleDeclaration>) {
-    let mut ms = 0;
+    let (mut ms, mut last) = (0, crate::engine::now());
     while ms < WRITE_SETTLE_MS {
         set_hand(rambo, pen::touch_down(ms));
-        crate::engine::wait(f64::from(INK_TICK_MS)).await;
-        ms += INK_TICK_MS;
+        ms += tick(&mut last).await;
     }
     set_hand(rambo, Hand::REST);
 }
@@ -401,6 +409,8 @@ pub async fn write_row_title(
 
     touch_down(rambo).await;
     let (mut elapsed, mut held) = (0, 0);
+    // The time passed since the last look, which is what the pen advances by.
+    let (mut step, mut last) = (INK_TICK_MS, crate::engine::now());
     let mut scratch: Option<sound::Loop> = None;
     let mut hand = Hand::REST;
     loop {
@@ -434,23 +444,23 @@ pub async fn write_row_title(
                     }
                     // The last letter closes with a flick off the paper. The
                     // row's meta inks in while he holds a beat before leaving.
-                    let mut ms = 0;
+                    let (mut ms, mut flicked) = (0, crate::engine::now());
                     while ms < WRITE_FLICK_MS {
                         set_hand(rambo, pen::flick(ms, hand));
-                        crate::engine::wait(f64::from(INK_TICK_MS)).await;
-                        ms += INK_TICK_MS;
+                        ms += tick(&mut flicked).await;
                     }
                     set_hand(rambo, Hand::REST);
                     row.class_list().add_1("meta-inked").ok();
                     crate::engine::wait(f64::from(WRITE_FINISH_MS)).await;
                     break;
                 }
-                elapsed += INK_TICK_MS;
+                elapsed += step;
             }
-            Beat::Hold => held += INK_TICK_MS,
+            Beat::Hold => held += step,
             Beat::FlyHome => {
                 held += crate::tuning::FLY_MS;
                 fly(state, set_state, mascot::Event::FlyHome).await;
+                last = crate::engine::now();
             }
             Beat::FlyBack => {
                 held += crate::tuning::FLY_MS;
@@ -468,10 +478,11 @@ pub async fn write_row_title(
                     mascot::Event::WriteRow,
                 ));
                 touch_down(rambo).await;
+                last = crate::engine::now();
             }
             Beat::Finish => break,
         }
-        crate::engine::wait(f64::from(INK_TICK_MS)).await;
+        step = tick(&mut last).await;
     }
     if let Some(sound) = scratch {
         sound.stop();
