@@ -17,9 +17,6 @@ use crate::{gesture, ink, mascot, settings, sound, speech, tuning, voice};
 /// where he lands, writes when dragged again, and hops back to the nest.
 #[component]
 pub(crate) fn Rambo(
-    /// The empty planner hour he was dropped on, as a date phrase: the capture box's
-    /// next task starts then
-    noting_at: RwSignal<Option<crate::capture::NotedHour>>,
     state: ReadSignal<mascot::State>,
     talking: ReadSignal<bool>,
     set_talking: WriteSignal<bool>,
@@ -562,13 +559,10 @@ pub(crate) fn Rambo(
     // the box, or Esc, is never mind (the ask's listeners below).
     let note_session = std::rc::Rc::new(std::cell::RefCell::new(None::<speech::Session>));
     Effect::new(move |_| {
-        if state.get() != mascot::State::Noting {
+        if !matches!(state.get(), mascot::State::Noting { .. }) {
             if let Some(session) = note_session.borrow_mut().take() {
                 session.stop();
                 set_talking.set(false);
-            }
-            if noting_at.with_untracked(Option::is_some) {
-                noting_at.set(None);
             }
             return;
         }
@@ -595,7 +589,7 @@ pub(crate) fn Rambo(
             move |on| {
                 set_talking.set(on);
                 if !on
-                    && state.get_untracked() == mascot::State::Noting
+                    && matches!(state.get_untracked(), mascot::State::Noting { .. })
                     && !capture_text.with_untracked(|heard| heard.trim().is_empty())
                     && let Some(form) = form_ref.get_untracked()
                 {
@@ -608,7 +602,7 @@ pub(crate) fn Rambo(
                 if note.as_deref() != Some(speech::NO_SPEECH_NOTE) {
                     set_error.set(note);
                 }
-                if quit && state.get_untracked() == mascot::State::Noting {
+                if quit && matches!(state.get_untracked(), mascot::State::Noting { .. }) {
                     give_up();
                 }
             },
@@ -636,7 +630,7 @@ pub(crate) fn Rambo(
     Effect::new(move |_| {
         let answer = match state.get() {
             mascot::State::Asking { .. } => Some(".ask"),
-            mascot::State::Noting => Some(".capture"),
+            mascot::State::Noting { .. } => Some(".capture"),
             _ => None,
         };
         ask_listeners
@@ -1135,8 +1129,7 @@ pub(crate) fn Rambo(
                             &view_settings.get_untracked(),
                         )
                     {
-                        noting_at.set(Some(at));
-                        rambo_world.tell(mascot::Event::DropHour);
+                        rambo_world.tell(mascot::Event::DropHour(at));
                         return;
                     }
                     // A listening Rambo dropped on a task row asks what to do with it.
