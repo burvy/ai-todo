@@ -213,6 +213,19 @@ impl Session {
     }
 }
 
+/// Chrome still fires `end` and `error` after an abort, and the closures these
+/// handlers point at are freed with the session. Clear every handler first, so
+/// nothing is called into a freed closure, then abort.
+impl Drop for Session {
+    fn drop(&mut self) {
+        self.recognition.set_onaudiostart(None);
+        self.recognition.set_onresult(None);
+        self.recognition.set_onerror(None);
+        self.recognition.set_onend(None);
+        self.recognition.abort();
+    }
+}
+
 /// Whether listening can work here: a browser with the API on a secure page.
 /// Chrome keeps `webkitSpeechRecognition` visible on plain-http pages but never
 /// starts it there, so the page must be secure too (127.0.0.1 is).
