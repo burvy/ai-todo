@@ -3,7 +3,7 @@
 // (see README.md). Stops only the server and browser it started, by their own PIDs.
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -29,6 +29,10 @@ const SIZES = [
 ];
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
+
+// Everything this run writes to the temp folder lives in one run folder: the data and
+// profile folders, and any failure screenshots. It is removed when every check passes.
+const runDir = mkdtempSync(join(tmpdir(), "rambl-smoke-run-"));
 
 async function waitFor(check, ms, what) {
   const until = Date.now() + ms;
@@ -93,6 +97,18 @@ function childEnv(extra) {
   return { ...env, ...extra };
 }
 
+// Resolves once the PID no longer exists (or after the wait, whichever comes first).
+async function waitForExit(pid) {
+  await waitFor(() => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  }, 10000, `process ${pid} to exit`).catch(() => {});
+}
+
 // Each start returns the process at once and is owned from then on, so a failed wait
 // still lets the caller's cleanup stop it by PID.
 async function launchServer(dataDir) {
@@ -148,8 +164,50 @@ function page(cdp, size, errors) {
   const rect = (selector) =>
     evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)});
       if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()`);
+  // A button below the fold of a tall sheet is scrolled into view before it is measured.
+  const rectByText = (selector, text) =>
+    evaluate(`(() => { const e = [...document.querySelectorAll(${JSON.stringify(selector)})]
+      .find((el) => el.textContent.trim() === ${JSON.stringify(text)});
+      if (!e) return null; e.scrollIntoView({ block: "center" }); const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()`);
+  const text = (selector) => evaluate(`(document.querySelector(${JSON.stringify(selector)}) || {}).textContent?.trim() ?? null`);
   const count = (selector) => evaluate(`document.querySelectorAll(${JSON.stringify(selector)}).length`);
+  // A sheet or menu that is still animating in takes taps in the wrong place.
+  const settled = (selector) =>
+    waitFor(() => evaluate(`(() => { const e = document.querySelector(${JSON.stringify(selector)});
+      return !!e && e.getAnimations().length === 0; })()`), 5000, `${selector} to settle`);
+  // A failed check leaves a picture behind, so the cause can be seen.
+  const screenshot = async (name) => {
+    const { data } = await cdp.send("Page.captureScreenshot", { format: "png" });
+    const path = join(runDir, `${name}.png`);
+    writeFileSync(path, Buffer.from(data, "base64"));
+    return path;
+  };
+  const reload = async () => {
+    await cdp.send("Page.reload");
+    await sleep(300);
+  };
+  const escape = async () => {
+    const key = { key: "Escape", code: "Escape", windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 };
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyDown", ...key });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
+  };
   const has = (selector) => evaluate(`!!document.querySelector(${JSON.stringify(selector)})`);
+  // On a stacked layout the planner can be the shown page; turn back to the list by its note.
+  const backToList = async () => {
+    if ((await evaluate(`document.querySelector("main")?.dataset.pane`)) !== "1") return;
+    const note = await waitFor(() => evaluate(`(() => { const b = [...document.querySelectorAll("button")]
+      .find((e) => e.textContent.includes("task list on the previous page")); if (!b) return null;
+      const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`), 8000, "the note back to the list");
+    await tap(note.x, note.y);
+    await waitFor(() => evaluate(`document.querySelector("main")?.dataset.pane === "0"`), 5000, "the list page to show");
+  };
+  // A sheet an earlier check failed to close would sit over what the next check taps.
+  const closeSheet = async () => {
+    if (!(await has(".task-dialog"))) return;
+    const cancel = await rectByText(".task-dialog button", "Cancel");
+    if (cancel) await tap(cancel.x + cancel.w / 2, cancel.y + cancel.h / 2);
+    await waitFor(async () => !(await has(".task-dialog")), 5000, "the sheet to close");
+  };
 
   const pointer = async (phase, x, y) => {
     if (size.phone) {
@@ -171,12 +229,15 @@ function page(cdp, size, errors) {
     }
   };
 
-  const drag = async (from, to, steps = 24) => {
+  // A drag ends at speed, which the app reads as a fling; `hold` keeps the pointer still
+  // before the release, for a drop that must land where it is let go.
+  const drag = async (from, to, { steps = 24, hold = 0 } = {}) => {
     await pointer("down", from.x, from.y);
     for (let i = 1; i <= steps; i++) {
       await pointer("move", from.x + ((to.x - from.x) * i) / steps, from.y + ((to.y - from.y) * i) / steps);
       await sleep(16);
     }
+    await sleep(hold);
     await pointer("up", to.x, to.y);
   };
 
@@ -195,7 +256,7 @@ function page(cdp, size, errors) {
     await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
   };
 
-  return { evaluate, rect, count, has, pointer, drag, tap, type, enter, errors };
+  return { evaluate, rect, rectByText, text, count, has, pointer, settled, drag, tap, type, enter, reload, escape, backToList, closeSheet, screenshot, errors };
 }
 
 const scenarios = {
@@ -226,6 +287,86 @@ const scenarios = {
     const tape = await waitFor(() => p.rect(".scrap-undo.done"), 8000, "the tape");
     await p.tap(tape.x + tape.w / 2, tape.y + tape.h / 2);
     await waitFor(async () => (await p.count("li.task-row")) === before, 8000, "the row to come back");
+  },
+
+  async "Rambo dropped on an empty planner hour takes a typed task"(p) {
+    await waitFor(() => p.has(".rambo"), 10000, "Rambo");
+    // On a phone the planner is the next page; turn to it if no hour is shown.
+    if (!(await p.evaluate(`[...document.querySelectorAll(".hour")].some((h) => h.getBoundingClientRect().width > 0)`))) {
+      const foot = await p.rect(".page-foot");
+      if (foot) await p.tap(foot.x + foot.w / 2, foot.y + foot.h / 2);
+      // The page turn takes a moment; Rambo's rectangle is read once it has settled.
+      await sleep(600);
+    }
+    // The last empty hour on screen is in a day still to come, so it is never a past hour.
+    const hour = await waitFor(
+      () => p.evaluate(`(() => { const h = [...document.querySelectorAll(".hour")]
+        .filter((el) => { const b = el.getBoundingClientRect();
+          const top = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+          return !el.querySelector(".placement") && b.width > 0 && b.bottom <= innerHeight && b.right <= innerWidth
+            && !!top && el.contains(top); }).pop();
+        if (!h) return null; const r = h.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })()`),
+      8000,
+      "an empty planner hour on screen",
+    );
+    // Rambo may still be flying home or writing from the capture before it: grab him only when at rest.
+    await waitFor(() => p.has(".rambo.is-home"), 8000, "Rambo at rest at home");
+    await p.settled(".rambo");
+    const rambo = await p.rect(".rambo");
+    const before = await p.count(".placement");
+    await p.drag(
+      { x: rambo.x + rambo.w / 2, y: rambo.y + rambo.h / 2 },
+      { x: hour.x + hour.w / 2, y: hour.y + hour.h / 2 },
+      { hold: 150 },
+    );
+    await waitFor(() => p.has(".rambo.is-noting"), 8000, "Rambo to start noting");
+    await p.type("walk the walrus");
+    await p.enter();
+    await waitFor(async () => (await p.count(".placement")) > before, 10000, "the new planner slip");
+  },
+
+  async "a row's edit sheet saves a title change"(p) {
+    await p.backToList();
+    await waitFor(() => p.has("li.task-row .task-open"), 10000, "a row to edit");
+    const open = await p.rect("li.task-row .task-open");
+    await p.tap(open.x + open.w / 2, open.y + open.h / 2);
+    await waitFor(() => p.has(".task-dialog"), 8000, "the edit sheet");
+    await p.settled(".task-dialog");
+    const title = `smoke title ${Date.now() % 100000}`;
+    await p.evaluate(`(() => { const i = document.querySelector(".task-dialog label input");
+      i.focus(); i.select(); return true; })()`);
+    await p.type(title);
+    const save = await waitFor(() => p.rectByText(".task-dialog button", "Save"), 5000, "the Save button");
+    await p.tap(save.x + save.w / 2, save.y + save.h / 2);
+    await waitFor(async () => !(await p.has(".task-dialog")), 8000, "the sheet to close");
+    await waitFor(
+      () => p.evaluate(`[...document.querySelectorAll("li.task-row")].some((r) => r.dataset.title === ${JSON.stringify(title)})`),
+      8000,
+      "the saved title on its row",
+    );
+  },
+
+  async "a gear setting is still set after a reload"(p) {
+    // A sheet or planner page left by an earlier check would sit over the gear.
+    await p.closeSheet();
+    await p.backToList();
+    await p.escape();
+    await waitFor(() => p.has("button.gear"), 10000, "the gear");
+    const gear = await p.rect("button.gear");
+    await p.tap(gear.x + gear.w / 2, gear.y + gear.h / 2);
+    await waitFor(() => p.has(".gear-menu"), 5000, "the gear menu");
+    await p.settled(".gear-menu");
+    const choice = await waitFor(() => p.rectByText('.gear-choices[aria-label="Clock"] button', "24-hour"), 5000, "the 24-hour choice");
+    await p.tap(choice.x + choice.w / 2, choice.y + choice.h / 2);
+    await p.escape();
+    await waitFor(async () => !(await p.has(".gear-menu")), 5000, "the menu to close");
+    await p.reload();
+    await waitFor(() => p.has("button.gear"), 20000, "the gear after reload");
+    const gearAgain = await p.rect("button.gear");
+    await p.tap(gearAgain.x + gearAgain.w / 2, gearAgain.y + gearAgain.h / 2);
+    await waitFor(() => p.has(".gear-menu"), 5000, "the gear menu after reload");
+    const active = await p.text('.gear-choices[aria-label="Clock"] button.active');
+    if (active !== "24-hour") throw new Error(`clock shows "${active}" after reload`);
   },
 
   async "a swipe turns the page and the book flip is drawn, not blank, mid-turn"(p) {
@@ -301,8 +442,8 @@ const TURN_NOW = `(() => {
 
 async function runSize(size) {
   const results = [];
-  const dataDir = mkdtempSync(join(tmpdir(), `rambl-smoke-${size.name}-`));
-  const profileDir = mkdtempSync(join(tmpdir(), `rambl-smoke-profile-${size.name}-`));
+  const dataDir = mkdtempSync(join(runDir, `${size.name}-data-`));
+  const profileDir = mkdtempSync(join(runDir, `${size.name}-profile-`));
   let server = null;
   let browser = null;
   try {
@@ -339,7 +480,8 @@ async function runSize(size) {
         await run(p);
         results.push({ label, ok: true });
       } catch (error) {
-        results.push({ label, ok: false, detail: String(error.message ?? error).slice(0, 300) });
+        const picture = await p.screenshot(`${size.name}-${name.replace(/\W+/g, "-").slice(0, 40)}`).catch(() => "");
+        results.push({ label, ok: false, detail: `${String(error.message ?? error).slice(0, 220)}${picture ? ` [${picture}]` : ""}` });
       }
     }
     results.push({
@@ -353,9 +495,11 @@ async function runSize(size) {
   } finally {
     if (browser) killTree(browser.child.pid);
     if (server) killTree(server.child.pid);
-    // The browser releases its profile files a moment after it exits; a leftover temp
-    // folder is not a failed check, so the cleanup is best-effort.
-    await sleep(1000);
+    // Windows keeps the profile's files locked until the browser has gone, so the folders
+    // are removed once both PIDs have exited, with retries. A folder left behind is not a
+    // failed check, so the cleanup is best-effort.
+    if (browser) await waitForExit(browser.child.pid);
+    if (server) await waitForExit(server.child.pid);
     for (const dir of [profileDir, dataDir]) {
       try {
         rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
@@ -374,5 +518,12 @@ for (const size of SIZES) {
     console.log(`${result.ok ? "PASS" : "FAIL"}  ${result.label}${result.detail ? `  (${result.detail})` : ""}`);
   }
 }
-console.log(failed === 0 ? "all smoke checks passed" : `${failed} smoke check(s) failed`);
+console.log(failed === 0 ? "all smoke checks passed" : `${failed} smoke check(s) failed; screenshots and folders are in ${runDir}`);
+if (failed === 0) {
+  try {
+    rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  } catch (error) {
+    console.log(`note  could not remove ${runDir}: ${error.code ?? error.message}`);
+  }
+}
 process.exitCode = failed === 0 ? 0 : 1;
