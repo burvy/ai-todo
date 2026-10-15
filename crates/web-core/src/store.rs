@@ -39,6 +39,17 @@ pub enum Command {
     },
     /// One day's mark taken off again, putting that day back to the rule.
     ClearOccurrence { series: String, date: String },
+    /// A ramble, typed or heard, that Jev turns into tasks.
+    Capture(String),
+}
+
+/// What the server answers besides the list, for the view that sent the command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reply {
+    /// Only the list.
+    Nothing,
+    /// The tasks it made, in the order it made them (the pen writes them in).
+    Created(Vec<TaskId>),
 }
 
 /// What one day of a repeat is marked as.
@@ -77,7 +88,8 @@ impl Command {
             | Command::PatchSeries { .. }
             | Command::DeleteSeries(_)
             | Command::MarkOccurrence { .. }
-            | Command::ClearOccurrence { .. } => {}
+            | Command::ClearOccurrence { .. }
+            | Command::Capture(_) => {}
         }
     }
 }
@@ -496,6 +508,7 @@ mod tests {
                 series: "s1".into(),
                 patch: SeriesPatchBody::default(),
             },
+            Command::Capture("buy stamps tomorrow".into()),
         ];
         for command in commands {
             let mut store = Store::new(start.clone());
