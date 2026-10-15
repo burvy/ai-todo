@@ -6,8 +6,8 @@
 //!
 //! Pure: the page (`web/src/store.rs`) does the sending and the signals.
 
-use crate::body::{PatchTaskBody, ReviseBody};
-use todo_core::{Snapshot, Source, TaskId};
+use crate::body::{PatchTaskBody, ReviseBody, SeriesBody, SeriesPatchBody};
+use todo_core::{Snapshot, Source, TaskDraft, TaskId};
 
 /// What a view asks the store to change.
 #[derive(Clone, Debug, PartialEq)]
@@ -18,6 +18,44 @@ pub enum Command {
     Patch(TaskId, PatchTaskBody),
     /// One spoken or typed sentence Jev turns into an edit of a task.
     Revise(TaskId, ReviseBody),
+    /// A task made by hand, already shaped.
+    CreateTask(TaskDraft),
+    /// A stored task removed. (A day of a repeat is [`Command::MarkOccurrence`] skipped.)
+    DeleteTask(TaskId),
+    /// A task made to repeat weekly.
+    CreateSeries(SeriesBody),
+    /// The rule every day of a series follows, changed.
+    PatchSeries {
+        series: String,
+        patch: SeriesPatchBody,
+    },
+    /// A whole series, every day still to come, removed.
+    DeleteSeries(String),
+    /// One day of a series marked done or skipped.
+    MarkOccurrence {
+        series: String,
+        date: String,
+        mark: Mark,
+    },
+    /// One day's mark taken off again, putting that day back to the rule.
+    ClearOccurrence { series: String, date: String },
+}
+
+/// What one day of a repeat is marked as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    Done,
+    Skipped,
+}
+
+impl Mark {
+    /// The word the server reads in `PATCH /api/v1/series/{id}/dates/{date}`.
+    pub fn word(self) -> &'static str {
+        match self {
+            Mark::Done => "done",
+            Mark::Skipped => "skipped",
+        }
+    }
 }
 
 impl Command {
@@ -26,9 +64,18 @@ impl Command {
     fn apply(&self, snapshot: &mut Snapshot) {
         match self {
             Command::Reorder(ids) => reorder(snapshot, ids),
-            // What an edit changes is the server's to say: a stale one is refused, and a
-            // sentence is read by Jev. Nothing shows until the reply.
-            Command::Patch(..) | Command::Revise(..) => {}
+            // Nothing is certain until the server answers (an id, an expanded series, a
+            // stale edit, a sentence Jev reads, a day the rule never repeats), so these show
+            // nothing yet.
+            Command::Patch(..)
+            | Command::Revise(..)
+            | Command::CreateTask(_)
+            | Command::DeleteTask(_)
+            | Command::CreateSeries(_)
+            | Command::PatchSeries { .. }
+            | Command::DeleteSeries(_)
+            | Command::MarkOccurrence { .. }
+            | Command::ClearOccurrence { .. } => {}
         }
     }
 }
@@ -190,6 +237,7 @@ impl Store {
 mod tests {
     use super::*;
     use chrono::Duration;
+    use todo_core::{Label, Priority, When};
 
     fn fixture() -> Snapshot {
         serde_json::from_str(include_str!("../../../web/fixtures/snapshot.json")).expect("fixture")
@@ -330,5 +378,54 @@ mod tests {
         assert_eq!(Refusal::Network.note(true), Refusal::Network.note(false));
         assert!(Refusal::Stale.note(true).contains("reloaded"));
         assert!(!Refusal::Refused.note(false).contains("reloaded"));
+    }
+
+    #[test]
+    fn what_only_the_server_can_decide_shows_nothing_until_it_answers() {
+        let start = fixture();
+        let task = start.tasks[0].id.clone();
+        let commands = [
+            Command::CreateTask(TaskDraft {
+                title: "Buy stamps".into(),
+                duration_min: 15,
+                when: When::Anytime,
+                label: Label::Personal,
+                priority: Priority::Medium,
+                source: Source::Text,
+            }),
+            Command::CreateSeries(SeriesBody {
+                title: "Gym".into(),
+                duration_min: 45,
+                weekdays: vec![chrono::Weekday::Mon],
+                time_of_day: None,
+                until: None,
+            }),
+            Command::DeleteTask(task),
+            Command::DeleteSeries("s1".into()),
+            Command::MarkOccurrence {
+                series: "s1".into(),
+                date: "2026-10-16".into(),
+                mark: Mark::Skipped,
+            },
+            Command::ClearOccurrence {
+                series: "s1".into(),
+                date: "2026-10-16".into(),
+            },
+            Command::PatchSeries {
+                series: "s1".into(),
+                patch: SeriesPatchBody::default(),
+            },
+        ];
+        for command in commands {
+            let mut store = Store::new(start.clone());
+            store.send(&command);
+            assert_eq!(store.snapshot(), &start, "{command:?} shows nothing yet");
+        }
+    }
+
+    #[test]
+    fn a_marks_word_is_what_the_server_reads() {
+        assert_eq!(Mark::Done.word(), "done");
+        assert_eq!(Mark::Skipped.word(), "skipped");
     }
 }

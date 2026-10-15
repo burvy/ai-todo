@@ -222,7 +222,7 @@ pub fn App() -> impl IntoView {
                 }
             >
             <div class="tasks-pane">
-                <TaskList snapshot set_snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request new_task open_sheet scraps />
+                <TaskList snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos edit_request new_task open_sheet scraps />
                 <scrap::ScrapCorner snapshot scraps set_snapshot set_error />
                 // Ink laid on the list: part of the page, so it scrolls and turns with it.
                 <inklayer::InkLayer strokes on=ink::Surface::List />
