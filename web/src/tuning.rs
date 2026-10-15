@@ -476,7 +476,7 @@ pub const RIP_MIN_PX: f64 = 24.0;
 pub const RIP_MAX_SLOPE: f64 = 0.5;
 /// How wide the hole opens in the middle of the tear, in px. Safe range 8 to 28: it
 /// has to be wide enough to see the planner through.
-pub const RIP_GAP_PX: f64 = 16.0;
+pub const RIP_GAP_PX: f64 = 22.0;
 /// How far the ragged edge of each lip wanders, in px, and how far apart its corners
 /// are. Safe ranges 0 to 6 and 6 to 16.
 pub const RIP_JAG_PX: f64 = 3.5;
@@ -497,6 +497,9 @@ pub const TAPE_AT_MS: u32 = 1100;
 pub const TAPE_LAY_MS: u32 = 350;
 pub const TEAR_HOLD_MS: u32 = 4000;
 pub const TEAR_FADE_MS: u32 = 1500;
+/// How long the planner takes to slide under the list on a desk while a page is torn, and
+/// back, in ms; the page reads it as `--tear-slide-ms`. Safe range 150 to 500.
+pub const TEAR_SLIDE_MS: u32 = 280;
 /// How long he stays at the tear, in ms: until the tape is on, and a moment more to
 /// look it over, so he is never walking off with the tape half laid.
 pub const MEND_MS: u32 = TAPE_AT_MS + TAPE_LAY_MS + 300;
