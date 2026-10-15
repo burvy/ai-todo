@@ -95,6 +95,13 @@ refreshes the complete snapshot. An edit made from a stale copy of a task (it ch
 device since this page loaded it) is refused with `409 stale_update`; the page keeps what the server has.
 b. Type a task and tap the nest or press Enter (there is no Add button); swipe a row right to
 finish it, or use the row's x to delete it.
+On a phone the **+** at the bar's left (a torn scrap beside the box) adds a task by hand: it opens
+the edit sheet, headed "New task", on a blank form (no title, 30 minutes, anytime, no repeat). Save
+needs a title and a length and makes the task with `POST /api/v1/tasks` (or a weekly series, if
+days are ticked); the task exists only from Save, so Cancel and Esc leave nothing behind. Its Done
+and x buttons are hidden, since there is nothing yet to finish or delete. A desk, with room to
+ramble, has no +. Code: `web/src/capture.rs:CaptureBox` (the button), `web/src/tasks/mod.rs:blank_form,
+new_task_draft, DRAFT_ID`, `web/src/api.rs:create_task`.
 c. Code: `web/src/capture.rs:CaptureBox`; `web/src/tasks/mod.rs:TaskList`;
 `web/src/api.rs:capture_text, patch_task, delete_task`;
 `server/src/v2/http.rs:capture, update, remove`.
