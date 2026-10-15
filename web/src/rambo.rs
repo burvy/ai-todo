@@ -190,7 +190,6 @@ pub(crate) fn Rambo(
             };
             let (brain, draw, posed, at_rest, laid, knocks, nest_moved) = {
                 let mut world = world.borrow_mut();
-                world.adopt(state.get_untracked());
                 // The music is heard only when he could dance to it, so the rest of the
                 // time nothing reads it and his loop may sleep.
                 let level = world
