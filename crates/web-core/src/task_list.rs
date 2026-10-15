@@ -2,10 +2,11 @@
 //! decided here without the DOM so `cargo test` covers it. `web/src/tasks/mod.rs`
 //! measures the page, asks these, and does what they answer.
 
-use chrono::{DateTime, NaiveDate, Utc};
-use todo_core::{Snapshot, Source, Task, TaskId, When};
+use chrono::{DateTime, NaiveDate, Utc, Weekday};
+use todo_core::{Label, Priority, Series, Snapshot, Source, Task, TaskDraft, TaskId, When};
 
 use crate::row::Slot;
+use crate::tuning;
 
 /// The order the server wants after moving `dragged` to `slot` beside `target`,
 /// or `None` when the drop is not a reorder at all.
@@ -88,6 +89,117 @@ pub fn tapped(wet: bool, on_title: bool) -> Tapped {
         (false, true) => Tapped::Open,
         (false, false) => Tapped::Nothing,
     }
+}
+
+// The edit sheet (opened on a row, or the + on a blank task): what it shows and what a
+// Save on it makes.
+
+/// Which kind of time the sheet's time field holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EditWhen {
+    Anytime,
+    DueBy,
+    At,
+}
+
+/// What the edit sheet shows when it opens on the row `id`, or `None` when the
+/// list no longer holds it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditForm {
+    pub title: String,
+    pub duration: String,
+    pub when: EditWhen,
+    pub datetime: String,
+    pub weekdays: Vec<Weekday>,
+    pub until: String,
+    pub time: String,
+}
+
+/// What the sheet says when Save is pressed with no title.
+pub const MISSING_TITLE_NOTE: &str = "Give the task a name first.";
+
+/// The id the sheet carries while it holds a task nobody has made yet (the + button). No
+/// server id looks like it, and nothing is stored until Save.
+pub const DRAFT_ID: &str = "draft";
+
+pub fn is_draft(id: &TaskId) -> bool {
+    id.0 == DRAFT_ID
+}
+
+/// The task a new sheet is drawn from: only what the sheet shows of a task (its title
+/// line and its zone), none of it the server's. The clock fields are the epoch because
+/// nothing here may read the wall clock, and nothing shows them.
+pub fn blank_task() -> Task {
+    Task {
+        id: TaskId(DRAFT_ID.to_owned()),
+        title: String::new(),
+        duration_min: tuning::NEW_TASK_MINUTES,
+        when: When::Anytime,
+        done: false,
+        order: 0,
+        label: Label::Other,
+        priority: Priority::Low,
+        source: Source::Text,
+        created: DateTime::UNIX_EPOCH,
+        updated_at: DateTime::UNIX_EPOCH,
+        due_tz: None,
+        external_uid: None,
+        off_planner: false,
+    }
+}
+
+/// What the sheet shows when it opens on a new task: an empty title, the default length
+/// and no day or repeat.
+pub fn blank_form() -> EditForm {
+    EditForm {
+        title: String::new(),
+        duration: tuning::NEW_TASK_MINUTES.to_string(),
+        when: EditWhen::Anytime,
+        datetime: String::new(),
+        weekdays: Vec::new(),
+        until: String::new(),
+        time: String::new(),
+    }
+}
+
+/// The task a Save on a new sheet makes, or `None` while it lacks a title or a length.
+pub fn new_task_draft(title: &str, duration: Option<u16>, when: When) -> Option<TaskDraft> {
+    let title = title.trim();
+    let duration_min = duration.filter(|minutes| *minutes > 0)?;
+    (!title.is_empty()).then(|| TaskDraft {
+        title: title.to_owned(),
+        duration_min,
+        when,
+        label: Label::Other,
+        priority: Priority::Low,
+        source: Source::Text,
+    })
+}
+
+/// The sheet after a refill: each field takes the server's `fresh` value unless the
+/// user has `typed` in it since the sheet showed `shown`.
+pub fn keep_typed(shown: &EditForm, typed: EditForm, fresh: EditForm) -> EditForm {
+    fn pick<T: PartialEq>(shown: &T, typed: T, fresh: T) -> T {
+        if typed == *shown { fresh } else { typed }
+    }
+    EditForm {
+        title: pick(&shown.title, typed.title, fresh.title),
+        duration: pick(&shown.duration, typed.duration, fresh.duration),
+        when: pick(&shown.when, typed.when, fresh.when),
+        datetime: pick(&shown.datetime, typed.datetime, fresh.datetime),
+        weekdays: pick(&shown.weekdays, typed.weekdays, fresh.weekdays),
+        until: pick(&shown.until, typed.until, fresh.until),
+        time: pick(&shown.time, typed.time, fresh.time),
+    }
+}
+
+/// The series a row belongs to, when the row is an occurrence of one.
+pub fn series_of<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a Series> {
+    let (series_id, _) = occurrence_parts(id)?;
+    snapshot
+        .series
+        .iter()
+        .find(|series| series.id.0 == series_id)
 }
 
 #[cfg(test)]
@@ -254,5 +366,47 @@ mod tests {
         let queue = [id("b")];
         assert_eq!(let_go(None, &queue, true), vec![id("b")]);
         assert!(let_go(None, &[], true).is_empty());
+    }
+
+    #[test]
+    fn a_new_sheet_starts_empty_with_the_default_length_and_no_day() {
+        let form = blank_form();
+        assert_eq!(form.title, "");
+        assert_eq!(form.duration, tuning::NEW_TASK_MINUTES.to_string());
+        assert_eq!(form.when, EditWhen::Anytime);
+        assert!(form.weekdays.is_empty() && form.until.is_empty() && form.time.is_empty());
+        assert!(is_draft(&blank_task().id));
+        assert!(!is_draft(&TaskId("t1".into())));
+    }
+
+    #[test]
+    fn a_new_task_needs_a_title_and_a_length_and_is_trimmed() {
+        let made = new_task_draft("  Buy stamps ", Some(15), When::Anytime).expect("a task");
+        assert_eq!((made.title.as_str(), made.duration_min), ("Buy stamps", 15));
+        assert_eq!(made.source, Source::Text);
+        assert!(new_task_draft("   ", Some(15), When::Anytime).is_none());
+        assert!(new_task_draft("Buy stamps", None, When::Anytime).is_none());
+        assert!(new_task_draft("Buy stamps", Some(0), When::Anytime).is_none());
+    }
+
+    #[test]
+    fn a_refill_takes_the_servers_value_except_where_the_user_typed() {
+        let shown = blank_form();
+        let typed = EditForm {
+            title: "Gym with Sam".into(),
+            ..shown.clone()
+        };
+        let fresh = EditForm {
+            title: "Gym (server)".into(),
+            datetime: "2026-10-16T15:00".into(),
+            ..shown.clone()
+        };
+        let refilled = keep_typed(&shown, typed, fresh);
+        assert_eq!(refilled.title, "Gym with Sam", "typed meanwhile: kept");
+        assert_eq!(
+            refilled.datetime, "2026-10-16T15:00",
+            "untouched: the server's"
+        );
+        assert_eq!(refilled.duration, shown.duration);
     }
 }
