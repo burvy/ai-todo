@@ -396,7 +396,7 @@ The engine reads the signal back each tick (`world.adopt(state)`, `rambo.rs:199`
 - The page side is a small `Rambo` handle in Leptos context: `tell(event)` borrows the world, tells it, and mirrors the answer into `mascot_state` when it changed. The answer comes back at once, so a handler that branches on the new state (`after == before`, then `Dragging`) keeps working unchanged.
 - The engine tick stops adopting. It only mirrors the world's state into the signal after `advance`, so the signal is a read-only copy written in one place.
 - `set_mascot_state` leaves `App`, and the props of `Rambo`, `TaskList` and `CaptureBox`. A test fails if a `WriteSignal<mascot::State>` appears outside the handle.
-- Rambo's inputs that come from other views (`edit_request`, `move_request`, `open_sheet`, `noting_at`, and the store's refusals he speaks) move to the events queue (step 3, Emilio). The world drains them each step. `tell` is for the synchronous decisions a pointer handler needs.
+- Requests between views go through the events queue (step 3, Emilio). The view that answers a request Rambo sends (`EditAsked`, the move) takes it, from an Effect that calls `Queue::track`. The world drains, each step, the requests addressed to him (the sheet opening or closing, a refusal he speaks). `tell` is for the synchronous decisions a pointer handler needs.
 
 **PRs.**
 1. `World::tell` with its tests, and the handle. `rambo.rs`'s own writes go through it, and the tick's adopt is removed.
