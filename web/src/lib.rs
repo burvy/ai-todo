@@ -96,7 +96,6 @@ pub fn App() -> impl IntoView {
     let capture_text = RwSignal::new(String::new());
     // Pen queue: task IDs the client just created, so the pen writes only those rows
     let pen_queue = RwSignal::new(Vec::<TaskId>::new());
-    // A row Rambo was asked to edit: the task list opens its edit sheet
     // When Rambo was dropped on an empty planner hour, that hour as a date phrase: the
     // capture box's next task starts then.
     let noting_at = RwSignal::new(None::<capture::NotedHour>);
