@@ -19,6 +19,7 @@ pub mod row;
 pub mod settings;
 pub mod sound;
 pub mod speech;
+pub mod store;
 pub mod voice;
 pub mod week;
 
@@ -62,6 +63,7 @@ pub fn App() -> impl IntoView {
     let (snapshot, set_snapshot) = signal(empty_snapshot());
     let (view_settings, set_view_settings) = signal(settings::load());
     let (error, set_error) = signal::<Option<String>>(None);
+    store::Store::provide(snapshot, set_snapshot, set_error);
     let (brain_speech, set_brain_speech) = signal::<Option<String>>(None);
     let (brain_pose, set_brain_pose) = signal("home".to_owned());
     let (brain_event, set_brain_event) = signal::<Option<rambl_brain::Event>>(None);
