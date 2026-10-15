@@ -201,16 +201,16 @@ pub fn series_of<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a Series> {
         .find(|series| series.id.0 == series_id)
 }
 
-/// Whether Rambo writes the rows queued for his pen (rows the page has just made, written
-/// in one at a time) at all: not with reduced motion and not
-/// lobotomized. Then the queue is dropped, so his lines are not held for it.
+/// Whether Rambo writes the rows queued for his pen (rows the page has just made,
+/// written in one at a time) at all: not with reduced motion and not lobotomized.
+/// Then the queue is dropped, so his lines are not held for it.
 pub fn pen_writes(mode: RamblMode, reduced_motion: bool) -> bool {
     !reduced_motion && mode != RamblMode::Lobotomized
 }
 
 /// Whether he is free to take the next queued row: at home, or still at the caret
 /// after Add.
-pub fn pen_free(state: &State) -> bool {
+pub fn takes_next_row(state: &State) -> bool {
     matches!(state, State::Home | State::WritingCaret)
 }
 
@@ -229,7 +229,7 @@ pub enum PenStep {
 
 /// The next queued row's step, with him as `state` and the row `in_view` or not.
 pub fn pen_step(state: &State, in_view: bool) -> PenStep {
-    match (pen_free(state), in_view) {
+    match (takes_next_row(state), in_view) {
         (false, _) => PenStep::Stop,
         (true, false) => PenStep::Skip,
         (true, true) => PenStep::Write,
@@ -477,9 +477,11 @@ mod tests {
             State::Flying,
             State::WritingRow,
         ] {
-            assert!(!pen_free(&busy), "{busy:?}");
+            assert!(!takes_next_row(&busy), "{busy:?}");
             assert_eq!(pen_step(&busy, true), PenStep::Stop, "{busy:?}");
         }
+        // Taken elsewhere wins over off the screen: the rest are let go, not skipped.
+        assert_eq!(pen_step(&State::Dragging, false), PenStep::Stop);
     }
 
     #[test]

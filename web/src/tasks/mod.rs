@@ -27,7 +27,7 @@ use rambl_web_core::task_list::{
 };
 #[cfg(target_arch = "wasm32")]
 use rambl_web_core::task_list::{
-    PenStep, flies_home_after_row, let_go, pen_free, pen_step, pen_writes,
+    PenStep, flies_home_after_row, let_go, pen_step, pen_writes, takes_next_row,
 };
 
 /// What the task list keys a row on: the whole task as the row draws it.
@@ -423,7 +423,7 @@ pub(crate) fn TaskList(
             if pen_queue.with(Vec::is_empty) || writing.get_value() {
                 return;
             }
-            if pen_free(&mascot_state.get()) {
+            if takes_next_row(&mascot_state.get()) {
                 let rambo_world = expect_context::<crate::rambo_world::RamboWorld>();
                 let pen_pos = pen_pos;
                 writing.set_value(true);
