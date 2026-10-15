@@ -1783,14 +1783,16 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 
 /* Fixed and centred (behaviour from #135); here it also fits a phone:
    never wider than the screen, scrollable inside itself. A dialog is a
-   loose sheet laid over the page, so it alone gets a shadow. */
+   loose sheet laid over the page, so it alone gets a shadow. It is centred by
+   auto margins inside the whole screen, so it never starts above the top: a
+   half-height offset (top: 50% less half its height) put a sheet taller than half
+   the window partly off the top on a short desk. */
 .task-dialog {
   box-sizing: border-box;
   max-width: calc(100vw - 2rem);
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  inset: 0;
+  margin: auto;
   z-index: var(--layer-sheet);
   width: min(32rem, calc(100vw - 2 * var(--gutter)));
   max-height: calc(100dvh - 2 * var(--gutter));
@@ -1830,7 +1832,6 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
     left: 0;
     right: 0;
     margin: 0;
-    transform: none;
     width: 100%;
     max-width: 100%;
     max-height: 90dvh;
