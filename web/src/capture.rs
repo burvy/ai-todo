@@ -45,7 +45,7 @@ fn prefers_reduced_motion() -> bool {
 /// (the `.whisper-fade` class), swap the text at the bottom of the dip and
 /// let the colour return. Re-arms forever; on a reduced-motion system the
 /// tick is a no-op, so the line stays put and the CSS transition is off.
-fn schedule_whisper(index: RwSignal<usize>, fading: RwSignal<bool>) {
+fn schedule_whisper(index: RwSignal<usize>, fading: RwSignal<bool>) -> crate::engine::Handle {
     crate::engine::every(f64::from(WHISPER_ROTATE_MS), move || {
         if whisper_rotates(prefers_reduced_motion()) {
             fading.set(true);
@@ -55,7 +55,7 @@ fn schedule_whisper(index: RwSignal<usize>, fading: RwSignal<bool>) {
             });
         }
         crate::engine::Flow::Go
-    });
+    })
 }
 
 /// What a submit adds: Rambo's transcript when he just heard one, else the box.
@@ -236,18 +236,17 @@ pub(crate) fn CaptureBox(
         };
         let _ = input.class_list().toggle_with_force("whisper-fade", fading);
     });
-    schedule_whisper(whisper, whisper_fading);
+    // The box's timers: stopped with it if it ever goes (a bare handle would let them run).
+    let whisper_timer = StoredValue::new_local(crate::engine::Guard::default());
+    whisper_timer.update_value(|timers| timers.keep(schedule_whisper(whisper, whisper_fading)));
 
     // Caret follow: on input, position pen at caret; after 2s of inactivity, fly home
-    let linger_timer = std::rc::Rc::new(std::cell::RefCell::new(None::<crate::engine::Handle>));
+    let linger_timer = StoredValue::new_local(crate::engine::Guard::default());
     // Peeking: Rambo looks up while you type and stops when you stop.
-    let peek_timer = std::rc::Rc::new(std::cell::RefCell::new(None::<crate::engine::Handle>));
+    let peek_timer = StoredValue::new_local(crate::engine::Guard::default());
     let restart_linger = {
-        let linger_timer = linger_timer.clone();
         move || {
-            if let Some(timer) = linger_timer.borrow_mut().take() {
-                timer.stop();
-            }
+            linger_timer.update_value(crate::engine::Guard::stop);
             let timer = crate::engine::after(f64::from(crate::tuning::LINGER_MS), move || {
                 set_state.update(|s| {
                     *s = mascot::transition(s, mascot::Event::FlyHome);
@@ -266,7 +265,7 @@ pub(crate) fn CaptureBox(
                     });
                 });
             });
-            linger_timer.borrow_mut().replace(timer);
+            linger_timer.update_value(|timers| timers.keep(timer));
         }
     };
 
@@ -336,15 +335,11 @@ pub(crate) fn CaptureBox(
         // He looks up at you as you type, and goes back to what he was doing
         // PEEK_MS after the last keystroke.
         set_typing.set(true);
-        if let Some(timer) = peek_timer.borrow_mut().take() {
-            timer.stop();
-        }
-        peek_timer.borrow_mut().replace(crate::engine::after(
-            f64::from(mascot::PEEK_MS),
-            move || {
-                set_typing.set(false);
-            },
-        ));
+        peek_timer.update_value(crate::engine::Guard::stop);
+        let peek = crate::engine::after(f64::from(mascot::PEEK_MS), move || {
+            set_typing.set(false);
+        });
+        peek_timer.update_value(|timers| timers.keep(peek));
         let st = state.get_untracked();
         // Already on his way or writing: the nib goes where the words are now, and the
         // wait before he goes home starts again. No new flight.
@@ -370,7 +365,6 @@ pub(crate) fn CaptureBox(
     let sending = RwSignal::new(false);
     let store = expect_context::<crate::store::Store>();
     let handle_submit = {
-        let linger_timer = linger_timer.clone();
         move |ev: leptos::ev::SubmitEvent| {
             ev.prevent_default();
             if sending.get_untracked() {
@@ -386,9 +380,7 @@ pub(crate) fn CaptureBox(
             if st == mascot::State::Noting {
                 set_state.set(mascot::transition(&st, mascot::Event::Return));
             }
-            if let Some(timer) = linger_timer.borrow_mut().take() {
-                timer.stop();
-            }
+            linger_timer.update_value(crate::engine::Guard::stop);
             // The box empties now, so whatever is typed while the task is on its way
             // is the next task, not wiped when this one lands.
             sending.set(true);
