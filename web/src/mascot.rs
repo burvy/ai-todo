@@ -1268,7 +1268,19 @@ mod tests {
         for fx in [Fx::SleepyZ, Fx::Sparks, Fx::ScribbleCloud] {
             let svg = std::fs::read_to_string(art_file(&fx.art_file())).expect("fx art exists");
             assert!(svg.contains("<g id=\"art\""), "{fx:?} has no #art group");
-            assert!(svg.contains("var(--rambo-fx"), "{fx:?} ignores --rambo-fx");
+            // The colour goes in a `style` declaration: `var()` in a presentation attribute
+            // (`fill="var(..)"`) is not honoured by every engine, and the picture, and the
+            // mask made from it, would draw nothing.
+            assert!(
+                svg.contains("style=\"stroke: var(--rambo-fx"),
+                "{fx:?} ignores --rambo-fx"
+            );
+            for paint in ["fill=\"var(", "stroke=\"var("] {
+                assert!(
+                    !svg.contains(paint),
+                    "{fx:?}: `{paint}` is a presentation attribute"
+                );
+            }
             assert!(
                 !svg.contains("currentColor"),
                 "{fx:?} follows the OS, not the page"
