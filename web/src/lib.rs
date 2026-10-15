@@ -96,9 +96,6 @@ pub fn App() -> impl IntoView {
     let capture_text = RwSignal::new(String::new());
     // Pen queue: task IDs the client just created, so the pen writes only those rows
     let pen_queue = RwSignal::new(Vec::<TaskId>::new());
-    // When Rambo was dropped on an empty planner hour, that hour as a date phrase: the
-    // capture box's next task starts then.
-    let noting_at = RwSignal::new(None::<capture::NotedHour>);
     // The + was tapped: the list opens its sheet on a new task
     let new_task = RwSignal::new(false);
     // The task whose edit sheet is open: the list owns it, Rambo listens while it is
@@ -171,7 +168,6 @@ pub fn App() -> impl IntoView {
                 view_settings
                 pen_pos
                 capture_text
-                noting_at
                 pen_queue
                 set_typing
                 set_error
@@ -252,7 +248,6 @@ pub fn App() -> impl IntoView {
         <inklayer::InkLayer strokes on=ink::Surface::Floor />
         // Rambo: independent fixed layer above everything, not part of the capture form
         <Rambo
-            noting_at
             state=mascot_state
             talking
             set_talking

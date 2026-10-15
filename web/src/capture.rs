@@ -101,13 +101,7 @@ fn added(before: &Snapshot, after: &Snapshot) -> Vec<TaskId> {
         .collect()
 }
 
-/// The empty planner hour Rambo was dropped on: its date phrase, which the capture box
-/// shows, and the instant a task noted there starts.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NotedHour {
-    pub(crate) phrase: String,
-    pub(crate) at: chrono::DateTime<chrono::Utc>,
-}
+pub(crate) use crate::mascot::NotedHour;
 
 /// How much of the bottom of the layout a phone's keyboard covers, in px: the layout's
 /// height below the visible part of the page (`visible_top` + `visible_height`, the
@@ -174,8 +168,6 @@ pub(crate) fn CaptureBox(
     view_settings: ReadSignal<settings::Settings>,
     pen_pos: RwSignal<(f64, f64)>,
     capture_text: RwSignal<String>,
-    /// The hour Rambo was dropped on, as a date phrase: what is sent starts then.
-    noting_at: RwSignal<Option<NotedHour>>,
     pen_queue: RwSignal<Vec<TaskId>>,
     set_typing: WriteSignal<bool>,
     set_error: WriteSignal<Option<String>>,
@@ -197,7 +189,9 @@ pub(crate) fn CaptureBox(
     // Never mind on the hour he was dropped on: nothing is sent, and the box empties.
     Effect::new(move |was: Option<mascot::State>| {
         let now = state.get();
-        if was == Some(mascot::State::Noting) && now != mascot::State::Noting {
+        if matches!(was, Some(mascot::State::Noting { .. }))
+            && !matches!(now, mascot::State::Noting { .. })
+        {
             set_text.set(String::new());
             capture_text.set(String::new());
         }
@@ -214,9 +208,11 @@ pub(crate) fn CaptureBox(
         let Some(input) = input_ref.get() else {
             return;
         };
-        match noting_at.get() {
-            Some(at) => input.set_placeholder(&format!("A task for {}", at.phrase.trim())),
-            None => input.set_placeholder(WHISPER_PROMPTS[index]),
+        match state.get() {
+            mascot::State::Noting { at } => {
+                input.set_placeholder(&format!("A task for {}", at.phrase.trim()))
+            }
+            _ => input.set_placeholder(WHISPER_PROMPTS[index]),
         }
     });
     Effect::new(move |_| {
@@ -334,7 +330,7 @@ pub(crate) fn CaptureBox(
             return;
         }
         // Held, or waiting on an hour for the task you type, he stays where he is.
-        if matches!(st, mascot::State::Dragging | mascot::State::Noting) {
+        if matches!(st, mascot::State::Dragging | mascot::State::Noting { .. }) {
             return;
         }
         if view_settings.get_untracked().mode == settings::RamblMode::Lobotomized {
@@ -360,9 +356,11 @@ pub(crate) fn CaptureBox(
                 return;
             };
             // Sent from an hour he was dropped on: the task starts then, and he goes home.
-            let hour = noting_at.get_untracked();
-            let st = state.get_untracked();
-            if st == mascot::State::Noting {
+            let hour = match state.get_untracked() {
+                mascot::State::Noting { at } => Some(at),
+                _ => None,
+            };
+            if hour.is_some() {
                 rambo_world.tell(mascot::Event::Return);
             }
             linger_timer.update_value(crate::engine::Guard::stop);
