@@ -1,24 +1,15 @@
 <!-- PLACEHOLDER: replace me, see ABOUT.md beside this file -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 170 100" aria-hidden="true">
-  <style>
-    svg{--nest-paper:#E1C38C;--nest-deep:#9F682E;--nest-line:#5D4732;--nest-strip:#A7865D}
-    @media (prefers-color-scheme:dark){svg{--nest-paper:#E8D9B0;--nest-deep:#C89B62;--nest-line:#C9AE85;--nest-strip:#B5976D}}
-    .shadow{fill:var(--nest-line);opacity:.12}
-    .wall{fill:var(--nest-paper);stroke:var(--nest-line);stroke-width:2;stroke-linejoin:round}
-    .hollow{fill:var(--nest-deep);opacity:.38}
-    .weave{stroke:var(--nest-strip);stroke-width:1.6;stroke-linecap:round;fill:none}
-    .strip{stroke:var(--nest-strip);stroke-width:2.2;stroke-linecap:round;fill:none}
-  </style>
+<svg id="art" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 170 100" aria-hidden="true">
   <!-- On the ground under the whole nest. -->
-  <ellipse class="shadow" cx="85" cy="86" rx="82" ry="10"/>
+  <ellipse cx="85" cy="86" rx="82" ry="10" fill="var(--nest-line, #5D4732)" opacity=".12"/>
   <!-- Paper strips poking up out of the back of the nest. -->
-  <path class="strip" d="M24 40 Q16 26 22 12"/>
-  <path class="strip" d="M44 30 Q40 16 47 6"/>
-  <path class="strip" d="M122 29 Q128 16 123 4"/>
-  <path class="strip" d="M146 38 Q156 25 150 13"/>
+  <path d="M24 40 Q16 26 22 12" stroke="var(--nest-strip, #A7865D)" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+  <path d="M44 30 Q40 16 47 6" stroke="var(--nest-strip, #A7865D)" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+  <path d="M122 29 Q128 16 123 4" stroke="var(--nest-strip, #A7865D)" stroke-width="2.2" stroke-linecap="round" fill="none"/>
+  <path d="M146 38 Q156 25 150 13" stroke="var(--nest-strip, #A7865D)" stroke-width="2.2" stroke-linecap="round" fill="none"/>
   <!-- The back wall of the bowl, torn paper along its top edge. Its bottom curves down behind the rim. -->
-  <path class="wall" d="M6 50 Q8 22 34 20 L40 17 L47 20 L56 16 L64 19 L74 15 L84 18 L94 14 L104 18 L113 15 L122 19 L131 17 L138 21 Q162 24 164 50 Q85 80 6 50 Z"/>
-  <path class="weave" d="M16 34 Q85 24 154 34"/>
+  <path d="M6 50 Q8 22 34 20 L40 17 L47 20 L56 16 L64 19 L74 15 L84 18 L94 14 L104 18 L113 15 L122 19 L131 17 L138 21 Q162 24 164 50 Q85 80 6 50 Z" fill="var(--nest-paper, #E1C38C)" stroke="var(--nest-line, #5D4732)" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M16 34 Q85 24 154 34" stroke="var(--nest-strip, #A7865D)" stroke-width="1.6" stroke-linecap="round" fill="none"/>
   <!-- The inside he sits in. -->
-  <ellipse class="hollow" cx="85" cy="44" rx="70" ry="13"/>
+  <ellipse cx="85" cy="44" rx="70" ry="13" fill="var(--nest-deep, #9F682E)" opacity=".38"/>
 </svg>

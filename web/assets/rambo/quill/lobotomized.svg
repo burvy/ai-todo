@@ -1,45 +1,23 @@
 <!-- PLACEHOLDER: replace me, see art/GUIDE.md -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 112" role="img" aria-label="Rambo (quill), lobotomized">
-  <style>
-    /* An img element never sees the page's CSS, so the theme.css tokens are restated here. */
-    svg{--rambo:#146272;--rambo-deep:#004552;--rambo-tint:#4a939f;--accent:#9f682e}
-    @media (prefers-color-scheme:dark){svg{--rambo:#64bbc4;--rambo-deep:#358e9b;--rambo-tint:#a3dde0;--accent:#d9a45c}}
-    svg{--rambo-barrel:var(--rambo);--rambo-cap:var(--accent);--rambo-nib:var(--accent);--rambo-lead:var(--rambo-deep);--rambo-ink:var(--rambo-deep);--rambo-eye:#FCFAF4;--rambo-pupil:var(--rambo-deep);--rambo-blush:#D08770;--rambo-fx:var(--rambo-tint);--rambo-brow:var(--rambo-deep)}
-    .pen-barrel{fill:var(--rambo-barrel)}
-    .pen-cap{fill:var(--rambo-cap)}
-    .pen-nib{fill:var(--rambo-nib)}
-    .pen-lead{fill:var(--rambo-lead)}
-    .pen-gloss{stroke:rgba(255,255,255,.35);stroke-width:2.4;stroke-linecap:round;fill:none}
-    .eye-white{fill:var(--rambo-eye)}
-    .eye-black{fill:var(--rambo-pupil)}
-    .brow{stroke:var(--rambo-brow);stroke-width:2;stroke-linecap:round;fill:none}
-    .mouth{stroke:var(--rambo-lead);stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;fill:none}
-    .mouth-fill{fill:var(--rambo-lead)}
-    .tongue{fill:var(--rambo-blush)}
-    .lid{fill:var(--rambo-barrel)}
-    .blush{fill:var(--rambo-blush);opacity:.45}
-    .ink-drop{fill:var(--rambo-ink)}
-    .fx{stroke:var(--rambo-fx);stroke-width:1.6;stroke-linecap:round;fill:none}
-    .fx-fill{fill:var(--rambo-fx)}
-  </style>
-  <g class="pen-body" transform="rotate(-2 32 100)">
-    <path class="pen-barrel" d="M25.5 24 L38.5 24 L36.5 88 L27.5 88 Z"/>
-    <path class="pen-gloss" d="M27 36 L27 76"/>
-    <path class="pen-nib" d="M27.5 86 L32 110 L36.5 86 Z"/>
-    <path class="pen-lead" d="M31.6 90 L32.4 90 L32 104 Z"/>
-    <path class="ink-drop" d="M37 74 q2.4 3.2 0 5 q-2.4 -1.8 0 -5 Z"/>
-    <circle class="ink-drop" cx="25.6" cy="84" r="1.1"/>
-    <path class="pen-cap" d="M32 2 C 43 4 49 13 45.5 23 C 41 31 29 32 23 26 C 17 20 21 4 32 2 Z"/>
-    <path class="pen-gloss" d="M30 6 C 26 10 25 16 26.5 23"/><path class="pen-gloss" d="M35 5.5 C 38 9 39 15 38 21"/>
-    <path class="pen-gloss" d="M26 18 L26 22" style="stroke-width:2"/>
-    <circle class="pen-nib" cx="32" cy="11.4" r="1.9"/>
-    <circle class="eye-white" cx="28.6" cy="55" r="4.8"/>
-    <circle class="eye-black" cx="27.0" cy="56.2" r="1.0"/>
-    <circle class="eye-white" cx="35.6" cy="55" r="4.8"/>
-    <circle class="eye-black" cx="37.6" cy="53.4" r="1.0"/>
-    <path class="brow" d="M25.2 47.4 L31.6 47.4"/>
-    <path class="brow" d="M33.2 47.4 L39.6 47.4"/>
-    <path class="mouth" d="M29 64.4 L35 64.4"/>
-    <path class="ink-drop" d="M33.6 65.6 q1.6 2.4 0 4 q-1.6 -1.6 0 -4 Z"/>
+  <g id="art" transform="rotate(-2 32 100)">
+    <path d="M25.5 24 L38.5 24 L36.5 88 L27.5 88 Z" fill="var(--rambo-barrel, #146272)"/>
+    <path d="M27 36 L27 76" stroke="rgba(255,255,255,.35)" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+    <path d="M27.5 86 L32 110 L36.5 86 Z" fill="var(--rambo-nib, #9f682e)"/>
+    <path d="M31.6 90 L32.4 90 L32 104 Z" fill="var(--rambo-lead, #004552)"/>
+    <path d="M37 74 q2.4 3.2 0 5 q-2.4 -1.8 0 -5 Z" fill="var(--rambo-ink, #004552)"/>
+    <circle cx="25.6" cy="84" r="1.1" fill="var(--rambo-ink, #004552)"/>
+    <path d="M32 2 C 43 4 49 13 45.5 23 C 41 31 29 32 23 26 C 17 20 21 4 32 2 Z" fill="var(--rambo-cap, #9f682e)"/>
+    <path d="M30 6 C 26 10 25 16 26.5 23" stroke="rgba(255,255,255,.35)" stroke-width="2.4" stroke-linecap="round" fill="none"/><path d="M35 5.5 C 38 9 39 15 38 21" stroke="rgba(255,255,255,.35)" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+    <path d="M26 18 L26 22" style="stroke-width:2" stroke="rgba(255,255,255,.35)" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+    <circle cx="32" cy="11.4" r="1.9" fill="var(--rambo-nib, #9f682e)"/>
+    <circle cx="28.6" cy="55" r="4.8" fill="var(--rambo-eye, #FCFAF4)"/>
+    <circle cx="27.0" cy="56.2" r="1.0" fill="var(--rambo-pupil, #004552)"/>
+    <circle cx="35.6" cy="55" r="4.8" fill="var(--rambo-eye, #FCFAF4)"/>
+    <circle cx="37.6" cy="53.4" r="1.0" fill="var(--rambo-pupil, #004552)"/>
+    <path d="M25.2 47.4 L31.6 47.4" stroke="var(--rambo-brow, #004552)" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <path d="M33.2 47.4 L39.6 47.4" stroke="var(--rambo-brow, #004552)" stroke-width="2" stroke-linecap="round" fill="none"/>
+    <path d="M29 64.4 L35 64.4" stroke="var(--rambo-lead, #004552)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <path d="M33.6 65.6 q1.6 2.4 0 4 q-1.6 -1.6 0 -4 Z" fill="var(--rambo-ink, #004552)"/>
   </g>
 </svg>

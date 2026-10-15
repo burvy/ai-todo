@@ -316,6 +316,11 @@ pub(crate) fn CaptureBox(
                 class="nest"
                 aria-label="Submit task"
             >
+                // The back of the dish, behind him. Drawn through <use> so it
+                // takes the page's --nest-* tokens and follows the theme. FE-2.
+                <svg class="nest-back" viewBox="0 0 170 100" preserveAspectRatio="none" aria-hidden="true">
+                    <use href="assets/nest/back.svg#art" />
+                </svg>
             </button>
         </form>
     }
