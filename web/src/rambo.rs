@@ -1,6 +1,7 @@
 //! Rambo the pen: dragging, flying, landing on a row, and listening.
 
 use leptos::prelude::*;
+use rambl_web_core::rambo::{self as model, bubble_offset, opens_below};
 use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
@@ -348,19 +349,6 @@ pub(crate) fn Rambo(
         }
     });
 
-    // Let go on the page: let go mid-flick he is thrown at the flick's speed (the
-    // world slides him, and only a smack into an edge dazes him); gently, he hops home.
-    let release_on_page = move |flick: Option<(f64, f64)>| {
-        let before = state.get_untracked();
-        let event = match flick {
-            Some(vel) if before == mascot::State::Dragging && !mascot::prefers_reduced_motion() => {
-                thrower.borrow_mut().throw(vel);
-                mascot::Event::DropHard
-            }
-            _ => mascot::Event::DropEmpty,
-        };
-        rambo_world.tell(event);
-    };
     // The paper he lies on drags him as it scrolls (Interview 1 item 2): slowly he rides
     // along on it; faster than he can hold on, he is flung with it, and the throw does
     // the rest (`engine::swept`).
@@ -1107,7 +1095,6 @@ pub(crate) fn Rambo(
             }
             on:pointerup={
                 let other_finger = other_finger.clone();
-                let release_on_page = release_on_page.clone();
                 move |ev: leptos::ev::PointerEvent| {
                     if other_finger(&ev) {
                         return;
@@ -1128,80 +1115,74 @@ pub(crate) fn Rambo(
                     hold_up.set(hold_up.get().wrapping_add(1));
                     let was_listening = listening_up.get();
                     stop_speech_up();
-                    if !matches!(before, mascot::State::Dragging | mascot::State::Inking) {
-                        return;
-                    }
-                    let did_move = *moved_for_up.borrow();
-                    if !did_move {
-                        *grab_state_up.borrow_mut() = None;
-                        if before == mascot::State::Dragging
-                            && !was_listening
-                            && let Some(form) = form_ref.get()
-                        {
-                            // Tap (no drag): submit the form (sends typed text) and go home
-                            let _ = form.request_submit();
-                        }
-                        rambo_world.tell(mascot::Event::Release);
-                        return;
-                    }
-                    *grab_state_up.borrow_mut() = None;
-                    // He lands where you saw him, above the finger.
-                    pen_pos.set(match before {
-                        mascot::State::Inking => (client_x, client_y),
-                        _ => held_spot(&ev, (client_x, client_y)),
-                    });
-
-                    // Put back in his nest: home at once, and forgiven a little
-                    // if he was dazed.
-                    let over_nest = nest_ref.get().is_some_and(|nest| {
-                        let rect = nest.get_bounding_client_rect();
-                        mascot::over_nest(
-                            (client_x, client_y),
-                            (rect.left(), rect.top(), rect.right(), rect.bottom()),
-                        )
-                    });
-                    if over_nest {
-                        let after = mascot::transition(&before, mascot::Event::DropNest);
-                        if mascot::put_back(&before, &after) {
-                            set_brain_event.set(Some(rambl_brain::Event::PutBack));
-                        }
-                        rambo_world.tell(mascot::Event::DropNest);
-                        return;
-                    }
-                    // Dropped on an empty planner hour, he notes a new task that starts then.
-                    if before == mascot::State::Dragging
-                        && let Some(at) = free_hour_under(
+                    // What lies under the finger, looked up only if it decides anything.
+                    let under = || model::Under {
+                        nest: nest_ref.get().is_some_and(|nest| {
+                            let rect = nest.get_bounding_client_rect();
+                            mascot::over_nest(
+                                (client_x, client_y),
+                                (rect.left(), rect.top(), rect.right(), rect.bottom()),
+                            )
+                        }),
+                        hour: free_hour_under(
                             (client_x, client_y),
                             &snapshot.get_untracked(),
                             &view_settings.get_untracked(),
-                        )
-                    {
-                        rambo_world.tell(mascot::Event::DropHour(at));
-                        return;
+                        ),
+                        row: row_under(client_x, client_y).map(|row| {
+                            (
+                                row.get_attribute("data-id").unwrap_or_default(),
+                                row.get_attribute("data-title").unwrap_or_default(),
+                            )
+                        }),
+                        slip: crate::week::slip_at(client_x, client_y)
+                            .map(|(id, title, repeats)| (id.0, title, repeats)),
+                    };
+                    match model::released(
+                        &before,
+                        *moved_for_up.borrow(),
+                        was_listening,
+                        flick,
+                        mascot::prefers_reduced_motion(),
+                        under,
+                    ) {
+                        model::Released::NotHeld => {}
+                        model::Released::Tapped { submit } => {
+                            *grab_state_up.borrow_mut() = None;
+                            if submit && let Some(form) = form_ref.get() {
+                                let _ = form.request_submit();
+                            }
+                            rambo_world.tell(mascot::Event::Release);
+                        }
+                        model::Released::Dropped {
+                            event,
+                            asked,
+                            put_back,
+                            throw,
+                        } => {
+                            *grab_state_up.borrow_mut() = None;
+                            // He lands where you saw him, above the finger.
+                            pen_pos.set(match before {
+                                mascot::State::Inking => (client_x, client_y),
+                                _ => held_spot(&ev, (client_x, client_y)),
+                            });
+                            if put_back {
+                                set_brain_event.set(Some(rambl_brain::Event::PutBack));
+                            }
+                            if let Some(asked) = asked {
+                                asked_on.set(asked);
+                            }
+                            // Thrown, the world slides him, and only a smack into an
+                            // edge dazes him.
+                            if let Some(vel) = throw {
+                                thrower.borrow_mut().throw(vel);
+                            }
+                            rambo_world.tell(event);
+                        }
                     }
-                    // A listening Rambo dropped on a task row asks what to do with it.
-                    if before == mascot::State::Dragging
-                        && let Some(row) = row_under(client_x, client_y)
-                    {
-                        let task_id = row.get_attribute("data-id").unwrap_or_default();
-                        let task_title = row.get_attribute("data-title").unwrap_or_default();
-                        asked_on.set(mascot::Asked::Row);
-                        rambo_world.tell(mascot::Event::DropTask { task_id, title: task_title });
-                        return;
-                    }
-                    // Dropped on a slip in the planner, he asks about its time.
-                    if before == mascot::State::Dragging
-                        && let Some((id, title, repeats)) = crate::week::slip_at(client_x, client_y)
-                    {
-                        asked_on.set(mascot::Asked::Slip { repeats });
-                        rambo_world.tell(mascot::Event::DropTask { task_id: id.0, title });
-                        return;
-                    }
-                    release_on_page(flick);
                 }
             }
             on:pointercancel={
-                let release_on_page = release_on_page.clone();
                 move |ev: leptos::ev::PointerEvent| {
                     if other_finger(&ev) {
                         return;
@@ -1216,7 +1197,7 @@ pub(crate) fn Rambo(
                         mascot::State::Dragging => {
                             hold_cancel.set(hold_cancel.get().wrapping_add(1));
                             stop_speech_cancel();
-                            release_on_page(None);
+                            rambo_world.tell(mascot::Event::DropEmpty);
                         }
                         mascot::State::Inking => {
                             // The browser took the gesture over: he lands where he
@@ -1568,13 +1549,6 @@ fn rambo_height() -> f64 {
         .map_or(0.0, |rambo| f64::from(rambo.offset_height()))
 }
 
-/// Whether a bubble `height` tall would run off the top of the screen sitting on
-/// something whose top is at `sits_on` (his status line, above him), keeping
-/// `edge` pixels clear: then it opens below him instead.
-fn opens_below(sits_on: f64, height: f64, edge: f64) -> bool {
-    sits_on - height < edge
-}
-
 /// The box his middle stays in when thrown: the screen, without its scrollbar, less
 /// half his size on every side.
 fn screen_walls() -> crate::engine::Walls {
@@ -1639,22 +1613,9 @@ fn screen_width() -> Option<f64> {
     Some(f64::from(root.client_width()))
 }
 
-/// How far to slide a bubble of `width`, centred on `centre_x`, so it keeps `edge`
-/// pixels from both sides of a `screen` that wide. A bubble too wide for the screen
-/// starts at the left edge, where its question begins.
-fn bubble_offset(centre_x: f64, width: f64, screen: f64, edge: f64) -> f64 {
-    let left = centre_x - width / 2.0;
-    let fitted = if width > screen - 2.0 * edge {
-        edge
-    } else {
-        left.clamp(edge, screen - edge - width)
-    };
-    fitted - left
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{bubble_offset, gives_up, mic_failed, opens_below};
+    use super::{gives_up, mic_failed};
     use crate::speech::{NO_SPEECH_NOTE, UNAVAILABLE_NOTE};
 
     #[test]
@@ -1728,46 +1689,5 @@ mod tests {
             .expect("rambo.rs watches the root with a MutationObserver");
         assert!(rambo.contains(r#"Array::of1(&"style".into())"#));
         assert!(watch.contains("observe_with_options(&root"));
-    }
-
-    #[test]
-    fn a_bubble_without_room_above_him_opens_below() {
-        // A 120px bubble, 8px from the top: room from his top at 128px down.
-        assert!(!opens_below(400.0, 120.0, 8.0));
-        assert!(!opens_below(128.0, 120.0, 8.0));
-        assert!(opens_below(127.0, 120.0, 8.0));
-        assert!(opens_below(-20.0, 120.0, 8.0));
-        // Room above him, but not above the line he is saying: it opens below.
-        let (his_top, line_h) = (150.0, 39.0);
-        assert!(!opens_below(his_top, 120.0, 8.0));
-        assert!(opens_below(his_top - line_h, 120.0, 8.0));
-    }
-
-    // Rambo at x, a 200px bubble, a 1000px screen, 16px from each edge.
-
-    #[test]
-    fn a_bubble_that_fits_stays_centred() {
-        assert_eq!(bubble_offset(500.0, 200.0, 1000.0, 16.0), 0.0);
-    }
-
-    #[test]
-    fn near_the_left_edge_it_slides_right() {
-        // It spans -70 to 130, so it moves 86 to start at 16.
-        assert_eq!(bubble_offset(30.0, 200.0, 1000.0, 16.0), 86.0);
-        assert_eq!(bubble_offset(10.0, 200.0, 1000.0, 16.0), 106.0);
-    }
-
-    #[test]
-    fn near_the_right_edge_it_slides_left() {
-        // It spans 870 to 1070, so it moves 86 to end at 984.
-        assert_eq!(bubble_offset(970.0, 200.0, 1000.0, 16.0), -86.0);
-    }
-
-    #[test]
-    fn a_bubble_wider_than_the_screen_starts_at_the_left_edge() {
-        // It spans -100 to 1100; it starts at 16 and runs off the right instead.
-        assert_eq!(bubble_offset(500.0, 1200.0, 1000.0, 16.0), 116.0);
-        // Exactly as wide as the room between the edges: it fits.
-        assert_eq!(bubble_offset(500.0, 968.0, 1000.0, 16.0), 0.0);
     }
 }
