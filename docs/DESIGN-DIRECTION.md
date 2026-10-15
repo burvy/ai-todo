@@ -58,7 +58,7 @@ For 20 glyphs the whole thing is about 3.2 seconds, and the row is readable from
 
 ## 6. Palette tokens
 
-Light stays the owner's six. Dark is the same desk at night. New: the five Rambo tokens, and the two per-tool ink tokens kept from #213.
+Light stays the owner's six. Dark is the same desk by lamplight: an older, darker parchment with dark ink (see docs/THEME.md), so the Dark column below is superseded for paper, ink and rule tokens by the values in `web/theme.css`. New: the five Rambo tokens, and the two per-tool ink tokens kept from #213.
 
 | Token | Light | Dark | Role |
 |---|---|---|---|
