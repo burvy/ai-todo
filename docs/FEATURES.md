@@ -209,12 +209,12 @@ a. Tasks carry one of six labels and one of four priorities.
 b. The list has no label filter: the filter tabs were removed. Labels stay on the task data.
 c. Code: `web/src/tasks/mod.rs:TaskList`;
 `crates/core/src/lib.rs:Label, Priority, Task`;
-`crates/judge/src/fake.rs:label_for`; `server/src/v2/store.rs:label_to_stored, priority_to_stored`.
+`crates/judge/src/fake.rs:label_for`; `server/src/v2/store/sqlite.rs:label_to_stored, priority_to_stored`.
 
 ### 6. Persistence
 a. Tasks and their order survive a server restart when the SQLite store is enabled.
 b. Restart the server and reload the page.
-c. Code: `server/src/v2/store.rs:SqliteStore, Store`;
+c. Code: `server/src/v2/store/sqlite.rs:SqliteStore`; `server/src/v2/store.rs:Store`;
 `server/src/v2/mod.rs:app_from_env`.
 
 ### 7. Due dates keep their zone
@@ -357,7 +357,7 @@ scheduler, store and server tests.
 c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
 `web/src/week.rs:take_off, place_at`; `web/src/api.rs:PatchTaskBody::off_planner`;
 `crates/scheduler/src/lib.rs:plan`; `server/src/v2/app.rs:patch`;
-`server/src/v2/store.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
+`server/src/v2/store/schema.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
 
 ### 5. Light and dark paper
 a. The paper is Light or Dark by the reader's own choice in the gear menu, not by
@@ -810,7 +810,7 @@ c. Code: `server/src/v2/http.rs:CurrentUser, HttpError`;
 ### 1. SQLite persistence
 a. SQLite stores tasks, order, imported event identities, users and sessions.
 b. Not visible; restart the server and request a snapshot.
-c. Code: `server/src/v2/store.rs:SqliteStore, MIGRATIONS, SCHEMA_VERSION`.
+c. Code: `server/src/v2/store/sqlite.rs:SqliteStore`; `server/src/v2/store/schema.rs:MIGRATIONS, SCHEMA_VERSION`.
 
 ### 2. Imported-event identity
 a. An imported event keeps its external UID so re-import can update it.
@@ -821,7 +821,7 @@ c. Code: `crates/core/src/lib.rs:Task.external_uid`;
 ### 3. In-memory test store
 a. Tests use an in-memory store so they do not write production data.
 b. Not visible; covered by server HTTP tests.
-c. Code: `server/src/v2/store.rs:MemoryStore`.
+c. Code: `server/src/v2/store/memory.rs:MemoryStore`.
 
 ### 4. Daily backup
 a. Automatic daily SQLite backups are created at startup and every 24 hours, with backups
