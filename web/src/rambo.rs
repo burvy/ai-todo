@@ -114,10 +114,14 @@ pub(crate) fn Rambo(
             folding.set(false);
             if asked.with_untracked(Option::is_none) {
                 opened.set(0.0);
-                // One frame to lay it out and place it, one to draw it tucked there.
+                // One frame to lay it out and place it, one to draw it tucked there. An
+                // ask that ended in those frames is already folding: growing then would
+                // take over the fold, so its `done` never ran and the bubble stayed.
                 crate::engine::next_frame(move || {
                     crate::engine::next_frame(move || {
-                        crate::slide::show("ask-bubble", opened, 1.0, || {});
+                        if asked.with_untracked(Option::is_some) && !folding.get_untracked() {
+                            crate::slide::show("ask-bubble", opened, 1.0, || {});
+                        }
                     });
                 });
             } else {
