@@ -19,6 +19,22 @@ pub(crate) fn on_tick(body: impl FnMut(Tick) -> Flow + 'static) -> Handle {
     handle
 }
 
+/// A number for a new start of a keyed job (see [`hold`]).
+pub(crate) fn next_start() -> u64 {
+    LOOP.with(|lp| lp.borrow_mut().next_start())
+}
+
+/// Keeps `handle` as the one job of `key` (start number `start`), stopping the job it
+/// takes over from.
+pub(crate) fn hold(key: &str, start: u64, handle: Handle) {
+    LOOP.with(|lp| lp.borrow_mut().hold(key, start, handle));
+}
+
+/// Lets go of `key`'s job when it ends, unless a newer start holds the key.
+pub(crate) fn release(key: &str, start: u64) {
+    LOOP.with(|lp| lp.borrow_mut().release(key, start));
+}
+
 /// Runs `body` once, on the next frame: after the page has laid out what changed.
 pub(crate) fn next_frame(body: impl FnOnce() + 'static) {
     let mut body = Some(body);
