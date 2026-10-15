@@ -162,7 +162,7 @@ mod tests {
 
     /// The transitions that still move or size something, as `selector: property`: each
     /// goes when its mover joins the world. Delete a line as its transition is deleted.
-    const OWED_TRANSITIONS: [&str; 18] = [
+    const OWED_TRANSITIONS: [&str; 14] = [
         // Rambo's ask bubble (rambo.rs, his owner is moving it).
         ".ask-choice: scale",
         ".ask.folding: scale",
@@ -179,11 +179,7 @@ mod tests {
         // Strips: the stack's slide, the leaving slide and the press.
         ".scrap-undo.done: transform",
         ".scrap-undo: transform",
-        // Small feedback and sheets: a press, the lamp's cord, the gear, the edit sheet.
-        ".add-by-hand: scale",
-        ".desk-lamp-cord: transform",
-        ".gear: transform",
-        ".paper-field, .paper-radio, .paper-page button: transform",
+        // The edit sheet.
         ".task-dialog: translate",
     ];
 
