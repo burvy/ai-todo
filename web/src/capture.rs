@@ -1,6 +1,5 @@
 //! The capture line: the box you type or ramble into, and its whispered prompts.
 
-use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 
@@ -47,18 +46,16 @@ fn prefers_reduced_motion() -> bool {
 /// let the colour return. Re-arms forever; on a reduced-motion system the
 /// tick is a no-op, so the line stays put and the CSS transition is off.
 fn schedule_whisper(index: RwSignal<usize>, fading: RwSignal<bool>) {
-    Timeout::new(WHISPER_ROTATE_MS, move || {
+    crate::engine::every(f64::from(WHISPER_ROTATE_MS), move || {
         if whisper_rotates(prefers_reduced_motion()) {
             fading.set(true);
-            Timeout::new(WHISPER_FADE_MS, move || {
+            crate::engine::after(f64::from(WHISPER_FADE_MS), move || {
                 index.update(|current| *current = next_whisper(*current, WHISPER_PROMPTS.len()));
                 fading.set(false);
-            })
-            .forget();
+            });
         }
-        schedule_whisper(index, fading);
-    })
-    .forget();
+        crate::engine::Flow::Go
+    });
 }
 
 /// What a submit adds: Rambo's transcript when he just heard one, else the box.
@@ -242,16 +239,16 @@ pub(crate) fn CaptureBox(
     schedule_whisper(whisper, whisper_fading);
 
     // Caret follow: on input, position pen at caret; after 2s of inactivity, fly home
-    let linger_timer = std::rc::Rc::new(std::cell::RefCell::new(None::<Timeout>));
+    let linger_timer = std::rc::Rc::new(std::cell::RefCell::new(None::<crate::engine::Handle>));
     // Peeking: Rambo looks up while you type and stops when you stop.
-    let peek_timer = std::rc::Rc::new(std::cell::RefCell::new(None::<Timeout>));
+    let peek_timer = std::rc::Rc::new(std::cell::RefCell::new(None::<crate::engine::Handle>));
     let restart_linger = {
         let linger_timer = linger_timer.clone();
         move || {
             if let Some(timer) = linger_timer.borrow_mut().take() {
-                timer.cancel();
+                timer.stop();
             }
-            let timer = Timeout::new(crate::tuning::LINGER_MS, move || {
+            let timer = crate::engine::after(f64::from(crate::tuning::LINGER_MS), move || {
                 set_state.update(|s| {
                     *s = mascot::transition(s, mascot::Event::FlyHome);
                 });
@@ -262,13 +259,12 @@ pub(crate) fn CaptureBox(
                     pen_pos.set(mascot::nest_home(nest));
                 }
                 let set_state = set_state;
-                let timer = Timeout::new(crate::tuning::FLY_MS, move || {
+                crate::engine::after(f64::from(crate::tuning::FLY_MS), move || {
                     // Use transition() so a grab during flight is not overridden.
                     set_state.update(|s| {
                         *s = mascot::transition(s, mascot::Event::FlyHome);
                     });
                 });
-                timer.forget();
             });
             linger_timer.borrow_mut().replace(timer);
         }
@@ -341,13 +337,14 @@ pub(crate) fn CaptureBox(
         // PEEK_MS after the last keystroke.
         set_typing.set(true);
         if let Some(timer) = peek_timer.borrow_mut().take() {
-            timer.cancel();
+            timer.stop();
         }
-        peek_timer
-            .borrow_mut()
-            .replace(Timeout::new(mascot::PEEK_MS, move || {
+        peek_timer.borrow_mut().replace(crate::engine::after(
+            f64::from(mascot::PEEK_MS),
+            move || {
                 set_typing.set(false);
-            }));
+            },
+        ));
         let st = state.get_untracked();
         // Already on his way or writing: the nib goes where the words are now, and the
         // wait before he goes home starts again. No new flight.
@@ -390,7 +387,7 @@ pub(crate) fn CaptureBox(
                 set_state.set(mascot::transition(&st, mascot::Event::Return));
             }
             if let Some(timer) = linger_timer.borrow_mut().take() {
-                timer.cancel();
+                timer.stop();
             }
             // The box empties now, so whatever is typed while the task is on its way
             // is the next task, not wiped when this one lands.
