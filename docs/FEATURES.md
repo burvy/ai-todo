@@ -282,6 +282,19 @@ the tape), `web/src/mascot.rs:State::Mending, Event::Mend`, `web/theme.css` (`ma
 `.tear-layer`, `.tape`); numbers in `web/src/tuning.rs` (`RIP_*`, `TAPE_*`, `TEAR_*`,
 `MEND_MS`).
 
+### 9. The list paper is lightly lined
+a. The list page is ruled like a notebook's, ruled before anything is written on it: one grid
+of faint rules from the top of the list down to the foot of the page and out under the pin's
+column, every `--line-pitch`. Each row is laid on it: a row is a whole number of pitches tall
+(its text's line height is the pitch), so a one-line title sits on one rule and a title that
+wraps takes two, each line on its own rule, and every rule below stays where it was. The
+planner keeps its own grid. The rules are a token (`--paper-line`, fainter than the rules that
+divide things, with its own dark value). The paper fills what is left of the page and never
+makes it longer.
+b. Add a few tasks, one with a long title: the rows stand on lines that carry on to the page's
+foot, with the long title on two, in light and dark paper, on a phone and on a desk.
+c. Code: `web/theme.css` (`--paper-line`, `--line-pitch`, `.task-list`, `.task-open`).
+
 ## III. WEEK PLANNER
 
 ### 1. Scrollable week view
@@ -353,15 +366,16 @@ c. Code: `web/theme.css` (`:root` and `:root[data-theme="dark"]`);
 
 ### 5a. The desk lamp
 a. A small desk lamp is the dark-mode switch. Tapping it pulls its cord: a sheet of the
-other paper is laid down from the top edge over the page, the page's own paper is swapped
-under it, and the sheet is taken away on the next frame. The page is swapped out; nothing
-fades. The lamp is dark by day and lit by night (by night its light falls on the corner of
-the page), and its own light changes at the tap. The gear menu's Light and Dark choices
-use the same switch, so there is one behaviour; only with reduced motion does the paper
-change at once. It is the same stored Theme setting as ever, and the page still never
-follows the OS. On a desk the lamp stands on the bottom edge of the screen in the bottom
-left corner, clear of the capture box and the gear; on a phone it stands at the foot, just
-above the capture bar.
+other paper is laid down from the top edge over the whole desk (Rambo and his nest too), the
+page's own paper is swapped under it, and the sheet lifts back off the way it came. The page
+is swapped out; nothing fades. The lamp is dark by day and lit by night (by night its light
+falls on the corner of the page), and its own light changes at the tap. The gear menu's
+Light and Dark choices use the same switch, so there is one behaviour, and the menu closes
+on the pick; only with reduced motion does the paper change at once. It is the same stored
+Theme setting as ever, and the page still never follows the OS. On a desk the lamp stands on
+the bottom edge of the screen in the bottom left corner, clear of the capture box and the
+gear; on a phone it stands in the left end of the capture bar (the bar keeps clear of it, and
+it rides up with the bar over the keyboard), so no page is under it.
 b. Tap the lamp (or pick Light or Dark in the gear menu) and watch the new paper slide
 down; reload and see the choice kept.
 c. Code: `web/src/lamp.rs:DeskLamp, switch_to`; `web/theme.css` (`.desk-lamp`,
