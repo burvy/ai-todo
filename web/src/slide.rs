@@ -13,10 +13,6 @@ const PULL: Pull = Pull {
     zeta: 1.0,
 };
 
-/// How near its end an amount in sight (0 out of sight, 1 in it) must come to count as
-/// there.
-const SHOWN_NEAR: f64 = 0.001;
-
 /// Slides the paper `key` names from `from` to `to`, drawing every place with `draw`
 /// (`near` is how close to `to` counts as there), then runs `done`. A new slide of the
 /// same key takes over, and the old one's `done` never runs.
@@ -43,7 +39,7 @@ pub(crate) fn show(key: &str, shown: RwSignal<f64>, to: f64, done: impl FnOnce()
         key,
         shown.get_untracked(),
         to,
-        SHOWN_NEAR,
+        crate::tuning::SHOWN_NEAR,
         move |at| shown.set(at),
         done,
     );

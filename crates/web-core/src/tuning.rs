@@ -241,6 +241,13 @@ pub const STRIP_STACK_OMEGA: f64 = 20.0;
 /// growing or shrinking, the placing note and the edit sheet coming and going. 24 is
 /// about a quarter of a second. Safe range 14 to 40.
 pub const PAPER_SLIDE_OMEGA: f64 = 24.0;
+/// How near its end, in px, sliding paper (the ribbon's head, a stretched slip) must come
+/// to count as there. Safe range 0.05 to 0.5: under a pixel, so the last step never shows.
+pub const SLIDE_NEAR_PX: f64 = 0.1;
+/// How near its end how far paper is in sight (0 out of sight, 1 in it: the placing note,
+/// the edit sheet) must come to count as there. Safe range 0.0005 to 0.005: a sheet the
+/// height of the screen is then under a few px from its end.
+pub const SHOWN_NEAR: f64 = 0.001;
 /// The done tasks hang at the pin as a stack: the newest on top, the rest under it. This many
 /// edges of the older ones show below the top strip, a few px each, to say how deep the stack
 /// is; the rest sit behind the last edge. Safe range 1 to 5.
