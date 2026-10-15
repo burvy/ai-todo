@@ -69,8 +69,6 @@ impl Hop {
         self.hops * HOP_MS
     }
 
-    /// Where he is `elapsed_ms` into the run towards `to`. Past the end he has
-    /// landed: at `to`, unsquashed.
     /// How fast he is coming down, in px/s, as each hop toward `to` touches down: the
     /// fall of its arc at the end of its flight.
     pub fn impact(&self, to: (f64, f64)) -> f64 {
@@ -79,6 +77,8 @@ impl Hop {
         arc_height(span) * std::f64::consts::PI * 1000.0 / flight_ms
     }
 
+    /// Where he is `elapsed_ms` into the run towards `to`. Past the end he has
+    /// landed: at `to`, unsquashed.
     pub fn at(&self, to: (f64, f64), elapsed_ms: u32) -> Frame {
         if elapsed_ms >= self.ms() {
             return Frame {
@@ -252,6 +252,21 @@ mod tests {
         // Long enough hops all top out at the cap itself.
         assert_eq!(arc_height(1000.0), HOP_HEIGHT_MAX_PX);
         assert_eq!(arc_height(2000.0), HOP_HEIGHT_MAX_PX);
+    }
+
+    #[test]
+    fn the_impact_is_how_fast_he_falls_just_before_touching_down() {
+        for to in [(60.0, 0.0), (240.0, 90.0), (900.0, 400.0)] {
+            let hop = Hop::plan((0.0, 0.0), to).expect("far enough to hop");
+            let touch_down = (hop.hops() - 1) * HOP_MS + (TOUCH_DOWN * f64::from(HOP_MS)) as u32;
+            let (before, just_before) = (touch_down - 2, touch_down - 1);
+            let fall = (hop.at(to, before).lift - hop.at(to, just_before).lift) * 1000.0;
+            let impact = hop.impact(to);
+            assert!(
+                (fall - impact).abs() < impact * 0.05,
+                "to {to:?}: falls at {fall:.0} px/s, impact says {impact:.0}"
+            );
+        }
     }
 
     #[test]
