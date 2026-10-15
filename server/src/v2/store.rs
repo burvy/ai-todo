@@ -47,7 +47,7 @@ pub fn data_path_from_env() -> std::path::PathBuf {
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
@@ -64,6 +64,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_10,
     MIGRATION_11,
     MIGRATION_12,
+    MIGRATION_13,
 ];
 
 const MIGRATION_1: &str = "
@@ -233,7 +234,7 @@ const MIGRATION_12: &str =
 const DAY_TIME_FORMAT: &str = "%H:%M";
 
 /// Interval column for series: every N weeks (weekly) or every N days (daily).
-const MIGRATION_12: &str = "
+const MIGRATION_13: &str = "
 ALTER TABLE v2_series ADD COLUMN interval INTEGER NOT NULL DEFAULT 1;
 ";
 
