@@ -143,6 +143,7 @@
   --layer-rambo: 50;
   --layer-nest-rim: 51; /* the nest's front rim, over his tip (its back is the capture bar's) */
   --layer-rambo-bubble: 52; /* his ask bubble */
+  --layer-switch: 53; /* the sheet of paper the desk lamp lays down: over Rambo and his nest, under a drag */
   --layer-drag: 60; /* the drag ghost, the tack pin */
   --layer-bin: 70; /* the tack bin, a drop target during a drag */
   --layer-menu-backdrop: 80;
@@ -1347,7 +1348,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   position: fixed;
   left: var(--lamp-left);
   bottom: var(--lamp-bottom);
-  z-index: calc(var(--layer-dim) + 1); /* above the sheet, under Rambo */
+  z-index: calc(var(--layer-dim) + 1); /* under Rambo; the sheet covers it with the rest of the desk */
   width: var(--lamp-w);
   height: var(--lamp-h);
   padding: 0;
@@ -1425,12 +1426,13 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 }
 
 /* The other paper, laid down from the top edge when the switch is pulled: it carries its
-   own paper tokens (data-theme on the sheet), covers the page while the real paper is
-   swapped under it, and is taken away on the next frame. It moves; it never fades. */
+   own paper tokens (data-theme on the sheet), covers the whole desk (Rambo and his nest
+   too) while the real paper is swapped under it, then lifts back off. It moves; it never
+   fades. */
 .lamp-sheet {
   position: fixed;
   inset: 0;
-  z-index: var(--layer-dim);
+  z-index: var(--layer-switch);
   background-color: var(--paper);
   background-image: var(--texture-paper);
   box-shadow: 0 6px 22px var(--flip-shade);
@@ -1439,10 +1441,17 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   pointer-events: none;
 }
 
-.lamp-sheet.laying {
+/* Down onto the page, and back up off it the way it came: one object, always moving. */
+.lamp-sheet.down {
   visibility: visible;
   transform: translateY(0);
   transition: transform var(--lamp-slide-ms) var(--arrive-ease);
+}
+
+.lamp-sheet.up {
+  visibility: visible;
+  transform: translateY(-100%);
+  transition: transform var(--lamp-slide-ms) var(--leave-ease);
 }
 
 @media (prefers-reduced-motion: reduce) {
