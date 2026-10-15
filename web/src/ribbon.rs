@@ -1,7 +1,9 @@
-//! The bookmark ribbon (SPEC-GAPS I3 idea 3): a ribbon hangs from under the day names
-//! at today's column and marks it; scrolled away, it stays at the planner's edge, the
-//! way a bookmark sticks out of a closed book. Pull it down (or tap it) and the planner
-//! slides back to today, at the hour it opens on.
+//! The bookmark ribbon (SPEC-GAPS I3 idea 3) marks today's column in two parts. Its head
+//! is the control: it sticks out of the band of day names at today's column and, with
+//! today scrolled away, at the planner's edge, the way a bookmark sticks out of a closed
+//! book. Its tail lies on today's hours under the slips, so it never covers a word.
+//! Pull the head down (or tap it) and the planner slides back to today, at the hour it
+//! opens on.
 
 use leptos::prelude::*;
 
@@ -18,12 +20,24 @@ pub(crate) fn jumps(dy: f64) -> bool {
     pulled(dy) >= RIBBON_PULL_PX
 }
 
-/// Where the ribbon hangs, from the left of the planner page: just inside the right edge
-/// of today's column (`today_right`, `width` the ribbon's own), held between `lo` and
-/// `hi`, the planner's visible edges, when today is scrolled away.
+/// Where the ribbon's head hangs, from the left of the planner page: just inside the
+/// right edge of a day's column (`day_rights`, left to right, today first; `width` the
+/// ribbon's own), where the band is empty because a day's name is written at its left.
+/// It is today's while that spot is in sight between `lo` and `hi`, the paper's visible
+/// edges; with today scrolled away, the first day whose spot is, so it waits at the
+/// paper's edge and still covers no name. Held at `hi` if none is.
 #[cfg(any(target_arch = "wasm32", test))]
-pub(crate) fn hang_left(today_right: f64, width: f64, lo: f64, hi: f64) -> f64 {
-    (today_right - 1.5 * width).clamp(lo, hi.max(lo))
+pub(crate) fn hang_left(
+    day_rights: impl IntoIterator<Item = f64>,
+    width: f64,
+    lo: f64,
+    hi: f64,
+) -> f64 {
+    day_rights
+        .into_iter()
+        .map(|right| right - 1.5 * width)
+        .find(|spot| *spot >= lo)
+        .map_or(hi, |spot| spot.min(hi.max(lo)))
 }
 
 /// Where a slide back to today is `ms` into its [`crate::tuning::RIBBON_GLIDE_MS`], from `from` to
@@ -34,15 +48,17 @@ pub(crate) fn glide(from: f64, to: f64, ms: f64) -> f64 {
     from + (to - from) * x * x * (3.0 - 2.0 * x)
 }
 
-/// The ribbon at `left`, `top` on the planner page. A pull past [`RIBBON_PULL_PX`] or a
-/// tap runs `back` (to today); let go, it springs back to its length.
+/// The ribbon's head at `left`, `top` on the planner page, `height` tall (the band of
+/// day names). A pull past [`RIBBON_PULL_PX`] or a tap runs `back` (to today); `pull` is
+/// how far it is stretched, which the tail draws; let go, it springs back.
 #[component]
 pub(crate) fn Ribbon(
     left: ReadSignal<f64>,
     top: ReadSignal<f64>,
+    height: ReadSignal<f64>,
+    pull: RwSignal<f64>,
     back: Callback<()>,
 ) -> impl IntoView {
-    let pull = RwSignal::new(0.0_f64);
     // Where the finger went down, while it holds the ribbon.
     let held = StoredValue::new(None::<(i32, f64)>);
     // The last press was a pull, not a tap: its click does nothing more.
@@ -60,7 +76,7 @@ pub(crate) fn Ribbon(
             aria-label="Back to today"
             style:left=move || format!("{:.1}px", left.get())
             style:top=move || format!("{:.1}px", top.get())
-            style:--pull=move || format!("{:.1}px", pull.get())
+            style:height=move || format!("{:.1}px", height.get())
             on:pointerdown=move |ev| {
                 held.set_value(Some((ev.pointer_id(), f64::from(ev.client_y()))));
                 was_pull.set_value(false);
@@ -101,6 +117,20 @@ pub(crate) fn Ribbon(
                 was_pull.set_value(false);
             }
         ></button>
+    }
+}
+
+/// The ribbon's tail on today's hours: cloth only, under the slips, stretched by the
+/// head's `pull`. It takes no touch; the head is what a finger holds.
+#[component]
+pub(crate) fn RibbonTail(pull: RwSignal<f64>) -> impl IntoView {
+    view! {
+        <div
+            class="ribbon-tail"
+            class:pulling=move || { pull.get() > 0.0 }
+            style:--pull=move || format!("{:.1}px", pull.get())
+            aria-hidden="true"
+        ></div>
     }
 }
 
@@ -147,20 +177,64 @@ mod tests {
     }
 
     #[test]
-    fn the_ribbon_hangs_at_today_or_at_the_edge_today_went_past() {
-        let (lo, hi, width) = (52.0, 360.0, 18.0);
-        for today_right in (-400..800).map(f64::from) {
-            let at = hang_left(today_right, width, lo, hi);
-            assert!((lo..=hi).contains(&at), "{today_right}");
-            if (lo..=hi).contains(&(today_right - 1.5 * width)) {
-                assert_eq!(at, today_right - 1.5 * width, "on today's column");
+    fn the_ribbon_hangs_at_today_or_at_the_edge_today_went_past_never_on_a_name() {
+        let (lo, hi, width, column) = (0.0, 360.0, 18.0, 120.0);
+        // Seven columns, scrolled left by `scroll` px: today is the first.
+        for scroll in 0..=(7 * 120 - 360) {
+            let rights: Vec<f64> = (1..=7)
+                .map(|day| f64::from(day) * column - f64::from(scroll))
+                .collect();
+            let at = hang_left(rights.iter().copied(), width, lo, hi);
+            assert!((lo..=hi).contains(&at), "in sight: {scroll}");
+            // Always just inside some day's right edge, where its band has no name.
+            assert!(
+                rights.iter().any(|right| at == right - 1.5 * width),
+                "inside a column's right edge: {scroll}"
+            );
+            if rights[0] - 1.5 * width >= lo {
+                assert_eq!(at, rights[0] - 1.5 * width, "on today's column: {scroll}");
+            } else {
+                assert!(at < lo + column, "at the edge today went past: {scroll}");
             }
         }
         assert_eq!(
-            hang_left(-300.0, width, lo, hi),
-            lo,
-            "today scrolled off to the left"
+            hang_left([], width, lo, hi),
+            hi,
+            "no days: held at the edge"
         );
+    }
+
+    /// The tail is cloth on the page: the slips lie over it and a finger goes through it
+    /// to them; the head, in the band above, is what a finger holds.
+    #[test]
+    fn the_tail_lies_under_the_slips_and_never_takes_a_touch() {
+        let css = include_str!("../theme.css");
+        let rule = |selector: &str| {
+            // Every block for the selector alone, at the start of a line.
+            let blocks: Vec<&str> = css
+                .split(&format!("\n{selector} {{"))
+                .skip(1)
+                .filter_map(|rest| rest.split('}').next())
+                .collect();
+            assert!(!blocks.is_empty(), "theme.css styles {selector}");
+            blocks.concat()
+        };
+        let layer = |name: &str| -> i32 {
+            css.split(&format!("--layer-{name}:"))
+                .nth(1)
+                .and_then(|rest| rest.split(';').next())
+                .and_then(|n| n.trim().parse().ok())
+                .unwrap_or_else(|| panic!("--layer-{name} is a number"))
+        };
+        let tail = rule(".ribbon-tail");
+        assert!(tail.contains("pointer-events: none"), "{tail}");
+        assert!(tail.contains("z-index: var(--layer-ribbon-tail)"), "{tail}");
+        assert!(layer("ribbon-tail") < layer("page"), "under the slips");
+        assert!(
+            rule(".bookmark-ribbon").contains("z-index: var(--layer-note)"),
+            "the head is over the day names"
+        );
+        assert!(layer("note") > layer("sticky"));
     }
 
     #[test]
