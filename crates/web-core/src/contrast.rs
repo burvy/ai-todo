@@ -16,7 +16,7 @@ const PAPERS: [&str; 2] = ["paper", "paper-raised"];
 
 /// The theme's tokens: the light ones, and the dark ones laid over them.
 fn themes() -> [(&'static str, HashMap<String, String>); 2] {
-    let css = include_str!("../theme.css");
+    let css = include_str!("../../../web/theme.css");
     let block = |head: &str| {
         let start = css
             .find(head)

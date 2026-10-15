@@ -4,10 +4,14 @@
 
 pub mod body;
 pub mod clock;
+#[cfg(test)]
+mod contrast;
 pub mod gesture;
 pub mod hop;
 pub mod ink;
 pub mod mascot;
+pub mod placing;
+pub mod planner;
 pub mod row;
 pub mod settings;
 pub mod store;
