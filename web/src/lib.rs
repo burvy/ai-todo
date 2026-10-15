@@ -34,6 +34,7 @@ mod fold;
 mod fold_turner;
 mod placing;
 mod rambo;
+mod ribbon;
 mod rip_ui;
 mod scrap;
 mod smudge;

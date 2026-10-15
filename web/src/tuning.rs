@@ -17,6 +17,10 @@ pub const BUBBLE_EDGE_PX: f64 = 8.0;
 /// ms; the page reads it as `--ask-fold-ms`. Safe range 120 to 300: shorter and it
 /// pops, longer and the page waits on it.
 pub const ASK_FOLD_MS: u32 = 180;
+/// How long a slip taken off the planner takes to slide out of its day, in ms; the
+/// week is drawn without it no sooner. Safe range 180 to 400: shorter and it pops,
+/// longer and the planner waits on it.
+pub const SLIP_OFF_MS: u32 = 260;
 
 /// How loud the background music plays, 0 to 1. Safe range 0.05 to 0.25: the music is
 /// a bed under the cues (whose own volumes are 0.2 to 0.42), not a track to listen to.
@@ -111,6 +115,14 @@ pub const INK_WIDTH_EASE: f64 = 0.15;
 pub const INK_TAPER_PX: f64 = 10.0;
 /// The end of a stroke in Rambo's own tint, in px. Safe range 6 to 30.
 pub const INK_TAIL_PX: f64 = 20.0;
+/// The bookmark ribbon (`ribbon.rs`): how far it must stretch before letting go takes
+/// the planner back to today, the most it stretches, how far a finger may tremble and
+/// still tap it, all in px; and how long the slide back to today takes, in ms. Safe
+/// ranges 20 to 60, 50 to 120, 4 to 12, and 250 to 700 (shorter jumps, longer drags).
+pub const RIBBON_PULL_PX: f64 = 36.0;
+pub const RIBBON_PULL_MAX_PX: f64 = 80.0;
+pub const RIBBON_TAP_PX: f64 = 6.0;
+pub const RIBBON_GLIDE_MS: f64 = 450.0;
 /// How long fresh ink takes to dry, in ms, and how much of it shows once dry.
 /// Safe ranges 300 to 2000 ms and 0.6 to 0.95.
 pub const INK_DRY_MS: f64 = 900.0;

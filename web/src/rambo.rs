@@ -10,7 +10,7 @@ use crate::edits::{
     EditSink, heard_edit_applies, revisable, revise_and_show, revise_body, sheet_left,
 };
 use crate::tasks::{apply_tick, tick_action};
-use crate::{gesture, ink, mascot, settings, speech, tuning, voice};
+use crate::{gesture, ink, mascot, settings, sound, speech, tuning, voice};
 
 /// The single Rambo element: independent fixed layer above everything.
 ///
@@ -90,6 +90,8 @@ pub(crate) fn Rambo(
     // What the bubble asks about. It outlives the ask by `ASK_FOLD_MS`, the time
     // it takes to fold back into him (`folding`), so it never vanishes in a frame.
     let asked = RwSignal::new(None::<String>);
+    // What he was dropped on, a row or a slip, which decides the bubble's choices.
+    let asked_on = RwSignal::new(mascot::Asked::Row);
     let folding = RwSignal::new(false);
     // Opening, it starts tucked into him until it is measured and placed (above or
     // below him), then grows out to that place.
@@ -192,7 +194,7 @@ pub(crate) fn Rambo(
                 leaf: crate::engine::leaf(),
                 walls: screen_walls(),
             };
-            let (brain, draw, posed, at_rest, laid, nest_moved) = {
+            let (brain, draw, posed, at_rest, laid, knocks, nest_moved) = {
                 let mut world = world.borrow_mut();
                 world.adopt(state.get_untracked());
                 // The music is heard only when he could dance to it, so the rest of the
@@ -210,9 +212,13 @@ pub(crate) fn Rambo(
                     world.look(),
                     world.at_rest(),
                     world.take_ink(),
+                    world.take_knocks(),
                     world.nest_offset(),
                 )
             };
+            if knocks > 0 {
+                sound::play(sound::Cue::Knock);
+            }
             if !laid.is_empty() {
                 let pen = pen.get_untracked();
                 strokes.update(|strokes| {
@@ -560,6 +566,19 @@ pub(crate) fn Rambo(
                     }
                     crate::scrap::forget_departure(&task_id);
                 });
+            }
+            mascot::Choice::Longer | mascot::Choice::Shorter => {
+                let stretch = if choice == mascot::Choice::Longer {
+                    crate::placing::Stretch::Longer
+                } else {
+                    crate::placing::Stretch::Shorter
+                };
+                crate::week::stretch(&TaskId(task_id), stretch, snapshot, set_snapshot, set_error);
+                chosen();
+            }
+            mascot::Choice::Off => {
+                crate::week::take_off(&TaskId(task_id), snapshot, set_snapshot, set_error);
+                chosen();
             }
         }
     };
@@ -1139,9 +1158,21 @@ pub(crate) fn Rambo(
                     {
                         let task_id = row.get_attribute("data-id").unwrap_or_default();
                         let task_title = row.get_attribute("data-title").unwrap_or_default();
+                        asked_on.set(mascot::Asked::Row);
                         set_state.set(mascot::transition(
                             &before,
                             mascot::Event::DropTask { task_id, title: task_title },
+                        ));
+                        return;
+                    }
+                    // Dropped on a slip in the planner, he asks about its time.
+                    if before == mascot::State::Dragging
+                        && let Some((id, title, repeats)) = crate::week::slip_at(client_x, client_y)
+                    {
+                        asked_on.set(mascot::Asked::Slip { repeats });
+                        set_state.set(mascot::transition(
+                            &before,
+                            mascot::Event::DropTask { task_id: id.0, title },
                         ));
                         return;
                     }
@@ -1205,7 +1236,9 @@ pub(crate) fn Rambo(
             </svg>
             // The mood's little picture, when the mood has one and he is home.
             {move || mascot::fx_for(&state.get(), &brain_pose.get(), typing.get()).map(|fx| view! {
-                <img class="rambo-fx" src=fx.art() alt="" aria-hidden="true" />
+                <svg class="rambo-fx" viewBox="0 0 48 48" aria-hidden="true">
+                    <use href=fx.art() />
+                </svg>
             })}
             // Speech bubble: inside the button so it follows Rambo everywhere
             <span class="mascot-status" aria-live="polite">
@@ -1224,11 +1257,11 @@ pub(crate) fn Rambo(
                         >
                             <span class="ask-question">"What about "<q>{title.clone()}</q>"?"</span>
                             <span class="ask-choices">
-                                {mascot::Choice::ALL.map(|choice| view! {
+                                {mascot::offered(asked_on.get_untracked()).iter().map(|&choice| view! {
                                     <button type="button" class="ask-choice" on:click=move |_| choose(choice)>
                                         {choice.label()}
                                     </button>
-                                })}
+                                }).collect_view()}
                             </span>
                         </span>
                     }.into_any(),

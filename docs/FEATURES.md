@@ -377,10 +377,12 @@ deadline, and the scheduler leaves it alone until it is placed again, because it
 reported in `Plan::off_planner` rather than as unplaced. This outranks a pin, so an
 `At` task taken off the planner leaves the week too. Set it with
 `PATCH /api/v1/tasks/{id}` and `{"off_planner": true}`.
-b. Not visible yet: the bubble button that calls it is (planned), and the UI that
+Placing it again (Move from the bubble, or a dropped slip) puts it back on the planner.
+b. Drop Rambo on a slip in the planner and choose **Take off** (III.7). The UI that
 shows why a task is in the list but not on the week is (planned). Covered by
 scheduler, store and server tests.
 c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
+`web/src/week.rs:take_off, place_at`; `web/src/api.rs:PatchTaskBody::off_planner`;
 `crates/scheduler/src/lib.rs:plan`; `server/src/v2/app.rs:patch`;
 `server/src/v2/store.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
 
@@ -423,13 +425,19 @@ working hours where the task's length fits without overlapping another slip. **L
 it**, Esc or turning back to the list leaves the task where it was; the page stays
 on the planner. The note floats over the planner's foot (the grid never moves for it)
 and slides up into place and back down out of sight rather than popping; it never fades. One day of a
-repeating series moves as that day only, as a dragged slip does. Choices for a slip
-Rambo is dropped on in the planner (move, longer or shorter, take it off) are
-(planned).
-b. Drop Rambo on a task, choose Move, then tap an hour or the "Next free" scrap.
+repeating series moves as that day only, as a dragged slip does.
+Rambo dropped on a slip in the planner asks about its time: **Move** (the same wait
+for an hour), **Longer** and **Shorter**, a quarter hour each way, never past the
+longest a task may be and never under a quarter hour. The slip stretches at once and
+the new length is saved. **Take off** takes the task off the planner (4a): its slip
+slides sideways out of its day and the week is drawn without it, while the task stays
+in the list. One day of a repeating series is only offered Move.
+b. Drop Rambo on a task, choose Move, then tap an hour or the "Next free" scrap. Drop
+him on a slip in the planner and choose Longer, or Take off.
 c. Code: `web/src/rambo.rs:Rambo` sets `move_request`; `web/src/lib.rs:App` turns
 the page; `web/src/placing.rs:PlacingNote, next_free`;
-`web/src/week.rs:WeekGrid, place_at`.
+`web/src/week.rs:WeekGrid, place_at, slip_at, stretch, take_off`;
+`web/src/mascot.rs:Asked, offered`; `web/src/placing.rs:stretched`.
 
 ### 8. A new task on an empty hour
 a. Drop Rambo on an hour of the planner with nothing placed there and he stays on it,
@@ -444,6 +452,19 @@ b. Turn to the planner, drag Rambo onto an empty hour, then speak or type a titl
 c. Code: `web/src/rambo.rs:Rambo, free_hour_under`; `web/src/week.rs:hour_at, free_at,
 hour_prefill_text`; `web/src/capture.rs:CaptureBox, noted`;
 `web/src/mascot.rs:State::Noting, Event::DropHour, asking_dismissed_by`.
+
+### 9. The bookmark ribbon marks today
+a. A satin ribbon hangs from under the row of day names at today's column. When
+today is scrolled out of sight it stays at the paper's edge that today went past, the
+way a bookmark sticks out of a closed book. Pull it down past a short stretch (it
+stretches with the finger, ever stiffer) and let go, or tap it, and the paper slides
+back to today, at the hour the planner opens on (about 08:00, or now if later); with reduced motion it jumps
+there at once. A shorter pull springs back and does nothing. The ribbon is drawn in
+CSS; it has no image asset.
+b. Scroll the planner away from today, then pull the ribbon down or tap it.
+c. Code: `web/src/ribbon.rs:Ribbon, pulled, jumps, hang_left, glide`;
+`web/src/week.rs:WeekGrid, ribbon_spot, slide_to`; tuning `RIBBON_*` in
+`web/src/tuning.rs`.
 
 ## IV. RAMBL, THE MASCOT
 
@@ -524,8 +545,8 @@ c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:Choice, asking_dismissed_b
 
 ### 4a. Sound presets
 a. The gear menu's **Sound** picks one of four: **Off** (silence; Rambo does not speak
-aloud), **A quiet desk** (only the noises paper and ink really make: the nib, the
-scribble, the page turn, the crumple; no voice), **Every touch answers** (the default:
+aloud), **A quiet desk** (only the noises paper and ink really make: the nib, its
+knock on the nest's rim, the scribble, the page turn, the crumple; no voice), **Every touch answers** (the default:
 also a tick on every button and a swish when a ramble is sent) and **Everything + music**
 (the same cues, plus calm piano under them: two public-domain recordings, looped softly,
 started by the first press after the choice). While it plays, Rambo dances to it in his
@@ -552,8 +573,10 @@ c. Code: `crates/rambl-brain/src/lib.rs:Brain, step, step_with`;
 `crates/rambl-brain/src/rng.rs:Seeded`.
 
 ### 7. Rambo's voice
-a. A line Rambo shows in his speech bubble is also spoken, in one friendly English
-voice, a little brisker and a little higher than the browser default. The bubble and
+a. A line Rambo shows in his speech bubble is also spoken, in one English voice that
+sounds like a young boy: a boy's voice where the browser offers one (Apple's Junior) at
+nearly its own pitch, otherwise a man's voice raised in pitch (any English voice if no
+man's is offered), and a little brisker than the browser default. The bubble and
 the voice are one thing: the bubble appears when the voice starts and goes 800ms after
 it ends. With no voice — muted, the toggle off, or a browser without speech — the
 bubble shows alone for 1.5s. He never speaks while the microphone is listening, because
@@ -561,7 +584,7 @@ his own voice would come back as a transcript.
 b. Let Rambo react to the list (add a task, complete one, let one go overdue) and
 listen. Toggle **Rambo talks** in the gear menu: the bubble still shows, the voice does
 not.
-c. Code: `web/src/voice.rs:say, cancel, audible, pick_voice`, called from
+c. Code: `web/src/voice.rs:say, cancel, audible, pick_voice, pitch_for`, called from
 `web/src/brain.rs` where the brain says a line; the toggle is
 `settings::Settings::rambo_talks`. Spec: docs/DESIGN-DIRECTION.md 3.
 

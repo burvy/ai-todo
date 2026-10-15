@@ -187,6 +187,41 @@ pub fn WeekGrid(
     // On the earliest day a right swipe has no days left to scroll, so the page takes it
     // (turner.rs turns back to the list); the class tells the browser to let it through.
     let (at_earliest, set_at_earliest) = signal(true);
+    // The bookmark ribbon (ribbon.rs) hangs at today's column, or at the edge today
+    // went past, kept up with the paper as it scrolls.
+    let (ribbon_left, set_ribbon_left) = signal(0.0_f64);
+    let (ribbon_top, set_ribbon_top) = signal(0.0_f64);
+    let hang_ribbon = move || {
+        #[cfg(target_arch = "wasm32")]
+        if let Some((left, top)) = grid_ref.get_untracked().and_then(|grid| ribbon_spot(&grid)) {
+            set_ribbon_left.set(left);
+            set_ribbon_top.set(top);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = (set_ribbon_left, set_ribbon_top);
+    };
+    // It finds today again whenever the days change, and whenever the paper changes
+    // size: laid out, shown by a phone's page turn, or the window resized.
+    Effect::new(move |_| {
+        let _ = settings.with(|s| s.days);
+        crate::engine::next_frame(hang_ribbon);
+    });
+    #[cfg(target_arch = "wasm32")]
+    Effect::new(move |_| {
+        if let Some(grid) = grid_ref.get() {
+            on_resized(&grid, hang_ribbon);
+        }
+    });
+    // Pulled, the paper slides back to today, at the hour the planner opens on.
+    let back_to_today = Callback::new(move |()| {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(grid) = grid_ref.get_untracked() {
+            let s = settings.get_untracked();
+            let opens = planner_open_minutes(current_minutes(), s.start_hour, s.end_hour);
+            let top = f64::from(now_line_top(opens, s.start_hour, HOUR_PX));
+            slide_to(grid.into(), (0.0, top));
+        }
+    });
     let on_scroll = move |_: leptos::ev::Event| {
         #[cfg(target_arch = "wasm32")]
         if let Some(grid) = grid_ref.get() {
@@ -194,6 +229,7 @@ pub fn WeekGrid(
         }
         #[cfg(not(target_arch = "wasm32"))]
         let _ = set_at_earliest;
+        hang_ribbon();
     };
     // The waiting task lands where it is told, and the planner stops waiting.
     let place = Callback::new(move |slot: Slot| {
@@ -237,6 +273,7 @@ pub fn WeekGrid(
             </div>
             <crate::PageFoot page=1 turn=turn_back />
             <crate::placing::PlacingNote snapshot settings move_request place />
+            <crate::ribbon::Ribbon left=ribbon_left top=ribbon_top back=back_to_today />
             <div
                 class="week-scroll"
                 class:at-earliest=at_earliest
@@ -463,6 +500,75 @@ fn long_press_stop(_: leptos::ev::PointerEvent) {}
 /// height, so the current-time line can be placed from the clock.
 const HOUR_PX: f32 = 64.0;
 
+/// Where the bookmark ribbon hangs on the planner page (its left and top, in px from the
+/// page's top left): just inside today's column, held at the planner's visible edges
+/// when today is scrolled away. It hangs from under the row of day names, so it never
+/// covers one, today's or the name of the column it is held over.
+#[cfg(target_arch = "wasm32")]
+fn ribbon_spot(grid: &web_sys::HtmlDivElement) -> Option<(f64, f64)> {
+    let page_el = grid.closest(".planner-page").ok()??;
+    let page = page_el.get_bounding_client_rect();
+    let paper = grid.get_bounding_client_rect();
+    let today_el = grid.query_selector(".day[data-day='0']").ok()??;
+    let today = today_el.get_bounding_client_rect();
+    let ribbon = page_el
+        .query_selector(".bookmark-ribbon")
+        .ok()??
+        .get_bounding_client_rect();
+    // The hours' column: where the first day starts with the paper scrolled to its left.
+    let hours_width = today.left() + f64::from(grid.scroll_left()) - paper.left();
+    let left = crate::ribbon::hang_left(
+        today.right() - page.left(),
+        ribbon.width(),
+        paper.left() - page.left() + hours_width,
+        paper.right() - page.left() - 1.5 * ribbon.width(),
+    );
+    // The names stick to the top of the paper as it scrolls, so their foot stays put.
+    let names_foot = today_el
+        .query_selector(".day-name")
+        .ok()
+        .flatten()
+        .map_or(paper.top(), |name| name.get_bounding_client_rect().bottom());
+    Some((left, (names_foot - page.top()).ceil()))
+}
+
+/// Calls `resized` whenever `paper` changes size, for as long as the page lives.
+#[cfg(target_arch = "wasm32")]
+fn on_resized(paper: &web_sys::Element, resized: impl Fn() + 'static) {
+    use wasm_bindgen::JsCast as _;
+    let listener = wasm_bindgen::closure::Closure::<dyn Fn()>::new(resized);
+    if let Ok(observer) = web_sys::ResizeObserver::new(listener.as_ref().unchecked_ref()) {
+        observer.observe(paper);
+    }
+    listener.forget();
+}
+
+/// Slides the paper to `to` (its scroll left and top) over `RIBBON_GLIDE_MS` on the
+/// engine's loop, or at once with reduced motion.
+#[cfg(target_arch = "wasm32")]
+fn slide_to(paper: web_sys::HtmlElement, to: (f64, f64)) {
+    if crate::mascot::prefers_reduced_motion() {
+        paper.set_scroll_left(to.0 as i32);
+        paper.set_scroll_top(to.1 as i32);
+        return;
+    }
+    let from = (
+        f64::from(paper.scroll_left()),
+        f64::from(paper.scroll_top()),
+    );
+    let began = crate::engine::now();
+    crate::engine::on_tick(move |tick| {
+        let ms = tick.now - began;
+        paper.set_scroll_left(crate::ribbon::glide(from.0, to.0, ms).round() as i32);
+        paper.set_scroll_top(crate::ribbon::glide(from.1, to.1, ms).round() as i32);
+        if ms >= crate::tuning::RIBBON_GLIDE_MS {
+            crate::engine::Flow::Stop
+        } else {
+            crate::engine::Flow::Go
+        }
+    });
+}
+
 /// How far down the hour rows the current time sits. The rows start at start_hour.
 fn now_line_top(now_minutes: u16, start_hour: u8, hour_px: f32) -> f32 {
     (f32::from(now_minutes) - f32::from(start_hour) * 60.0).max(0.0) / 60.0 * hour_px
@@ -569,7 +675,6 @@ pub(crate) fn local_time_label(
 /// What an occurrence row's id is named from: `"{series_id}:{date}"`, the
 /// original local date of the expansion. `None` for a plain task id, whose
 /// move is a normal task PATCH.
-#[cfg(any(target_arch = "wasm32", test))]
 fn occurrence_of(id: &TaskId) -> Option<(String, chrono::NaiveDate)> {
     let (series_id, date) = id.0.rsplit_once(':')?;
     let date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").ok()?;
@@ -691,6 +796,7 @@ fn PlacementBlock(
 ) -> impl IntoView {
     let task_id = placement.task.clone();
     let label_task_id = task_id.clone();
+    let slip_id = task_id.clone();
     let drag_task_id = task_id.clone();
     // Each handler owns its id clone: none of them may move the shared one.
     #[cfg(target_arch = "wasm32")]
@@ -925,6 +1031,10 @@ fn PlacementBlock(
             on:pointermove=grip_move
             on:pointerup=grip_end
             on:pointercancel=grip_cancel
+            // Who the slip is, for Rambo dropped on it (`slip_at`).
+            data-id=slip_id.0.clone()
+            data-repeats=occurrence_of(&slip_id).is_some().then_some("")
+            data-title=move || placement_label(&snapshot.get(), &slip_id)
         >
             <span
                 class="placement-grip"
@@ -976,8 +1086,10 @@ fn place_at(
                 crate::api::move_series_occurrence(&series_id, date, When::At(instant)).await
             }
             None => {
+                // Placed, a task taken off the planner is back on it.
                 let body = crate::api::PatchTaskBody::new()
                     .when(When::At(instant))
+                    .off_planner(false)
                     .updated_at(updated_at);
                 crate::api::patch_task(&id, body).await
             }
@@ -994,8 +1106,7 @@ fn place_at(
 #[cfg(target_arch = "wasm32")]
 fn drop_location(x: f64, y: f64) -> Option<(i64, f32)> {
     use wasm_bindgen::JsCast;
-    let document = leptos::prelude::document();
-    let element = document.element_from_point(x as f32, y as f32)?;
+    let element = under(x, y)?;
     let day = element
         .closest(".day")
         .ok()
@@ -1033,10 +1144,7 @@ fn landing_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
 /// planner or over a slip, which is a task of its own.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn hour_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
-    let over_slip = leptos::prelude::document()
-        .element_from_point(x as f32, y as f32)
-        .is_some_and(|el| el.closest(".placement").ok().flatten().is_some());
-    if over_slip {
+    if slip_at(x, y).is_some() {
         return None;
     }
     landing_at(x, y, settings)
@@ -1046,6 +1154,219 @@ pub(crate) fn hour_at(x: f64, y: f64, settings: &Settings) -> Option<Slot> {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn hour_at(_x: f64, _y: f64, _settings: &Settings) -> Option<Slot> {
     None
+}
+
+/// The slip under a point on the screen: the task it is, its title, and whether it is
+/// one day of a repeating series. What Rambo dropped on the planner asks about.
+pub(crate) fn slip_at(x: f64, y: f64) -> Option<(TaskId, String, bool)> {
+    let slip = under(x, y)?.closest(".placement[data-id]").ok().flatten()?;
+    Some((
+        TaskId(slip.get_attribute("data-id")?),
+        slip.get_attribute("data-title").unwrap_or_default(),
+        slip.has_attribute("data-repeats"),
+    ))
+}
+
+/// The topmost element at a point, looking past Rambo: while he is carried he is
+/// under the finger himself, and a hold or a drop means what lies beneath him.
+fn under(x: f64, y: f64) -> Option<web_sys::Element> {
+    use wasm_bindgen::JsCast as _;
+    leptos::prelude::document()
+        .elements_from_point(x as f32, y as f32)
+        .iter()
+        .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+        .find(|el| el.closest(".rambo").ok().flatten().is_none())
+}
+
+/// Makes task `id` a quarter hour longer or shorter (`placing::stretched`): its slip
+/// grows or shrinks on the page at once, and the new length is saved. A length already
+/// at its limit stays as it is.
+pub(crate) fn stretch(
+    id: &TaskId,
+    stretch: crate::placing::Stretch,
+    snapshot: ReadSignal<Snapshot>,
+    set_snapshot: WriteSignal<Snapshot>,
+    set_error: WriteSignal<Option<String>>,
+) {
+    let Some((from, updated_at)) = snapshot.with_untracked(|snap| {
+        snap.tasks
+            .iter()
+            .find(|task| task.id == *id)
+            .map(|task| (task.duration_min, task.updated_at))
+    }) else {
+        return;
+    };
+    let to = crate::placing::stretched(from, stretch);
+    if to == from {
+        return;
+    }
+    #[cfg(target_arch = "wasm32")]
+    resize_slip(id, from, to);
+    let id = id.clone();
+    wasm_bindgen_futures::spawn_local(async move {
+        let body = crate::api::PatchTaskBody::new()
+            .duration_min(to)
+            .updated_at(updated_at);
+        match crate::api::patch_task(&id, body).await {
+            Ok(new_snapshot) => {
+                // The saved plan draws the slip anew; it carries on from the height it
+                // had reached instead of starting at its new one. The redraw runs as a
+                // microtask, so the ease queued after it lands before the next paint:
+                // a frame later, the new slip would show once at its planned height.
+                #[cfg(target_arch = "wasm32")]
+                let reached = slips_of(&id)
+                    .first()
+                    .map(|slip| slip.get_bounding_client_rect().height());
+                set_snapshot.set(new_snapshot);
+                #[cfg(target_arch = "wasm32")]
+                if let Some(reached) = reached {
+                    wasm_bindgen_futures::spawn_local(async move { ease_slip_from(&id, reached) });
+                }
+            }
+            Err(e) => {
+                // Refused, the slip goes back to the length it still has.
+                #[cfg(target_arch = "wasm32")]
+                unstretch_slip(&id, from, to);
+                set_error.set(Some(format!("Resize failed: {e}")));
+            }
+        }
+    });
+}
+
+/// Takes task `id` off the planner (`Task::off_planner`): it stays in the list, and the
+/// scheduler leaves it alone until it is placed again. Its slips slide out of their
+/// days at once, and the week is drawn without them once that has run and the change
+/// is saved; refused, they slide back.
+pub(crate) fn take_off(
+    id: &TaskId,
+    snapshot: ReadSignal<Snapshot>,
+    set_snapshot: WriteSignal<Snapshot>,
+    set_error: WriteSignal<Option<String>>,
+) {
+    let Some(updated_at) = snapshot.with_untracked(|snap| {
+        snap.tasks
+            .iter()
+            .find(|task| task.id == *id)
+            .map(|task| task.updated_at)
+    }) else {
+        return;
+    };
+    #[cfg(target_arch = "wasm32")]
+    slide_off(id, true);
+    let began = crate::engine::now();
+    let id = id.clone();
+    wasm_bindgen_futures::spawn_local(async move {
+        let body = crate::api::PatchTaskBody::new()
+            .off_planner(true)
+            .updated_at(updated_at);
+        let saved = crate::api::patch_task(&id, body).await;
+        let left = f64::from(crate::tuning::SLIP_OFF_MS) - (crate::engine::now() - began);
+        if left > 0.0 {
+            gloo_timers::future::TimeoutFuture::new(left.ceil() as u32).await;
+        }
+        match saved {
+            Ok(new_snapshot) => set_snapshot.set(new_snapshot),
+            Err(e) => {
+                #[cfg(target_arch = "wasm32")]
+                slide_off(&id, false);
+                set_error.set(Some(format!("Taking it off failed: {e}")));
+            }
+        }
+    });
+}
+
+/// Slides task `id`'s slips out of their days (`off`), or back in.
+#[cfg(target_arch = "wasm32")]
+fn slide_off(id: &TaskId, off: bool) {
+    for slip in slips_of(id) {
+        let _ = slip.style().set_property(
+            "--slip-off-ms",
+            &format!("{}ms", crate::tuning::SLIP_OFF_MS),
+        );
+        let _ = slip.class_list().toggle_with_force("slip-off", off);
+    }
+}
+
+/// Task `id`'s slips on the page.
+#[cfg(target_arch = "wasm32")]
+fn slips_of(id: &TaskId) -> Vec<web_sys::HtmlElement> {
+    use wasm_bindgen::JsCast as _;
+    let slips = leptos::prelude::document().get_elements_by_class_name("placement");
+    (0..slips.length())
+        .filter_map(|i| slips.item(i))
+        .filter_map(|node| node.dyn_into::<web_sys::HtmlElement>().ok())
+        .filter(|slip| slip.get_attribute("data-id").as_deref() == Some(id.0.as_str()))
+        .collect()
+}
+
+/// Grows or shrinks task `id`'s slip on the page from `from` to `to` minutes long, so
+/// it moves the moment it is asked, before the change is saved.
+#[cfg(target_arch = "wasm32")]
+fn resize_slip(id: &TaskId, from: u16, to: u16) {
+    for slip in slips_of(id) {
+        let height = resized_px(slip.get_bounding_client_rect().height() as f32, from, to);
+        let _ = slip.class_list().add_1("stretching");
+        let _ = slip
+            .style()
+            .set_property("height", &format!("{height:.1}px"));
+    }
+}
+
+/// Takes back a stretch whose save was refused: task `id`'s slips ease from the `to`
+/// minutes they were stretched to back to `from`, then lose `.stretching`, so a later
+/// redraw of them does not ease. It starts from the height they were stretched to, not
+/// the one they have reached, since a quick refusal can come mid-ease.
+#[cfg(target_arch = "wasm32")]
+fn unstretch_slip(id: &TaskId, from: u16, to: u16) {
+    use wasm_bindgen::JsCast as _;
+    for slip in slips_of(id) {
+        let style = slip.style();
+        let stretched = style
+            .get_property_value("height")
+            .ok()
+            .and_then(|height| height.trim_end_matches("px").parse::<f32>().ok())
+            .unwrap_or_else(|| slip.get_bounding_client_rect().height() as f32);
+        let _ = style.set_property(
+            "height",
+            &format!("{:.1}px", resized_px(stretched, to, from)),
+        );
+        let eased = slip.clone();
+        let done = wasm_bindgen::closure::Closure::once_into_js(move || {
+            let _ = eased.class_list().remove_1("stretching");
+        });
+        let once = web_sys::AddEventListenerOptions::new();
+        once.set_once(true);
+        let _ = slip.add_event_listener_with_callback_and_add_event_listener_options(
+            "transitionend",
+            done.unchecked_ref(),
+            &once,
+        );
+    }
+}
+
+/// A slip's height once its task goes from `from` to `to` minutes long, from `height` px.
+#[cfg(any(target_arch = "wasm32", test))]
+fn resized_px(height: f32, from: u16, to: u16) -> f32 {
+    (height + (f32::from(to) - f32::from(from)) / 60.0 * HOUR_PX).max(0.0)
+}
+
+/// Eases task `id`'s newly drawn slip from `reached` px to the height the plan gives it
+/// (`.stretching`'s height transition, which only a stretched slip has).
+#[cfg(target_arch = "wasm32")]
+fn ease_slip_from(id: &TaskId, reached: f64) {
+    for slip in slips_of(id) {
+        let style = slip.style();
+        let Ok(planned) = style.get_property_value("height") else {
+            continue;
+        };
+        let _ = style.set_property("transition", "none");
+        let _ = style.set_property("height", &format!("{reached:.2}px"));
+        // Lay it out at the height reached before it eases on.
+        let _ = slip.offset_height();
+        let _ = style.remove_property("transition");
+        let _ = slip.class_list().add_1("stretching");
+        let _ = style.set_property("height", &planned);
+    }
 }
 
 /// The paper a not-yet-lifted finger slides over: `main` along its length,
@@ -1256,6 +1577,31 @@ mod tests {
     fn an_unknown_zone_name_falls_back_to_utc() {
         let context = planner_context("Not/AZone");
         assert_eq!(context.tz, chrono_tz::UTC);
+    }
+
+    #[test]
+    fn a_refused_stretch_puts_the_slip_back_to_the_height_it_had() {
+        use crate::placing::{Stretch, stretched};
+        let quarter = HOUR_PX / 4.0;
+        for minutes in (15..=240).step_by(15) {
+            let height = f32::from(minutes) / 60.0 * HOUR_PX;
+            for stretch in [Stretch::Longer, Stretch::Shorter] {
+                let to = stretched(minutes, stretch);
+                let grown = resized_px(height, minutes, to);
+                // What the bubble's stretch draws: a quarter hour, or nothing at a limit.
+                let moved = (grown - height).abs();
+                assert!(
+                    moved == 0.0 || (moved - quarter).abs() < 1e-3,
+                    "{minutes} {stretch:?}"
+                );
+                // And taking it back lands where it started.
+                let back = resized_px(grown, to, minutes);
+                assert!(
+                    (back - height).abs() < 1e-3,
+                    "{minutes} {stretch:?}: {back} vs {height}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -278,18 +278,45 @@ pub enum Choice {
     Edit,
     Move,
     Done,
+    /// A quarter hour more (a slip in the planner).
+    Longer,
+    /// A quarter hour less (a slip in the planner).
+    Shorter,
+    /// Off the planner: it stays in the list (a slip in the planner).
+    Off,
 }
 
 impl Choice {
-    /// The bubble's buttons, in order.
-    pub const ALL: [Choice; 3] = [Choice::Edit, Choice::Move, Choice::Done];
-
     pub fn label(self) -> &'static str {
         match self {
             Choice::Edit => "Edit",
             Choice::Move => "Move",
             Choice::Done => "Done",
+            Choice::Longer => "Longer",
+            Choice::Shorter => "Shorter",
+            Choice::Off => "Take off",
         }
+    }
+}
+
+/// What he was dropped on, which decides what he offers (Interview 3, items 2 and 3).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asked {
+    /// A row of the list: the task itself.
+    Row,
+    /// A slip in the planner: its time. One day of a repeating series has its length
+    /// from the series and is planned with it, so it can only be moved.
+    Slip { repeats: bool },
+}
+
+/// The bubble's buttons for what he was dropped on, in order.
+pub fn offered(on: Asked) -> &'static [Choice] {
+    match on {
+        Asked::Row => &[Choice::Edit, Choice::Move, Choice::Done],
+        Asked::Slip { repeats: false } => {
+            &[Choice::Move, Choice::Longer, Choice::Shorter, Choice::Off]
+        }
+        Asked::Slip { repeats: true } => &[Choice::Move],
     }
 }
 
@@ -556,7 +583,14 @@ impl Fx {
         }
     }
 
+    /// The `<use>` reference: the picture is drawn into the page, so it takes the page's
+    /// tokens (`--rambo-fx`) and follows the theme, not the operating system.
     pub fn art(self) -> String {
+        format!("{}#art", self.art_file())
+    }
+
+    /// The file the picture lives in.
+    pub fn art_file(self) -> String {
         format!("assets/rambo/fx/{}.svg", self.id())
     }
 }
@@ -1221,8 +1255,42 @@ mod tests {
     #[test]
     fn fx_art_lives_beside_the_skins() {
         for fx in [Fx::SleepyZ, Fx::Sparks, Fx::ScribbleCloud] {
-            let file = art_file(&fx.art());
+            let file = art_file(&fx.art_file());
             assert!(file.is_file(), "missing art: {file:?}");
+        }
+    }
+
+    /// The pictures are shown through `<use>`, so they must expose `#art` and take the
+    /// page's colour: `currentColor` or a fixed colour would make them follow the
+    /// operating system (or stay black on a dark page).
+    #[test]
+    fn fx_art_takes_the_page_theme() {
+        for fx in [Fx::SleepyZ, Fx::Sparks, Fx::ScribbleCloud] {
+            let svg = std::fs::read_to_string(art_file(&fx.art_file())).expect("fx art exists");
+            assert!(svg.contains("<g id=\"art\""), "{fx:?} has no #art group");
+            // The colour goes in a `style` declaration: `var()` in a presentation attribute
+            // (`fill="var(..)"`) is not honoured by every engine, and the picture, and the
+            // mask made from it, would draw nothing.
+            assert!(
+                svg.contains("style=\"stroke: var(--rambo-fx"),
+                "{fx:?} ignores --rambo-fx"
+            );
+            for paint in ["fill=\"var(", "stroke=\"var("] {
+                assert!(
+                    !svg.contains(paint),
+                    "{fx:?}: `{paint}` is a presentation attribute"
+                );
+            }
+            assert!(
+                !svg.contains("currentColor"),
+                "{fx:?} follows the OS, not the page"
+            );
+            // A `--` inside an XML comment makes the file unparseable and the picture blank.
+            let comment = svg.split("-->").next().unwrap_or_default();
+            assert!(
+                !comment.trim_start_matches("<!--").contains("--"),
+                "{fx:?}: `--` in the comment"
+            );
         }
     }
 
@@ -1586,8 +1654,29 @@ mod tests {
 
     #[test]
     fn he_offers_edit_move_and_done_and_nothing_else() {
-        let labels: Vec<&str> = Choice::ALL.iter().map(|c| c.label()).collect();
-        assert_eq!(labels, ["Edit", "Move", "Done"]);
+        let labels = |on| offered(on).iter().map(|c| c.label()).collect::<Vec<_>>();
+        assert_eq!(labels(Asked::Row), ["Edit", "Move", "Done"]);
+    }
+
+    #[test]
+    fn on_a_slip_he_offers_its_time_and_a_repeat_only_moves() {
+        let slip = offered(Asked::Slip { repeats: false });
+        assert_eq!(
+            slip,
+            [Choice::Move, Choice::Longer, Choice::Shorter, Choice::Off]
+        );
+        assert_eq!(offered(Asked::Slip { repeats: true }), [Choice::Move]);
+        // Editing or ticking the task is the list's business, never a slip's.
+        for on in [
+            Asked::Slip { repeats: false },
+            Asked::Slip { repeats: true },
+        ] {
+            assert!(
+                !offered(on)
+                    .iter()
+                    .any(|c| matches!(c, Choice::Edit | Choice::Done))
+            );
+        }
     }
 
     #[test]

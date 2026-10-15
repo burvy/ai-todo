@@ -176,6 +176,10 @@
   --flip-shade: color-mix(in srgb, black 34%, transparent);
   --flip-cast-w: 4rem; /* how far the leaf's shadow reaches onto the page under it */
 
+  /* The bookmark ribbon's length at rest (web/src/ribbon.rs); a pull adds to it, as far
+     as RIBBON_PULL_MAX_PX in web/src/tuning.rs. */
+  --ribbon-rest: 46px;
+
   /* Motion. */
   --dur-fast: 120ms;
   --dur: 200ms;
@@ -1097,14 +1101,13 @@ li.task-row:focus-within .delete-mark {
 }
 
 /* The mood picture beside him: a floating z, sparks, a grumpy scribble cloud.
-   Drawn with currentColor, so it takes the page's ink in light and dark. */
-.rambo img.rambo-fx {
+   Drawn into the page through <use> in --rambo-fx, so it takes the page's theme. */
+.rambo .rambo-fx {
   position: absolute;
   top: -2%;
   right: -16%;
   width: 44%;
   height: 44%;
-  color: var(--ink-soft);
   transform-origin: 50% 100%;
   animation: rambo-fx-float 2.6s ease-in-out infinite;
 }
@@ -1780,6 +1783,38 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   white-space: nowrap;
 }
 
+/* Longer or shorter from Rambo's bubble (week.rs:stretch), a slip stretches rather
+   than jumps. Only that slip: every other slip takes its new height at once. */
+.placement.stretching {
+  transition: height var(--dur) var(--arrive-ease);
+}
+
+/* Taken off the planner (week.rs:take_off), a slip slides sideways out of its day,
+   under the column's edge, and the week is then drawn without it: paper slides, it
+   never fades. */
+.placement.slip-off {
+  pointer-events: none;
+  animation: slip-off var(--slip-off-ms, 260ms) var(--arrive-ease) forwards;
+}
+
+/* From an explicit inset: a clip from none would jump to its end. */
+@keyframes slip-off {
+  from {
+    transform: none;
+    clip-path: inset(0 0 0 0);
+  }
+  to {
+    transform: translateX(60%);
+    clip-path: inset(0 0 0 100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .placement.slip-off {
+    animation: none;
+  }
+}
+
 /* A placed task: a wash of ink across the hour lines, marked by its edge.
    The hour rows are positioned too and come later in the document, so without
    a raised layer the slip paints under them and its grip never gets hit by
@@ -2145,6 +2180,42 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 @media (prefers-reduced-motion: reduce) {
   .placing-note,
   .placing-note.open {
+    transition: none;
+  }
+}
+
+/* The bookmark ribbon (web/src/ribbon.rs): a satin ribbon hanging from the top of the
+   planner at today's column, its tail cut in a notch. Pulled, it stretches with the
+   finger (--pull) and springs back once let go. */
+.bookmark-ribbon {
+  position: absolute;
+  z-index: var(--layer-note);
+  width: 18px;
+  height: calc(var(--ribbon-rest) + var(--pull, 0px));
+  padding: 0;
+  border: 0;
+  background:
+    linear-gradient(90deg, rgba(0, 0, 0, 0.18), transparent 30%, rgba(255, 255, 255, 0.22) 55%, transparent 75%, rgba(0, 0, 0, 0.2)),
+    var(--ribbon, #9b2c2c);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 7px), 0 100%);
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
+  cursor: grab;
+  touch-action: none;
+  transition: height var(--dur) var(--arrive-ease), left var(--dur) var(--arrive-ease);
+}
+
+.bookmark-ribbon.pulling {
+  cursor: grabbing;
+  transition: none;
+}
+
+.bookmark-ribbon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bookmark-ribbon {
     transition: none;
   }
 }
@@ -2679,7 +2750,10 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   content: "";
   position: absolute;
   inset: -0.2em -0.4em;
-  background: url("assets/rambo/fx/scribble-cloud.svg") center / contain no-repeat;
+  /* A background image cannot see the page's tokens, so the cloud is a mask and the colour
+     is the page's own. */
+  background-color: var(--rambo-fx);
+  mask: url("assets/rambo/fx/scribble-cloud.svg") center / contain no-repeat;
   animation: scribble-cloud var(--scribble-ms, 420ms) ease-in forwards;
   pointer-events: none;
 }
