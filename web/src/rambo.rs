@@ -1129,23 +1129,24 @@ pub(crate) fn Rambo(
                             &snapshot.get_untracked(),
                             &view_settings.get_untracked(),
                         ),
-                        row: row_under(client_x, client_y).map(|row| {
-                            (
-                                row.get_attribute("data-id").unwrap_or_default(),
-                                row.get_attribute("data-title").unwrap_or_default(),
-                            )
+                        row: row_under(client_x, client_y).map(|row| model::TaskUnder {
+                            id: row.get_attribute("data-id").unwrap_or_default(),
+                            title: row.get_attribute("data-title").unwrap_or_default(),
                         }),
-                        slip: crate::week::slip_at(client_x, client_y)
-                            .map(|(id, title, repeats)| (id.0, title, repeats)),
+                        slip: crate::week::slip_at(client_x, client_y).map(
+                            |(id, title, repeats)| model::SlipUnder {
+                                task: model::TaskUnder { id: id.0, title },
+                                repeats,
+                            },
+                        ),
                     };
-                    match model::released(
-                        &before,
-                        *moved_for_up.borrow(),
-                        was_listening,
+                    let how = model::LetGo {
+                        moved: *moved_for_up.borrow(),
+                        listening: was_listening,
                         flick,
-                        mascot::prefers_reduced_motion(),
-                        under,
-                    ) {
+                        reduced_motion: mascot::prefers_reduced_motion(),
+                    };
+                    match model::released(&before, how, under) {
                         model::Released::NotHeld => {}
                         model::Released::Tapped { submit } => {
                             *grab_state_up.borrow_mut() = None;
