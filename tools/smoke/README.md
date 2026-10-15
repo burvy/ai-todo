@@ -33,7 +33,8 @@ Each check runs at desk size (1280x800, mouse) and at phone size (390x844, touch
 
 - A release server starts on a free port with a fresh data file in a temporary folder.
 - Edge starts muted (`--mute-audio`) with its own profile in a temporary folder. The page is set to the window's focus and lifecycle state (`Emulation.setFocusEmulationEnabled`, `Page.setWebLifecycleState` active), so a headless page behaves as an open one.
-- The server and the browser are stopped by their own process IDs in a `finally` block, and nothing else is stopped.
+- The server and the browser get only an allow-listed environment (`PATH`, `SystemRoot`, the temp and home folders, and the `RAMBL_` settings the suite sets). A key in the shell, such as `TYPESAFE_API_KEY`, is never passed on, so test captures cannot reach the real judge.
+- The server and the browser are stopped by their own process IDs in a `finally` block, on Ctrl+C, and on exit. Nothing else is stopped.
 - The temporary folders are removed afterwards. A folder the browser still holds is reported, not treated as a failed check.
 
 Exit status is 0 when every check passes and 1 otherwise. Each line of output is `PASS` or `FAIL` with the reason.

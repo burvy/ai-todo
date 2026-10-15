@@ -51,8 +51,12 @@ function freePort() {
   });
 }
 
+// The processes this run started, by PID. Only these are ever stopped.
+const owned = new Set();
+
 // Stops one process and its children, by PID, and nothing else.
 function killTree(pid) {
+  owned.delete(pid);
   try {
     if (windows) execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
     else process.kill(pid, "SIGTERM");
@@ -61,22 +65,54 @@ function killTree(pid) {
   }
 }
 
-async function startServer(dataDir) {
+// A child that failed to start has no PID, and its error must not crash the run: the
+// wait that follows then times out and reports it.
+function trackChild(child) {
+  child.on("error", () => {});
+  if (child.pid !== undefined) owned.add(child.pid);
+}
+
+// Ctrl+C or a normal exit stops whatever this run still owns.
+function stopOwned() {
+  for (const pid of [...owned]) killTree(pid);
+}
+process.on("SIGINT", () => {
+  stopOwned();
+  process.exit(130);
+});
+process.on("exit", stopOwned);
+
+// Only what the server and Edge need from the shell. The rest of the environment is
+// left out, so a key in the shell (for example TYPESAFE_API_KEY) can never reach the
+// server and send test captures to the real judge.
+const ALLOWED_ENV = ["PATH", "SystemRoot", "TEMP", "TMP", "USERPROFILE", "SYSTEMDRIVE", "HOME"];
+function childEnv(extra) {
+  const env = {};
+  for (const name of ALLOWED_ENV) if (process.env[name] !== undefined) env[name] = process.env[name];
+  return { ...env, ...extra };
+}
+
+// Each start returns the process at once and is owned from then on, so a failed wait
+// still lets the caller's cleanup stop it by PID.
+async function launchServer(dataDir) {
   const port = await freePort();
   const child = spawn(serverBin, [], {
-    env: {
-      ...process.env,
+    env: childEnv({
       RAMBL_PORT: String(port),
       RAMBL_BIND: "127.0.0.1",
       RAMBL_DATA: join(dataDir, "rambl.db"),
-    },
+    }),
     stdio: "ignore",
   });
-  await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/`)).ok, 20000, "the server");
+  trackChild(child);
   return { child, port };
 }
 
-async function startBrowser(profileDir, size) {
+async function waitForServer(server) {
+  await waitFor(async () => (await fetch(`http://127.0.0.1:${server.port}/`)).ok, 20000, "the server");
+}
+
+async function launchBrowser(profileDir, size) {
   const port = await freePort();
   const child = spawn(
     edgeBin,
@@ -90,11 +126,16 @@ async function startBrowser(profileDir, size) {
       `--window-size=${size.width},${size.height}`,
       "about:blank",
     ],
-    { stdio: "ignore" },
+    { stdio: "ignore", env: childEnv({}) },
   );
-  await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/json/version`)).ok, 20000, "the browser");
-  const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method: "PUT" })).json();
-  return { child, cdp: await Cdp.connect(target.webSocketDebuggerUrl) };
+  trackChild(child);
+  return { child, port };
+}
+
+async function connectBrowser(browser) {
+  await waitFor(async () => (await fetch(`http://127.0.0.1:${browser.port}/json/version`)).ok, 20000, "the browser");
+  const target = await (await fetch(`http://127.0.0.1:${browser.port}/json/new?about:blank`, { method: "PUT" })).json();
+  browser.cdp = await Cdp.connect(target.webSocketDebuggerUrl);
 }
 
 // The page as a scenario sees it: rectangles, element counts and real pointer input.
@@ -203,8 +244,10 @@ async function runSize(size) {
   let server = null;
   let browser = null;
   try {
-    server = await startServer(dataDir);
-    browser = await startBrowser(profileDir, size);
+    server = await launchServer(dataDir);
+    await waitForServer(server);
+    browser = await launchBrowser(profileDir, size);
+    await connectBrowser(browser);
     const errors = [];
     const { cdp } = browser;
     cdp.on((method, params) => {
