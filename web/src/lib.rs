@@ -96,7 +96,6 @@ pub fn App() -> impl IntoView {
     let capture_text = RwSignal::new(String::new());
     // Pen queue: task IDs the client just created, so the pen writes only those rows
     let pen_queue = RwSignal::new(Vec::<TaskId>::new());
-    // A row Rambo was asked to edit: the task list opens its edit sheet
     // When Rambo was dropped on an empty planner hour, that hour as a date phrase: the
     // capture box's next task starts then.
     let noting_at = RwSignal::new(None::<capture::NotedHour>);
@@ -168,9 +167,7 @@ pub fn App() -> impl IntoView {
                 form_ref
                 nest_ref
                 snapshot
-                set_snapshot=set_snapshot
                 state=mascot_state
-                set_state=set_mascot_state
                 view_settings
                 pen_pos
                 capture_text
@@ -205,7 +202,7 @@ pub fn App() -> impl IntoView {
                 }
             >
             <div class="tasks-pane">
-                <TaskList snapshot set_error view_settings mascot_state set_mascot_state pen_queue pen_pos new_task open_sheet scraps />
+                <TaskList snapshot set_error view_settings mascot_state pen_queue pen_pos new_task open_sheet scraps />
                 <scrap::ScrapCorner snapshot scraps />
                 // Ink laid on the list: part of the page, so it scrolls and turns with it.
                 <inklayer::InkLayer strokes on=ink::Surface::List />
@@ -268,7 +265,7 @@ pub fn App() -> impl IntoView {
             pen_pos
             capture_text
             form_ref
-            open_sheet
+            open_sheet=open_sheet.read_only()
             nest_ref
             pen=Signal::derive(move || view_settings.get().pen)
             typing

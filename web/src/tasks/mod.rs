@@ -341,6 +341,34 @@ pub async fn delete_scribbled(
     scrap::delete_and_lay(task_id, snapshot, scraps, deleted).await
 }
 
+/// The `li` of row `id` on the page, if it is shown.
+fn row_element(id: &TaskId) -> Option<web_sys::Element> {
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|doc| {
+            doc.query_selector(&format!("li[data-id=\"{}\"]", id.0))
+                .ok()
+                .flatten()
+        })
+}
+
+/// The rows the pen lets go of without writing them: the row it was on (if any), and,
+/// when the queue is dropped, every row still waiting in it. A skipped row releases
+/// only itself.
+#[cfg(any(target_arch = "wasm32", test))]
+fn let_go(current: Option<&TaskId>, queue: &[TaskId], queue_dropped: bool) -> Vec<TaskId> {
+    let waiting = if queue_dropped { queue } else { &[] };
+    current.into_iter().chain(waiting).cloned().collect()
+}
+
+/// Unclips the titles of rows the pen will not write, so none is left clipped.
+#[cfg(target_arch = "wasm32")]
+fn unclip_rows(ids: &[TaskId]) {
+    for row in ids.iter().filter_map(row_element) {
+        row.class_list().remove_1("pen-pending").ok();
+    }
+}
+
 /// Whether row `id` is wet: Rambo wrote it less than `INK_WET_MS` ago.
 fn is_wet(written: StoredValue<Vec<(TaskId, f64)>>, id: &TaskId) -> bool {
     let now = crate::engine::now();
@@ -389,14 +417,7 @@ fn smudge_if_wet(
     if !is_wet(written, id) {
         return;
     }
-    let row = web_sys::window()
-        .and_then(|window| window.document())
-        .and_then(|doc| {
-            doc.query_selector(&format!("li[data-id=\"{}\"]", id.0))
-                .ok()
-                .flatten()
-        });
-    let Some(row) = row else {
+    let Some(row) = row_element(id) else {
         return;
     };
     let rect = row.get_bounding_client_rect();
@@ -411,10 +432,8 @@ pub(crate) fn TaskList(
     set_error: WriteSignal<Option<String>>,
     view_settings: ReadSignal<settings::Settings>,
     mascot_state: ReadSignal<mascot::State>,
-    set_mascot_state: WriteSignal<mascot::State>,
     pen_queue: RwSignal<Vec<TaskId>>,
     pen_pos: RwSignal<(f64, f64)>,
-    /// A row to open the edit sheet on, set by Rambo's "Edit".
     /// Set by the + beside the capture box: the sheet opens on a new task.
     new_task: RwSignal<bool>,
     /// The task whose edit sheet is open; Rambo listens for its change while it is.
@@ -573,6 +592,7 @@ pub(crate) fn TaskList(
             if mascot::prefers_reduced_motion() || mode == settings::RamblMode::Lobotomized {
                 // Nothing is written: drop the queue, so his lines are not held for it.
                 if pen_queue.with(|queue| !queue.is_empty()) {
+                    pen_queue.with(|queue| unclip_rows(&let_go(None, queue, true)));
                     pen_queue.set(Vec::new());
                 }
                 return;
@@ -586,7 +606,7 @@ pub(crate) fn TaskList(
                 current_state,
                 mascot::State::Home | mascot::State::WritingCaret
             ) {
-                let set_state = set_mascot_state;
+                let rambo_world = expect_context::<crate::rambo_world::RamboWorld>();
                 let pen_pos = pen_pos;
                 writing.set_value(true);
                 wasm_bindgen_futures::spawn_local(async move {
@@ -605,23 +625,21 @@ pub(crate) fn TaskList(
                             matches!(state, mascot::State::Home | mascot::State::WritingCaret);
                         if !is_ready {
                             // Taken elsewhere between rows: the rest stay as they are.
+                            pen_queue.with_untracked(|queue| {
+                                unclip_rows(&let_go(Some(&task_id), queue, true));
+                            });
                             pen_queue.set(Vec::new());
                             break;
                         }
-                        let row = web_sys::window()
-                            .and_then(|w| w.document())
-                            .and_then(|doc| {
-                                doc.query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
-                                    .ok()
-                                    .flatten()
-                            });
+                        let row = row_element(&task_id);
                         // A row off the screen (the other pane on a phone, or
                         // scrolled away) is left as it is; he stays home.
                         if !row.as_ref().is_some_and(write::in_view) {
-                            set_state.set(mascot::transition(&state, mascot::Event::SkipRow));
+                            unclip_rows(&let_go(Some(&task_id), &[], false));
+                            rambo_world.tell(mascot::Event::SkipRow);
                             continue;
                         }
-                        set_state.set(mascot::transition(&state, mascot::Event::WriteRow));
+                        rambo_world.tell(mascot::Event::WriteRow);
                         // Clip the title and park the nib at the line's start.
                         // The fonts settle first: parking on fallback metrics
                         // would put the pen somewhere the line does not start.
@@ -636,12 +654,9 @@ pub(crate) fn TaskList(
                         if let Some(following) = following {
                             following.stop();
                         }
-                        set_state.set(mascot::transition(
-                            &mascot_state.get_untracked(),
-                            mascot::Event::WriteRow,
-                        ));
+                        rambo_world.tell(mascot::Event::WriteRow);
                         if let Some(row) = row.as_ref() {
-                            write::write_row_title(row, pen_pos, mascot_state, set_state).await;
+                            write::write_row_title(row, pen_pos, mascot_state, rambo_world).await;
                             // The ink he has just laid is wet, and shines until it dries.
                             let now = crate::engine::now();
                             written.update_value(|rows| {
@@ -661,15 +676,9 @@ pub(crate) fn TaskList(
                         // Fly home after this row. A row finished without him (he
                         // was taken elsewhere) leaves him where he is.
                         if mascot_state.get_untracked() == mascot::State::WritingRow {
-                            set_state.set(mascot::transition(
-                                &mascot::State::WritingRow,
-                                mascot::Event::FlyHome,
-                            ));
+                            rambo_world.tell(mascot::Event::FlyHome);
                             crate::engine::wait(f64::from(crate::tuning::FLY_MS)).await;
-                            set_state.set(mascot::transition(
-                                &mascot_state.get_untracked(),
-                                mascot::Event::FlyHome,
-                            ));
+                            rambo_world.tell(mascot::Event::FlyHome);
                         }
                     }
                     writing.set_value(false);
@@ -678,7 +687,7 @@ pub(crate) fn TaskList(
         });
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (pen_queue, mascot_state, set_mascot_state, view_settings);
+    let _ = (pen_queue, mascot_state, view_settings);
 
     view! {
         <section aria-label="Tasks">
@@ -686,6 +695,9 @@ pub(crate) fn TaskList(
                 <For each=visible_tasks key=|task| RowKey(task.clone()) let:task>
                     {
                         let task_id = task.id.clone();
+                        // Queued before the list shows (see `Store::send_with`): the row
+                        // is clipped from its first frame, so its title never shows whole.
+                        let queued = pen_queue.with_untracked(|queue| queue.contains(&task_id));
                         let task_title = task.title.clone();
                         // An occurrence row carries the small hand-drawn repeat mark, and
                         // loses the one-row delete: its × would refuse the id, and a whole
@@ -835,6 +847,7 @@ pub(crate) fn TaskList(
                         view! {
                     <li
                         class="task-row"
+                        class:pen-pending=queued
                         data-id={render_task_id_attr}
                         data-title={render_task_title.clone()}
                         on:pointerdown=handle_pointer_down
@@ -1697,5 +1710,34 @@ mod tests {
             Some(TickAction::Task(_))
         ));
         assert!(tick_action(&fixture, "gone").is_none());
+    }
+
+    fn id(name: &str) -> TaskId {
+        TaskId(name.to_owned())
+    }
+
+    /// A skipped row lets go of itself only: the rows still queued stay as they are.
+    #[test]
+    fn a_skipped_row_releases_only_itself() {
+        let queue = [id("b")];
+        assert_eq!(super::let_go(Some(&id("a")), &queue, false), vec![id("a")]);
+    }
+
+    /// A dropped queue lets go of the row he was on and every row waiting behind it.
+    #[test]
+    fn a_dropped_queue_releases_the_row_he_was_on_and_every_queued_row() {
+        let queue = [id("b"), id("c")];
+        assert_eq!(
+            super::let_go(Some(&id("a")), &queue, true),
+            vec![id("a"), id("b"), id("c")]
+        );
+    }
+
+    /// Reduced motion drops the queue before any row is on the pen.
+    #[test]
+    fn a_dropped_queue_with_no_row_on_the_pen_releases_the_queue() {
+        let queue = [id("b")];
+        assert_eq!(super::let_go(None, &queue, true), vec![id("b")]);
+        assert!(super::let_go(None, &[], true).is_empty());
     }
 }
