@@ -20,7 +20,7 @@ use crate::tasks::occurrence_parts;
 use crate::tuning::{
     BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGE_PX, PIN_EDGES, PIN_ROOM_PX, ROW_SLIDE_OMEGA,
     SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX, STRIP_GAP_PX,
-    STRIP_H_PX,
+    STRIP_H_PX, STRIP_RELEASE_OMEGA, STRIP_STACK_OMEGA,
 };
 use rambl_web_core::events::{Event, any_row_back, row_back, row_left};
 use rambl_web_core::store::Command;
@@ -570,6 +570,79 @@ async fn tape_back(scrap: Scrap, scraps: RwSignal<Vec<Scrap>>, store: Store) {
     scraps.update(|pile| *pile = after_tape(std::mem::take(pile), scrap.ticket, taken));
 }
 
+/// The engine key of the glide that carries the strip of task `id`: the task's row is
+/// carried under its bare id, and the two must never take each other's glide over.
+fn strip_key(id: &str) -> String {
+    format!("strip:{id}")
+}
+
+/// The engine key of the glide that moves the strip of task `id` forward in the stack.
+fn depth_key(id: &str) -> String {
+    format!("depth:{id}")
+}
+
+/// Slide the strip of task `id` to `to` edges deep in the stack from where `depth` is: a
+/// spring (`engine::glide_keyed`) moves `depth`, which the page writes as `--depth`. With
+/// reduced motion it is there at once.
+fn slide_depth(id: &str, depth: RwSignal<f64>, to: f64) {
+    let from = depth.get_untracked();
+    if crate::mascot::prefers_reduced_motion() || (from - to).abs() < DEPTH_NEAR {
+        depth.set(to);
+        return;
+    }
+    let pull = crate::engine::Pull {
+        omega: STRIP_STACK_OMEGA,
+        zeta: 1.0,
+    };
+    crate::engine::glide_keyed(
+        &depth_key(id),
+        [from],
+        [to],
+        pull,
+        DEPTH_NEAR,
+        move |[now]| depth.set(now),
+        move || depth.set(to),
+    );
+}
+
+/// How near, in edges, a strip's depth must come to its place to count as there.
+const DEPTH_NEAR: f64 = 0.02;
+
+/// Where a press at `finger` must anchor so a drag keeps the strip where it is: a strip let
+/// go mid-swing is `offset` away from its pin, and the first move must not snap it back.
+fn grip_at(finger: (f64, f64), offset: (f64, f64)) -> (f64, f64) {
+    (finger.0 - offset.0, finger.1 - offset.1)
+}
+
+/// Let go of a dragged strip: `offset` (how far the finger had pulled it) runs back to
+/// nothing on a spring, `homing` true meanwhile so the style sheet's own transition stays
+/// off. With reduced motion it is back at once.
+fn swing_home(id: &str, offset: RwSignal<(f64, f64)>, homing: RwSignal<bool>) {
+    let key = strip_key(id);
+    let (x, y) = offset.get_untracked();
+    if crate::mascot::prefers_reduced_motion() || x.hypot(y) < ROW_NEAR_PX {
+        offset.set((0.0, 0.0));
+        return;
+    }
+    homing.set(true);
+    let pull = crate::engine::Pull {
+        omega: STRIP_RELEASE_OMEGA,
+        zeta: 1.0,
+    };
+    crate::engine::glide_keyed(
+        &key,
+        [x, y],
+        [0.0; 2],
+        pull,
+        ROW_NEAR_PX,
+        move |[x, y]| offset.set((x, y)),
+        move || {
+            offset.set((0.0, 0.0));
+            homing.set(false);
+        },
+    );
+}
+
 /// The pin's side of the list's page, where the scraps hang. Nothing is drawn while there is
 /// none. Each scrap is kept by its ticket, so a new one arriving does not replay the others.
 #[component]
@@ -611,11 +684,22 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                     let dragging = RwSignal::new(false);
                     let binned = RwSignal::new(false);
                     let just_dragged = StoredValue::new(false);
+                    // The strip swinging back to the pin after a let go: the page drives
+                    // `offset` (the style sheet's transition is off meanwhile).
+                    let homing = RwSignal::new(false);
                     let task_id = StoredValue::new(hung.id.clone());
                     let deletable = occurrence_parts(&hung.id.0).is_none();
                     let rank_id = hung.id.clone();
                     let rank = Memo::new(move |_| snapshot.with(|held| stack_rank(held, &rank_id)));
                     let top = Memo::new(move |_| rank.get() == Some(0));
+                    // How many edges deep the strip hangs, on a spring: it slides forward
+                    // when the strip above it goes.
+                    let depth = RwSignal::new(edge_depth(rank.get_untracked().unwrap_or(PIN_EDGES)) as f64);
+                    let depth_id = hung.id.0.clone();
+                    Effect::new(move |_| {
+                        let to = edge_depth(rank.get().unwrap_or(PIN_EDGES)) as f64;
+                        slide_depth(&depth_id, depth, to);
+                    });
                     let label = format!("Tape \"{}\" back: not done after all", hung.title);
                     // Only the top strip carries its title; the edges under it are plain paper.
                     let title = hung.title.clone();
@@ -628,10 +712,10 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                             style:--hang=style
                             style:--drag-x=move || format!("{}px", offset.get().0)
                             style:--drag-y=move || format!("{}px", offset.get().1)
-                            class:dragging=move || dragging.get()
+                            class:dragging=move || dragging.get() || homing.get()
                             class:over-bin=move || binned.get() && dragging.get()
                             class:binned=move || binned.get() && !dragging.get()
-                            style:--depth=move || edge_depth(rank.get().unwrap_or(PIN_EDGES)).to_string()
+                            style:--depth=move || format!("{:.3}", depth.get())
                             style:z-index=move || (PIN_EDGES + 1 - edge_depth(rank.get().unwrap_or(PIN_EDGES))).to_string()
                             class:on-top=move || top.get()
                             aria-label=label
@@ -640,7 +724,10 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                             title="Tap to tape it back"
                             on:pointerdown=move |event: leptos::ev::PointerEvent| {
                                 if top.get_untracked() {
-                                    grip.set_value(Some((f64::from(event.client_x()), f64::from(event.client_y()))));
+                                    crate::engine::cancel(&strip_key(&task_id.get_value().0));
+                                    homing.set(false);
+                                    let finger = (f64::from(event.client_x()), f64::from(event.client_y()));
+                                    grip.set_value(Some(grip_at(finger, offset.get_untracked())));
                                     just_dragged.set_value(false);
                                     // Moves go to the strip even once the finger has left it.
                                     if let Some(button) = hung_ref.get_untracked() {
@@ -680,19 +767,19 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                                             // Refused: the scrap comes back off the bin.
                                             if store.send(Command::DeleteTask(id)).await.is_none() {
                                                 binned.set(false);
-                                                offset.set((0.0, 0.0));
+                                                swing_home(&task_id.get_value().0, offset, homing);
                                             }
                                         });
                                     });
                                 } else {
-                                    offset.set((0.0, 0.0));
+                                    swing_home(&task_id.get_value().0, offset, homing);
                                 }
                             }
                             on:pointercancel=move |_| {
                                 grip.set_value(None);
                                 dragging.set(false);
                                 binned.set(false);
-                                offset.set((0.0, 0.0));
+                                swing_home(&task_id.get_value().0, offset, homing);
                             }
                             on:click=move |_| {
                                 if just_dragged.get_value() {
@@ -1006,6 +1093,31 @@ mod tests {
             after_tick(SCRAP_UNDO_MS, true),
             SCRAP_UNDO_MS,
             "paused while taping"
+        );
+    }
+
+    #[test]
+    fn a_strip_has_its_own_glide_key_apart_from_its_row() {
+        assert_ne!(strip_key("t1"), "t1");
+        assert_ne!(strip_key("t1"), strip_key("t2"));
+        assert_ne!(
+            depth_key("t1"),
+            strip_key("t1"),
+            "the drag and the stack never share a glide"
+        );
+        assert_ne!(depth_key("t1"), "t1");
+    }
+
+    #[test]
+    fn a_press_mid_swing_anchors_where_the_strip_is_so_it_does_not_jump() {
+        let (finger, offset) = ((300.0, 200.0), (-40.0, 25.0));
+        let grip = grip_at(finger, offset);
+        // The first move to the same spot leaves the strip where it was.
+        assert_eq!((finger.0 - grip.0, finger.1 - grip.1), offset);
+        assert_eq!(
+            grip_at(finger, (0.0, 0.0)),
+            finger,
+            "at rest: the finger itself"
         );
     }
 
