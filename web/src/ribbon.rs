@@ -1,4 +1,4 @@
-//! The bookmark ribbon (SPEC-GAPS I3 idea 3): a ribbon hangs from the top of the planner
+//! The bookmark ribbon (SPEC-GAPS I3 idea 3): a ribbon hangs from under the day names
 //! at today's column and marks it; scrolled away, it stays at the planner's edge, the
 //! way a bookmark sticks out of a closed book. Pull it down (or tap it) and the planner
 //! slides back to today, at the hour it opens on.

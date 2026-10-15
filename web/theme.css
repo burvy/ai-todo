@@ -176,6 +176,10 @@
   --flip-shade: color-mix(in srgb, black 34%, transparent);
   --flip-cast-w: 4rem; /* how far the leaf's shadow reaches onto the page under it */
 
+  /* The bookmark ribbon's length at rest (web/src/ribbon.rs); a pull adds to it, as far
+     as RIBBON_PULL_MAX_PX in web/src/tuning.rs. */
+  --ribbon-rest: 46px;
+
   /* Motion. */
   --dur-fast: 120ms;
   --dur: 200ms;
@@ -2156,7 +2160,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   position: absolute;
   z-index: var(--layer-note);
   width: 18px;
-  height: calc(var(--ribbon-rest, 46px) + var(--pull, 0px));
+  height: calc(var(--ribbon-rest) + var(--pull, 0px));
   padding: 0;
   border: 0;
   background:
