@@ -801,7 +801,8 @@ li.task-row.row-lifted {
 
 /* Dragged by the finger: it follows at once, with no lag. Over the bin corner it leans
    toward the bin. Released there it crumples and drops off the page's bottom edge; released
-   anywhere else it swings back to the pin (the transition above). */
+   anywhere else it swings back to the pin on a spring (`scrap.rs:swing_home`, which keeps
+   this class on meanwhile so no transition fights it). */
 .scrap-undo.done.dragging {
   transition: none;
   cursor: grabbing;
