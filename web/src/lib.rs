@@ -273,7 +273,6 @@ pub fn App() -> impl IntoView {
             talking
             set_talking
             snapshot
-            set_snapshot
             set_error
             view_settings
             brain_speech

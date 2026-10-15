@@ -7,9 +7,11 @@ use todo_core::When;
 use todo_core::{Clock, SystemClock};
 use todo_core::{LocalContext, Placement, Snapshot, TaskId};
 
+use crate::store::Store;
 use crate::tuning::{HOUR_PX, SHORT_SLIP_PX};
 use crate::{clock, settings::Settings};
 pub(crate) use rambl_web_core::planner::*;
+use rambl_web_core::store::Command;
 
 /// A task being dragged by its grip: who it is, where the finger is, and where on
 /// the slip it took hold. Where it may land is drawn from `landing`; the drop's
@@ -59,6 +61,8 @@ pub fn WeekGrid(
     move_request: RwSignal<Option<TaskId>>,
 ) -> impl IntoView {
     let grid_ref = NodeRef::<leptos::html::Div>::new();
+    #[cfg(target_arch = "wasm32")]
+    let store = expect_context::<Store>();
     let (now_minutes, set_now_minutes) = signal(current_minutes());
     crate::engine::every(60_000.0, move || {
         set_now_minutes.set(current_minutes());
@@ -230,7 +234,7 @@ pub fn WeekGrid(
         move_request.set(None);
         landing.set(None);
         #[cfg(target_arch = "wasm32")]
-        place_at(&id, slot, snapshot, set_snapshot, set_error);
+        place_at(&id, slot, snapshot, store);
         #[cfg(not(target_arch = "wasm32"))]
         let _ = (id, slot);
     });
@@ -357,7 +361,7 @@ pub fn WeekGrid(
                                     placements_on_day(&snapshot.plan.placements, i64::from(day), &ctx)
                                 }
                                 key=placement_key let:placement>
-                                <PlacementBlock placement snapshot settings set_snapshot set_error drag landing mascot_state />
+                                <PlacementBlock placement snapshot settings drag landing mascot_state />
                             </For>
                                 <For each=hours key=|hour| *hour let:hour>
                                     <div
@@ -643,12 +647,12 @@ fn PlacementBlock(
     placement: Placement,
     snapshot: ReadSignal<Snapshot>,
     settings: ReadSignal<Settings>,
-    set_snapshot: WriteSignal<Snapshot>,
-    set_error: WriteSignal<Option<String>>,
     drag: RwSignal<Option<Drag>>,
     landing: RwSignal<Option<Slot>>,
     mascot_state: ReadSignal<crate::mascot::State>,
 ) -> impl IntoView {
+    #[cfg(target_arch = "wasm32")]
+    let store = expect_context::<Store>();
     let task_id = placement.task.clone();
     let label_task_id = task_id.clone();
     let slip_id = task_id.clone();
@@ -844,7 +848,7 @@ fn PlacementBlock(
             if slot == current {
                 return;
             }
-            place_at(&end_id, slot, snapshot, set_snapshot, set_error);
+            place_at(&end_id, slot, snapshot, store);
         }
     };
 
@@ -861,7 +865,7 @@ fn PlacementBlock(
     };
     // On a native build the patch paths never run; keep the unused-shelf silent.
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (&set_snapshot, &set_error, &drag, &landing, &mascot_state);
+    let _ = (&drag, &landing, &mascot_state);
     #[cfg(not(target_arch = "wasm32"))]
     let (grip_down, grip_move, grip_end, grip_cancel) = (
         |_: leptos::ev::PointerEvent| {},
@@ -915,17 +919,11 @@ fn PlacementBlock(
 
 /// Starts task `id` at `slot`, as a dropped slip or a tapped hour says.
 #[cfg(target_arch = "wasm32")]
-fn place_at(
-    id: &TaskId,
-    slot: Slot,
-    snapshot: ReadSignal<Snapshot>,
-    set_snapshot: WriteSignal<Snapshot>,
-    set_error: WriteSignal<Option<String>>,
-) {
+fn place_at(id: &TaskId, slot: Slot, snapshot: ReadSignal<Snapshot>, store: Store) {
     let snap = snapshot.get_untracked();
     let ctx = planner_context(&snap.tz);
     let Some(instant) = drop_start(&ctx, slot.day, slot.minutes) else {
-        set_error.set(Some(
+        store.set_error.set(Some(
             "The clock skips that time that day (daylight change), so it cannot start then.".into(),
         ));
         return;
@@ -945,25 +943,22 @@ fn place_at(
     // whole rule, and its id names the original local date.
     let occurrence = occurrence_of(id);
     let id = id.clone();
-    wasm_bindgen_futures::spawn_local(async move {
-        let result = match occurrence {
-            Some((series_id, date)) => {
-                crate::api::move_series_occurrence(&series_id, date, When::At(instant)).await
-            }
-            None => {
-                // Placed, a task taken off the planner is back on it.
-                let body = crate::api::PatchTaskBody::new()
-                    .when(When::At(instant))
-                    .off_planner(false)
-                    .updated_at(updated_at);
-                crate::api::patch_task(&id, body).await
-            }
-        };
-        match result {
-            Ok(new_snapshot) => set_snapshot.set(new_snapshot),
-            Err(e) => set_error.set(Some(format!("Move failed: {e}"))),
+    let command = match occurrence {
+        Some((series, date)) => Command::MoveOccurrence {
+            series,
+            date,
+            to: When::At(instant),
+        },
+        None => {
+            // Placed, a task taken off the planner is back on it.
+            let body = crate::api::PatchTaskBody::new()
+                .when(When::At(instant))
+                .off_planner(false)
+                .updated_at(updated_at);
+            Command::Patch(id.clone(), body)
         }
-    });
+    };
+    store.dispatch(command);
 }
 
 /// What sits under a point: the planner day column (from data-day) and the
@@ -1050,8 +1045,7 @@ pub(crate) fn stretch(
     id: &TaskId,
     stretch: crate::placing::Stretch,
     snapshot: ReadSignal<Snapshot>,
-    set_snapshot: WriteSignal<Snapshot>,
-    set_error: WriteSignal<Option<String>>,
+    store: Store,
 ) {
     let Some((from, updated_at)) = snapshot.with_untracked(|snap| {
         snap.tasks
@@ -1072,28 +1066,23 @@ pub(crate) fn stretch(
         let body = crate::api::PatchTaskBody::new()
             .duration_min(to)
             .updated_at(updated_at);
-        match crate::api::patch_task(&id, body).await {
-            Ok(new_snapshot) => {
-                // The saved plan draws the slip anew; it carries on from the height it
-                // had reached instead of starting at its new one. The redraw runs as a
-                // microtask, so the ease queued after it lands before the next paint:
-                // a frame later, the new slip would show once at its planned height.
-                #[cfg(target_arch = "wasm32")]
-                let reached = slips_of(&id)
-                    .first()
-                    .map(|slip| slip.get_bounding_client_rect().height());
-                set_snapshot.set(new_snapshot);
-                #[cfg(target_arch = "wasm32")]
-                if let Some(reached) = reached {
-                    wasm_bindgen_futures::spawn_local(async move { ease_slip_from(&id, reached) });
-                }
+        if store.send(Command::Patch(id.clone(), body)).await.is_some() {
+            // The saved plan draws the slip anew; it carries on from the height it
+            // had reached instead of starting at its new one. The store has just shown
+            // the plan, and the redraw runs as a microtask: reading the slip here still
+            // sees the old one, and the ease queued after it lands before the next
+            // paint (a frame later, the new slip would show once at its planned height).
+            #[cfg(target_arch = "wasm32")]
+            if let Some(reached) = slips_of(&id)
+                .first()
+                .map(|slip| slip.get_bounding_client_rect().height())
+            {
+                wasm_bindgen_futures::spawn_local(async move { ease_slip_from(&id, reached) });
             }
-            Err(e) => {
-                // Refused, the slip goes back to the length it still has.
-                #[cfg(target_arch = "wasm32")]
-                unstretch_slip(&id, from, to);
-                set_error.set(Some(format!("Resize failed: {e}")));
-            }
+        } else {
+            // Refused, the slip goes back to the length it still has.
+            #[cfg(target_arch = "wasm32")]
+            unstretch_slip(&id, from, to);
         }
     });
 }
@@ -1102,12 +1091,7 @@ pub(crate) fn stretch(
 /// scheduler leaves it alone until it is placed again. Its slips slide out of their
 /// days at once, and the week is drawn without them once that has run and the change
 /// is saved; refused, they slide back.
-pub(crate) fn take_off(
-    id: &TaskId,
-    snapshot: ReadSignal<Snapshot>,
-    set_snapshot: WriteSignal<Snapshot>,
-    set_error: WriteSignal<Option<String>>,
-) {
+pub(crate) fn take_off(id: &TaskId, snapshot: ReadSignal<Snapshot>, store: Store) {
     let Some(updated_at) = snapshot.with_untracked(|snap| {
         snap.tasks
             .iter()
@@ -1118,24 +1102,16 @@ pub(crate) fn take_off(
     };
     #[cfg(target_arch = "wasm32")]
     slide_off(id, true);
-    let began = crate::engine::now();
     let id = id.clone();
     wasm_bindgen_futures::spawn_local(async move {
+        // The slips finish sliding out before the store shows the week without them.
+        gloo_timers::future::TimeoutFuture::new(crate::tuning::SLIP_OFF_MS).await;
         let body = crate::api::PatchTaskBody::new()
             .off_planner(true)
             .updated_at(updated_at);
-        let saved = crate::api::patch_task(&id, body).await;
-        let left = f64::from(crate::tuning::SLIP_OFF_MS) - (crate::engine::now() - began);
-        if left > 0.0 {
-            gloo_timers::future::TimeoutFuture::new(left.ceil() as u32).await;
-        }
-        match saved {
-            Ok(new_snapshot) => set_snapshot.set(new_snapshot),
-            Err(e) => {
-                #[cfg(target_arch = "wasm32")]
-                slide_off(&id, false);
-                set_error.set(Some(format!("Taking it off failed: {e}")));
-            }
+        if store.send(Command::Patch(id.clone(), body)).await.is_none() {
+            #[cfg(target_arch = "wasm32")]
+            slide_off(&id, false);
         }
     });
 }
