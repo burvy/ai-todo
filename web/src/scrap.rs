@@ -317,11 +317,17 @@ fn row_spot(id: &str) -> Option<Spot> {
 /// Fly a scrap that has just been laid from the row it tore from to its place: it starts
 /// at the row, turned flat like the row's own line, and the page's transition carries it
 /// to where it hangs. Done in one task (move, read, release) so the start is never drawn
-/// in the wrong place; with reduced motion it simply hangs.
+/// in the wrong place; with reduced motion it simply hangs. Either way it is pinned with
+/// a tack's sound, as it arrives.
 fn fly(scrap: &web_sys::HtmlElement, from: Spot) {
     if crate::mascot::prefers_reduced_motion() {
+        crate::sound::play(crate::sound::Cue::Pin);
         return;
     }
+    set_timeout(
+        || crate::sound::play(crate::sound::Cue::Pin),
+        std::time::Duration::from_millis(SCRAP_SLIDE_MS.into()),
+    );
     let rect = scrap.get_bounding_client_rect();
     let hung = Spot {
         x: rect.left(),
@@ -544,6 +550,9 @@ where
     // Where the row stands now, before the list loses it: the scrap flies from there.
     let from = row_spot(&task_id.0);
     let result = delete.await;
+    if result.is_ok() {
+        crate::sound::play(crate::sound::Cue::Delete);
+    }
     if let (Ok(_), Some((title, undo))) = (&result, undo) {
         lay(scraps, title, undo, from);
     }
