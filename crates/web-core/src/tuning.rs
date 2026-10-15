@@ -593,7 +593,10 @@ mod tests {
                 px.trim().parse().expect("a whole number of px")
             })
             .collect();
-        let named = medias.iter().map(|line| line.matches("width").count()).sum();
+        let named = medias
+            .iter()
+            .map(|line| line.matches("width").count())
+            .sum();
         (edges, named)
     }
 
