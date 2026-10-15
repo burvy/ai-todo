@@ -239,6 +239,48 @@ Plain and fast: a text box with a mic button (Web Speech API via `web-sys`), the
 
 Everything on the page that moves runs on one loop with one animation clock. `engine::on_tick` runs a job on every frame until it returns `Flow::Stop`, `engine::next_frame` runs one once the page has laid out, and `engine::every` runs one every so many ms. A job sees `Tick { now, steps }`. `now` is the browser's animation time in ms: what frames and pointer events are stamped with, never the wall clock. `steps` is how many fixed `ENGINE_DT_S` (1/120 s) steps have come due: time left over carries to the next frame, a late frame takes at most 8, and the first frame after the loop has slept takes none. Physics steps by exactly that (the page turn's spring does), so motion is the same at any frame rate. The loop asks the browser for frames only while a job runs on every frame and for one timeout for the earliest timer otherwise, so at rest it costs nothing. The rules are pure and tested natively (`engine/sched.rs`); `engine/run.rs` is the only code that asks the browser for frames or timers, and a test fails on `request_animation_frame`, `set_interval`, `Interval::new` or `Date::now` anywhere else. `Date::now` stays only where the user's day is read (the planner's now line, what is overdue, the hour the brain hears). On the loop today: the ink, the page turns, Rambo's hops, the brain's tick, the planner's now line and its edge slide. Writing a row (`tasks/write.rs`) still steps on its own timers until it moves onto the loop (planned). `engine/world.rs` holds Rambo as an entity of the engine, and `rambo.rs` draws what it says. The brain stays `mascot::transition`; the rest of the page sets his state, and the world's own timers and landings set it back. `behaviour` gives each state a drive: `HopTo` a target with `hop.rs` (where `mascot::hops_there`), landing where the target is now; `Ride`, a critically damped spring after the finger at `RIDE_OMEGA`, while held; `Throw`, the slide of a throw (`engine/fling.rs`) inside the screen less half his size (`Anchors::walls`); or `Follow` his spot exactly (a splat and its daze stay where the throw left him) (inking, his nib stays on the finger). From flying to writing a row he reaches the row's first letter on the ride spring, never by a jump. With reduced motion he is on his spot in every state: no hops, no ride. Every run that sets off on a change of state starts with his notice beat (`mascot::notice`, `NOTICE_BEAT_MS`), and the splat and the daze are timed in world time. His pose comes from the entity too (`engine/look.rs`, `look::pose`): sunk `--nest-sink` into the nest at home; held, tilted like a pen in a hand with a slow pulse; dazed, tipped over; the splat a wobble that dies into the daze's tilt; hopping or carried, leaning into where he goes (`LEAN_PER_PX_S`, at most `LEAN_MAX_DEG`), the lean eased after his speed every step over `LEAN_EASE_MS` (`look::eased_sway`) so it never jumps as a hop lands; caught under the leaf, upright; writing, smaller at `--write-lean`, a row turning about his nib and wearing his hand (`--nib-dip`, `--nib-tilt`). On every change of state he eases in and out of the pose he had into the new one over `POSE_BLEND_MS` (`WRITE_BLEND_MS` into or out of the writing pose, a whole `--write-lean` turn), so nothing snaps (flying into writing a row used to step 18 px); with reduced motion the pose changes at once, with no pulse and no wobble. He is a job on the loop only while something can change on its own: when he stands exactly on what he follows (settled in his nest, asking, inking, writing a row) the loop sleeps until his state or his spot changes; the splat and the daze keep it running until their timers end them, and a change of pose until it has eased in.
 
+### 8.0.1 One body: physics for Rambo and the paper (planned)
+
+**Problem.** Motion today is picked per state: `world.rs:Drive` swaps between `Follow`, `Ride` (a spring), `HopTo` (`hop.rs`, a scripted arc) and `Throw` (`fling.rs`), so momentum is lost at every switch, as when a drag ends in a scripted hop. Beside the world there are two springs (`engine/nest.rs:Spring`, `flip.rs:Spring`), smoothstep glides, about 20 wasm timers outside the engine clock, CSS lengths kept in step with Rust by hand, and reduced motion checked in a dozen places (hive/research/motion-inventory.md).
+
+**Rule.** Anything that moves physically is a `Body`: position, velocity and an optional height above the page. Every engine step it gets the forces its owner set, and one integrator (semi-implicit Euler at `ENGINE_DT_S`) moves it. States never move a body; they only set its forces and constraints. Velocity is never reset by a change of state, so momentum always carries over.
+
+**Module** (`web/src/engine/body.rs`, pure and tested natively, about 150 lines):
+- `Body { pos, vel, z, vz }`, `Body::step(&Forces, walls, dt)`, `Body::impulse(dv)`.
+- `Forces`: an optional `Spring { to, omega, zeta }` (for a moving `to`, such as the pointer or the nest), `friction`, `gravity` (on `z` only: the page is the ground) and an optional `Pin(to)` for exact tracking (the nib on a row). A pinned body still reports the velocity it moved at, so letting go of a pin carries it on.
+- `Spring1 { x, v }` with the same `step`: one scalar spring for the nest's sag and rock, the dance sway, the page flip and the ribbon. It replaces both springs that exist today.
+- `Motion::Reduced`: the one reduced-motion switch, read once by the world. A reduced body snaps to its spring's target or pin and never takes an impulse.
+
+**Rambo's states only set forces:**
+
+| State | Forces |
+|---|---|
+| Dragging | stiff, critically damped spring to `held_at(pointer)` |
+| Let go (any speed) | none: he slides on his velocity with friction and the walls. A smack at `FLING_SPLAT_SPEED` splats as today. Once slow, he is sent home. A gentle drop is just a slow throw, so there is no separate hop. |
+| Home run | after `HOME_WAIT_MS`, a series of impulses: each hop is the `vz` and ground velocity that lands on the next waypoint of a bowed path, blended with the velocity he still has. Touching down (`z` reaches 0 while falling) leaves an ink dot, kicks the nest when he lands in it, and fires the next hop. |
+| Home (settled) | spring to the nest anchor; idle sway as small random kicks on a `Spring1` tilt |
+| Writing (caret or row) | `Pin` to the nib point |
+| Dazed, asking, noting | friction only (he lies where he stopped); the paper's sweep stays a velocity |
+| Covered | spring along the leaf's free edge |
+
+Squash, stretch and lean are read from `vel` and `vz` (`look.rs`), not scripted per hop.
+
+**Paper strips** (the pinned scraps, list rows lifted or released, the slip ghost) become bodies in the same world: held, a spring to the pointer; let go, a spring to their slot or the pin. That removes their `TimeoutFuture` lays and flies and the inline transform that fights a CSS transition (inventory items 1 and 3 for `scrap.rs` and `row.rs`).
+
+**Kept as they are:** CSS keyframes for drawing-only effects (breathing, mood pictures, the scribble picture), ink ageing, and the tear's fade. The human allows fades only for ink and the patch.
+
+**Order of small PRs.** Each PR is green on its own and leaves behaviour the same unless it says otherwise.
+1. `body.rs` with `Body`, `Spring1`, `Forces` and `Motion`, plus tests (energy falls, a critically damped spring never overshoots, a pin's velocity carries on). Port `nest.rs`, `dance.rs` and `flip.rs` onto `Spring1`, then delete the two old springs. No visible change.
+2. Rambo's ground motion: `Drive` becomes `Forces` on one `Body`. The drag spring, release keeping velocity (a gentle drop slides and stops) and the pin for writing. `fling.rs` keeps the walls and the splat rule and loses its own integrator.
+3. The hop home as impulses with `z` and gravity, and ink dots on landing. Delete `hop.rs` and `Run`. The parked `emilio/hop-home` branch has the bowed path and the wait.
+4. Idle sway and one reduced-motion switch through `Motion`.
+5. Paper strips: the pinned scraps' lay and fly, and a lifted row's release, as bodies. Delete their wasm timers and inline transitions.
+6. The remaining sequencing timers (capture, lamp, glyph pacing, `take_off`) move onto `engine::every`. This is clock work, not physics, so it is listed only to close inventory item 1.
+
+**Not in scope:** the page turn's geometry (it only takes `Spring1`), the planner tear slide (it becomes a `Spring1` in PR 5 if the tear allows) and the ribbon's length (PR 1 takes its spring-back if it is small).
+
+**Risk.** Release-keeps-velocity changes the feel of a gentle drop: Fable reviews PRs 2 and 3. The freeze question stays open; if it comes from a mechanism switch, PR 2 removes the switch.
+
 ### 8.1 Rambo, the mascot
 
 The pen character (`web/assets/rambo/`) is named **Rambo**. He rests in his nest, the dish at the end of the text box.
