@@ -93,6 +93,12 @@ impl Nest {
         self.rock.kick(-DRY_NIB_TAP_ROCK, NEST_ROCK_MAX_DEG);
     }
 
+    /// He bounces in it to a beat of `strength` (0 to 1).
+    pub(crate) fn bounce(&mut self, strength: f64) {
+        self.sag
+            .kick(strength * crate::tuning::DANCE_BOUNCE_KICK, NEST_SAG_MAX_PX);
+    }
+
     /// He leaves it heading `dx` across: it springs up as his weight goes and rocks
     /// the other way.
     pub(crate) fn leave(&mut self, dx: f64) {

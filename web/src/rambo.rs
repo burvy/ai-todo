@@ -194,6 +194,7 @@ pub(crate) fn Rambo(
             let (brain, draw, posed, at_rest, laid, nest_moved) = {
                 let mut world = world.borrow_mut();
                 world.adopt(state.get_untracked());
+                world.hear(crate::music::level());
                 world.advance(tick.steps, &anchors);
                 crate::engine::set_push(world.leaf_push());
                 (
@@ -261,10 +262,38 @@ pub(crate) fn Rambo(
         let wake = wake.clone();
         move || wake()
     });
-    Effect::new(move |_| {
-        state.track();
-        pen_pos.track();
-        wake();
+    Effect::new({
+        let wake = wake.clone();
+        move |_| {
+            state.track();
+            pen_pos.track();
+            wake();
+        }
+    });
+    // With music on he listens for it now and then, and wakes to dance when it plays;
+    // while it plays his loop keeps hearing it. Picking another preset stops the listening.
+    let listening = std::rc::Rc::new(std::cell::Cell::new(0_u32));
+    Effect::new({
+        let wake = wake.clone();
+        move |_| {
+            if view_settings.with(|s| s.sound) != settings::SoundPreset::Music {
+                return;
+            }
+            let ticket = listening.get().wrapping_add(1);
+            listening.set(ticket);
+            let (wake, listening) = (wake.clone(), listening.clone());
+            crate::engine::every(tuning::DANCE_LISTEN_MS, move || {
+                let still_music = listening.get() == ticket
+                    && view_settings.with_untracked(|s| s.sound) == settings::SoundPreset::Music;
+                if !still_music {
+                    return crate::engine::Flow::Stop;
+                }
+                if crate::music::level().is_some() {
+                    wake();
+                }
+                crate::engine::Flow::Go
+            });
+        }
     });
 
     // Let go on the page: let go mid-flick he is thrown at the flick's speed (the
