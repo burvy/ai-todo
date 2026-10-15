@@ -425,6 +425,7 @@ pub(crate) fn TaskList(
     #[cfg(not(target_arch = "wasm32"))]
     let _ = pen_pos;
     let store = expect_context::<crate::store::Store>();
+    let events = expect_context::<crate::events::Queue>();
     let (editing_task, set_editing_task) = (open_sheet.read_only(), open_sheet.write_only());
     // Rows Rambo has written and when (`engine::now`): wet for a while, and a tap then
     // smudges the ink instead of opening the row (`smudge.rs`).
@@ -793,11 +794,11 @@ pub(crate) fn TaskList(
                                             // The swipe drew the ink; it finishes across the row,
                                             // and the row, done, tears off and flies to the pin.
                                             gloo_timers::future::TimeoutFuture::new(tuning::SCRIBBLE_FINISH_MS).await;
-                                            scrap::note_departure(&task_id.0);
+                                            scrap::note_departure(events, &task_id.0);
                                             if let Some(action) = snapshot.with_untracked(|s| tick_action(s, &task_id.0)) {
                                                 apply_tick(&task_id, action, store).await;
                                             }
-                                            scrap::forget_departure(&task_id.0);
+                                            scrap::forget_departure(events, &task_id.0);
                                             // Refused: the ink comes off and the row stays.
                                             if snapshot.with_untracked(|s| held(s, &task_id.0).is_some_and(|task| !task.done)) {
                                                 row::dom::clear_ink(&task_id.0);

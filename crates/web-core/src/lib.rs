@@ -6,10 +6,12 @@ pub mod body;
 pub mod clock;
 #[cfg(test)]
 mod contrast;
+pub mod events;
 pub mod gesture;
 pub mod hop;
 pub mod ink;
 pub mod mascot;
+pub mod pen;
 pub mod placing;
 pub mod planner;
 pub mod row;

@@ -120,7 +120,7 @@ impl Store {
     }
 
     /// Fetch the list again; whether a list came back.
-    async fn reload(self) -> bool {
+    pub(crate) async fn reload(self) -> bool {
         let Some(ticket) = self.core.try_update_value(|core| core.reload()) else {
             return false;
         };

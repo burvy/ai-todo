@@ -3,7 +3,7 @@ use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
 
 // The core (crates/web-core), under the paths the page has always used.
-pub use rambl_web_core::{clock, gesture, hop, ink, tuning};
+pub use rambl_web_core::{clock, gesture, hop, ink, pen, tuning};
 pub mod account;
 pub mod api;
 pub mod brain;
@@ -11,7 +11,6 @@ pub mod inklayer;
 pub mod lamp;
 pub mod mascot;
 pub mod music;
-pub mod pen;
 pub mod pickers;
 pub mod row;
 pub mod settings;
@@ -24,6 +23,7 @@ pub mod week;
 mod capture;
 mod edits;
 mod engine;
+mod events;
 mod flip;
 mod flip_turner;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -60,6 +60,7 @@ pub fn App() -> impl IntoView {
     let (view_settings, set_view_settings) = signal(settings::load());
     let (error, set_error) = signal::<Option<String>>(None);
     store::Store::provide(snapshot, set_snapshot, set_error);
+    events::Queue::provide();
     let (brain_speech, set_brain_speech) = signal::<Option<String>>(None);
     let (brain_pose, set_brain_pose) = signal("home".to_owned());
     let (brain_event, set_brain_event) = signal::<Option<rambl_brain::Event>>(None);
