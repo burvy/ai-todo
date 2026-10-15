@@ -69,7 +69,7 @@ Scale (rem): `--text-xs` 0.85, `--text-sm` 0.95, `--text-base` 1.05, `--text-lg`
 - **Controls:** buttons are plain ink text (44px targets kept); hover underlines at 4px offset. The active tab or filter is 700-weight accent text with a 2px accent underline at 6px offset — no outline, no fill.
 - **Inputs:** transparent background, no box, one `--rule-strong` underline — writing on a rule. Focus turns the underline `--accent`.
 - **Task rows** are separated by a solid `--rule` hairline, like ruled paper.
-- **Placements** are slips of `--paper-raised` paper with the page's grain (`--texture-paper`), laid on the hour lines: cut straight at a 3px `--brass` left edge, torn down the right (`--slip-cut`, `--slip-tear`, masks that tile so a tall slip tears as finely as a short one), with `--shadow-drop` and a crook of under half a degree. Back-to-back slips keep a hairline of page between them.
+- **Placements** are slips of `--paper-raised` paper with the page's grain (`--texture-paper`), laid on the hour lines: cut straight at a 3px `--brass` left edge, torn down the right (`--slip-cut`, `--slip-tear`, masks that tile so a tall slip tears as finely as a short one), with `--shadow-drop` and a crook of under half a degree. Back-to-back slips keep a hairline of page between them. The drag ghost is the same paper in hand, lifted by `--lift-drop`, a drop shadow that follows the tear.
 - Radii are 0 everywhere (`--radius-sm`, `--radius-md` 2px for the loose-sheet dialog) except round things: Rambo's nest (`--radius-round`) and the ask bubble (12px).
 - Errors keep a red left bar (3px `--danger`) on a faint red wash, square corners.
 
