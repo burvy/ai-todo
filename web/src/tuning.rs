@@ -29,6 +29,38 @@ pub const LAMP_SLIDE_MS: u32 = 340;
 /// How long the lamp's cord stays pulled down after a tap, in ms. Safe range 150 to 400.
 pub const LAMP_PULL_MS: u32 = 240;
 
+// Rambo's dance to that music (`engine/dance.rs`): he hears each note's attack in how
+// loud the music is, and every beat kicks his sway and bounces the nest.
+
+/// How quickly he follows the music's loudness, and how slowly he remembers it, in ms: a
+/// note's attack is the quick one rising above the slow one. Safe ranges 15 to 60 and
+/// 250 to 800.
+pub const DANCE_FAST_MS: f64 = 30.0;
+pub const DANCE_SLOW_MS: f64 = 400.0;
+/// How far above lately's loudness a sound must rise to be a beat. Safe range 1.2 to 2.5:
+/// lower and he twitches at every swell, higher and only the loudest chords move him. At
+/// 1.35 the Nocturne (the first track) moves him about every 1.6 s; at 1.5, half as often.
+pub const DANCE_ONSET_RATIO: f64 = 1.35;
+/// Softer than this is silence to him (loudness, 0 to 1). Safe range 0.001 to 0.01.
+pub const DANCE_FLOOR: f64 = 0.003;
+/// The shortest gap between two beats he moves to, in ms. Safe range 180 to 500.
+pub const DANCE_MIN_GAP_MS: f64 = 250.0;
+/// His sway: how stiff (rad/s) and how damped (a share of critical), how hard a full
+/// beat kicks it (degrees/s), and the most it leans (degrees). Loose and slow, so the
+/// swing carries from one note to the next and the notes swell it: a period of about
+/// 2 s that takes about 3 s to die away. Safe ranges 2 to 5, 0.08 to 0.3, 8 to 30 and
+/// 3 to 10.
+pub const DANCE_OMEGA: f64 = 3.0;
+pub const DANCE_DAMPING: f64 = 0.12;
+pub const DANCE_LEAN_KICK: f64 = 15.0;
+pub const DANCE_LEAN_MAX_DEG: f64 = 6.0;
+/// How hard a full beat bounces the nest under him, in px/s of sag: he bobs on it, a
+/// few px on a phone. Safe range 30 to 90.
+pub const DANCE_BOUNCE_KICK: f64 = 60.0;
+/// How often a sleeping Rambo checks whether the music has started, in ms. Safe range
+/// 250 to 1000.
+pub const DANCE_LISTEN_MS: f64 = 500.0;
+
 const _: () = assert!(60 % MINUTE_STEP == 0);
 
 // ---- What a finger means (web/src/gesture.rs, VISION-AUDIT item 3): one slop and

@@ -2,6 +2,7 @@
 //! (ARCHITECTURE "The engine"). Jobs run on its frames (`on_tick`, `next_frame`) or
 //! every so often in its time (`every`); the loop sleeps when none is waiting.
 
+mod dance;
 mod fling;
 mod link;
 mod look;
