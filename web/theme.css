@@ -1101,14 +1101,13 @@ li.task-row:focus-within .delete-mark {
 }
 
 /* The mood picture beside him: a floating z, sparks, a grumpy scribble cloud.
-   Drawn with currentColor, so it takes the page's ink in light and dark. */
-.rambo img.rambo-fx {
+   Drawn into the page through <use> in --rambo-fx, so it takes the page's theme. */
+.rambo .rambo-fx {
   position: absolute;
   top: -2%;
   right: -16%;
   width: 44%;
   height: 44%;
-  color: var(--ink-soft);
   transform-origin: 50% 100%;
   animation: rambo-fx-float 2.6s ease-in-out infinite;
 }
@@ -2745,7 +2744,10 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   content: "";
   position: absolute;
   inset: -0.2em -0.4em;
-  background: url("assets/rambo/fx/scribble-cloud.svg") center / contain no-repeat;
+  /* A background image cannot see the page's tokens, so the cloud is a mask and the colour
+     is the page's own. */
+  background-color: var(--rambo-fx);
+  mask: url("assets/rambo/fx/scribble-cloud.svg") center / contain no-repeat;
   animation: scribble-cloud var(--scribble-ms, 420ms) ease-in forwards;
   pointer-events: none;
 }

@@ -583,7 +583,14 @@ impl Fx {
         }
     }
 
+    /// The `<use>` reference: the picture is drawn into the page, so it takes the page's
+    /// tokens (`--rambo-fx`) and follows the theme, not the operating system.
     pub fn art(self) -> String {
+        format!("{}#art", self.art_file())
+    }
+
+    /// The file the picture lives in.
+    pub fn art_file(self) -> String {
         format!("assets/rambo/fx/{}.svg", self.id())
     }
 }
@@ -1248,8 +1255,42 @@ mod tests {
     #[test]
     fn fx_art_lives_beside_the_skins() {
         for fx in [Fx::SleepyZ, Fx::Sparks, Fx::ScribbleCloud] {
-            let file = art_file(&fx.art());
+            let file = art_file(&fx.art_file());
             assert!(file.is_file(), "missing art: {file:?}");
+        }
+    }
+
+    /// The pictures are shown through `<use>`, so they must expose `#art` and take the
+    /// page's colour: `currentColor` or a fixed colour would make them follow the
+    /// operating system (or stay black on a dark page).
+    #[test]
+    fn fx_art_takes_the_page_theme() {
+        for fx in [Fx::SleepyZ, Fx::Sparks, Fx::ScribbleCloud] {
+            let svg = std::fs::read_to_string(art_file(&fx.art_file())).expect("fx art exists");
+            assert!(svg.contains("<g id=\"art\""), "{fx:?} has no #art group");
+            // The colour goes in a `style` declaration: `var()` in a presentation attribute
+            // (`fill="var(..)"`) is not honoured by every engine, and the picture, and the
+            // mask made from it, would draw nothing.
+            assert!(
+                svg.contains("style=\"stroke: var(--rambo-fx"),
+                "{fx:?} ignores --rambo-fx"
+            );
+            for paint in ["fill=\"var(", "stroke=\"var("] {
+                assert!(
+                    !svg.contains(paint),
+                    "{fx:?}: `{paint}` is a presentation attribute"
+                );
+            }
+            assert!(
+                !svg.contains("currentColor"),
+                "{fx:?} follows the OS, not the page"
+            );
+            // A `--` inside an XML comment makes the file unparseable and the picture blank.
+            let comment = svg.split("-->").next().unwrap_or_default();
+            assert!(
+                !comment.trim_start_matches("<!--").contains("--"),
+                "{fx:?}: `--` in the comment"
+            );
         }
     }
 

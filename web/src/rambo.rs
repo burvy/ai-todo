@@ -1236,7 +1236,9 @@ pub(crate) fn Rambo(
             </svg>
             // The mood's little picture, when the mood has one and he is home.
             {move || mascot::fx_for(&state.get(), &brain_pose.get(), typing.get()).map(|fx| view! {
-                <img class="rambo-fx" src=fx.art() alt="" aria-hidden="true" />
+                <svg class="rambo-fx" viewBox="0 0 48 48" aria-hidden="true">
+                    <use href=fx.art() />
+                </svg>
             })}
             // Speech bubble: inside the button so it follows Rambo everywhere
             <span class="mascot-status" aria-live="polite">
