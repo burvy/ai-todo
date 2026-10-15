@@ -19,8 +19,8 @@ use crate::store::Store;
 use crate::tasks::occurrence_parts;
 use crate::tuning::{
     BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGE_PX, PIN_EDGES, PIN_ROOM_PX, ROW_SLIDE_OMEGA,
-    SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX, STRIP_GAP_PX,
-    STRIP_H_PX, STRIP_RELEASE_OMEGA, STRIP_STACK_OMEGA,
+    SCRAP_LEAVE_OMEGA, SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX,
+    STRIP_GAP_PX, STRIP_H_PX, STRIP_RELEASE_OMEGA, STRIP_STACK_OMEGA,
 };
 use rambl_web_core::events::{Event, any_row_back, row_back, row_left};
 use rambl_web_core::store::Command;
@@ -457,6 +457,39 @@ fn carry_row(row: &web_sys::HtmlElement, id: &str, (dx, dy): (f64, f64)) {
     );
 }
 
+/// Slide a scrap whose time is up off the page's right edge, turning as it goes, on a
+/// spring (`engine::glide_keyed`). With reduced motion it only waits to be removed.
+fn slide_off(strip: &web_sys::HtmlElement, ticket: u32) {
+    if crate::mascot::prefers_reduced_motion() {
+        return;
+    }
+    let pull = crate::engine::Pull {
+        omega: SCRAP_LEAVE_OMEGA,
+        zeta: 1.0,
+    };
+    let travel = f64::from(strip.offset_width()) + LEAVE_GUTTER_PX;
+    let style = strip.style();
+    crate::engine::glide_keyed(
+        &format!("leave:{ticket}"),
+        [0.0, 0.0],
+        [travel, LEAVE_TURN_DEG],
+        pull,
+        ROW_NEAR_PX,
+        move |[x, turn]| {
+            let _ = style.set_property(
+                "transform",
+                &format!("translateX({x:.1}px) rotate(calc(var(--hang, 0deg) + {turn:.1}deg))"),
+            );
+        },
+        || {},
+    );
+}
+
+/// How far past the strip's own width it travels, in px, to be clear of the page's edge.
+const LEAVE_GUTTER_PX: f64 = 16.0;
+/// How far, in degrees, it turns as it goes.
+const LEAVE_TURN_DEG: f64 = 14.0;
+
 /// How near, in px, a flying row must come to its place to count as there.
 const ROW_NEAR_PX: f64 = 0.3;
 
@@ -655,7 +688,6 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
             class="scrap-pile"
             style:--strip-h=format!("{STRIP_H_PX}px")
             style:--strip-gap=format!("{STRIP_GAP_PX}px")
-            style:--scrap-ms=format!("{SCRAP_SLIDE_MS}ms")
             style:--bin-crumple-ms=format!("{BIN_CRUMPLE_MS}ms")
             style:--pin-room=format!("{PIN_ROOM_PX}px")
             style:--edge-px=format!("{PIN_EDGE_PX}px")
@@ -834,6 +866,17 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                             ready.is_some()
                         });
                     }
+                    // Its time is up: it slides off the page's edge.
+                    Effect::new(move |was: Option<bool>| {
+                        let leaving = state(|s| s.leaving);
+                        if leaving
+                            && was != Some(true)
+                            && let Some(strip) = hung.get_untracked()
+                        {
+                            slide_off(&strip, ticket);
+                        }
+                        leaving
+                    });
                     view! {
                         <button
                             type="button"
@@ -841,7 +884,6 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                             node_ref=hung
                             class:leaving=move || state(|s| s.leaving)
                             class:taping=move || state(|s| s.taping)
-                            style:--scrap-ms=format!("{SCRAP_SLIDE_MS}ms")
                             style:--hang=format!("{}deg", sway_deg(ticket))
                             aria-label=label
                             title="Tap to tape it back"

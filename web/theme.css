@@ -770,7 +770,6 @@ li.task-row.row-lifted {
   clip-path: polygon(6% 0, 100% 3%, 97% 28%, 100% 55%, 96% 80%, 100% 100%, 55% 97%, 28% 100%, 0 96%, 4% 66%, 0 38%, 4% 14%);
   transform-origin: top center;
   transform: rotate(var(--hang, 0deg));
-  transition: transform var(--scrap-ms) cubic-bezier(0.23, 1, 0.32, 1);
   cursor: pointer;
 }
 
@@ -790,7 +789,6 @@ li.task-row.row-lifted {
      drag on the strip is the strip's own. */
   translate: var(--drag-x, 0px) calc(var(--depth, 0) * var(--edge-px, 4px) + var(--drag-y, 0px));
   touch-action: none;
-  transition: transform var(--scrap-ms) cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 /* The edges under the top strip keep their title in the layout, so promoting one to the
@@ -838,8 +836,8 @@ li.task-row.row-lifted {
   background: url("assets/tackboard/pin.svg") center / contain no-repeat;
 }
 
+/* It slides off the page's edge on a spring (`scrap.rs:slide_off`, inline `transform`). */
 .scrap-undo.leaving {
-  transform: translateX(calc(100% + var(--gutter))) rotate(14deg);
   pointer-events: none;
 }
 
@@ -862,10 +860,8 @@ li.task-row.row-lifted {
 /* No motion: the scrap simply hangs, and is simply gone. */
 @media (prefers-reduced-motion: reduce) {
   .scrap-undo,
-  .scrap-undo.done,
-  .scrap-undo.leaving {
+  .scrap-undo.done {
     transform: rotate(var(--hang, 0deg));
-    transition: none;
   }
 
   /* The crumple is motion: with it off the strip is simply deleted once it is dropped. */
