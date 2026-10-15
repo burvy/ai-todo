@@ -34,6 +34,8 @@ Rambl is a speed-focused to-do list: you ramble, Jev (TypeSafe's model) helps tu
 4. **Time.** Never read the wall clock or assume UTC outside `core`'s `Clock` and `LocalContext`.
 5. **Secrets.** Never commit `.env`, keys or `data/`. Never print a key.
 
+Claude agents: browser smoke checks are `node tools/smoke/run.mjs`, which drives a release build in Edge at desk and phone sizes. Run it after a change to the planner, rows, the edit sheet, the gear menu or Rambo. Agents that may not run servers or browsers (see STATUS.md) do not run it. It is not in CI (see `tools/smoke/README.md`).
+
 ## Definition of done (run all of it, once, at the end)
 
 Make all your edits first, then run the gate once. Re-running it after every small edit wastes budget and trips the office's loop detector.
