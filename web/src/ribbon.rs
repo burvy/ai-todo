@@ -5,7 +5,7 @@
 
 use leptos::prelude::*;
 
-use crate::tuning::{RIBBON_GLIDE_MS, RIBBON_PULL_MAX_PX, RIBBON_PULL_PX, RIBBON_TAP_PX};
+use crate::tuning::{RIBBON_PULL_MAX_PX, RIBBON_PULL_PX, RIBBON_TAP_PX};
 
 /// How far the ribbon stretches for a finger pulled `dy` px down: one for one at first,
 /// then stiffer, never past [`RIBBON_PULL_MAX_PX`]; pushed up, not at all.
@@ -21,14 +21,16 @@ pub(crate) fn jumps(dy: f64) -> bool {
 /// Where the ribbon hangs, from the left of the planner page: just inside the right edge
 /// of today's column (`today_right`, `width` the ribbon's own), held between `lo` and
 /// `hi`, the planner's visible edges, when today is scrolled away.
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn hang_left(today_right: f64, width: f64, lo: f64, hi: f64) -> f64 {
     (today_right - 1.5 * width).clamp(lo, hi.max(lo))
 }
 
-/// Where a slide back to today is `ms` into its [`RIBBON_GLIDE_MS`], from `from` to
+/// Where a slide back to today is `ms` into its [`crate::tuning::RIBBON_GLIDE_MS`], from `from` to
 /// `to`: easing in and out, there exactly at the end and after.
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn glide(from: f64, to: f64, ms: f64) -> f64 {
-    let x = (ms / RIBBON_GLIDE_MS).clamp(0.0, 1.0);
+    let x = (ms / crate::tuning::RIBBON_GLIDE_MS).clamp(0.0, 1.0);
     from + (to - from) * x * x * (3.0 - 2.0 * x)
 }
 
@@ -105,6 +107,7 @@ pub(crate) fn Ribbon(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tuning::RIBBON_GLIDE_MS;
 
     #[test]
     fn the_ribbon_stretches_with_the_pull_ever_stiffer_and_never_past_its_most() {
