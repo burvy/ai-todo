@@ -64,7 +64,12 @@ function killTree(pid) {
 async function startServer(dataDir) {
   const port = await freePort();
   const child = spawn(serverBin, [], {
-    env: { ...process.env, RAMBL_PORT: String(port), RAMBL_DATA: join(dataDir, "rambl.db") },
+    env: {
+      ...process.env,
+      RAMBL_PORT: String(port),
+      RAMBL_BIND: "127.0.0.1",
+      RAMBL_DATA: join(dataDir, "rambl.db"),
+    },
     stdio: "ignore",
   });
   await waitFor(async () => (await fetch(`http://127.0.0.1:${port}/`)).ok, 20000, "the server");
