@@ -538,8 +538,8 @@ c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:Choice, asking_dismissed_b
 
 ### 4a. Sound presets
 a. The gear menu's **Sound** picks one of four: **Off** (silence; Rambo does not speak
-aloud), **A quiet desk** (only the noises paper and ink really make: the nib, the
-scribble, the page turn, the crumple; no voice), **Every touch answers** (the default:
+aloud), **A quiet desk** (only the noises paper and ink really make: the nib, its
+knock on the nest's rim, the scribble, the page turn, the crumple; no voice), **Every touch answers** (the default:
 also a tick on every button and a swish when a ramble is sent) and **Everything + music**
 (the same cues, plus calm piano under them: two public-domain recordings, looped softly,
 started by the first press after the choice). While it plays, Rambo dances to it in his
