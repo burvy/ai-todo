@@ -136,7 +136,7 @@ pub(crate) fn pose(state: &State, ms: f64, reduced_motion: bool) -> Look {
         | State::Thrown
         | State::Inking
         | State::Asking { .. }
-        | State::Noting => plain,
+        | State::Noting { .. } => plain,
     }
 }
 

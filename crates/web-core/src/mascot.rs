@@ -16,6 +16,14 @@
 
 use crate::settings::Pen;
 
+/// The empty planner hour Rambo was dropped on: its date phrase, which the capture box
+/// shows, and the instant a task noted there starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotedHour {
+    pub phrase: String,
+    pub at: chrono::DateTime<chrono::Utc>,
+}
+
 /// The folder a tool's drawings live in. The fountain pen is `fountain-pen` in
 /// the settings and in `data-pen`, and `fountain` on disk.
 fn art_folder(pen: Pen) -> &'static str {
@@ -53,8 +61,9 @@ pub enum State {
     /// Dropped on a task: asking what to do with it.
     Asking { task_id: String, title: String },
     /// Dropped on an empty planner hour: he stays on it and listens for the new task
-    /// that starts there (SPEC-ANSWERS Interview 3 item 4).
-    Noting,
+    /// that starts there (SPEC-ANSWERS Interview 3 item 4). The hour is his to hold, so
+    /// it goes when he leaves it.
+    Noting { at: NotedHour },
     /// Flying to the capture caret or a task row (transit, not writing yet).
     Flying,
     /// Writing along at the capture caret while the user types.
@@ -82,7 +91,7 @@ pub enum Event {
     /// Dropped on a task row or planner block.
     DropTask { task_id: String, title: String },
     /// Dropped on an empty hour of the planner.
-    DropHour,
+    DropHour(NotedHour),
     /// Put back in his nest.
     DropNest,
     /// The page he lies on scrolled faster than he can hold on: he is flung with it.
@@ -153,7 +162,7 @@ pub fn transition(state: &State, event: Event) -> State {
         // hold on flings him with the paper: a throw like any other (Interview 1 item 2).
         (State::Dazed | State::Asking { .. }, Event::Swept) => State::Thrown,
         (State::Dragging, Event::DropTask { task_id, title }) => State::Asking { task_id, title },
-        (State::Dragging, Event::DropHour) => State::Noting,
+        (State::Dragging, Event::DropHour(at)) => State::Noting { at },
 
         // Splatting → Dazed → Skittering → Home.
         (State::Splatting, Event::Return) => State::Dazed,
@@ -165,7 +174,11 @@ pub fn transition(state: &State, event: Event) -> State {
         // undazed. Home is the nest, in the bar and
         // on no page; in hand he is above the page; in transit he is not standing there.
         (
-            State::Dazed | State::Inking | State::Splatting | State::Asking { .. } | State::Noting,
+            State::Dazed
+            | State::Inking
+            | State::Splatting
+            | State::Asking { .. }
+            | State::Noting { .. },
             Event::Covered,
         ) => State::Covered,
         (State::Covered, Event::Uncovered) => State::Home,
@@ -182,7 +195,7 @@ pub fn transition(state: &State, event: Event) -> State {
         // Asking: choose or return goes home.
         (State::Asking { .. }, Event::Choose | Event::Return) => State::Home,
         // Noting: the new task sent, or never mind, goes home.
-        (State::Noting, Event::Return) => State::Home,
+        (State::Noting { .. }, Event::Return) => State::Home,
 
         // Writing caret: fly home when done, or fly to a row (after Add). A
         // row he cannot see is skipped without a flight.
@@ -316,7 +329,7 @@ pub fn asking_dismissed_by(
     gesture: &crate::gesture::Gesture,
     on_answer: bool,
 ) -> bool {
-    matches!(state, State::Asking { .. } | State::Noting)
+    matches!(state, State::Asking { .. } | State::Noting { .. })
         && *gesture == crate::gesture::Gesture::Tap
         && !on_answer
 }
@@ -368,7 +381,7 @@ pub fn is_off_nest(state: &State) -> bool {
             | State::Covered
             | State::Skittering
             | State::Asking { .. }
-            | State::Noting
+            | State::Noting { .. }
             | State::Flying
             | State::WritingCaret
             | State::WritingRow
@@ -404,7 +417,7 @@ pub fn hops_there(state: &State, settled_home: bool) -> bool {
         | State::Splatting
         | State::Covered
         | State::Asking { .. }
-        | State::Noting => false,
+        | State::Noting { .. } => false,
         State::Home => !settled_home,
         State::Flying | State::WritingCaret | State::Skittering => true,
     }
@@ -460,7 +473,7 @@ pub fn rambo_class(state: &State, pose: &str) -> String {
         State::Splatting => " is-splatting",
         State::Skittering => " is-skittering",
         State::Asking { .. } => " is-asking",
-        State::Noting => " is-noting",
+        State::Noting { .. } => " is-noting",
         State::Flying => " is-flying",
         State::WritingCaret => " is-flying is-writing is-caret",
         // Not a flight: the flight's eased transition would trail the nib behind
@@ -622,7 +635,7 @@ pub fn mood_for(brain_pose: &str, typing: bool) -> Mood {
 /// type. A lobotomized Rambl is vacant whatever you do, so it wins over both.
 pub fn pose_for(state: &State, brain_pose: &str, typing: bool) -> Pose {
     match state {
-        State::Dragging | State::Noting => Pose::Listening,
+        State::Dragging | State::Noting { .. } => Pose::Listening,
         State::WritingCaret | State::WritingRow | State::Inking => Pose::Writing,
         State::Flying | State::Thrown => Pose::Flying,
         State::Asking { .. } => Pose::Teasing,
@@ -847,6 +860,23 @@ mod tests {
         );
     }
 
+    /// An hour he was dropped on.
+    fn hour() -> NotedHour {
+        use chrono::TimeZone as _;
+        NotedHour {
+            phrase: "today 11:15".into(),
+            at: chrono::Utc
+                .with_ymd_and_hms(2026, 10, 15, 15, 15, 0)
+                .single()
+                .expect("a plain instant"),
+        }
+    }
+
+    /// Noting a task at [`hour`].
+    fn noting() -> State {
+        State::Noting { at: hour() }
+    }
+
     /// Every state, and every event, the guard tests below walk.
     fn every_state() -> Vec<State> {
         vec![
@@ -860,7 +890,7 @@ mod tests {
                 task_id: "t1".into(),
                 title: "Lab report".into(),
             },
-            State::Noting,
+            noting(),
             State::Flying,
             State::WritingCaret,
             State::WritingRow,
@@ -873,7 +903,7 @@ mod tests {
             Event::Release,
             Event::DropEmpty,
             Event::DropHard,
-            Event::DropHour,
+            Event::DropHour(hour()),
             Event::Swept,
             Event::DropTask {
                 task_id: "t1".into(),
@@ -1364,10 +1394,10 @@ mod tests {
             (&State::Home, &Gesture::Tap, false, false),
             (&State::Dazed, &Gesture::Tap, false, false),
             // Noting a task, the capture box is what he asks with.
-            (&State::Noting, &Gesture::Tap, false, true),
-            (&State::Noting, &Gesture::Tap, true, false),
-            (&State::Noting, &Gesture::Hold, false, false),
-            (&State::Noting, &drag, false, false),
+            (&noting(), &Gesture::Tap, false, true),
+            (&noting(), &Gesture::Tap, true, false),
+            (&noting(), &Gesture::Hold, false, false),
+            (&noting(), &drag, false, false),
         ];
         for (state, gesture, on_bubble, dismissed) in table {
             assert_eq!(
@@ -1383,9 +1413,9 @@ mod tests {
     #[test]
     fn only_a_listening_rambo_dropped_on_an_hour_notes_a_task_there() {
         for state in every_state() {
-            let after = transition(&state, Event::DropHour);
+            let after = transition(&state, Event::DropHour(hour()));
             match state {
-                State::Dragging => assert_eq!(after, State::Noting),
+                State::Dragging => assert_eq!(after, noting()),
                 // Dazed and writing, a drop is ink, never a task.
                 _ => assert_eq!(after, state, "{state:?} ignores an hour"),
             }
@@ -1393,12 +1423,17 @@ mod tests {
         // He stays on the hour, listening, away from his nest, until the task is sent
         // or never mind; a grab does not pick him off it, and a leaf closing over the
         // planner catches him under it like anywhere on the page.
-        assert!(!hops_there(&State::Noting, false));
-        assert!(is_off_nest(&State::Noting));
-        assert_eq!(pose_for(&State::Noting, "happy", false), Pose::Listening);
-        assert_eq!(transition(&State::Noting, Event::Return), State::Home);
-        assert_eq!(transition(&State::Noting, Event::Grab), State::Noting);
-        assert_eq!(transition(&State::Noting, Event::Covered), State::Covered);
+        assert!(!hops_there(&noting(), false));
+        assert!(is_off_nest(&noting()));
+        assert_eq!(pose_for(&noting(), "happy", false), Pose::Listening);
+        assert_eq!(transition(&noting(), Event::Return), State::Home);
+        // The hour he holds is the one he was dropped on, and a grab keeps it.
+        assert_eq!(
+            transition(&State::Dragging, Event::DropHour(hour())),
+            State::Noting { at: hour() }
+        );
+        assert_eq!(transition(&noting(), Event::Grab), noting());
+        assert_eq!(transition(&noting(), Event::Covered), State::Covered);
     }
 
     #[test]
