@@ -12,11 +12,6 @@ pub(crate) use rambl_web_core::planner::*;
 use rambl_web_core::store::Command;
 use rambl_web_core::week::{self as model, SlipDrag};
 
-/// How near, in px, a gliding ribbon head or stretched slip must come to its end to count
-/// as there.
-#[cfg(target_arch = "wasm32")]
-const SLIDE_NEAR_PX: f64 = 0.1;
-
 #[component]
 pub fn WeekGrid(
     snapshot: ReadSignal<Snapshot>,
@@ -191,7 +186,7 @@ pub fn WeekGrid(
                     "ribbon-head",
                     slack,
                     0.0,
-                    SLIDE_NEAR_PX,
+                    crate::tuning::SLIDE_NEAR_PX,
                     move |slack| {
                         ribbon_slack.set_value(slack);
                         let spot = ribbon_hung.get_value().map_or(0.0, |(_, left)| left);
@@ -1149,7 +1144,7 @@ fn glide_height(slip: web_sys::HtmlElement, key: &str, from: f64, to: f64) {
         key,
         from,
         to,
-        SLIDE_NEAR_PX,
+        crate::tuning::SLIDE_NEAR_PX,
         move |height| {
             let _ = style.set_property("height", &format!("{height:.2}px"));
         },
