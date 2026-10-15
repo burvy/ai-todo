@@ -12,6 +12,11 @@ pub(crate) use rambl_web_core::planner::*;
 use rambl_web_core::store::Command;
 use rambl_web_core::week::{self as model, SlipDrag};
 
+/// How near, in px, a gliding ribbon head or stretched slip must come to its end to count
+/// as there.
+#[cfg(target_arch = "wasm32")]
+const SLIDE_NEAR_PX: f64 = 0.1;
+
 #[component]
 pub fn WeekGrid(
     snapshot: ReadSignal<Snapshot>,
@@ -164,21 +169,49 @@ pub fn WeekGrid(
     let (at_earliest, set_at_earliest) = signal(true);
     // The bookmark ribbon's head (ribbon.rs) sticks out of the day names at today's
     // column, or at the edge today went past, kept up with the paper as it scrolls; its
-    // tail lies on today's hours, under the slips.
+    // tail lies on today's hours, under the slips. A hop to another day eases: the head
+    // is drawn at its spot plus a slack that glides away (`ribbon::hop_slack`), so it
+    // still keeps up with the paper while it eases.
     let (ribbon_left, set_ribbon_left) = signal(0.0_f64);
     let (ribbon_top, set_ribbon_top) = signal(0.0_f64);
     let (ribbon_height, set_ribbon_height) = signal(0.0_f64);
+    let ribbon_hung = StoredValue::new(None::<(Option<usize>, f64)>);
+    let ribbon_slack = StoredValue::new(0.0_f64);
     let hang_ribbon = move || {
         #[cfg(target_arch = "wasm32")]
-        if let Some((left, top, height)) =
+        if let Some((day, left, top, height)) =
             grid_ref.get_untracked().and_then(|grid| ribbon_spot(&grid))
         {
-            set_ribbon_left.set(left);
+            let was = ribbon_hung.get_value().map(|(was, _)| was);
+            ribbon_hung.set_value(Some((day, left)));
+            if let Some(slack) =
+                crate::ribbon::hop_slack(was, day, ribbon_left.get_untracked(), left)
+            {
+                crate::slide::slide(
+                    "ribbon-head",
+                    slack,
+                    0.0,
+                    SLIDE_NEAR_PX,
+                    move |slack| {
+                        ribbon_slack.set_value(slack);
+                        let spot = ribbon_hung.get_value().map_or(0.0, |(_, left)| left);
+                        set_ribbon_left.set(spot + slack);
+                    },
+                    || {},
+                );
+            }
+            set_ribbon_left.set(left + ribbon_slack.get_value());
             set_ribbon_top.set(top);
             set_ribbon_height.set(height);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        let _ = (set_ribbon_left, set_ribbon_top, set_ribbon_height);
+        let _ = (
+            ribbon_hung,
+            ribbon_slack,
+            set_ribbon_left,
+            set_ribbon_top,
+            set_ribbon_height,
+        );
     };
     // It finds today again whenever the days change, and whenever the paper changes
     // size: laid out, shown by a phone's page turn, or the window resized.
@@ -492,7 +525,7 @@ fn long_press_stop(_: leptos::ev::PointerEvent) {}
 /// today's column, whose name is written at its left. With today scrolled away it waits
 /// in the first column still in sight, at the same spot, so it covers no name.
 #[cfg(target_arch = "wasm32")]
-fn ribbon_spot(grid: &web_sys::HtmlDivElement) -> Option<(f64, f64, f64)> {
+fn ribbon_spot(grid: &web_sys::HtmlDivElement) -> Option<(Option<usize>, f64, f64, f64)> {
     let page_el = grid.closest(".planner-page").ok()??;
     let page = page_el.get_bounding_client_rect();
     let paper = grid.get_bounding_client_rect();
@@ -506,7 +539,7 @@ fn ribbon_spot(grid: &web_sys::HtmlDivElement) -> Option<(f64, f64, f64)> {
     let rights = (0..days.length())
         .filter_map(|i| days.item(i))
         .map(|day| day.get_bounding_client_rect().right() - page.left());
-    let left = crate::ribbon::hang_left(
+    let (day, left) = crate::ribbon::hang_left(
         rights,
         ribbon.width(),
         paper.left() - page.left(),
@@ -518,6 +551,7 @@ fn ribbon_spot(grid: &web_sys::HtmlDivElement) -> Option<(f64, f64, f64)> {
         .ok()??
         .get_bounding_client_rect();
     Some((
+        day,
         left,
         (band.top() - page.top()).floor(),
         band.height().ceil(),
@@ -1019,7 +1053,7 @@ pub(crate) fn stretch(
         } else {
             // Refused, the slip goes back to the length it still has.
             #[cfg(target_arch = "wasm32")]
-            unstretch_slip(&id, stretched.from, stretched.to);
+            resize_slip(&id, stretched.to, stretched.from);
         }
     });
 }
@@ -1072,68 +1106,55 @@ fn slips_of(id: &TaskId) -> Vec<web_sys::HtmlElement> {
         .collect()
 }
 
-/// Grows or shrinks task `id`'s slip on the page from `from` to `to` minutes long, so
-/// it moves the moment it is asked, before the change is saved.
+/// Grows or shrinks task `id`'s slips on the page from `from` to `to` minutes long, so
+/// they move the moment it is asked, before the change is saved. Each counts from the
+/// height it is headed to, so a quick second stretch, or a refused one taken back
+/// (`to` back to `from`), lands where it should even mid-glide.
 #[cfg(target_arch = "wasm32")]
 fn resize_slip(id: &TaskId, from: u16, to: u16) {
-    for slip in slips_of(id) {
-        let height = resized_px(slip.get_bounding_client_rect().height() as f32, from, to);
-        let _ = slip.class_list().add_1("stretching");
-        let _ = slip
-            .style()
-            .set_property("height", &format!("{height:.1}px"));
+    for (i, slip) in slips_of(id).into_iter().enumerate() {
+        let shown = slip.get_bounding_client_rect().height();
+        let headed = slip
+            .get_attribute("data-headed-px")
+            .and_then(|px| px.parse::<f32>().ok())
+            .unwrap_or(shown as f32);
+        let to = f64::from(resized_px(headed, from, to));
+        glide_height(slip, &stretch_key(id, i), shown, to);
     }
 }
 
-/// Takes back a stretch whose save was refused: task `id`'s slips ease from the `to`
-/// minutes they were stretched to back to `from`, then lose `.stretching`, so a later
-/// redraw of them does not ease. It starts from the height they were stretched to, not
-/// the one they have reached, since a quick refusal can come mid-ease.
-#[cfg(target_arch = "wasm32")]
-fn unstretch_slip(id: &TaskId, from: u16, to: u16) {
-    use wasm_bindgen::JsCast as _;
-    for slip in slips_of(id) {
-        let style = slip.style();
-        let stretched = style
-            .get_property_value("height")
-            .ok()
-            .and_then(|height| height.trim_end_matches("px").parse::<f32>().ok())
-            .unwrap_or_else(|| slip.get_bounding_client_rect().height() as f32);
-        let _ = style.set_property(
-            "height",
-            &format!("{:.1}px", resized_px(stretched, to, from)),
-        );
-        let eased = slip.clone();
-        let done = wasm_bindgen::closure::Closure::once_into_js(move || {
-            let _ = eased.class_list().remove_1("stretching");
-        });
-        let once = web_sys::AddEventListenerOptions::new();
-        once.set_once(true);
-        let _ = slip.add_event_listener_with_callback_and_add_event_listener_options(
-            "transitionend",
-            done.unchecked_ref(),
-            &once,
-        );
-    }
-}
-
-/// Eases task `id`'s newly drawn slip from `reached` px to the height the plan gives it
-/// (`.stretching`'s height transition, which only a stretched slip has).
+/// Glides task `id`'s newly drawn slips from `reached` px to the height the plan gives
+/// them, so a saved stretch carries on from where the old slip had got to.
 #[cfg(target_arch = "wasm32")]
 fn ease_slip_from(id: &TaskId, reached: f64) {
-    for slip in slips_of(id) {
-        let style = slip.style();
-        let Ok(planned) = style.get_property_value("height") else {
-            continue;
-        };
-        let _ = style.set_property("transition", "none");
-        let _ = style.set_property("height", &format!("{reached:.2}px"));
-        // Lay it out at the height reached before it eases on.
-        let _ = slip.offset_height();
-        let _ = style.remove_property("transition");
-        let _ = slip.class_list().add_1("stretching");
-        let _ = style.set_property("height", &planned);
+    for (i, slip) in slips_of(id).into_iter().enumerate() {
+        let planned = slip.get_bounding_client_rect().height();
+        glide_height(slip, &stretch_key(id, i), reached, planned);
     }
+}
+
+/// The glide key of task `id`'s `i`th slip.
+#[cfg(target_arch = "wasm32")]
+fn stretch_key(id: &TaskId, i: usize) -> String {
+    format!("stretch:{}:{i}", id.0)
+}
+
+/// Glides `slip`'s height from `from` to `to` px, and marks `to` on it as where it is
+/// headed.
+#[cfg(target_arch = "wasm32")]
+fn glide_height(slip: web_sys::HtmlElement, key: &str, from: f64, to: f64) {
+    let _ = slip.set_attribute("data-headed-px", &format!("{to:.2}"));
+    let style = slip.style();
+    crate::slide::slide(
+        key,
+        from,
+        to,
+        SLIDE_NEAR_PX,
+        move |height| {
+            let _ = style.set_property("height", &format!("{height:.2}px"));
+        },
+        || {},
+    );
 }
 
 /// The paper a not-yet-lifted finger slides over: `main` along its length,

@@ -236,6 +236,11 @@ pub const SCRAP_LEAVE_OMEGA: f64 = 25.0;
 /// gone, in radians per second (critically damped). 20 is about a third of a second. Safe
 /// range 12 to 35.
 pub const STRIP_STACK_OMEGA: f64 = 20.0;
+/// How quickly paper in the planner and the edit sheet slides, in radians per second
+/// (critically damped): the ribbon's head hopping to another day, a stretched slip
+/// growing or shrinking, the placing note and the edit sheet coming and going. 24 is
+/// about a quarter of a second. Safe range 14 to 40.
+pub const PAPER_SLIDE_OMEGA: f64 = 24.0;
 /// The done tasks hang at the pin as a stack: the newest on top, the rest under it. This many
 /// edges of the older ones show below the top strip, a few px each, to say how deep the stack
 /// is; the rest sit behind the last edge. Safe range 1 to 5.

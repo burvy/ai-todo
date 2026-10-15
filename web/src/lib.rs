@@ -32,6 +32,7 @@ mod rambo;
 mod rambo_world;
 mod ribbon;
 mod scrap;
+mod slide;
 mod smudge;
 mod tasks;
 #[cfg(target_arch = "wasm32")]
