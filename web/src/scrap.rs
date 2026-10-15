@@ -22,7 +22,7 @@ use crate::tuning::{
     SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX, STRIP_GAP_PX,
     STRIP_H_PX,
 };
-use rambl_web_core::events::{Event, row_left};
+use rambl_web_core::events::{Event, any_row_back, row_back, row_left};
 use rambl_web_core::store::Command;
 
 /// What taping a scrap back does.
@@ -59,28 +59,33 @@ pub fn note_departure(events: Queue, id: &str) {
 /// strip will take it. One that went through is left for its strip, which mounts after
 /// this runs; dropping it here sent every strip to the pin without its flight.
 pub fn settle_departure(events: Queue, snapshot: &Snapshot, id: &str) {
-    if tick_refused(snapshot, id) {
+    if tick_refused(snapshot, id, true) {
         events.take_all(row_left(id));
     }
 }
 
-/// Whether a tick on `id` was refused: the row is still listed, not done.
-pub fn tick_refused(snapshot: &Snapshot, id: &str) -> bool {
-    crate::edits::held(snapshot, id).is_some_and(|task| !task.done)
+/// Note where the strip of `id` hangs, for its row about to come back to the list.
+fn note_return(events: Queue, id: &str, from: Spot) {
+    // A newer note of the same row replaces the older one.
+    events.take_all(row_back(id));
+    events.push(Event::RowBack {
+        id: id.to_owned(),
+        from,
+    });
 }
 
-thread_local! {
-    /// Where the strip of a task being taped back hung, so its row can fly back from there.
-    static RETURNS: std::cell::RefCell<std::collections::HashMap<String, Spot>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
+/// The same for a strip taped back: a refused tape drops the noted spot, and one that went
+/// through leaves it for the row, which the list lays out a frame after this runs.
+fn settle_return(events: Queue, snapshot: &Snapshot, id: &str) {
+    if tick_refused(snapshot, id, false) {
+        events.take_all(row_back(id));
+    }
 }
 
-fn note_return(id: &str, spot: Spot) {
-    RETURNS.with(|noted| noted.borrow_mut().insert(id.to_owned(), spot));
-}
-
-fn forget_return(id: &str) {
-    RETURNS.with(|noted| noted.borrow_mut().remove(id));
+/// Whether a tick on `id` asking for `done` was refused: the task is still listed, and
+/// not as asked.
+pub fn tick_refused(snapshot: &Snapshot, id: &str, done: bool) -> bool {
+    crate::edits::held(snapshot, id).is_some_and(|task| task.done != done)
 }
 
 /// Whether a point (`x`, `y`) in a `width` x `height` window is in the bin corner: the
@@ -411,12 +416,12 @@ pub fn slide_rows(moved: &[(String, i32)]) {
 
 /// Fly each row that has just come back from the pin from where its strip hung. A strip
 /// not yet answered for (the row is not in the list) is kept for the next look.
-pub fn fly_rows_back() {
+pub fn fly_rows_back(events: Queue) {
     let Some(doc) = web_sys::window().and_then(|window| window.document()) else {
         return;
     };
     let motion = !crate::mascot::prefers_reduced_motion();
-    let noted: Vec<(String, Spot)> = RETURNS.with(|noted| noted.borrow_mut().drain().collect());
+    let noted = events.take_all(any_row_back);
     let mut flown = Vec::new();
     for (id, strip) in noted {
         let row = doc
@@ -425,7 +430,7 @@ pub fn fly_rows_back() {
             .flatten()
             .and_then(|row| row.dyn_into::<web_sys::HtmlElement>().ok());
         let Some(row) = row else {
-            note_return(&id, strip);
+            note_return(events, &id, strip);
             continue;
         };
         if !motion {
@@ -648,7 +653,7 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                                 // The row flies back from where this strip hangs.
                                 if let Some(button) = hung_ref.get_untracked() {
                                     let rect = button.get_bounding_client_rect();
-                                    note_return(&id.0, Spot {
+                                    note_return(events, &id.0, Spot {
                                         x: rect.left(),
                                         y: rect.top(),
                                         w: rect.width(),
@@ -657,7 +662,7 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                                 }
                                 wasm_bindgen_futures::spawn_local(async move {
                                     crate::tasks::apply_tick(&id, action, store).await;
-                                    forget_return(&id.0);
+                                    snapshot.with_untracked(|s| settle_return(events, s, &id.0));
                                     // The strip is gone: keep the keyboard on the new top strip.
                                     crate::engine::next_frame(focus_top_strip);
                                 });
@@ -766,6 +771,36 @@ mod tests {
                 events.take(row_left(&id)),
                 Some(from),
                 "gone from the list: kept"
+            );
+        });
+    }
+
+    /// The same for a strip taped back: its spot waits for the row, which the list lays
+    /// out a frame after the tick returns; only a refused tape drops it.
+    #[test]
+    fn a_taped_back_rows_spot_waits_for_the_row_unless_the_tick_was_refused() {
+        let mut snapshot = api::fixture_snapshot();
+        let id = snapshot.tasks[0].id.0.clone();
+        let from = Spot {
+            x: 5.0,
+            y: 6.0,
+            w: 7.0,
+            h: 8.0,
+        };
+        Owner::new().with(|| {
+            let events = Queue::provide();
+            snapshot.tasks[0].done = true;
+            note_return(events, &id, from);
+            settle_return(events, &snapshot, &id);
+            assert_eq!(events.take(row_back(&id)), None, "refused: dropped");
+
+            snapshot.tasks[0].done = false;
+            note_return(events, &id, from);
+            settle_return(events, &snapshot, &id);
+            assert_eq!(
+                events.take(row_back(&id)),
+                Some(from),
+                "back: kept for the row"
             );
         });
     }
