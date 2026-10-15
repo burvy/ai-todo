@@ -1,6 +1,10 @@
 //! Numbers the page's own widgets use. Values two crates must agree on live in
 //! `todo_core::tuning` instead; see `docs/TUNING.md`.
 
+/// How long a task made by hand on the + sheet lasts until you say otherwise, in
+/// minutes. Safe range 5 to 120.
+pub const NEW_TASK_MINUTES: u16 = 30;
+
 /// The gap between the minutes the time picker offers. Safe range 1 to 30 and a
 /// divisor of 60; the picker also keeps a task's own off-step minute on offer.
 pub const MINUTE_STEP: u16 = 5;

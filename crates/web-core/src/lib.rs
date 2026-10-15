@@ -19,4 +19,5 @@ pub mod rambo;
 pub mod row;
 pub mod settings;
 pub mod store;
+pub mod task_list;
 pub mod tuning;

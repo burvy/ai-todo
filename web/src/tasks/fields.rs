@@ -97,12 +97,7 @@ pub(crate) fn series_patch_from_dialog(
     })
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum EditWhen {
-    Anytime,
-    DueBy,
-    At,
-}
+pub(crate) use rambl_web_core::task_list::EditWhen;
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn local_input_value(time: DateTime<Utc>) -> String {

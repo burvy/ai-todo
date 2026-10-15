@@ -59,7 +59,7 @@ words like "tomorrow": a `Date:` with an offset is that instant, while Outlook's
 b. Not visible; upload through `POST /api/v1/capture`. Covered by tests in
 `crates/capture/src/pdf.rs` and `crates/capture/src/email.rs`.
 c. Code: `crates/capture/src/pdf.rs:pdf_to_text`;
-`crates/capture/src/email.rs:parse_email, Sent`; `server/src/v2/http.rs:file_text`.
+`crates/capture/src/email.rs:parse_email, Sent`; `server/src/v2/http/ramble.rs:file_text`.
 
 ### 6. Offline capture fallback
 a. Capture still works without a Jev key by using deterministic rules (see 4 for what counts
@@ -102,11 +102,11 @@ the edit sheet, headed "New task", on a blank form (no title, 30 minutes, anytim
 needs a title and a length and makes the task with `POST /api/v1/tasks` (or a weekly series, if
 days are ticked); the task exists only from Save, so Cancel and Esc leave nothing behind. Its Done
 and x buttons are hidden, since there is nothing yet to finish or delete. A desk, with room to
-ramble, has no +. Code: `web/src/capture.rs:CaptureBox` (the button), `web/src/tasks/mod.rs:blank_form,
-new_task_draft, DRAFT_ID`, `web/src/api.rs:create_task`.
+ramble, has no +. Code: `web/src/capture.rs:CaptureBox` (the button), `crates/web-core/src/task_list.rs:blank_form,
+new_task_draft, DRAFT_ID` (its length `tuning::NEW_TASK_MINUTES`), `web/src/api.rs:create_task`.
 c. Code: `web/src/capture.rs:CaptureBox`; `web/src/tasks/mod.rs:TaskList`;
 `web/src/api.rs:capture_text, patch_task, delete_task`;
-`server/src/v2/http.rs:capture, update, remove`.
+`server/src/v2/http/ramble.rs:capture`, `http/tasks.rs:update, remove`.
 
 ### 3. Reorder tasks
 a. Dragging task rows changes their saved order.
@@ -181,9 +181,9 @@ the server refuses it, the list goes back to the last order the server confirmed
 reloaded, and Rambo says why in his bubble (the same note an edit gives). A slower answer to an
 earlier change never puts an older list back.
 i. Code: `crates/web-core/src/row.rs` (the gesture rules, unit-tested) and `web/src/row.rs`'s `dom` module
-(pointer events); `web/src/tasks/mod.rs:reorder_ids`, the row's handlers;
+(pointer events); `crates/web-core/src/task_list.rs:reorder_ids`; `web/src/tasks/mod.rs`, the row's handlers;
 `crates/web-core/src/store.rs` (`Command::Reorder`) and `web/src/store.rs`;
-`web/src/api.rs:reorder_tasks`; `server/src/v2/http.rs:reorder`;
+`web/src/api.rs:reorder_tasks`; `server/src/v2/http/tasks.rs:reorder`;
 `server/src/v2/app.rs:reorder`.
 
 ### 4. Edit through Rambo
@@ -199,7 +199,7 @@ b. Drag Rambo onto a task, then choose **Edit**, **Move** or **Done**, or tap of
 Or tap a task's title.
 c. Code: `web/src/rambo.rs:Rambo`, which pushes `Event::EditAsked`
 (`crates/web-core/src/events.rs`) for `web/src/tasks/mod.rs:TaskList` to open its sheet; a tap on the row is decided on its
-release (`tasks/mod.rs:tapped, on_title`), since the row holds the pointer from the press; `crates/web-core/src/mascot.rs:Choice, asking_dismissed_by`; `web/src/api.rs:patch_task`.
+release (`crates/web-core/src/task_list.rs:tapped`, `web/src/tasks/mod.rs:on_title`), since the row holds the pointer from the press; `crates/web-core/src/mascot.rs:Choice, asking_dismissed_by`; `web/src/api.rs:patch_task`.
 d. The sheet's days and times are picked on the paper's own pickers (handwritten
 numbers, keyboard reachable, the paper's 12- or 24-hour clock), never the browser's:
 `web/src/pickers.rs:PaperDate, PaperTime, PaperDateTime`; numbers in `crates/web-core/src/tuning.rs`.
@@ -209,12 +209,12 @@ a. Tasks carry one of six labels and one of four priorities.
 b. The list has no label filter: the filter tabs were removed. Labels stay on the task data.
 c. Code: `web/src/tasks/mod.rs:TaskList`;
 `crates/core/src/lib.rs:Label, Priority, Task`;
-`crates/judge/src/fake.rs:label_for`; `server/src/v2/store.rs:label_to_stored, priority_to_stored`.
+`crates/judge/src/fake.rs:label_for`; `server/src/v2/store/sqlite.rs:label_to_stored, priority_to_stored`.
 
 ### 6. Persistence
 a. Tasks and their order survive a server restart when the SQLite store is enabled.
 b. Restart the server and reload the page.
-c. Code: `server/src/v2/store.rs:SqliteStore, Store`;
+c. Code: `server/src/v2/store/sqlite.rs:SqliteStore`; `server/src/v2/store.rs:Store`;
 `server/src/v2/mod.rs:app_from_env`.
 
 ### 7. Due dates keep their zone
@@ -318,7 +318,7 @@ working hours around them. Tasks with a deadline are planned first, earliest
 deadline first, so a task higher in the list cannot take the only room a deadline has.
 b. Capture a phrase such as `dinner Friday at 7`, then inspect the Friday block.
 c. Code: `server/src/v2/app.rs:plan, working_hours`;
-`crates/scheduler/src/lib.rs:plan, WorkingHours`.
+`crates/scheduler/src/plan.rs:plan`, `crates/scheduler/src/hours.rs:WorkingHours`.
 
 ### 3a. Day-only tasks
 a. A task with a day but no time ("call mom Friday") is due at the end of that day
@@ -334,9 +334,9 @@ planner moves its day-only tasks, and a refused one (a 00:00 deadline) puts the 
 and shows the reason. The picker keeps the minute it was on, so choosing 5 from 11:59 pm gives
 5:59 pm; pick the minute too.
 c. Code: `web/src/gear_menu.rs:DayTimes, DayTime`; `web/src/api.rs:fetch_day_settings, patch_day_settings`;
-`crates/scheduler/src/lib.rs:plan, usual_time, slot_near`;
+`crates/scheduler/src/plan.rs:plan, usual_time, slot_near`;
 `crates/core/src/lib.rs:DaySettings`; `crates/dates/src/lib.rs:when_from`;
-`server/src/v2/app.rs:patch_day_settings`; `server/src/v2/http.rs:get_settings`.
+`server/src/v2/app.rs:patch_day_settings`; `server/src/v2/http/tasks.rs:get_settings`.
 
 ### 4. Unplaced tasks are reported
 a. A task that cannot fit is reported as unplaced rather than silently dropped.
@@ -356,8 +356,8 @@ shows why a task is in the list but not on the week is (planned). Covered by
 scheduler, store and server tests.
 c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
 `web/src/week.rs:take_off, place_at`; `web/src/api.rs:PatchTaskBody::off_planner`;
-`crates/scheduler/src/lib.rs:plan`; `server/src/v2/app.rs:patch`;
-`server/src/v2/store.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
+`crates/scheduler/src/plan.rs:plan`; `server/src/v2/app.rs:patch`;
+`server/src/v2/store/schema.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
 
 ### 5. Light and dark paper
 a. The paper is Light or Dark by the reader's own choice in the gear menu, not by
@@ -576,7 +576,7 @@ a. An `.ics` calendar becomes editable tasks with their original times. Recurrin
 become repeating series (§7).
 b. Choose a file in **Import .ics**.
 c. Code: `web/src/gear_menu.rs:GearMenu`; `web/src/api.rs:import_ics`;
-`server/src/v2/http.rs:import`; `server/src/v2/ics_import.rs`.
+`server/src/v2/http/tasks.rs:import`; `server/src/v2/ics_import.rs`.
 
 ### 2. Re-import without duplicates
 a. Importing the same event again updates it by its calendar identifier instead
@@ -587,7 +587,7 @@ c. Code: `server/src/v2/app.rs:import, ImportedEvent`;
 
 ### 3. Skip cancelled and transparent events
 a. Cancelled events and transparent free-time events do not become tasks.
-b. Not visible; covered by tests in `server/src/v2/http.rs` and `server/src/v2/ics_import.rs`.
+b. Not visible; covered by tests in `server/src/v2/http/tests.rs` and `server/src/v2/ics_import/tests.rs`.
 c. Code: `server/src/v2/ics_import.rs`.
 
 ### 4. Edit imported-event tasks
@@ -600,13 +600,13 @@ dialog; `crates/core/src/lib.rs:Source`.
 a. The current plan can be downloaded as a standard iCalendar file.
 b. Click **Download calendar (.ics)** in **View settings**, or call `GET /api/v1/calendar.ics`.
 c. Code: `web/src/api.rs:export_calendar`;
-`server/src/v2/http.rs:calendar_ics`; `server/src/v2/ics_export.rs:build_ics`.
+`server/src/v2/http/feed.rs:calendar_ics`; `server/src/v2/ics_export.rs:build_ics`.
 
 ### 6. Accepted import formats
 a. Calendars use `.ics`; capture accepts PDF, email and text; Outlook `.pst` is
 not read.
 b. Not visible; covered by the capture and HTTP tests.
-c. Code: `server/src/v2/http.rs:file_text`;
+c. Code: `server/src/v2/http/ramble.rs:file_text`;
 `crates/capture/src/pdf.rs:pdf_to_text`; `crates/capture/src/email.rs:parse_email`.
 
 ### 7. Recurring events become series
@@ -626,7 +626,7 @@ b. Import a `.ics` with `RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO` and check that t
 snapshot contains one series that fires every other Monday.
 c. Code: `server/src/v2/ics_import.rs:parse_calendar, rrule_series`;
 `server/src/v2/app.rs:import_series`; `crates/core/src/lib.rs:Recurrence, Series`.
-Tests: `server/src/v2/ics_import.rs` (hand-written `.ics` strings for weekly,
+Tests: `server/src/v2/ics_import/tests.rs` (hand-written `.ics` strings for weekly,
 weekly with interval, daily, daily with interval);
 `crates/core/src/lib.rs` (covers math for interval and daily).
 
@@ -661,7 +661,7 @@ from now, before any normal flexible tasks. Rambo teases about overdue tasks.
 b. Add tasks in sequence, then inspect the list and a task whose due time has passed.
 c. Code: `server/src/v2/app.rs:create, import, add_drafts` (new task order, newest first),
 `server/src/v2/app.rs:sort_tasks`;
-`crates/scheduler/src/lib.rs:plan` (overdue detection and priority placement);
+`crates/scheduler/src/plan.rs:plan` (overdue detection and priority placement);
 `web/src/tasks/mod.rs:is_overdue, TaskList` (overdue badge);
 `web/src/brain.rs:142` (emits `TaskOverdue`);
 `crates/rambl-brain/src/lib.rs:Event::TaskOverdue`;
@@ -673,14 +673,14 @@ c. Code: `server/src/v2/app.rs:create, import, add_drafts` (new task order, newe
 a. A deployment with `GOOGLE_CLIENT_ID` accepts a verified Google ID token and
 returns a 90-day session.
 b. Call `POST /api/v1/auth/google` with `{ "credential": "..." }`.
-c. Code: `server/src/v2/http.rs:sign_in_google`;
+c. Code: `server/src/v2/http/account.rs:sign_in_google`;
 `server/src/v2/auth.rs:GoogleVerifier, open_session`.
 
 ### 2. Account and session controls
 a. Signed-in users can identify themselves, sign out, or delete their account and
 its tasks.
 b. Use `GET /api/v1/me`, `POST /api/v1/auth/signout`, or `DELETE /api/v1/me`.
-c. Code: `server/src/v2/http.rs:me, sign_out, delete_me`;
+c. Code: `server/src/v2/http/account.rs:me, sign_out, delete_me`;
 `server/src/v2/auth.rs:session_user, sign_out, delete_user`.
 
 ### 3. Local mode
@@ -702,13 +702,13 @@ c. Code: `server/src/v2/admin.rs`; blocks and usage are in `server/src/v2/store.
 ### 6. Web administration
 a. With `RAMBL_ADMIN_EMAILS` set (a comma-separated list of emails), a signed-in user whose email is in the list can open `/admin` and block or unblock a user or address, move users between plans, and see today's usage (captures by user and address, and totals per plan; one capture is one Jev call). The page is a single static document served by the server, with no build step; it signs in through the same Google session the main page uses. Unset or empty `RAMBL_ADMIN_EMAILS` turns the whole surface off (404).
 b. Open `/admin` in a browser after signing in on the main page.
-c. Code: `server/src/v2/admin_web.rs` (data lives in `server/src/v2/admin.rs` and `server/src/v2/store.rs`); routes in `server/src/v2/http.rs:admin_page, admin_of`.
+c. Code: `server/src/v2/admin_web.rs` (data lives in `server/src/v2/admin.rs` and `server/src/v2/store.rs`); routes in `server/src/v2/http/admin.rs:admin_page, admin_of`.
 d. Block and plan actions reuse the console's resolution: a user may be named by id or email, and the same `block`, `unblock`, `blocked` and `plan` storage calls serve both.
 
 ### 7. Data export
 a. Everything the caller owns can be downloaded as one JSON file: the task list with every field. Planner settings are not included; they are stored in the browser, not on the server. The response is `Cache-Control: no-store`, so a cache does not keep a person's task list.
 b. Call `GET /api/v1/export`, signed in or with the anonymous id; the download is named `rambl-export-YYYY-MM-DD.json` (the date is the caller's own). A request with no credentials at all is a brand-new anonymous account: it downloads an empty list, not a 401, exactly as the rest of the API treats a signed-out visitor.
-c. Code: `server/src/v2/http.rs:export`, reading through `App::tasks` rather than `App::snapshot`, so a download does not run the planner.
+c. Code: `server/src/v2/http/feed.rs:export`, reading through `App::tasks` rather than `App::snapshot`, so a download does not run the planner.
 
 ## VIII. DATES
 
@@ -770,20 +770,20 @@ c. Code: `server/src/v2/http.rs:jev_daily_cap_from_env, over_jev_cap`;
 ### 1. Deterministic placement
 a. The scheduler puts flexible tasks into local working-hour gaps around fixed tasks.
 b. Not visible; covered by scheduler tests.
-c. Code: `crates/scheduler/src/lib.rs:plan, WorkingHours`;
+c. Code: `crates/scheduler/src/plan.rs:plan`, `crates/scheduler/src/hours.rs:WorkingHours`;
 `server/src/v2/app.rs:plan`.
 
 ### 2. Whole-task invariant
 a. A task is placed once as a whole; if no complete slot exists it is unplaced.
-b. Not visible; covered by tests in `crates/scheduler/src/lib.rs`.
+b. Not visible; covered by tests in `crates/scheduler/src/tests.rs`.
 c. Code: `crates/core/src/lib.rs:Placement, Plan`.
 
 ### 3. Scheduler v2
 a. The `plan()`-based scheduler places fixed and flexible tasks and is covered by
 invariant tests.
 b. Not visible; track the implementation in `server/src/v2/app.rs:plan`.
-c. Code: `server/src/v2/app.rs:plan`; `crates/scheduler/src/lib.rs:plan`;
-`crates/scheduler/src/lib.rs:generated_plans_preserve_scheduler_invariants`.
+c. Code: `server/src/v2/app.rs:plan`; `crates/scheduler/src/plan.rs:plan`;
+`crates/scheduler/src/tests.rs:generated_plans_preserve_scheduler_invariants`.
 
 ## XI. SERVER API
 
@@ -791,13 +791,13 @@ c. Code: `server/src/v2/app.rs:plan`; `crates/scheduler/src/lib.rs:plan`;
 a. Reads and mutations return a complete `Snapshot` containing tasks and placements.
 b. Not visible; call `GET /api/v1/snapshot` or any mutating task endpoint.
 c. Code: `crates/core/src/lib.rs:Snapshot`;
-`server/src/v2/http.rs:snapshot, create, update, remove`.
+`server/src/v2/http/tasks.rs:snapshot, create, update, remove`.
 
 ### 2. Capture, task and calendar routes
 a. The API supports capture, task creation and changes, reorder, revise, calendar
 import and iCalendar export.
 b. Not visible; see the route table in `docs/ARCHITECTURE.md`.
-c. Code: `server/src/v2/http.rs:build_router, capture, import, revise_task, calendar_ics`.
+c. Code: `server/src/v2/http.rs:build_router`; `http/ramble.rs:capture, revise_task`; `http/tasks.rs:import`; `http/feed.rs:calendar_ics`.
 
 ### 3. User scoping and errors
 a. Requests are scoped to the authenticated user and return structured API errors.
@@ -810,7 +810,7 @@ c. Code: `server/src/v2/http.rs:CurrentUser, HttpError`;
 ### 1. SQLite persistence
 a. SQLite stores tasks, order, imported event identities, users and sessions.
 b. Not visible; restart the server and request a snapshot.
-c. Code: `server/src/v2/store.rs:SqliteStore, MIGRATIONS, SCHEMA_VERSION`.
+c. Code: `server/src/v2/store/sqlite.rs:SqliteStore`; `server/src/v2/store/schema.rs:MIGRATIONS, SCHEMA_VERSION`.
 
 ### 2. Imported-event identity
 a. An imported event keeps its external UID so re-import can update it.
@@ -821,7 +821,7 @@ c. Code: `crates/core/src/lib.rs:Task.external_uid`;
 ### 3. In-memory test store
 a. Tests use an in-memory store so they do not write production data.
 b. Not visible; covered by server HTTP tests.
-c. Code: `server/src/v2/store.rs:MemoryStore`.
+c. Code: `server/src/v2/store/memory.rs:MemoryStore`.
 
 ### 4. Daily backup
 a. Automatic daily SQLite backups are created at startup and every 24 hours, with backups
