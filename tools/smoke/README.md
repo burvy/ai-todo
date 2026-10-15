@@ -27,7 +27,7 @@ Each check runs at desk size (1280x800, mouse), at a narrow desk window (640x800
 2. **a typed capture writes a row**: type a sentence into the capture box and press Enter; a new row appears.
 3. **a swipe finishes a row and the tape brings it back**: drag a row to the right; it goes, and the tape (undo) brings it back.
 4. **a swipe turns the page and the book flip is drawn, not blank, mid-turn**: where the pages stack (narrow desk, phone) swipe the list over to the planner, hold, and check the leaf is swung with the list on it, the planner shows beneath and the leaf's light is drawn; release, then turn back with the note at the foot and check the same. On the wide desk the two pages sit side by side, so it only checks both show.
-5. **a slip dragged on the planner springs to its new time, and back where it sat** (wide desk only, where the planner is in sight beside the list): drop a slip where it sits and its ghost goes back onto it and it stays; drag it two hours down and the ghost is still drawn the moment it is let go (it springs to the slot rather than vanishing), then the slip is there.
+5. **a slip dragged on the planner springs to its new time, and back where it sat** (wide desk only, where the planner is in sight beside the list; `SKIP` elsewhere, or when no slip is in sight with room below it): drop a slip where it sits and its ghost goes back onto it and it stays; drag it two hours down and the ghost is still drawn the moment it is let go (it springs to the slot rather than vanishing), then the slip is there.
 6. **Rambo dragged to the page goes home**: drag Rambo to the middle of the page and release; he goes home.
 7. **no page errors**: no uncaught exception or console error during the run.
 
@@ -39,7 +39,7 @@ Each check runs at desk size (1280x800, mouse), at a narrow desk window (640x800
 - The server and the browser are stopped by their own process IDs in a `finally` block, on Ctrl+C, and on exit. Nothing else is stopped.
 - The temporary folders are removed afterwards. A folder the browser still holds is reported, not treated as a failed check.
 
-Exit status is 0 when every check passes and 1 otherwise. Each line of output is `PASS` or `FAIL` with the reason.
+Exit status is 0 when every check passes and 1 otherwise. Each line of output is `PASS`, `FAIL` with the reason, or `SKIP` with why the check did not apply (a skip is not a failure).
 
 ## Files
 
