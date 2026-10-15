@@ -3,8 +3,8 @@
 use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 
-use crate::{api, mascot, settings};
-use rambl_web_core::store::Command;
+use crate::{mascot, settings};
+use rambl_web_core::store::{Command, Reply};
 
 /// Rambo's whisper: short handwritten prompts the empty capture line cycles
 /// through, one every few seconds, as if he's quietly suggesting what to type.
@@ -160,27 +160,11 @@ fn ride_the_keyboard() {
     listener.forget();
 }
 
-/// The note when a capture was not added, naming it so it is never silently lost.
-fn capture_note(title: &str, error: &api::ApiError) -> String {
-    match error {
-        api::ApiError::Network(_) => {
-            format!("Could not reach the server, so \"{title}\" was not added.")
-        }
-        api::ApiError::Server(refusal) => {
-            format!("\"{title}\" was not added: {}", refusal.message)
-        }
-        api::ApiError::Decode(_) => {
-            format!("\"{title}\" may not have been added. Reload to check.")
-        }
-    }
-}
-
 #[component]
 pub(crate) fn CaptureBox(
     form_ref: NodeRef<leptos::html::Form>,
     nest_ref: NodeRef<leptos::html::Button>,
     snapshot: ReadSignal<Snapshot>,
-    set_snapshot: WriteSignal<Snapshot>,
     state: ReadSignal<mascot::State>,
     set_state: WriteSignal<mascot::State>,
     view_settings: ReadSignal<settings::Settings>,
@@ -410,28 +394,26 @@ pub(crate) fn CaptureBox(
             }
             wasm_bindgen_futures::spawn_local(async move {
                 // The capture pipeline (docs/ARCHITECTURE.md 5) splits the ramble into
-                // tasks and reads their days, times, labels and priorities.
-                match api::capture_text(&title).await {
-                    Ok(captured) => {
-                        if captured.created.is_empty() {
+                // tasks and reads their days, times, labels and priorities. The store shows
+                // the list it answers with; what it made comes back for the pen to write.
+                match store.send(Command::Capture(title.clone())).await {
+                    Some(Reply::Created(created)) => {
+                        if created.is_empty() {
                             if text.get_untracked().trim().is_empty() {
                                 set_text.set(title.clone());
                             }
                             set_error.set(Some(format!("No task found in \"{title}\".")));
-                        }
-                        if !captured.created.is_empty() {
+                        } else {
                             crate::sound::play(crate::sound::Cue::Send);
                         }
-                        pen_queue.update(|queue| queue.extend(captured.created));
-                        set_snapshot.set(captured.snapshot);
+                        pen_queue.update(|queue| queue.extend(created));
                     }
-                    Err(error) => {
-                        // Never lose what was said: it goes back in the box when the
-                        // box is still empty, and the note names it either way.
+                    // A refusal: the store has shown its note. Never lose what was said: it
+                    // goes back in the box when the box is still empty.
+                    Some(Reply::Nothing) | None => {
                         if text.get_untracked().trim().is_empty() {
                             set_text.set(title.clone());
                         }
-                        set_error.set(Some(capture_note(&title, &error)));
                     }
                 }
                 sending.set(false);
@@ -476,6 +458,7 @@ pub(crate) fn CaptureBox(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api;
 
     #[test]
     fn the_keyboard_inset_is_what_the_visible_page_leaves_uncovered_at_the_bottom() {
@@ -599,20 +582,5 @@ mod tests {
         let made = before.tasks.remove(1);
         assert_eq!(added(&before, &after), vec![made.id]);
         assert_eq!(added(&after, &after), Vec::<TaskId>::new());
-    }
-
-    #[test]
-    fn a_capture_that_failed_is_named_in_the_note() {
-        let offline = api::ApiError::Network("offline".into());
-        assert!(capture_note("buy milk", &offline).contains("\"buy milk\""));
-        assert!(capture_note("buy milk", &offline).contains("Could not reach the server"));
-        let refused = api::ApiError::Server(todo_core::ApiError {
-            code: todo_core::ErrorCode::Forbidden,
-            message: "this account is paused".into(),
-        });
-        assert_eq!(
-            capture_note("buy milk", &refused),
-            "\"buy milk\" was not added: this account is paused"
-        );
     }
 }

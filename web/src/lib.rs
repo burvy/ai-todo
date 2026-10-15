@@ -184,7 +184,6 @@ pub fn App() -> impl IntoView {
                 form_ref
                 nest_ref
                 snapshot
-                set_snapshot=set_snapshot
                 state=mascot_state
                 set_state=set_mascot_state
                 view_settings
