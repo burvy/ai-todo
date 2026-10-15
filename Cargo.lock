@@ -2162,7 +2162,6 @@ dependencies = [
  "serde",
  "serde_json",
  "todo-core",
- "unicode-segmentation",
  "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -2179,6 +2178,7 @@ dependencies = [
  "serde",
  "serde_json",
  "todo-core",
+ "unicode-segmentation",
 ]
 
 [[package]]

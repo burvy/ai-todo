@@ -546,3 +546,16 @@ const _: () = assert!(WRITE_MIN_MS < WRITE_MAX_MS);
 const _: () = assert!(WRITE_TOUCHDOWN_MS <= WRITE_SETTLE_MS);
 // A title that is merely slow to write is never cut short as "waited too long".
 const _: () = assert!(WRITE_MAX_MS < WRITE_HOLD_MAX_MS);
+
+/// One hour of the planner grid, in CSS pixels. The `.hour` rule in `index.html` has the
+/// same height, so the current-time line and the slips can be placed from the clock.
+/// Change both together; safe range 40 to 100 px.
+pub const HOUR_PX: f32 = 64.0;
+/// A slip shorter than this writes its words a size smaller (`.placement.short` in
+/// `theme.css`); every slip holds them inside its edges.
+pub const SHORT_SLIP_PX: f32 = HOUR_PX;
+/// The band near a scroll-box edge where a held slip makes the paper slide along so slots
+/// beyond the edge can be reached without letting go. Safe range 24 to 96 px.
+pub const EDGE_ZONE_PX: f32 = 48.0;
+/// The most the paper slides per auto-scroll tick, right at an edge. Safe range 2 to 12 px.
+pub const EDGE_MAX_PX: f32 = 6.0;

@@ -552,7 +552,8 @@ pub(crate) fn Rambo(
                     if let Some(action) = action {
                         apply_tick(&TaskId(task_id.clone()), action, sink).await;
                     }
-                    crate::scrap::forget_departure(events, &task_id);
+                    snapshot
+                        .with_untracked(|s| crate::scrap::settle_departure(events, s, &task_id));
                 });
             }
             mascot::Choice::Longer | mascot::Choice::Shorter => {

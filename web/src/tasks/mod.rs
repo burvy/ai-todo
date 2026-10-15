@@ -799,9 +799,9 @@ pub(crate) fn TaskList(
                                             if let Some(action) = snapshot.with_untracked(|s| tick_action(s, &task_id.0)) {
                                                 apply_tick(&task_id, action, store).await;
                                             }
-                                            scrap::forget_departure(events, &task_id.0);
+                                            snapshot.with_untracked(|s| scrap::settle_departure(events, s, &task_id.0));
                                             // Refused: the ink comes off and the row stays.
-                                            if snapshot.with_untracked(|s| held(s, &task_id.0).is_some_and(|task| !task.done)) {
+                                            if snapshot.with_untracked(|s| scrap::tick_refused(s, &task_id.0)) {
                                                 row::dom::clear_ink(&task_id.0);
                                             }
                                         });

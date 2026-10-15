@@ -7,6 +7,7 @@ use todo_core::When;
 use todo_core::{Clock, SystemClock};
 use todo_core::{LocalContext, Placement, Snapshot, TaskId};
 
+use crate::tuning::{HOUR_PX, SHORT_SLIP_PX};
 use crate::{clock, settings::Settings};
 pub(crate) use rambl_web_core::planner::*;
 
