@@ -250,7 +250,7 @@ This replaces the earlier interview 3 note that swiping left crosses a task out.
 Later steps under the physical principle:
 - **Ink dries:** a new row is glossy for a few seconds, and a tap smudges it.
 - **The nib runs dry:** after a long run of writing, Rambo taps his nib on the dish's rim.
-- **A bookmark ribbon marks today** in the planner; pull it to jump back to today.
+- **A bookmark ribbon marks today** in the planner; tap it to go back to today (its pull was cut, ARCHITECTURE §8A.3).
 - **The scrap undo** above.
 - **A desk lamp is the dark-mode switch:** pull its chain and the night page is laid down.
 
