@@ -302,7 +302,8 @@ The hole is on the page's clock, not Rambo's: it stays open for the length of a 
 (`rip::total_ms`) and closes by itself even if he is busy and never comes. The rows below wait
 where they were while the hole is open (`scrap::hold_rows`) so none slides into it, and slide up
 when it heals (`scrap::release_rows`). One tear at a time: a second row finished while a hole is
-open just leaves. If the server refuses the done, the row stays under a hole that heals like any
+open waits its turn and tears out where it stood when the first has healed (the rows
+below stay put until the last hole has healed). If the server refuses the done, the row stays under a hole that heals like any
 tear (rare).
 Code: `web/src/rip.rs` (the rules: `is_rip`, `is_page_gesture`, `starts_on_paper`, `Tear::outline`, `sheet_path`,
 `slide_px`; pure and tested), `web/src/rip_ui.rs:Ripper, TearLayer` (the pointer, the hole,

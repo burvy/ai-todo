@@ -169,6 +169,9 @@ mod imp {
         phase: RefCell<Phase>,
         /// Counts tears, so each one's ragged edge is its own.
         made: Cell<u32>,
+        /// Rows that finished while a tear lasted, in the order they did: each opens its
+        /// hole, where it stood, when the one before has healed.
+        waiting: RefCell<std::collections::VecDeque<crate::scrap::Spot>>,
     }
 
     impl Ripper {
@@ -193,6 +196,7 @@ mod imp {
                     pen_pos,
                     phase: RefCell::new(Phase::Idle),
                     made: Cell::new(0),
+                    waiting: RefCell::new(std::collections::VecDeque::new()),
                 }),
             };
             // The page is torn while a tear lasts: the planner shows beneath, and the list,
@@ -432,11 +436,15 @@ mod imp {
 
         /// A row that has finished tears out of the page where it stood (`spot`, in viewport
         /// px): the hole is as tall as the row, and Rambo tapes it without a sulk. One tear
-        /// at a time: while one lasts, a second row just leaves.
+        /// at a time: a row that finishes while one lasts waits its turn, and the rows below
+        /// stay where they were until the last hole has healed, so each hole opens where its
+        /// row stood.
         fn tear_out(&self, spot: crate::scrap::Spot) {
             let dom = &self.dom;
             let Some(pane) = dom.pane.get() else { return };
             if self.tear.with_untracked(Option::is_some) {
+                super::HOLE_OPEN.with(|open| open.set(true));
+                dom.waiting.borrow_mut().push_back(spot);
                 return;
             }
             let (left, top) = Self::origin(&pane);
@@ -468,12 +476,21 @@ mod imp {
                     .set(mascot::transition(&State::Home, Event::Mend { annoyed }));
             }
             let (tear_signal, released) = (self.tear, self.released);
+            let ripper = self.clone();
             // On the engine's clock, with everything else that moves.
             crate::engine::every(f64::from(rip::total_ms()), move || {
                 tear_signal.set(None);
                 released.set(false);
-                if super::HOLE_OPEN.with(|open| open.replace(false)) {
-                    crate::scrap::release_rows();
+                // A row waiting for its turn opens its hole now; the rows below close
+                // up only when nothing is waiting.
+                let next = ripper.dom.waiting.borrow_mut().pop_front();
+                match next {
+                    Some(spot) => ripper.tear_out(spot),
+                    None => {
+                        if super::HOLE_OPEN.with(|open| open.replace(false)) {
+                            crate::scrap::release_rows();
+                        }
+                    }
                 }
                 crate::engine::Flow::Stop
             });
