@@ -272,7 +272,7 @@ Squash, stretch and lean are read from `vel` and `vz` (`look.rs`), not scripted 
 **Kept as they are:** CSS keyframes for drawing-only effects (breathing, mood pictures, the scribble picture), and ink ageing. The human allows fades only for ink and the patch (the tear and its patch were cut, #413).
 
 **Order of small PRs.** Each PR is green on its own and leaves behaviour the same unless it says otherwise.
-1. (done) `body.rs` with `Pull` and `Spring1` and their tests. `nest.rs`, `dance.rs` and `flip.rs` are ported onto them and the two old springs are deleted. No visible change. `Body` and `Forces` arrive with their first user in PR 2, and `Motion` in PR 4, so no code waits unused.
+1. (done) `spring.rs` (now in `web-core`; the engine's `body`) with `Pull` and `Spring1` and their tests. `nest.rs`, `dance.rs` and `flip.rs` are ported onto them and the two old springs are deleted. No visible change. `Body` and `Forces` arrive with their first user in PR 2, and `Motion` in PR 4, so no code waits unused.
 2. Rambo's ground motion: `Drive` becomes `Forces` on one `Body`. The drag spring, release keeping velocity (a gentle drop slides and stops) and the pin for writing. `fling.rs` keeps the walls and the splat rule and loses its own integrator.
 3. The hop home as impulses with `z` and gravity, and ink dots on landing. Delete `hop.rs` and `Run`. The parked `emilio/hop-home` branch has the bowed path and the wait.
 4. Idle sway and one reduced-motion switch through `Motion`.
