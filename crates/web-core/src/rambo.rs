@@ -3,7 +3,8 @@
 //! asks these, and does what they answer.
 
 use crate::gesture::Vec2;
-use crate::mascot::{self, Asked, Event, NotedHour, State};
+use crate::mascot::{self, Asked, Choice, Event, NotedHour, State};
+use crate::placing::Stretch;
 
 /// A task under the finger, as the page shows it.
 #[derive(Clone, Debug, PartialEq)]
@@ -187,6 +188,49 @@ pub fn keyed(key: &str, talking: bool, before: &State) -> Option<Keyed> {
     } else {
         Keyed::Nothing
     })
+}
+
+/// What a choice in his bubble does to the task he asks about (its id).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Errand {
+    /// Its edit sheet opens, and he listens for the edit.
+    Edit(String),
+    /// The planner takes it to place.
+    Move(String),
+    /// It is ticked off.
+    Tick(String),
+    /// Its slip is a quarter hour longer or shorter.
+    Stretch(String, Stretch),
+    /// Its slip comes off the planner; it stays in the list.
+    TakeOff(String),
+}
+
+/// What `choice` does, as `state`: only an asking Rambo has a task to do it to.
+pub fn chosen(state: &State, choice: Choice) -> Option<Errand> {
+    let State::Asking { task_id, .. } = state else {
+        return None;
+    };
+    let id = task_id.clone();
+    Some(match choice {
+        Choice::Edit => Errand::Edit(id),
+        Choice::Move => Errand::Move(id),
+        Choice::Done => Errand::Tick(id),
+        Choice::Longer => Errand::Stretch(id, Stretch::Longer),
+        Choice::Shorter => Errand::Stretch(id, Stretch::Shorter),
+        Choice::Off => Errand::TakeOff(id),
+    })
+}
+
+/// Whether, noting a task, he sends what he `heard` as his listening ends: only words.
+pub fn sends_heard(state: &State, heard: &str) -> bool {
+    matches!(state, State::Noting { .. }) && !heard.trim().is_empty()
+}
+
+/// Whether, noting a task, he gives it up: the microphone failed (`mic_failed`) and
+/// nothing is `typed`, so there is nothing to send. Typed words keep him noting, where
+/// Enter sends them at that hour.
+pub fn gives_up_noting(state: &State, mic_failed: bool, typed: &str) -> bool {
+    matches!(state, State::Noting { .. }) && mic_failed && typed.trim().is_empty()
 }
 
 /// Whether a bubble `height` tall would run off the top of the screen sitting on
@@ -478,6 +522,69 @@ mod tests {
         );
         assert_eq!(keyed("a", false, &State::Home), None);
         assert_eq!(keyed("Escape", true, &State::Dragging), None);
+    }
+
+    fn asking() -> State {
+        State::Asking {
+            task_id: "t1".into(),
+            title: "Lab report".into(),
+        }
+    }
+
+    #[test]
+    fn each_choice_does_its_errand_to_the_task_he_asks_about() {
+        let id = || "t1".to_string();
+        for (choice, errand) in [
+            (Choice::Edit, Errand::Edit(id())),
+            (Choice::Move, Errand::Move(id())),
+            (Choice::Done, Errand::Tick(id())),
+            (Choice::Longer, Errand::Stretch(id(), Stretch::Longer)),
+            (Choice::Shorter, Errand::Stretch(id(), Stretch::Shorter)),
+            (Choice::Off, Errand::TakeOff(id())),
+        ] {
+            assert_eq!(chosen(&asking(), choice), Some(errand));
+        }
+    }
+
+    #[test]
+    fn a_choice_when_he_no_longer_asks_does_nothing() {
+        // A second tap on Done finds him home: it cannot tick the task back.
+        for state in [State::Home, State::Dragging, State::Noting { at: hour() }] {
+            assert_eq!(chosen(&state, Choice::Done), None, "{state:?}");
+        }
+    }
+
+    #[test]
+    fn noting_he_sends_only_words_he_heard() {
+        let noting = State::Noting { at: hour() };
+        assert!(sends_heard(&noting, "water the plants"));
+        assert!(!sends_heard(&noting, "  "), "spaces are not words");
+        assert!(
+            !sends_heard(&State::Home, "water the plants"),
+            "he left the hour"
+        );
+    }
+
+    #[test]
+    fn a_failed_microphone_ends_his_note_unless_words_are_typed() {
+        let noting = State::Noting { at: hour() };
+        assert!(gives_up_noting(&noting, true, ""));
+        assert!(
+            gives_up_noting(&noting, true, "   "),
+            "spaces are not words"
+        );
+        assert!(
+            !gives_up_noting(&noting, true, "Lab report"),
+            "typed words keep him noting"
+        );
+        assert!(
+            !gives_up_noting(&noting, false, ""),
+            "a quiet pause is not a failure"
+        );
+        assert!(
+            !gives_up_noting(&asking(), true, ""),
+            "only a note is given up"
+        );
     }
 
     #[test]
