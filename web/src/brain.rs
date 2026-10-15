@@ -1,5 +1,4 @@
 use chrono::{TimeZone, Utc};
-use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
 use rambl_brain::{Action, Brain, Event, Mode, Seeded};
 use std::cell::RefCell;
@@ -91,7 +90,7 @@ fn say(line: String, audible: Signal<bool>, set_speech: WriteSignal<Option<Strin
     set_speech.set(Some(line.clone()));
     let clear_later = move |after_ms: u32| {
         let clear = set_speech;
-        Timeout::new(after_ms, move || clear.set(None)).forget();
+        crate::engine::after(f64::from(after_ms), move || clear.set(None));
     };
     let spoke = audible.get_untracked()
         && crate::voice::say(&line, {
