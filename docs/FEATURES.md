@@ -318,7 +318,7 @@ working hours around them. Tasks with a deadline are planned first, earliest
 deadline first, so a task higher in the list cannot take the only room a deadline has.
 b. Capture a phrase such as `dinner Friday at 7`, then inspect the Friday block.
 c. Code: `server/src/v2/app.rs:plan, working_hours`;
-`crates/scheduler/src/lib.rs:plan, WorkingHours`.
+`crates/scheduler/src/plan.rs:plan`, `crates/scheduler/src/hours.rs:WorkingHours`.
 
 ### 3a. Day-only tasks
 a. A task with a day but no time ("call mom Friday") is due at the end of that day
@@ -334,7 +334,7 @@ planner moves its day-only tasks, and a refused one (a 00:00 deadline) puts the 
 and shows the reason. The picker keeps the minute it was on, so choosing 5 from 11:59 pm gives
 5:59 pm; pick the minute too.
 c. Code: `web/src/gear_menu.rs:DayTimes, DayTime`; `web/src/api.rs:fetch_day_settings, patch_day_settings`;
-`crates/scheduler/src/lib.rs:plan, usual_time, slot_near`;
+`crates/scheduler/src/plan.rs:plan, usual_time, slot_near`;
 `crates/core/src/lib.rs:DaySettings`; `crates/dates/src/lib.rs:when_from`;
 `server/src/v2/app.rs:patch_day_settings`; `server/src/v2/http/tasks.rs:get_settings`.
 
@@ -356,7 +356,7 @@ shows why a task is in the list but not on the week is (planned). Covered by
 scheduler, store and server tests.
 c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
 `web/src/week.rs:take_off, place_at`; `web/src/api.rs:PatchTaskBody::off_planner`;
-`crates/scheduler/src/lib.rs:plan`; `server/src/v2/app.rs:patch`;
+`crates/scheduler/src/plan.rs:plan`; `server/src/v2/app.rs:patch`;
 `server/src/v2/store/schema.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
 
 ### 5. Light and dark paper
@@ -661,7 +661,7 @@ from now, before any normal flexible tasks. Rambo teases about overdue tasks.
 b. Add tasks in sequence, then inspect the list and a task whose due time has passed.
 c. Code: `server/src/v2/app.rs:create, import, add_drafts` (new task order, newest first),
 `server/src/v2/app.rs:sort_tasks`;
-`crates/scheduler/src/lib.rs:plan` (overdue detection and priority placement);
+`crates/scheduler/src/plan.rs:plan` (overdue detection and priority placement);
 `web/src/tasks/mod.rs:is_overdue, TaskList` (overdue badge);
 `web/src/brain.rs:142` (emits `TaskOverdue`);
 `crates/rambl-brain/src/lib.rs:Event::TaskOverdue`;
@@ -770,20 +770,20 @@ c. Code: `server/src/v2/http.rs:jev_daily_cap_from_env, over_jev_cap`;
 ### 1. Deterministic placement
 a. The scheduler puts flexible tasks into local working-hour gaps around fixed tasks.
 b. Not visible; covered by scheduler tests.
-c. Code: `crates/scheduler/src/lib.rs:plan, WorkingHours`;
+c. Code: `crates/scheduler/src/plan.rs:plan`, `crates/scheduler/src/hours.rs:WorkingHours`;
 `server/src/v2/app.rs:plan`.
 
 ### 2. Whole-task invariant
 a. A task is placed once as a whole; if no complete slot exists it is unplaced.
-b. Not visible; covered by tests in `crates/scheduler/src/lib.rs`.
+b. Not visible; covered by tests in `crates/scheduler/src/tests.rs`.
 c. Code: `crates/core/src/lib.rs:Placement, Plan`.
 
 ### 3. Scheduler v2
 a. The `plan()`-based scheduler places fixed and flexible tasks and is covered by
 invariant tests.
 b. Not visible; track the implementation in `server/src/v2/app.rs:plan`.
-c. Code: `server/src/v2/app.rs:plan`; `crates/scheduler/src/lib.rs:plan`;
-`crates/scheduler/src/lib.rs:generated_plans_preserve_scheduler_invariants`.
+c. Code: `server/src/v2/app.rs:plan`; `crates/scheduler/src/plan.rs:plan`;
+`crates/scheduler/src/tests.rs:generated_plans_preserve_scheduler_invariants`.
 
 ## XI. SERVER API
 
