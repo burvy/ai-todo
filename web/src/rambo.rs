@@ -1339,15 +1339,19 @@ fn on_page_moved(moved: impl Fn() + Copy + 'static) {
     {
         observer.observe(&root);
     }
-    // A phone's keyboard opening or closing moves the capture bar and his nest with it
-    // (`capture.rs:ride_the_keyboard`); he measures again once the bar has moved.
-    if let Some(visible) = window.visual_viewport() {
+    // A phone's keyboard opening or closing moves the capture bar and his nest with it:
+    // `--keyboard-inset` on the root (`capture.rs:ride_the_keyboard`). He watches the
+    // inset itself rather than the events that set it, so whatever sets it, he measures
+    // again once the bar has moved.
+    if let Some(root) = window.document().and_then(|doc| doc.document_element()) {
         let after_layout = wasm_bindgen::closure::Closure::<dyn Fn()>::new(move || {
             crate::engine::next_frame(moved)
         });
-        for event in ["resize", "scroll"] {
-            let _ = visible
-                .add_event_listener_with_callback(event, after_layout.as_ref().unchecked_ref());
+        let watched = web_sys::MutationObserverInit::new();
+        watched.set_attribute_filter(&js_sys::Array::of1(&"style".into()));
+        if let Ok(observer) = web_sys::MutationObserver::new(after_layout.as_ref().unchecked_ref())
+        {
+            let _ = observer.observe_with_options(&root, &watched);
         }
         after_layout.forget();
     }
@@ -1569,6 +1573,29 @@ fn bubble_offset(centre_x: f64, width: f64, screen: f64, edge: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{bubble_offset, opens_below};
+
+    /// Rambo and the nest's rim are fixed layers placed by measuring the nest, so they
+    /// follow the keyboard only if he measures again when the inset changes. He watches
+    /// the root's style, where the inset lives, so it holds whatever sets the inset; a
+    /// screenshot that set it by hand once left him and the rim at the screen's foot.
+    #[test]
+    fn he_measures_again_whenever_the_keyboard_inset_changes() {
+        // The code only, not these tests, which name what they look for.
+        let code = |source: &'static str| source.split("#[cfg(test)]").next().unwrap_or(source);
+        let rambo = code(include_str!("rambo.rs"));
+        let capture = code(include_str!("capture.rs"));
+        assert!(capture.contains(r#".set_property("--keyboard-inset""#));
+        assert!(
+            capture.contains(".document_element()"),
+            "the inset is on the root"
+        );
+        let watch = rambo
+            .split("MutationObserver::new(")
+            .nth(1)
+            .expect("rambo.rs watches the root with a MutationObserver");
+        assert!(rambo.contains(r#"Array::of1(&"style".into())"#));
+        assert!(watch.contains("observe_with_options(&root"));
+    }
 
     #[test]
     fn a_bubble_without_room_above_him_opens_below() {
