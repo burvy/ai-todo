@@ -59,6 +59,9 @@
 
   --rule: color-mix(in srgb, var(--chamoisee) 42%, transparent);
   --rule-strong: color-mix(in srgb, var(--chamoisee) 62%, transparent);
+  /* The list page's ruled lines: fainter than the rules that divide things, and one row apart. */
+  --paper-line: color-mix(in srgb, var(--rule) 70%, transparent);
+  --line-pitch: 3.25rem;
   --margin-line: rgba(165, 52, 42, 0.24);
   --wash: rgba(159, 104, 46, 0.1);
   --shadow: 0 1px 2px rgba(93, 71, 50, 0.14);
@@ -541,6 +544,13 @@ main.flipping > .bend-front {
 }
 
 /* Sections are parts of one page, not cards: space and rules divide them. */
+section[aria-label="Tasks"] {
+  display: flex;
+  flex-direction: column;
+  /* On a phone the page is a flex column: let the ruled paper take what is left of it. */
+  flex: 1 0 auto;
+}
+
 section {
   min-width: 0;
   padding: 0;
@@ -618,20 +628,37 @@ a {
   margin: 0;
   padding: 0;
   list-style: none;
+  /* The list page is lightly lined like a notebook's: each row sits on a rule, and the
+     rules run on down the page below the last row, at the same pitch. */
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
 }
 
 .task-list li {
   display: flex;
+  flex: none;
   flex-wrap: nowrap;
   gap: var(--space-2);
   align-items: center;
-  min-height: var(--tap);
+  min-height: var(--line-pitch);
   padding: var(--space-1) 0;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--paper-line);
 }
 
-.task-list li:last-child {
-  border-bottom: none;
+/* The empty ruled paper under the last row: it fills what is left of the page and never
+   makes it longer. Its rules start where the last row's ends, so they continue it. */
+.task-list::after {
+  content: "";
+  flex: 1 1 0;
+  min-height: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--line-pitch) - 1px),
+    var(--paper-line) calc(var(--line-pitch) - 1px),
+    var(--paper-line) var(--line-pitch)
+  );
 }
 
 /* Section 4 row delete (Angela): hover mark on desktop, faint x + swipe right on phone */

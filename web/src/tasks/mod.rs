@@ -1313,6 +1313,26 @@ fn task_time(snapshot: &Snapshot, id: &str, clock: Clock) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The list's ruled lines: a row is exactly one line tall at least, and the ruled paper
+    /// under the last row repeats the same pitch in the same colour, so the lines continue.
+    #[test]
+    fn the_ruled_paper_continues_the_rows_at_their_pitch() {
+        let css = include_str!("../../theme.css");
+        let rule = |selector: &str| {
+            css.split(selector)
+                .nth(1)
+                .and_then(|rest| rest.split('}').next())
+                .unwrap_or_else(|| panic!("theme.css styles {selector}"))
+                .to_owned()
+        };
+        let row = rule(".task-list li {");
+        let filler = rule(".task-list::after {");
+        assert!(row.contains("min-height: var(--line-pitch)"), "{row}");
+        assert!(row.contains("var(--paper-line)"), "{row}");
+        assert!(filler.matches("var(--line-pitch)").count() >= 2, "{filler}");
+        assert!(filler.contains("var(--paper-line)"), "{filler}");
+    }
+
     /// FRONTEND-PLAN 1.8 item 7: the edit sheet is a real modal (focus trapped, page
     /// inert, Escape closes), not a dialog merely given the `open` attribute.
     #[test]

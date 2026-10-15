@@ -282,6 +282,19 @@ the tape), `web/src/mascot.rs:State::Mending, Event::Mend`, `web/theme.css` (`ma
 `.tear-layer`, `.tape`); numbers in `web/src/tuning.rs` (`RIP_*`, `TAPE_*`, `TEAR_*`,
 `MEND_MS`).
 
+### 9. The list paper is lightly lined
+a. The list page is ruled like a notebook's: each row sits on a faint line, and the lines
+run on down the page below the last row at the same spacing, to the foot of the page. The
+planner keeps its own grid. The lines are a token (`--paper-line`, fainter than the rules
+that divide things, with its own dark value) and the spacing is `--line-pitch`, which is
+also each row's least height, so a one-line row is exactly one line. A title that wraps
+makes its row taller; the lines below it continue from where it ends. The ruled paper fills
+what is left of the page and never makes it longer.
+b. Add a few tasks: the rows stand on lines that carry on to the page's foot, in light and
+dark paper, on a phone and on a desk.
+c. Code: `web/theme.css` (`--paper-line`, `--line-pitch`, `.task-list li`,
+`.task-list::after`).
+
 ## III. WEEK PLANNER
 
 ### 1. Scrollable week view
