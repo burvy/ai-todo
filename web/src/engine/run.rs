@@ -232,6 +232,91 @@ mod tests {
         assert!(waiting.as_mut().poll(&mut cx).is_ready());
     }
 
+    const PULL: crate::engine::Pull = crate::engine::Pull {
+        omega: 20.0,
+        zeta: 1.0,
+    };
+
+    /// Frames 16 ms apart from `from` until `to`.
+    fn frames(from: f64, to: f64) {
+        let mut at = from;
+        while at <= to {
+            frame_at(at);
+            at += 16.0;
+        }
+    }
+
+    /// A keyed glide that draws into `drawn` (its label with each place) and counts its end.
+    fn keyed(
+        key: &str,
+        label: &'static str,
+        from: f64,
+        drawn: &Rc<std::cell::RefCell<Vec<(&'static str, f64)>>>,
+        ended: &Rc<Cell<u32>>,
+    ) {
+        let (log, ends) = (drawn.clone(), ended.clone());
+        crate::engine::glide_keyed(
+            key,
+            [from],
+            [0.0],
+            PULL,
+            0.1,
+            move |[x]| log.borrow_mut().push((label, x)),
+            move || ends.set(ends.get() + 1),
+        );
+    }
+
+    #[test]
+    fn a_keyed_glide_runs_to_its_end_once_and_lets_the_key_go() {
+        let (drawn, ended) = (Rc::default(), Rc::new(Cell::new(0)));
+        keyed("t-run", "a", 100.0, &drawn, &ended);
+        frames(0.0, 3000.0);
+        assert_eq!(ended.get(), 1);
+        assert_eq!(
+            drawn.borrow().first(),
+            Some(&("a", 100.0)),
+            "start drawn at once"
+        );
+        assert_eq!(
+            drawn.borrow().last(),
+            Some(&("a", 0.0)),
+            "the exact end last"
+        );
+        // The key is free again: a second glide under it is not cut short by the first.
+        keyed("t-run", "b", 50.0, &drawn, &ended);
+        frames(3100.0, 6000.0);
+        assert_eq!(ended.get(), 2);
+    }
+
+    #[test]
+    fn a_glide_sent_off_again_takes_the_first_over_and_the_first_never_ends() {
+        let (drawn, ended) = (Rc::default(), Rc::new(Cell::new(0)));
+        keyed("t-replace", "old", 100.0, &drawn, &ended);
+        frames(0.0, 100.0);
+        keyed("t-replace", "new", 40.0, &drawn, &ended);
+        let mark = drawn.borrow().len();
+        frames(116.0, 3000.0);
+        assert!(
+            drawn.borrow()[mark..]
+                .iter()
+                .all(|(label, _)| *label == "new"),
+            "only the newer glide draws after it starts"
+        );
+        assert_eq!(ended.get(), 1, "and only the newer one ends");
+    }
+
+    #[test]
+    fn a_cancelled_glide_stops_without_ending() {
+        let (drawn, ended) = (Rc::default(), Rc::new(Cell::new(0)));
+        keyed("t-cancel", "a", 100.0, &drawn, &ended);
+        frames(0.0, 50.0);
+        crate::engine::cancel("t-cancel");
+        let seen = drawn.borrow().len();
+        frames(66.0, 3000.0);
+        assert_eq!(drawn.borrow().len(), seen, "nothing more is drawn");
+        assert_eq!(ended.get(), 0);
+    }
+
     #[test]
     fn a_stopped_after_never_runs() {
         let runs = Rc::new(Cell::new(0));
