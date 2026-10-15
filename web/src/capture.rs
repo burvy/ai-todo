@@ -402,7 +402,11 @@ pub(crate) fn CaptureBox(
             if let Some(hour) = hour {
                 let before = snapshot.get_untracked();
                 wasm_bindgen_futures::spawn_local(async move {
-                    if store.send(Command::CreateTask(noted(&hour, &title))).await {
+                    if store
+                        .send(Command::CreateTask(noted(&hour, &title)))
+                        .await
+                        .is_some()
+                    {
                         pen_queue.update(|queue| {
                             queue.extend(added(&before, &snapshot.get_untracked()));
                         });

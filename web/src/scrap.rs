@@ -14,16 +14,16 @@ use leptos::prelude::*;
 use todo_core::{Snapshot, Task, TaskId};
 use wasm_bindgen::JsCast;
 
-use crate::api;
-use crate::edits::series_note;
 use crate::events::Queue;
+use crate::store::Store;
 use crate::tasks::occurrence_parts;
 use crate::tuning::{
     BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGE_PX, PIN_EDGES, PIN_ROOM_PX, ROW_CLOSE_MS,
     SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX, STRIP_GAP_PX,
     STRIP_H_PX,
 };
-use rambl_web_core::events::{Event, row_left};
+use rambl_web_core::events::{Event, any_row_back, row_back, row_left};
+use rambl_web_core::store::Command;
 
 /// What taping a scrap back does.
 #[derive(Clone, Debug, PartialEq)]
@@ -34,7 +34,6 @@ pub enum Undo {
     Day { series: String, date: NaiveDate },
 }
 
-/// A box on the page, in viewport pixels: where a deleted row stood, or where a scrap hangs.
 pub use rambl_web_core::events::Spot;
 
 /// How far, in px across and down, a scrap hung at `hung` starts from the middle of the
@@ -47,7 +46,8 @@ pub fn fly_offset(row: Spot, hung: Spot) -> (f64, f64) {
 /// Note where the row `id` stands now, for the strip that is about to hang at the pin.
 pub fn note_departure(events: Queue, id: &str) {
     if let Some(from) = row_spot(id) {
-        forget_departure(events, id);
+        // A newer note of the same row replaces the older one.
+        events.take_all(row_left(id));
         events.push(Event::RowLeft {
             id: id.to_owned(),
             from,
@@ -55,24 +55,43 @@ pub fn note_departure(events: Queue, id: &str) {
     }
 }
 
-/// Drop a noted departure once its request is answered: a refused one, or a strip that
-/// landed past what fits, never mounts a strip to take it.
-pub fn forget_departure(events: Queue, id: &str) {
-    events.take_all(row_left(id));
+/// The tick on row `id` is answered: the noted departure is left for its strip, which
+/// mounts after this runs (dropping it here sent every strip to the pin without its
+/// flight), and dropped when no strip will take it: the tick was refused, or the strip
+/// landed past what the pin mounts.
+pub fn settle_departure(events: Queue, snapshot: &Snapshot, id: &str) {
+    if !hung_at_the_pin(snapshot).iter().any(|hung| hung.id.0 == id) {
+        events.take_all(row_left(id));
+    }
 }
 
-thread_local! {
-    /// Where the strip of a task being taped back hung, so its row can fly back from there.
-    static RETURNS: std::cell::RefCell<std::collections::HashMap<String, Spot>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
+/// Note where the strip of `id` hangs, for its row about to come back to the list.
+fn note_return(events: Queue, id: &str, from: Spot) {
+    // A newer note of the same row replaces the older one.
+    events.take_all(row_back(id));
+    events.push(Event::RowBack {
+        id: id.to_owned(),
+        from,
+    });
 }
 
-fn note_return(id: &str, spot: Spot) {
-    RETURNS.with(|noted| noted.borrow_mut().insert(id.to_owned(), spot));
+/// The same for a strip taped back: the noted spot is left for the row, which the list
+/// lays out a frame after this runs, and dropped when no row will come: the tape was
+/// refused, or the task is gone.
+fn settle_return(events: Queue, snapshot: &Snapshot, id: &str) {
+    if !coming_back(snapshot, id) {
+        events.take_all(row_back(id));
+    }
 }
 
-fn forget_return(id: &str) {
-    RETURNS.with(|noted| noted.borrow_mut().remove(id));
+/// Whether a row for `id` is on its way into the list: the task is listed, not done.
+fn coming_back(snapshot: &Snapshot, id: &str) -> bool {
+    crate::edits::held(snapshot, id).is_some_and(|task| !task.done)
+}
+
+/// Whether a tick on `id` was refused: the row is still listed, not done.
+pub fn tick_refused(snapshot: &Snapshot, id: &str) -> bool {
+    crate::edits::held(snapshot, id).is_some_and(|task| !task.done)
 }
 
 /// Whether a point (`x`, `y`) in a `width` x `height` window is in the bin corner: the
@@ -401,14 +420,16 @@ pub fn slide_rows(moved: &[(String, i32)]) {
     }
 }
 
-/// Fly each row that has just come back from the pin from where its strip hung. A strip
-/// not yet answered for (the row is not in the list) is kept for the next look.
-pub fn fly_rows_back() {
+/// Fly each row that has just come back from the pin from where its strip hung. One whose
+/// row is not drawn yet is kept for the next look while its task is listed, and dropped
+/// once the task is gone (deleted elsewhere). It may still be done here: the store redraws
+/// the list the moment the tape is sent, before the server answers.
+pub fn fly_rows_back(events: Queue, snapshot: &Snapshot) {
     let Some(doc) = web_sys::window().and_then(|window| window.document()) else {
         return;
     };
     let motion = !crate::mascot::prefers_reduced_motion();
-    let noted: Vec<(String, Spot)> = RETURNS.with(|noted| noted.borrow_mut().drain().collect());
+    let noted = events.take_all(any_row_back);
     let mut flown = Vec::new();
     for (id, strip) in noted {
         let row = doc
@@ -417,7 +438,9 @@ pub fn fly_rows_back() {
             .flatten()
             .and_then(|row| row.dyn_into::<web_sys::HtmlElement>().ok());
         let Some(row) = row else {
-            note_return(&id, strip);
+            if crate::edits::held(snapshot, &id).is_some() {
+                note_return(events, &id, strip);
+            }
             continue;
         };
         if !motion {
@@ -489,34 +512,24 @@ where
 /// Tape the scrap's task back, then show the list the server answers with. The
 /// scrap stays until the server has the task again, so a refused tape-back keeps
 /// the undo.
-async fn tape_back(
-    scrap: Scrap,
-    scraps: RwSignal<Vec<Scrap>>,
-    set_snapshot: WriteSignal<Snapshot>,
-    set_error: WriteSignal<Option<String>>,
-) {
-    let result = match scrap.undo {
-        Undo::Task(task) => api::restore_task(&task).await,
-        Undo::Day { series, date } => api::clear_occurrence(&series, &date.to_string()).await,
+async fn tape_back(scrap: Scrap, scraps: RwSignal<Vec<Scrap>>, store: Store) {
+    let command = match scrap.undo {
+        Undo::Task(task) => Command::RestoreTask(task),
+        Undo::Day { series, date } => Command::ClearOccurrence {
+            series,
+            date: date.to_string(),
+        },
     };
-    scraps.update(|pile| *pile = after_tape(std::mem::take(pile), scrap.ticket, result.is_ok()));
-    match result {
-        Ok(snapshot) => set_snapshot.set(snapshot),
-        Err(error) => set_error.set(Some(series_note(&error))),
-    }
+    let taken = store.send(command).await.is_some();
+    scraps.update(|pile| *pile = after_tape(std::mem::take(pile), scrap.ticket, taken));
 }
 
 /// The pin's side of the list's page, where the scraps hang. Nothing is drawn while there is
 /// none. Each scrap is kept by its ticket, so a new one arriving does not replay the others.
 #[component]
-pub fn ScrapCorner(
-    snapshot: ReadSignal<Snapshot>,
-    scraps: RwSignal<Vec<Scrap>>,
-    set_snapshot: WriteSignal<Snapshot>,
-    set_error: WriteSignal<Option<String>>,
-) -> impl IntoView {
+pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>) -> impl IntoView {
     // Edits go through the store, which shows the reply and explains a refusal.
-    let store = expect_context::<crate::store::Store>();
+    let store = expect_context::<Store>();
     let events = expect_context::<Queue>();
     view! {
         <div
@@ -618,13 +631,10 @@ pub fn ScrapCorner(
                                     set_timeout(
                                         move || {
                                             wasm_bindgen_futures::spawn_local(async move {
-                                                match api::delete_task(&id).await {
-                                                    Ok(snapshot) => set_snapshot.set(snapshot),
-                                                    Err(e) => {
-                                                        binned.set(false);
-                                                        offset.set((0.0, 0.0));
-                                                        set_error.set(Some(series_note(&e)));
-                                                    }
+                                                // Refused: the scrap comes back off the bin.
+                                                if store.send(Command::DeleteTask(id)).await.is_none() {
+                                                    binned.set(false);
+                                                    offset.set((0.0, 0.0));
                                                 }
                                             });
                                         },
@@ -649,11 +659,11 @@ pub fn ScrapCorner(
                                 let Some(action) = snapshot.with_untracked(|s| crate::tasks::tick_action(s, &id.0)) else {
                                     return;
                                 };
-                                let sink = store;
+
                                 // The row flies back from where this strip hangs.
                                 if let Some(button) = hung_ref.get_untracked() {
                                     let rect = button.get_bounding_client_rect();
-                                    note_return(&id.0, Spot {
+                                    note_return(events, &id.0, Spot {
                                         x: rect.left(),
                                         y: rect.top(),
                                         w: rect.width(),
@@ -661,8 +671,8 @@ pub fn ScrapCorner(
                                     });
                                 }
                                 wasm_bindgen_futures::spawn_local(async move {
-                                    crate::tasks::apply_tick(&id, action, sink).await;
-                                    forget_return(&id.0);
+                                    crate::tasks::apply_tick(&id, action, store).await;
+                                    snapshot.with_untracked(|s| settle_return(events, s, &id.0));
                                     // The strip is gone: keep the keyboard on the new top strip.
                                     crate::engine::next_frame(focus_top_strip);
                                 });
@@ -713,8 +723,7 @@ pub fn ScrapCorner(
                                     wasm_bindgen_futures::spawn_local(tape_back(
                                         tapped.clone(),
                                         scraps,
-                                        set_snapshot,
-                                        set_error,
+                                        store,
                                     ));
                                 }
                             }
@@ -731,6 +740,93 @@ pub fn ScrapCorner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api;
+
+    /// A tick that went through leaves the row's departure for its strip, which mounts
+    /// after the tick returns; one no strip will take is dropped.
+    #[test]
+    fn a_done_rows_departure_waits_for_its_strip_unless_the_tick_was_refused() {
+        let mut snapshot = api::fixture_snapshot();
+        let id = snapshot.tasks[0].id.0.clone();
+        let from = Spot {
+            x: 1.0,
+            y: 2.0,
+            w: 3.0,
+            h: 4.0,
+        };
+        let left = || Event::RowLeft {
+            id: id.clone(),
+            from,
+        };
+        Owner::new().with(|| {
+            let events = Queue::provide();
+            snapshot.tasks[0].done = false;
+            events.push(left());
+            settle_departure(events, &snapshot, &id);
+            assert_eq!(events.take(row_left(&id)), None, "refused: dropped");
+
+            snapshot.tasks[0].done = true;
+            events.push(left());
+            settle_departure(events, &snapshot, &id);
+            assert_eq!(
+                events.take(row_left(&id)),
+                Some(from),
+                "done: kept for the strip"
+            );
+
+            // Done, but older than every strip the pin mounts: no strip will take it.
+            let newer = snapshot.tasks[0].updated_at + chrono::Duration::minutes(1);
+            for n in 0..PIN_EDGES + 2 {
+                let mut other = snapshot.tasks[0].clone();
+                other.id = TaskId(format!("newer-{n}"));
+                other.updated_at = newer;
+                snapshot.tasks.push(other);
+            }
+            events.push(left());
+            settle_departure(events, &snapshot, &id);
+            assert_eq!(events.take(row_left(&id)), None, "past what fits: dropped");
+
+            snapshot.tasks.remove(0);
+            events.push(left());
+            settle_departure(events, &snapshot, &id);
+            assert_eq!(events.take(row_left(&id)), None, "gone: dropped");
+        });
+    }
+
+    /// The same for a strip taped back: its spot waits for the row, which the list lays
+    /// out a frame after the tick returns; one no row will take is dropped.
+    #[test]
+    fn a_taped_back_rows_spot_waits_for_the_row_unless_the_tick_was_refused() {
+        let mut snapshot = api::fixture_snapshot();
+        let id = snapshot.tasks[0].id.0.clone();
+        let from = Spot {
+            x: 5.0,
+            y: 6.0,
+            w: 7.0,
+            h: 8.0,
+        };
+        Owner::new().with(|| {
+            let events = Queue::provide();
+            snapshot.tasks[0].done = true;
+            note_return(events, &id, from);
+            settle_return(events, &snapshot, &id);
+            assert_eq!(events.take(row_back(&id)), None, "refused: dropped");
+
+            snapshot.tasks[0].done = false;
+            note_return(events, &id, from);
+            settle_return(events, &snapshot, &id);
+            assert_eq!(
+                events.take(row_back(&id)),
+                Some(from),
+                "back: kept for the row"
+            );
+
+            snapshot.tasks.remove(0);
+            note_return(events, &id, from);
+            settle_return(events, &snapshot, &id);
+            assert_eq!(events.take(row_back(&id)), None, "gone: dropped");
+        });
+    }
 
     #[test]
     fn a_deleted_task_is_taped_back_unchanged() {

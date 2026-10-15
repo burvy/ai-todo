@@ -547,7 +547,7 @@ const _: () = assert!(WRITE_TOUCHDOWN_MS <= WRITE_SETTLE_MS);
 // A title that is merely slow to write is never cut short as "waited too long".
 const _: () = assert!(WRITE_MAX_MS < WRITE_HOLD_MAX_MS);
 
-/// One hour of the planner grid, in CSS pixels. The `.hour` rule in `index.html` has the
+/// One hour of the planner grid, in CSS pixels. `--hour-h` in `theme.css` has the
 /// same height, so the current-time line and the slips can be placed from the clock.
 /// Change both together; safe range 40 to 100 px.
 pub const HOUR_PX: f32 = 64.0;
