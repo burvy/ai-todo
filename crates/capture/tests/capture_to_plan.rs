@@ -38,6 +38,7 @@ fn task(index: usize, draft: TaskDraft, ctx: &LocalContext) -> Task {
         updated_at: ctx.now,
         due_tz: None,
         external_uid: None,
+        off_planner: false,
     }
 }
 

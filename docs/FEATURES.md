@@ -247,9 +247,9 @@ planner page shows through it live (its own slips and lines, not a picture), in 
 hole reads as a hole even where the planner is empty paper. On a phone the
 planner already lies under the list; on a desk, where the two pages are a spread side by side,
 it slides under the list for as long as the tear lasts (`TEAR_SLIDE_MS`) and slides back: a day
-column (the first with a slip) is brought under where the tear starts, and an hour line to its
-level, computed from the tear's place (`rip::slide_px`, `lift_px`), so the hole shows hour
-lines and column rules and not just the planner's hour labels.
+column (the first with a slip) is brought under where the tear starts (`rip::slide_px`). On
+both, an hour line of that column is brought to the tear's level (`rip::lift_px`), so the hole
+shows hour lines and column rules and not just the planner's hour labels or bare paper.
 The tear follows the finger, never goes back, stops short of the pin's column, and never
 touches a task's words: a press too near a row tears nothing (`rip::lane`). One tear at a
 time. When the finger lets go Rambo notices, hops to the tear and tapes it: a strip of tape
@@ -313,6 +313,19 @@ a. A task that cannot fit is reported as unplaced rather than silently dropped.
 b. Not visible; covered by scheduler and server tests.
 c. Code: `crates/core/src/lib.rs:Placement, Plan`;
 `server/src/v2/app.rs:plan`.
+
+### 4a. Taking a task off the planner
+a. A task can be taken off the planner on purpose: it stays in the list with its
+deadline, and the scheduler leaves it alone until it is placed again, because it is
+reported in `Plan::off_planner` rather than as unplaced. This outranks a pin, so an
+`At` task taken off the planner leaves the week too. Set it with
+`PATCH /api/v1/tasks/{id}` and `{"off_planner": true}`.
+b. Not visible yet: the bubble button that calls it is (planned), and the UI that
+shows why a task is in the list but not on the week is (planned). Covered by
+scheduler, store and server tests.
+c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
+`crates/scheduler/src/lib.rs:plan`; `server/src/v2/app.rs:patch`;
+`server/src/v2/store.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
 
 ### 5. Light and dark paper
 a. The paper is Light or Dark by the reader's own choice in the gear menu, not by
@@ -426,6 +439,18 @@ b. Drag the pen onto a task row and choose an action.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:Choice, asking_dismissed_by`;
 `web/src/api.rs:patch_task`. Move sets `move_request`; the planner places the task
 (III.7).
+
+### 4a. Sound presets
+a. The gear menu's **Sound** picks one of four: **Off** (silence; Rambo does not speak
+aloud), **A quiet desk** (only the noises paper and ink really make: the nib, the
+scribble, the page turn, the crumple; no voice), **Every touch answers** (the default:
+also a tick on every button and a swish when a ramble is sent) and **Everything + music**
+(the same cues; calm background music is (planned)). It replaces the old Sounds on/off
+flag: a stored "off" stays Off, a stored "on" becomes every touch. With reduced motion
+on, the tick and the page sound are dropped.
+b. Open the gear menu, pick each preset, then tap a button, turn the page and add a task.
+c. Code: `web/src/sound.rs:Cue, plays`; `web/src/settings.rs:SoundPreset, with_migrated_sound`;
+`web/src/voice.rs:audible`. Sound files and how to swap one: `web/assets/sounds/ABOUT.md`.
 
 ### 5. Reduced motion
 a. With reduced motion enabled, Rambo returns immediately instead of animating.

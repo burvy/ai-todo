@@ -342,6 +342,9 @@ pub(crate) fn CaptureBox(
                             }
                             set_error.set(Some(format!("No task found in \"{title}\".")));
                         }
+                        if !captured.created.is_empty() {
+                            crate::sound::play(crate::sound::Cue::Send);
+                        }
                         pen_queue.update(|queue| queue.extend(captured.created));
                         set_snapshot.set(captured.snapshot);
                     }

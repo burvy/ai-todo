@@ -158,6 +158,14 @@ pub struct Task {
     pub due_tz: Option<String>,
     /// iCalendar UID for imported events. Re-importing the same UID updates this task.
     pub external_uid: Option<String>,
+    /// The user took this task off the planner on purpose: it stays in the list and the
+    /// scheduler leaves it alone, so it is neither placed nor counted as unplaced
+    /// (ARCHITECTURE.md 4.2). It is a flag and not a [`When`] because the task keeps
+    /// its deadline — only the decision to put it on the week is withdrawn.
+    /// `#[serde(default)]` keeps snapshots written before this field parse, and
+    /// defaults them to on the planner, which is how they were already planned.
+    #[serde(default)]
+    pub off_planner: bool,
 }
 
 /// A task before the server gives it an id.
@@ -182,6 +190,11 @@ pub struct Placement {
 pub struct Plan {
     pub placements: Vec<Placement>,
     pub unplaced: Vec<TaskId>,
+    /// Tasks the user took off the planner, in list order, so the UI can show why they
+    /// are in the list but not on the week. Kept apart from `unplaced`, which means
+    /// "wanted on the week, no room left".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub off_planner: Vec<TaskId>,
 }
 
 /// Everything the client needs to draw the list and the week, from one call.
@@ -429,6 +442,7 @@ mod tests {
             created: at,
             updated_at: at,
             due_tz: None,
+            off_planner: true,
             external_uid: None,
         };
         let snapshot = Snapshot {
