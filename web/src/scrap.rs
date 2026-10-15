@@ -570,10 +570,23 @@ async fn tape_back(scrap: Scrap, scraps: RwSignal<Vec<Scrap>>, store: Store) {
     scraps.update(|pile| *pile = after_tape(std::mem::take(pile), scrap.ticket, taken));
 }
 
+/// The engine key of the glide that carries the strip of task `id`: the task's row is
+/// carried under its bare id, and the two must never take each other's glide over.
+fn strip_key(id: &str) -> String {
+    format!("strip:{id}")
+}
+
+/// Where a press at `finger` must anchor so a drag keeps the strip where it is: a strip let
+/// go mid-swing is `offset` away from its pin, and the first move must not snap it back.
+fn grip_at(finger: (f64, f64), offset: (f64, f64)) -> (f64, f64) {
+    (finger.0 - offset.0, finger.1 - offset.1)
+}
+
 /// Let go of a dragged strip: `offset` (how far the finger had pulled it) runs back to
 /// nothing on a spring, `homing` true meanwhile so the style sheet's own transition stays
 /// off. With reduced motion it is back at once.
 fn swing_home(id: &str, offset: RwSignal<(f64, f64)>, homing: RwSignal<bool>) {
+    let key = strip_key(id);
     let (x, y) = offset.get_untracked();
     if crate::mascot::prefers_reduced_motion() || x.hypot(y) < ROW_NEAR_PX {
         offset.set((0.0, 0.0));
@@ -585,7 +598,7 @@ fn swing_home(id: &str, offset: RwSignal<(f64, f64)>, homing: RwSignal<bool>) {
         zeta: 1.0,
     };
     crate::engine::glide_keyed(
-        id,
+        &key,
         [x, y],
         [0.0; 2],
         pull,
@@ -671,9 +684,10 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                             title="Tap to tape it back"
                             on:pointerdown=move |event: leptos::ev::PointerEvent| {
                                 if top.get_untracked() {
-                                    crate::engine::cancel(&task_id.get_value().0);
+                                    crate::engine::cancel(&strip_key(&task_id.get_value().0));
                                     homing.set(false);
-                                    grip.set_value(Some((f64::from(event.client_x()), f64::from(event.client_y()))));
+                                    let finger = (f64::from(event.client_x()), f64::from(event.client_y()));
+                                    grip.set_value(Some(grip_at(finger, offset.get_untracked())));
                                     just_dragged.set_value(false);
                                     // Moves go to the strip even once the finger has left it.
                                     if let Some(button) = hung_ref.get_untracked() {
@@ -1039,6 +1053,25 @@ mod tests {
             after_tick(SCRAP_UNDO_MS, true),
             SCRAP_UNDO_MS,
             "paused while taping"
+        );
+    }
+
+    #[test]
+    fn a_strip_has_its_own_glide_key_apart_from_its_row() {
+        assert_ne!(strip_key("t1"), "t1");
+        assert_ne!(strip_key("t1"), strip_key("t2"));
+    }
+
+    #[test]
+    fn a_press_mid_swing_anchors_where_the_strip_is_so_it_does_not_jump() {
+        let (finger, offset) = ((300.0, 200.0), (-40.0, 25.0));
+        let grip = grip_at(finger, offset);
+        // The first move to the same spot leaves the strip where it was.
+        assert_eq!((finger.0 - grip.0, finger.1 - grip.1), offset);
+        assert_eq!(
+            grip_at(finger, (0.0, 0.0)),
+            finger,
+            "at rest: the finger itself"
         );
     }
 
