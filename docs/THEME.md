@@ -24,7 +24,6 @@ The look is **one page of parchment, written on in ink** (owner brief, `docs/DES
 | `--rule` | chamoisee 42% | hairlines between rows and hours |
 | `--rule-strong` | chamoisee 62% | page fold, input rules |
 | `--margin-line` | `rgba(165,52,42,.24)` | the notebook's red margin, on the task list |
-| `--wash` | `rgba(159,104,46,.1)` | tint behind a placement |
 | `--backdrop` | `rgba(46,35,21,.35)` | dialog backdrop |
 
 `--paper`, `--paper-raised`, `--paper-sunken` are kept as aliases so existing rules read naturally.
@@ -44,7 +43,6 @@ Every text ink (`--ink`, `--ink-soft`, `--ink-faint`, `--accent`, `--danger`) is
 | `--accent` | `#d9a45c` |
 | `--danger` | `#e0705f` |
 | `--now` | `#da6e53` |
-| `--wash` | `rgba(217,164,92,.14)` |
 | `--backdrop` | `rgba(10,8,5,.55)` |
 
 `color-scheme` is `light` or `dark` to match, so checkboxes, scrollbars and the dialog follow the paper.
@@ -71,7 +69,7 @@ Scale (rem): `--text-xs` 0.85, `--text-sm` 0.95, `--text-base` 1.05, `--text-lg`
 - **Controls:** buttons are plain ink text (44px targets kept); hover underlines at 4px offset. The active tab or filter is 700-weight accent text with a 2px accent underline at 6px offset — no outline, no fill.
 - **Inputs:** transparent background, no box, one `--rule-strong` underline — writing on a rule. Focus turns the underline `--accent`.
 - **Task rows** are separated by a solid `--rule` hairline, like ruled paper.
-- **Placements** are a `--wash` tint with a 3px `--accent` left bar and square corners — ink laid across the hour lines, not a chip.
+- **Placements** are slips of `--paper-raised` paper with the page's grain (`--texture-paper`), laid on the hour lines: cut straight at a 3px `--brass` left edge, torn down the right (`--slip-cut`, `--slip-tear`, masks that tile so a tall slip tears as finely as a short one), with `--shadow-drop` and a crook of under half a degree. Back-to-back slips keep a hairline of page between them.
 - Radii are 0 everywhere (`--radius-sm`, `--radius-md` 2px for the loose-sheet dialog) except round things: Rambo's nest (`--radius-round`) and the ask bubble (12px).
 - Errors keep a red left bar (3px `--danger`) on a faint red wash, square corners.
 

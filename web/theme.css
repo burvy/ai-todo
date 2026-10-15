@@ -66,7 +66,6 @@
   --paper-line: color-mix(in srgb, var(--rule) 70%, transparent);
   --line-pitch: 3.25rem;
   --margin-line: rgba(165, 52, 42, 0.24);
-  --wash: rgba(159, 104, 46, 0.1);
   --shadow: 0 1px 2px rgba(93, 71, 50, 0.14);
   /* The same shadow for a torn shape (filter: drop-shadow), which box-shadow cannot follow. */
   --shadow-drop: 0 1px 1.5px rgba(93, 71, 50, 0.28);
@@ -203,6 +202,11 @@
   --texture-paper: url("assets/theme/paper.svg");
   /* The ripped scrap the desktop capture line is written on (web/assets/scratch/ABOUT.md). */
   --scratch-art: url("assets/scratch/paper.svg");
+  /* A planner slip's paper (.placement::before): the body up to its torn right edge, and
+     that edge's teeth, one tile per 14px of height. Masks, so the colour stays the theme's. */
+  --slip-tear-w: 5px;
+  --slip-cut: linear-gradient(#000, #000) left / calc(100% - var(--slip-tear-w)) 100% no-repeat;
+  --slip-tear: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='14'%3E%3Cpath d='M0 0H3L5 3L2 6L4 9L1 12L3 14H0Z'/%3E%3C/svg%3E") right / var(--slip-tear-w) 14px repeat-y;
 }
 
 /* Dark is the same desk at night: deep paper, parchment-coloured ink.
@@ -246,7 +250,6 @@
   --rule: rgba(167, 134, 93, 0.3);
   --rule-strong: rgba(167, 134, 93, 0.46);
   --margin-line: rgba(224, 112, 95, 0.26);
-  --wash: rgba(217, 164, 92, 0.14);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-drop: 0 1px 1.5px rgba(0, 0, 0, 0.55);
   --sheet-shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.8);
@@ -1824,10 +1827,12 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   }
 }
 
-/* A placed task: a wash of ink across the hour lines, marked by its edge.
-   The hour rows are positioned too and come later in the document, so without
-   a raised layer the slip paints under them and its grip never gets hit by
-   the pointer; a small layer puts the paper's edge back under the pen. */
+/* A placed task: a slip of paper laid on the hour lines, cut straight at its
+   brass-marked left edge and torn down its right one, with a little shadow and a
+   little crook, as the list's scraps are. The hour rows are positioned too and
+   come later in the document, so without a raised layer the slip paints under
+   them and its grip never gets hit by the pointer; a small layer puts the
+   paper's edge back under the pen. */
 .placement {
   position: absolute;
   z-index: var(--layer-page);
@@ -1835,10 +1840,12 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   right: 0;
   padding: var(--space-1);
   padding-left: calc(var(--space-1) + 16px);
-  background-color: var(--wash);
+  background: none;
   border: none;
-  border-left: 3px solid var(--accent);
   border-radius: 0;
+  /* The torn paper is drawn by ::before; its shape casts this shadow. */
+  filter: drop-shadow(var(--shadow-drop));
+  rotate: var(--slip-tilt, -0.4deg);
   /* A 30-minute block is 32px tall. Every slip holds its words inside and
      cuts them with an ellipsis: nothing is ever written past its edge. */
   min-height: 20px;
@@ -1851,6 +1858,26 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
      the slip is not yet lifted, and a lifted slip never starts the page flip. */
   touch-action: none;
   cursor: grab;
+}
+
+.placement:nth-child(even) {
+  --slip-tilt: 0.3deg;
+}
+
+/* The paper itself, behind the words (the slip is its own stacking layer): wheat
+   with the page's grain, a brass mark down the cut edge, and a torn right edge
+   whose teeth tile down it, so a tall slip tears as finely as a short one. */
+.placement::before {
+  content: "";
+  position: absolute;
+  /* Back-to-back slips are separate sheets: a hairline of the page shows between them. */
+  inset: 1px 0;
+  z-index: -1;
+  background-color: var(--paper-raised);
+  background-image: var(--texture-paper);
+  border-left: 3px solid var(--brass);
+  -webkit-mask: var(--slip-cut), var(--slip-tear);
+  mask: var(--slip-cut), var(--slip-tear);
 }
 
 /* Short slips (under an hour) write a size smaller and closer to their
