@@ -175,7 +175,7 @@ fn player(cue: Cue) -> Option<web_sys::HtmlAudioElement> {
 /// rejects the promise (`NotAllowedError`), and nothing a user could do about it, so
 /// the rejection is caught here, in the one place every cue starts from, and dropped.
 #[cfg(target_arch = "wasm32")]
-fn start(audio: &web_sys::HtmlAudioElement) {
+pub(crate) fn start(audio: &web_sys::HtmlAudioElement) {
     if let Ok(playing) = audio.play() {
         wasm_bindgen_futures::spawn_local(async move {
             let _ = wasm_bindgen_futures::JsFuture::from(playing).await;
