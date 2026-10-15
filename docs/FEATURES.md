@@ -333,10 +333,15 @@ c. Code: `web/theme.css` (`--paper-line`, `--line-pitch`, `.task-list`, `.task-o
 
 ### 1. Scrollable week view
 a. The planner shows a configurable number of days and a scrollable 24-hour range.
-Each placement block shows the task's title in the handwriting font and its start time,
-truncated with an ellipsis when the block is too narrow.
+Each placed task is a **torn paper slip** laid on the hour lines: raised paper
+(`--paper-raised`) with the page grain, a brass cut edge on the left, and a torn right
+edge (tiled every 14 px, so a short slip tears as finely as a tall one). A drop shadow
+follows the torn shape, and the slip tilts a fraction of a degree (alternating direction).
+Back-to-back slips keep a hairline of page between them. The slip shows the task's title
+in the handwriting font and its start time, truncated with an ellipsis when too narrow.
 b. Open the **Week** panel and scroll through the grid.
-c. Code: `web/src/week.rs:WeekGrid`; `web/src/settings.rs:GearMenu, Settings`.
+c. Code: `web/src/week.rs:WeekGrid`; `web/src/settings.rs:GearMenu, Settings`;
+`web/theme.css` (`.placement::before`, `--slip-cut`, `--slip-tear`).
 
 ### 2. One server snapshot
 a. The task list and planner use the same server snapshot, so a task cannot show
