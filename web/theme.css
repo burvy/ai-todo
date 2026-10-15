@@ -1872,7 +1872,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   position: absolute;
   /* Back-to-back slips are separate sheets: a hairline of the page shows between them. */
   inset: 1px 0;
-  z-index: -1;
+  z-index: var(--layer-behind);
   background-color: var(--paper-raised);
   background-image: var(--texture-paper);
   border-left: 3px solid var(--brass);
