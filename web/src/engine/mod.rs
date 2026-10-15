@@ -2,7 +2,6 @@
 //! (ARCHITECTURE "The engine"). Jobs run on its frames (`on_tick`, `next_frame`) or
 //! every so often in its time (`every`); the loop sleeps when none is waiting.
 
-mod body;
 mod dance;
 mod fling;
 mod glide;
@@ -10,15 +9,16 @@ mod link;
 mod look;
 mod nest;
 mod run;
-mod sched;
 mod world;
 
+// The pure halves live in `web-core`; these keep the engine's old paths.
 pub(crate) use body::{Pull, Spring1};
 pub(crate) use fling::Walls;
 pub(crate) use glide::{glide, glide_keyed};
 pub(crate) use link::{leaf, on_leaf, set_push};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use link::{push, show};
+pub(crate) use rambl_web_core::{sched, spring as body};
 pub(crate) use run::{after, cancel, every, next_frame, now, on_tick, wait};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use sched::{ENGINE_DT_S, Tick};
