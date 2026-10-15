@@ -3,9 +3,10 @@
 //! actually sees. All wasm-only: no DOM on the test path.
 
 use crate::pen::{Beat, Hand, LineBox, Stroke};
+use crate::rambo_world::RamboWorld;
 use crate::tuning::{INK_FADE_MS, INK_TICK_MS, WRITE_FINISH_MS, WRITE_FLICK_MS, WRITE_SETTLE_MS};
 use crate::{mascot, pen, sound};
-use leptos::prelude::{GetUntracked, ReadSignal, RwSignal, Set, WriteSignal};
+use leptos::prelude::{GetUntracked, ReadSignal, RwSignal, Set};
 use std::cell::Cell;
 use std::collections::HashMap;
 use wasm_bindgen::JsCast;
@@ -204,14 +205,10 @@ fn baseline(line: &LineBox, writing: &Writing) -> f64 {
 }
 
 /// Fly him from where he is and land him, `event` taking him off and on again.
-async fn fly(
-    state: ReadSignal<mascot::State>,
-    set_state: WriteSignal<mascot::State>,
-    event: mascot::Event,
-) {
-    set_state.set(mascot::transition(&state.get_untracked(), event.clone()));
+async fn fly(rambo_world: RamboWorld, event: mascot::Event) {
+    rambo_world.tell(event.clone());
     crate::engine::wait(f64::from(crate::tuning::FLY_MS)).await;
-    set_state.set(mascot::transition(&state.get_untracked(), event));
+    rambo_world.tell(event);
 }
 
 /// The title spelled out one span a glyph while Rambo writes it, so each glyph's
@@ -347,7 +344,7 @@ pub async fn write_row_title(
     row: &web_sys::Element,
     pen_pos: RwSignal<(f64, f64)>,
     state: ReadSignal<mascot::State>,
-    set_state: WriteSignal<mascot::State>,
+    rambo_world: RamboWorld,
 ) {
     let unhide = || {
         row.class_list().remove_1("pen-pending").ok();
@@ -459,24 +456,18 @@ pub async fn write_row_title(
             Beat::Hold => held += step,
             Beat::FlyHome => {
                 held += crate::tuning::FLY_MS;
-                fly(state, set_state, mascot::Event::FlyHome).await;
+                fly(rambo_world, mascot::Event::FlyHome).await;
                 last = crate::engine::now();
             }
             Beat::FlyBack => {
                 held += crate::tuning::FLY_MS;
-                set_state.set(mascot::transition(
-                    &state.get_untracked(),
-                    mascot::Event::WriteRow,
-                ));
+                rambo_world.tell(mascot::Event::WriteRow);
                 // He lands on the letter he stopped at.
                 if let Some(at) = pen::stroke_at(&glyphs, elapsed) {
                     nib_to(at);
                 }
                 crate::engine::wait(f64::from(crate::tuning::FLY_MS)).await;
-                set_state.set(mascot::transition(
-                    &state.get_untracked(),
-                    mascot::Event::WriteRow,
-                ));
+                rambo_world.tell(mascot::Event::WriteRow);
                 touch_down(rambo).await;
                 last = crate::engine::now();
             }

@@ -171,7 +171,6 @@ pub(crate) fn CaptureBox(
     nest_ref: NodeRef<leptos::html::Button>,
     snapshot: ReadSignal<Snapshot>,
     state: ReadSignal<mascot::State>,
-    set_state: WriteSignal<mascot::State>,
     view_settings: ReadSignal<settings::Settings>,
     pen_pos: RwSignal<(f64, f64)>,
     capture_text: RwSignal<String>,
@@ -183,6 +182,8 @@ pub(crate) fn CaptureBox(
     /// Set when you tap the +: the list opens its sheet on a new task.
     new_task: RwSignal<bool>,
 ) -> impl IntoView {
+    // Rambo is told what the box does to him (ARCHITECTURE 8A.5); his state only mirrors.
+    let rambo_world = expect_context::<crate::rambo_world::RamboWorld>();
     let (text, set_text) = signal(String::new());
 
     // Watch for speech transcript from Rambo: when capture_text changes, fill the input
@@ -237,21 +238,16 @@ pub(crate) fn CaptureBox(
         move || {
             linger_timer.update_value(crate::engine::Guard::stop);
             let timer = crate::engine::after(f64::from(crate::tuning::LINGER_MS), move || {
-                set_state.update(|s| {
-                    *s = mascot::transition(s, mascot::Event::FlyHome);
-                });
+                rambo_world.tell(mascot::Event::FlyHome);
                 // He sets off for the nest now, not when the flight is over.
                 if state.get_untracked() == mascot::State::Flying
                     && let Some(nest) = crate::rambo::nest_box(nest_ref)
                 {
                     pen_pos.set(mascot::nest_home(nest));
                 }
-                let set_state = set_state;
                 crate::engine::after(f64::from(crate::tuning::FLY_MS), move || {
-                    // Use transition() so a grab during flight is not overridden.
-                    set_state.update(|s| {
-                        *s = mascot::transition(s, mascot::Event::FlyHome);
-                    });
+                    // Told, not set, so a grab during flight is not overridden.
+                    rambo_world.tell(mascot::Event::FlyHome);
                 });
             });
             linger_timer.update_value(|timers| timers.keep(timer));
@@ -344,7 +340,7 @@ pub(crate) fn CaptureBox(
         if view_settings.get_untracked().mode == settings::RamblMode::Lobotomized {
             return;
         }
-        set_state.set(mascot::transition(&st, mascot::Event::WriteCaret));
+        rambo_world.tell(mascot::Event::WriteCaret);
         measure_caret();
         restart_linger();
     };
@@ -367,7 +363,7 @@ pub(crate) fn CaptureBox(
             let hour = noting_at.get_untracked();
             let st = state.get_untracked();
             if st == mascot::State::Noting {
-                set_state.set(mascot::transition(&st, mascot::Event::Return));
+                rambo_world.tell(mascot::Event::Return);
             }
             linger_timer.update_value(crate::engine::Guard::stop);
             // The box empties now, so whatever is typed while the task is on its way

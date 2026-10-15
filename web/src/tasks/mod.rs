@@ -432,7 +432,6 @@ pub(crate) fn TaskList(
     set_error: WriteSignal<Option<String>>,
     view_settings: ReadSignal<settings::Settings>,
     mascot_state: ReadSignal<mascot::State>,
-    set_mascot_state: WriteSignal<mascot::State>,
     pen_queue: RwSignal<Vec<TaskId>>,
     pen_pos: RwSignal<(f64, f64)>,
     /// A row to open the edit sheet on, set by Rambo's "Edit".
@@ -608,7 +607,7 @@ pub(crate) fn TaskList(
                 current_state,
                 mascot::State::Home | mascot::State::WritingCaret
             ) {
-                let set_state = set_mascot_state;
+                let rambo_world = expect_context::<crate::rambo_world::RamboWorld>();
                 let pen_pos = pen_pos;
                 writing.set_value(true);
                 wasm_bindgen_futures::spawn_local(async move {
@@ -638,10 +637,10 @@ pub(crate) fn TaskList(
                         // scrolled away) is left as it is; he stays home.
                         if !row.as_ref().is_some_and(write::in_view) {
                             unclip_rows(&let_go(Some(&task_id), &[], false));
-                            set_state.set(mascot::transition(&state, mascot::Event::SkipRow));
+                            rambo_world.tell(mascot::Event::SkipRow);
                             continue;
                         }
-                        set_state.set(mascot::transition(&state, mascot::Event::WriteRow));
+                        rambo_world.tell(mascot::Event::WriteRow);
                         // Clip the title and park the nib at the line's start.
                         // The fonts settle first: parking on fallback metrics
                         // would put the pen somewhere the line does not start.
@@ -656,12 +655,9 @@ pub(crate) fn TaskList(
                         if let Some(following) = following {
                             following.stop();
                         }
-                        set_state.set(mascot::transition(
-                            &mascot_state.get_untracked(),
-                            mascot::Event::WriteRow,
-                        ));
+                        rambo_world.tell(mascot::Event::WriteRow);
                         if let Some(row) = row.as_ref() {
-                            write::write_row_title(row, pen_pos, mascot_state, set_state).await;
+                            write::write_row_title(row, pen_pos, mascot_state, rambo_world).await;
                             // The ink he has just laid is wet, and shines until it dries.
                             let now = crate::engine::now();
                             written.update_value(|rows| {
@@ -681,15 +677,9 @@ pub(crate) fn TaskList(
                         // Fly home after this row. A row finished without him (he
                         // was taken elsewhere) leaves him where he is.
                         if mascot_state.get_untracked() == mascot::State::WritingRow {
-                            set_state.set(mascot::transition(
-                                &mascot::State::WritingRow,
-                                mascot::Event::FlyHome,
-                            ));
+                            rambo_world.tell(mascot::Event::FlyHome);
                             crate::engine::wait(f64::from(crate::tuning::FLY_MS)).await;
-                            set_state.set(mascot::transition(
-                                &mascot_state.get_untracked(),
-                                mascot::Event::FlyHome,
-                            ));
+                            rambo_world.tell(mascot::Event::FlyHome);
                         }
                     }
                     writing.set_value(false);
@@ -698,7 +688,7 @@ pub(crate) fn TaskList(
         });
     }
     #[cfg(not(target_arch = "wasm32"))]
-    let _ = (pen_queue, mascot_state, set_mascot_state, view_settings);
+    let _ = (pen_queue, mascot_state, view_settings);
 
     view! {
         <section aria-label="Tasks">
