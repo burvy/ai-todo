@@ -310,6 +310,13 @@
   font-display: swap;
 }
 
+/* A swipe right that nothing on the page takes (one that lands on the edit sheet, say) must
+   not reach the browser, which reads it as "back" and leaves the app for the page before it. */
+html,
+body {
+  overscroll-behavior-x: none;
+}
+
 body {
   max-width: 1100px;
   margin: 0 auto;

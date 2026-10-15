@@ -95,6 +95,8 @@ refreshes the complete snapshot. An edit made from a stale copy of a task (it ch
 device since this page loaded it) is refused with `409 stale_update`; the page keeps what the server has.
 b. Type a task and tap the nest or press Enter (there is no Add button); swipe a row right to
 finish it, or use the row's x to delete it.
+A sideways swipe that lands on the open edit sheet does nothing: `html` and `body` take
+`overscroll-behavior-x: none`, so the browser never reads it as "back" and leaves the app.
 On a phone the **+** at the bar's left (a torn scrap beside the box) adds a task by hand: it opens
 the edit sheet, headed "New task", on a blank form (no title, 30 minutes, anytime, no repeat). Save
 needs a title and a length and makes the task with `POST /api/v1/tasks` (or a weekly series, if
