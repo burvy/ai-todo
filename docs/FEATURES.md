@@ -286,8 +286,10 @@ a. When a phone's keyboard covers the screen, the page sets `--keyboard-inset` o
 to the height the keyboard covers. Rambo and the nest's rim move with that inset, and they
 measure again whenever it changes, whatever sets it.
 b. On a phone, tap the capture box: the keyboard opens and Rambo rides up with the bar.
-c. Code: `web/src/capture.rs` (`--keyboard-inset` on the document root, the watch that
-measures again); `web/theme.css` (`.capture`, `.nest`).
+c. Code: `web/src/capture.rs` (sets `--keyboard-inset` on the document root);
+`web/src/rambo.rs` (a `MutationObserver` on the root that makes Rambo and the nest's rim
+measure again; test `he_measures_again_whenever_the_keyboard_inset_changes`);
+`web/theme.css` (`.capture`).
 
 ## III. WEEK PLANNER
 
