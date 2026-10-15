@@ -150,9 +150,9 @@ mod imp {
         /// Down on bare paper: `y` is the level a tear would run along, in page coordinates.
         Pressed {
             id: i32,
-            x: f64,
-            y: f64,
-            client_y: f64,
+            at: rip::Pt,
+            client: rip::Pt,
+            touch: bool,
         },
         /// The finger is tearing.
         Tearing {
@@ -213,6 +213,13 @@ mod imp {
                     if let Some(main) = main.get_untracked() {
                         el_style(&main, "--planner-settled", &settled.get().to_string());
                     }
+                }
+            });
+            // A list that fits its page has nothing to scroll, so a finger may tear it up
+            // or down: the browser is told so (`.fits`), or it would take the drag.
+            Effect::new(move |_| {
+                if let Some(pane) = pane.get() {
+                    keep_fit(&pane);
                 }
             });
             // A finished row tears out of the page where it stood.
@@ -321,15 +328,14 @@ mod imp {
                 return;
             }
             let (left, top) = Self::origin(&pane);
-            let (x, client_y) = (f64::from(ev.client_x()), f64::from(ev.client_y()));
-            let y = client_y - top;
-            let rows = rows_of(&pane, top);
-            if let Some(y) = rip::lane(y, &rows) {
+            let client = (f64::from(ev.client_x()), f64::from(ev.client_y()));
+            let at = (client.0 - left, client.1 - top);
+            if rip::starts_on_paper(at, &rows_of(&pane, left, top)) {
                 *dom.phase.borrow_mut() = Phase::Pressed {
                     id: ev.pointer_id(),
-                    x: x - left,
-                    y,
-                    client_y,
+                    at,
+                    client,
+                    touch: ev.pointer_type() == "touch",
                 };
             }
         }
@@ -337,55 +343,65 @@ mod imp {
         pub(crate) fn moved(&self, ev: &leptos::ev::PointerEvent) {
             let dom = &self.dom;
             let Some(pane) = dom.pane.get() else { return };
-            let (left, _) = Self::origin(&pane);
-            let x = f64::from(ev.client_x()) - left;
+            let (left, top) = Self::origin(&pane);
+            let client = (f64::from(ev.client_x()), f64::from(ev.client_y()));
+            let finger = (client.0 - left, client.1 - top);
             let mut phase = dom.phase.borrow_mut();
             match &*phase {
                 Phase::Pressed {
                     id,
-                    x: x0,
-                    y,
-                    client_y,
+                    at,
+                    client: down,
+                    touch,
                 } if *id == ev.pointer_id() => {
-                    let (dx, dy) = (x - x0, f64::from(ev.client_y()) - client_y);
-                    if rip::is_rip(dx, dy) {
+                    let (dx, dy) = (client.0 - down.0, client.1 - down.1);
+                    let scrolls = pane.scroll_height() > pane.client_height();
+                    if dx.hypot(dy) > crate::tuning::GESTURE_SLOP_PX
+                        && rip::is_page_gesture(dx, dy, *touch, scrolls)
+                    {
+                        // The page's own gesture: a turn, or a scroll.
+                        *phase = Phase::Idle;
+                    } else if rip::is_rip(dx, dy) {
                         let seed = dom.made.get().wrapping_add(1);
                         dom.made.set(seed);
-                        let tear = Tear::slit(
-                            (*x0, *y),
-                            (*x0, *y),
-                            seed.wrapping_mul(2_654_435_761) ^ (*y as u32),
-                        );
+                        let tear =
+                            Tear::slit(*at, *at, seed.wrapping_mul(2_654_435_761) ^ (at.1 as u32));
                         let _ = pane.set_pointer_capture(*id);
                         *phase = Phase::Tearing { id: *id };
                         drop(phase);
                         self.tear.set(Some(tear));
-                        self.tear_to(&pane, x);
-                    } else if dy.abs() > crate::tuning::GESTURE_SLOP_PX && dy.abs() > dx.max(0.0) {
-                        // Going up or down, or back left: a scroll or a turn, not a rip.
-                        *phase = Phase::Idle;
+                        self.tear_to(&pane, finger);
                     }
                 }
                 Phase::Tearing { id } if *id == ev.pointer_id() => {
                     drop(phase);
-                    self.tear_to(&pane, x);
+                    self.tear_to(&pane, finger);
                 }
                 _ => {}
             }
         }
 
-        /// The tear reaches `x` (the page's own coordinates): further each time, never
-        /// back, and not into the pin's column or off the screen.
-        fn tear_to(&self, pane: &Element, x: f64) {
+        /// The tear follows the finger (`finger`, in the page's own coordinates): further
+        /// each time, never back, in whatever direction it goes, and it stops where it
+        /// would touch a task's words, the pin's column or the edge of the page.
+        fn tear_to(&self, pane: &Element, finger: rip::Pt) {
             let pin = web_sys::window()
                 .and_then(|window| window.get_computed_style(pane).ok().flatten())
                 .and_then(|style| style.get_property_value("padding-right").ok())
                 .and_then(|value| value.trim_end_matches("px").parse::<f64>().ok())
                 .unwrap_or(0.0);
-            let limit = rip::right_limit(f64::from(pane.client_width()), pin);
+            let (left, top) = Self::origin(pane);
+            let bounds = (
+                crate::tuning::RIP_EDGE_PX,
+                crate::tuning::RIP_EDGE_PX,
+                rip::right_limit(f64::from(pane.client_width()), pin),
+                f64::from(pane.scroll_height().max(pane.client_height()))
+                    - crate::tuning::RIP_EDGE_PX,
+            );
+            let rows = rows_of(pane, left, top);
             self.tear.update(|tear| {
                 if let Some(tear) = tear {
-                    tear.to.0 = tear.to.0.max(x.min(limit)).max(tear.from.0);
+                    tear.follow(rip::reach_towards(tear.from, finger, &rows, bounds));
                 }
             });
         }
@@ -479,6 +495,25 @@ mod imp {
         }
     }
 
+    /// Keep `.fits` on the list page while its content fits it: it lets a finger drag
+    /// anywhere on it (theme.css), as there is nothing to scroll. Checked when the page or
+    /// its list changes size.
+    fn keep_fit(pane: &Element) {
+        let page = pane.clone();
+        let check = wasm_bindgen::closure::Closure::<dyn Fn()>::new(move || {
+            let fits = page.scroll_height() <= page.client_height();
+            let _ = page.class_list().toggle_with_force("fits", fits);
+        });
+        if let Ok(observer) = web_sys::ResizeObserver::new(check.as_ref().unchecked_ref()) {
+            observer.observe(pane);
+            if let Ok(Some(list)) = pane.query_selector(".task-list") {
+                observer.observe(&list);
+            }
+        }
+        // The page lives as long as the app, and so does its watcher.
+        check.forget();
+    }
+
     /// The planner page in `main`.
     fn planner_in(main: &Element) -> Option<web_sys::HtmlElement> {
         main.query_selector(".planner-page")
@@ -534,15 +569,20 @@ mod imp {
         tear.with_untracked(Option::is_some)
     }
 
-    /// Each row's `(top, bottom)` in the page's coordinates, `top` being where the page's
+    /// Each row's box in the page's coordinates, `left` and `top` being where the page's
     /// content starts on the screen.
-    fn rows_of(pane: &Element, top: f64) -> Vec<(f64, f64)> {
+    fn rows_of(pane: &Element, left: f64, top: f64) -> Vec<rip::Rect> {
         let rows = pane.get_elements_by_class_name("task-row");
         (0..rows.length())
             .filter_map(|i| rows.item(i))
             .map(|row| {
                 let rect = row.get_bounding_client_rect();
-                (rect.top() - top, rect.bottom() - top)
+                (
+                    rect.left() - left,
+                    rect.top() - top,
+                    rect.right() - left,
+                    rect.bottom() - top,
+                )
             })
             .collect()
     }

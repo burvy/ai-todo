@@ -1177,6 +1177,12 @@ li.task-row:focus-within .delete-mark {
    hidden; while a tear lasts it shows, under the list, which is paper with the slit cut out of
    it, so what shows through the hole is the live planner. The texture is fixed to the screen so
    it does not shift where it was the body's. */
+/* A list that fits its page has nothing to scroll (rip_ui.rs keeps `.fits`): a finger can tear
+   it in any direction, up and down too, and the browser does not take the drag for a pan. */
+.tasks-pane.fits {
+  touch-action: none;
+}
+
 main.torn > .tasks-pane {
   z-index: var(--layer-turn-front);
   background-color: var(--paper);
