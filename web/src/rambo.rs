@@ -10,7 +10,7 @@ use crate::edits::{
     EditSink, heard_edit_applies, revisable, revise_and_show, revise_body, sheet_left,
 };
 use crate::tasks::{apply_tick, tick_action};
-use crate::{gesture, ink, mascot, settings, speech, tuning, voice};
+use crate::{gesture, ink, mascot, settings, sound, speech, tuning, voice};
 
 /// The single Rambo element: independent fixed layer above everything.
 ///
@@ -194,7 +194,7 @@ pub(crate) fn Rambo(
                 leaf: crate::engine::leaf(),
                 walls: screen_walls(),
             };
-            let (brain, draw, posed, at_rest, laid, nest_moved) = {
+            let (brain, draw, posed, at_rest, laid, knocks, nest_moved) = {
                 let mut world = world.borrow_mut();
                 world.adopt(state.get_untracked());
                 // The music is heard only when he could dance to it, so the rest of the
@@ -212,9 +212,13 @@ pub(crate) fn Rambo(
                     world.look(),
                     world.at_rest(),
                     world.take_ink(),
+                    world.take_knocks(),
                     world.nest_offset(),
                 )
             };
+            if knocks > 0 {
+                sound::play(sound::Cue::Knock);
+            }
             if !laid.is_empty() {
                 let pen = pen.get_untracked();
                 strokes.update(|strokes| {

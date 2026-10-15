@@ -24,17 +24,20 @@ pub enum Cue {
     Send,
     /// A strip is crumpled into the bin.
     Crumple,
+    /// His dry nib knocks on the nest's rim, once a tap.
+    Knock,
 }
 
 impl Cue {
     /// Every cue, for the tests that check the table and the files.
-    pub const ALL: [Cue; 6] = [
+    pub const ALL: [Cue; 7] = [
         Cue::Write,
         Cue::Scribble,
         Cue::Tap,
         Cue::Page,
         Cue::Send,
         Cue::Crumple,
+        Cue::Knock,
     ];
 
     /// Sounds that answer a touch with no job of their own: what a person who asked the
@@ -45,13 +48,17 @@ impl Cue {
 }
 
 /// The event-to-sound table: does `preset` play `cue`? Off plays nothing. A quiet desk keeps to the noises
-/// paper and ink really make (the nib, the scribble, the page, the crumple); the other
+/// paper and ink really make (the nib, its knock on the rim, the scribble, the page, the
+/// crumple); the other
 /// two answer every touch (the music of `Music` is a separate track, not a cue).
 /// Reduced motion drops the cues that only decorate a movement.
 pub fn plays(preset: SoundPreset, cue: Cue, reduced_motion: bool) -> bool {
     let wanted = match preset {
         SoundPreset::Off => false,
-        SoundPreset::Quiet => matches!(cue, Cue::Write | Cue::Scribble | Cue::Page | Cue::Crumple),
+        SoundPreset::Quiet => matches!(
+            cue,
+            Cue::Write | Cue::Knock | Cue::Scribble | Cue::Page | Cue::Crumple
+        ),
         SoundPreset::Touch | SoundPreset::Music => true,
     };
     wanted && !(reduced_motion && cue.is_ambient())
@@ -67,6 +74,8 @@ impl Cue {
             Cue::Page => "page",
             Cue::Send => "send",
             Cue::Crumple => "crumple",
+            // A small hard knock, as a button's tick is: no file of its own yet.
+            Cue::Knock => "tick",
         }
     }
 
@@ -79,6 +88,7 @@ impl Cue {
             Cue::Page => 0.3,
             Cue::Send => 0.35,
             Cue::Crumple => 0.4,
+            Cue::Knock => 0.25,
         }
     }
 }
@@ -184,7 +194,13 @@ mod tests {
                 "{cue:?} on a quiet desk"
             );
         }
-        for cue in [Cue::Write, Cue::Scribble, Cue::Page, Cue::Crumple] {
+        for cue in [
+            Cue::Write,
+            Cue::Knock,
+            Cue::Scribble,
+            Cue::Page,
+            Cue::Crumple,
+        ] {
             assert!(
                 plays(SoundPreset::Quiet, cue, false),
                 "{cue:?} is a real noise"
@@ -209,7 +225,7 @@ mod tests {
             .filter(|p| *p != SoundPreset::Off)
         {
             assert!(!plays(preset, Cue::Tap, true) && !plays(preset, Cue::Page, true));
-            for cue in [Cue::Write, Cue::Scribble, Cue::Crumple] {
+            for cue in [Cue::Write, Cue::Knock, Cue::Scribble, Cue::Crumple] {
                 assert!(
                     plays(preset, cue, true),
                     "{cue:?} is feedback, not decoration"
