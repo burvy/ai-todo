@@ -18,6 +18,7 @@ use fields::{
     EditWhen, WEEKDAY_CHOICES, due_display, local_input_value, series_from_dialog,
     series_patch_from_dialog, toggled_day, typed_when,
 };
+use rambl_web_core::store::Command;
 
 /// The order the server wants after moving `dragged` to `slot` beside `target`,
 /// or `None` when the drop is not a reorder at all.
@@ -421,6 +422,7 @@ pub(crate) fn TaskList(
 ) -> impl IntoView {
     #[cfg(not(target_arch = "wasm32"))]
     let _ = pen_pos;
+    let store = expect_context::<crate::store::Store>();
     let (editing_task, set_editing_task) = (open_sheet.read_only(), open_sheet.write_only());
     // Rows Rambo has written and when (`engine::now`): wet for a while, and a tap then
     // smudges the ink instead of opening the row (`smudge.rs`).
@@ -822,12 +824,7 @@ pub(crate) fn TaskList(
                                         let Some(new_order) = new_order else {
                                             return;
                                         };
-                                        let set_snapshot = set_snapshot_clone;
-                                        wasm_bindgen_futures::spawn_local(async move {
-                                            if let Ok(new_snap) = api::reorder_tasks(new_order).await {
-                                                set_snapshot.set(new_snap);
-                                            }
-                                        });
+                                        store.dispatch(Command::Reorder(new_order));
                                     }
                                 }
                             }

@@ -6,4 +6,5 @@ pub mod clock;
 pub mod gesture;
 pub mod hop;
 pub mod settings;
+pub mod store;
 pub mod tuning;
