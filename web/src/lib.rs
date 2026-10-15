@@ -31,6 +31,7 @@ mod fold;
 mod fold_turner;
 mod placing;
 mod rambo;
+mod rambo_world;
 mod ribbon;
 mod scrap;
 mod smudge;
@@ -87,6 +88,8 @@ pub fn App() -> impl IntoView {
     let (talking, set_talking) = signal(false);
     let (typing, set_typing) = signal(false);
     let pen_pos = RwSignal::new((0.0_f64, 0.0));
+    // Rambo's one owner: the world holds his state and `mascot_state` mirrors it.
+    rambo_world::RamboWorld::provide(pen_pos.get_untracked(), mascot_state, set_mascot_state);
     // What a dazed Rambo has written on the page, one path per drag.
     let strokes = RwSignal::new(Vec::<ink::Stroke>::new());
     // Transcript buffer: Rambo fills it while listening, CaptureBox reads it
@@ -268,7 +271,6 @@ pub fn App() -> impl IntoView {
         <Rambo
             noting_at
             state=mascot_state
-            set_state=set_mascot_state
             talking
             set_talking
             snapshot
