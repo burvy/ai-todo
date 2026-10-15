@@ -258,8 +258,28 @@ pub(crate) fn CaptureBox(
             };
             let el: web_sys::Element = input_el.clone().into();
             let rect = el.get_bounding_client_rect();
-            let sel = input_el.selection_start().ok().flatten().unwrap_or(0);
-            let caret_x = rect.left() + f64::from(sel) * 8.0;
+            let sel = input_el.selection_start().ok().flatten().unwrap_or(0) as usize;
+            // The nib is at the end of the words before the caret, on the paper: measured
+            // in the box's own font, past its padding.
+            let style =
+                web_sys::window().and_then(|window| window.get_computed_style(&el).ok().flatten());
+            let px = |name: &str| {
+                style
+                    .as_ref()
+                    .and_then(|style| style.get_property_value(name).ok())
+                    .and_then(|value| value.trim_end_matches("px").parse::<f64>().ok())
+                    .unwrap_or(0.0)
+            };
+            let before: String = input_el.value().chars().take(sel).collect();
+            let advance = crate::tasks::write::text_advance(&el, &before);
+            let content = rect.width() - px("padding-left") - px("padding-right");
+            let caret_x = crate::pen::caret_x(
+                rect.left(),
+                px("padding-left"),
+                advance,
+                f64::from(input_el.scroll_left()),
+                content,
+            );
             let caret_y = rect.top() + rect.height() / 2.0;
             let center = crate::pen::writing_pen_center(caret_x, caret_y);
             // Rambo is now a fixed layer — pen_pos is absolute page coords

@@ -52,7 +52,7 @@ Converted TTF → WOFF2 with `fontTools`.
 ## Art
 
 All SVGs in `web/assets/` (Rambo skins and poses, the nest's two layers, mood fx,
-tack-board art, `pen.svg`, icons, paper textures) are placeholders drawn in
+tack-board art, the scratch paper, `pen.svg`, icons, paper textures) are placeholders drawn in
 this repository by AI agents; no external source, no licence needed. The
 fountain-pen skin was recoloured to the paper palette (coffee `#5D4732` body,
 golden brown `#9F682E` cap) on 2026-10-13; the pencil/ballpoint/quill/marker

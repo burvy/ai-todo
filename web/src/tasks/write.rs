@@ -66,6 +66,13 @@ fn measuring_canvas(el: &web_sys::Element) -> Option<web_sys::CanvasRenderingCon
     Some(ctx)
 }
 
+/// How wide `text` is in `el`'s font, in px: where the nib stands after it on a line.
+pub(crate) fn text_advance(el: &web_sys::Element, text: &str) -> f64 {
+    measuring_canvas(el)
+        .and_then(|ctx| ctx.measure_text(text).ok())
+        .map_or(0.0, |metrics| metrics.width())
+}
+
 /// The writing font measured once: how wide each glyph is on the page,
 /// and how far the em box runs above and below the baseline.
 struct Writing {

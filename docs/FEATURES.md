@@ -230,17 +230,25 @@ Tapping the nest submits the box. On a phone, when the keyboard opens the captur
 up on top of it, with the nest and Rambo in it, and goes back down when it closes.
 d. Nothing pops in or out. The only thing on main that fades is ink (it appears over `INK_FADE_MS`
 and fades out over `INK_FADE_OUT_MS`); the one other thing allowed to fade is Rambo's
-tape patch and the tear it mends (item g). Everything else moves: a done or
+tape patch and the tear it mends (item h). Everything else moves: a done or
 deleted row flies to the pin, a taped-back task flies back from it, the rows below slide up
 to close a gap (`ROW_CLOSE_MS`), a crumpled strip drops away, and Rambo's ask bubble grows
 out of him and folds back into him over `ASK_FOLD_MS` before it leaves the page, at full
 opacity throughout.
 e. Try it: open the app on a phone and see no heading; add enough tasks to overflow and see
 the box stay put; swipe a row right and watch it travel to the pin.
-f. Code: `web/src/lib.rs:App, PageFoot`; `web/src/week.rs:WeekGrid` (the planner page, the
+f. On a desk the capture line is **pinned** (it stays at the top of the screen while the page
+scrolls, as the phone's bar stays at the bottom) and is drawn as **a piece of ripped scratch
+paper** laid on the desk: torn on every side with a shadow, and a faint writing line
+(`web/assets/scratch/`, one file per theme, see its `ABOUT.md`). Rambo writes on it: as you type
+his nib stands at the end of the words you have typed, on the paper (the caret is measured in the
+line's own font, past its padding, and follows the text as a long line scrolls:
+`pen::caret_x`, `tasks::write::text_advance`). A phone keeps the bar at its bottom edge. The
+paper cut-out x that scribbles the text out and lays down a fresh scrap is *(planned)*.
+g. Code: `web/src/lib.rs:App, PageFoot`; `web/src/week.rs:WeekGrid` (the planner page, the
 gear); `web/src/scrap.rs` (the pin); `web/theme.css` (`.capture`, `.nest`, `.nest-rim`, the
 phone block with `100dvh`); numbers in `web/src/tuning.rs`.
-g. **The page rips.** A swipe to the right on bare paper of the list page (a finger on a phone, a
+h. **The page rips.** A swipe to the right on bare paper of the list page (a finger on a phone, a
 mouse drag on a desk; not on a task, and mostly level: `RIP_MIN_PX`, `RIP_MAX_SLOPE`) tears the
 page along the swipe. The tear is a real hole, a ragged slit up to `RIP_GAP_PX` wide: the
 planner page shows through it live (its own slips and lines, not a picture), in shade, so the

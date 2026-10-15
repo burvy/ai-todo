@@ -273,6 +273,20 @@ pub fn writing_pen_center(caret_x: f64, caret_y: f64) -> (f64, f64) {
     (caret_x, caret_y - (PEN_H / 2.0) * WRITE_SCALE)
 }
 
+/// Where the nib is across the capture line when the caret has `advance` px of text before
+/// it: past the box's left padding, back by however far the text has scrolled, and never
+/// beyond the line's written width (a long line scrolls and the caret stays at its end).
+/// All in px; `box_left` is the line's left edge on screen.
+pub fn caret_x(
+    box_left: f64,
+    padding_left: f64,
+    advance: f64,
+    scroll: f64,
+    content_width: f64,
+) -> f64 {
+    box_left + padding_left + (advance - scroll).clamp(0.0, content_width.max(0.0))
+}
+
 /// The writing baseline inside a line box: leading is shared above and below,
 /// so the baseline is the box's middle shifted by the font's own bias towards
 /// the descenders.
@@ -305,6 +319,24 @@ pub fn scribble_ms(title: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_nib_stands_at_the_end_of_the_words_on_the_paper() {
+        // A line at x 100 with 28 px of paper before the words: an empty line has the nib at
+        // the start of the words, and each px of text moves it right by as much.
+        assert_eq!(caret_x(100.0, 28.0, 0.0, 0.0, 400.0), 128.0);
+        assert_eq!(caret_x(100.0, 28.0, 90.0, 0.0, 400.0), 218.0);
+        // A long line scrolls: the caret keeps its place relative to the text.
+        assert_eq!(caret_x(100.0, 28.0, 700.0, 350.0, 400.0), 478.0);
+        // It never leaves the written width, however far the text runs.
+        assert_eq!(caret_x(100.0, 28.0, 900.0, 0.0, 400.0), 528.0);
+        assert_eq!(caret_x(100.0, 28.0, -5.0, 0.0, 400.0), 128.0);
+        assert_eq!(
+            caret_x(100.0, 28.0, 30.0, 0.0, -10.0),
+            128.0,
+            "a box with no room"
+        );
+    }
     use crate::tuning::INK_TICK_MS;
 
     /// Every letter the same width: the easy case to reason about.
