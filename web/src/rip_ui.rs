@@ -355,7 +355,7 @@ mod imp {
                     touch,
                 } if *id == ev.pointer_id() => {
                     let (dx, dy) = (client.0 - down.0, client.1 - down.1);
-                    let scrolls = pane.scroll_height() > pane.client_height();
+                    let scrolls = scrolls(&pane);
                     if dx.hypot(dy) > crate::tuning::GESTURE_SLOP_PX
                         && rip::is_page_gesture(dx, dy, *touch, scrolls)
                     {
@@ -495,13 +495,27 @@ mod imp {
         }
     }
 
+    /// Whether the list page has anything to scroll: it or the `main` around it is a scroll
+    /// box with more content than room (which of the two it is depends on the layout).
+    fn scrolls(pane: &Element) -> bool {
+        let scroll_box = |el: &Element| {
+            let overflows = el.scroll_height() > el.client_height();
+            let auto = web_sys::window()
+                .and_then(|window| window.get_computed_style(el).ok().flatten())
+                .and_then(|style| style.get_property_value("overflow-y").ok())
+                .is_some_and(|value| matches!(value.as_str(), "auto" | "scroll"));
+            overflows && auto
+        };
+        scroll_box(pane) || pane.parent_element().is_some_and(|main| scroll_box(&main))
+    }
+
     /// Keep `.fits` on the list page while its content fits it: it lets a finger drag
     /// anywhere on it (theme.css), as there is nothing to scroll. Checked when the page or
     /// its list changes size.
     fn keep_fit(pane: &Element) {
         let page = pane.clone();
         let check = wasm_bindgen::closure::Closure::<dyn Fn()>::new(move || {
-            let fits = page.scroll_height() <= page.client_height();
+            let fits = !scrolls(&page);
             let _ = page.class_list().toggle_with_force("fits", fits);
         });
         if let Ok(observer) = web_sys::ResizeObserver::new(check.as_ref().unchecked_ref()) {
