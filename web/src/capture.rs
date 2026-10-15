@@ -273,9 +273,10 @@ pub(crate) fn CaptureBox(
             // The torn ends are the box's borders (theme.css): the words start inside them.
             let inset_left = px_of("padding-left") + px_of("border-left-width");
             let inset_right = px_of("padding-right") + px_of("border-right-width");
-            let before: String = input_el.value().chars().take(sel).collect();
+            let value = input_el.value();
+            let before = crate::pen::before_caret(&value, sel);
             let (advance, baseline) =
-                crate::tasks::write::text_on_line(&el, &before, rect.top(), rect.height());
+                crate::tasks::write::text_on_line(&el, before, rect.top(), rect.height());
             let content = rect.width() - inset_left - inset_right;
             let caret_x = crate::pen::caret_x(
                 rect.left(),
