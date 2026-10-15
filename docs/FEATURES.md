@@ -385,7 +385,7 @@ it rides up with the bar over the keyboard), so no page is under it.
 b. Tap the lamp (or pick Light or Dark in the gear menu) and watch the new paper slide
 down; reload and see the choice kept.
 c. Code: `web/src/lamp.rs:DeskLamp, switch_to`; `web/theme.css` (`.desk-lamp`,
-`.lamp-sheet`); `crates/web-core/src/tuning.rs:LAMP_SLIDE_MS`. The art: `web/assets/lamp/ABOUT.md`.
+`.lamp-sheet`); `crates/web-core/src/tuning.rs:LAMP_SHEET_OMEGA`. The art: `web/assets/lamp/ABOUT.md`.
 
 ### 6. Parchment theme
 a. The page is aged paper: warm palette, serif headings, a tiled paper texture that switches to a dark variant in dark mode.

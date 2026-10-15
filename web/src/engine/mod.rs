@@ -5,6 +5,7 @@
 mod body;
 mod dance;
 mod fling;
+mod glide;
 mod link;
 mod look;
 mod nest;
@@ -14,6 +15,7 @@ mod world;
 
 pub(crate) use body::{Pull, Spring1};
 pub(crate) use fling::Walls;
+pub(crate) use glide::glide;
 pub(crate) use link::{leaf, on_leaf, set_push};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use link::{push, show};
@@ -32,9 +34,6 @@ mod tests {
     /// Files that read the wall clock for the user's day (the planner's now line, what
     /// is overdue, the hour he hears), not to time a movement.
     const DAY_TIME: [&str; 3] = ["brain.rs", "tasks/mod.rs", "week.rs"];
-
-    /// Files still on the browser's own timers until the scrap moves (core step 6).
-    const TIMERS_PENDING: [&str; 1] = ["scrap.rs"];
 
     fn sources(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("read web/src").flatten() {
@@ -76,11 +75,9 @@ mod tests {
                     found.push(format!("{name}: {token}"));
                 }
             }
-            if !TIMERS_PENDING.contains(&name.as_str()) {
-                for token in &timers {
-                    if text.contains(token.as_str()) {
-                        found.push(format!("{name}: {token}"));
-                    }
+            for token in &timers {
+                if text.contains(token.as_str()) {
+                    found.push(format!("{name}: {token}"));
                 }
             }
             if text.contains(clock.as_str()) && !DAY_TIME.contains(&name.as_str()) {

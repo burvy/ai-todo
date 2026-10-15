@@ -49,16 +49,17 @@ pub fn decide(current: Theme, wanted: Theme, busy: bool, reduced_motion: bool) -
     }
 }
 
-/// Where the sheet is in its trip.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Sheet {
-    /// Up out of sight.
-    Away,
-    /// Sliding down onto the page.
-    Down,
-    /// Lifting back up off it.
-    Up,
-}
+/// Where the sheet hangs when it is up out of sight, in percent of its own height (the
+/// page-high sheet's top edge is at 0 when it covers the page).
+const SHEET_AWAY: f64 = -100.0;
+/// How near its end, in percent, the sheet counts as landed.
+const SHEET_NEAR: f64 = 0.4;
+
+/// The sheet's spring: critically damped, so it lands without bouncing.
+const SHEET_PULL: crate::engine::Pull = crate::engine::Pull {
+    omega: crate::tuning::LAMP_SHEET_OMEGA,
+    zeta: 1.0,
+};
 
 /// A pick of paper waiting to be laid down: the gear menu and the lamp both write it, and
 /// the one `DeskLamp` on the page runs it.
@@ -98,16 +99,16 @@ pub fn DeskLamp(
     let request = use_context::<SwitchRequest>()
         .expect("provide_switch is called before the lamp")
         .0;
-    // The paper the sheet carries, and where it is on its trip.
+    // The paper the sheet carries, and where it hangs: `None` while it is away, else its
+    // top edge in percent of its height (-100 up out of sight, 0 over the page).
     let (sheet_paper, set_sheet_paper) = signal(Theme::Dark);
-    let (sheet, set_sheet) = signal(Sheet::Away);
+    let (sheet, set_sheet) = signal(None::<f64>);
     // The cord is mid-pull.
     let (pulled, set_pulled) = signal(false);
     // The paper being switched to, from the click until it has landed: the lamp's own
     // light changes at the click, instantly.
     let (going_to, set_going_to) = signal(None::<Theme>);
-    let slide = f64::from(crate::tuning::LAMP_SLIDE_MS);
-    // The timers of a switch in progress, stopped if the lamp goes before they run.
+    // The glides and the timer of a switch in progress, stopped if the lamp goes first.
     let timers = StoredValue::new_local(crate::engine::Guard::default());
     Effect::new(move |_| {
         let Some(theme) = request.get() else { return };
@@ -126,18 +127,33 @@ pub fn DeskLamp(
         set_going_to.set(Some(theme));
         set_sheet_paper.set(theme);
         set_pulled.set(true);
-        // One frame for the sheet to be drawn above the page, then it slides down.
-        crate::engine::next_frame(move || set_sheet.set(Sheet::Down));
-        timers.update_value(|timers| {
-            timers.keep(crate::engine::after(slide, move || {
-                // It covers the page: swap the paper under it, then lift it back off.
+        set_sheet.set(Some(SHEET_AWAY));
+        // It comes down onto the page; once it covers it, the paper is swapped under it
+        // and it goes back up the way it came.
+        let down = crate::engine::glide(
+            [SHEET_AWAY],
+            [0.0],
+            SHEET_PULL,
+            SHEET_NEAR,
+            move |[y]| set_sheet.set(Some(y)),
+            move || {
                 swap(set_settings, settings, theme);
-                crate::engine::next_frame(move || set_sheet.set(Sheet::Up));
-            }));
-            timers.keep(crate::engine::after(slide * 2.0 + 50.0, move || {
-                set_sheet.set(Sheet::Away);
-                set_going_to.set(None);
-            }));
+                let up = crate::engine::glide(
+                    [0.0],
+                    [SHEET_AWAY],
+                    SHEET_PULL,
+                    SHEET_NEAR,
+                    move |[y]| set_sheet.set(Some(y)),
+                    move || {
+                        set_sheet.set(None);
+                        set_going_to.set(None);
+                    },
+                );
+                timers.try_update_value(|timers| timers.keep(up));
+            },
+        );
+        timers.update_value(|timers| {
+            timers.keep(down);
             timers.keep(crate::engine::after(
                 f64::from(crate::tuning::LAMP_PULL_MS),
                 move || set_pulled.set(false),
@@ -160,10 +176,9 @@ pub fn DeskLamp(
         // The other paper, laid down from the top edge over the whole page.
         <div
             class="lamp-sheet"
-            class:down=move || sheet.get() == Sheet::Down
-            class:up=move || sheet.get() == Sheet::Up
             attr:data-theme=move || if sheet_paper.get() == Theme::Dark { "dark" } else { "light" }
-            style:--lamp-slide-ms=format!("{}ms", crate::tuning::LAMP_SLIDE_MS)
+            style:visibility=move || sheet.get().map(|_| "visible")
+            style:transform=move || sheet.get().map(|y| format!("translateY({y:.2}%)"))
             aria-hidden="true"
         ></div>
     }
