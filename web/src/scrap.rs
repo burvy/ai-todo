@@ -531,6 +531,8 @@ pub fn ScrapCorner(
     set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
 ) -> impl IntoView {
+    // Edits go through the store, which shows the reply and explains a refusal.
+    let store = expect_context::<crate::store::Store>();
     view! {
         <div
             class="scrap-pile"
@@ -662,7 +664,7 @@ pub fn ScrapCorner(
                                 let Some(action) = snapshot.with_untracked(|s| crate::tasks::tick_action(s, &id.0)) else {
                                     return;
                                 };
-                                let sink = crate::edits::EditSink { set_snapshot, set_error };
+                                let sink = store;
                                 // The row flies back from where this strip hangs.
                                 if let Some(button) = hung_ref.get_untracked() {
                                     let rect = button.get_bounding_client_rect();
