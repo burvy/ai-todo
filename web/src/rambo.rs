@@ -551,22 +551,22 @@ pub(crate) fn Rambo(
 
     // What each of the bubble's buttons does with the task he was dropped on.
     let choose = move |choice: mascot::Choice| {
-        let mascot::State::Asking { task_id, .. } = state.get_untracked() else {
+        let Some(errand) = model::chosen(&state.get_untracked(), choice) else {
             return;
         };
         let chosen = move || rambo_world.tell(mascot::Event::Choose);
-        match choice {
-            mascot::Choice::Edit => {
+        match errand {
+            model::Errand::Edit(task_id) => {
                 let id = TaskId(task_id);
                 events.push(rambl_web_core::events::Event::EditAsked { id: id.0.clone() });
                 listen_for_edit(id);
                 chosen();
             }
-            mascot::Choice::Move => {
+            model::Errand::Move(task_id) => {
                 events.push(rambl_web_core::events::Event::MoveAsked { id: task_id });
                 chosen();
             }
-            mascot::Choice::Done => {
+            model::Errand::Tick(task_id) => {
                 // The list's tick, so a repeat's day is marked on its own date.
                 let action = snapshot.with_untracked(|s| tick_action(s, &task_id));
                 crate::scrap::note_departure(events, &task_id);
@@ -582,16 +582,11 @@ pub(crate) fn Rambo(
                         .with_untracked(|s| crate::scrap::settle_departure(events, s, &task_id));
                 });
             }
-            mascot::Choice::Longer | mascot::Choice::Shorter => {
-                let stretch = if choice == mascot::Choice::Longer {
-                    crate::placing::Stretch::Longer
-                } else {
-                    crate::placing::Stretch::Shorter
-                };
+            model::Errand::Stretch(task_id, stretch) => {
                 crate::week::stretch(&TaskId(task_id), stretch, snapshot, store);
                 chosen();
             }
-            mascot::Choice::Off => {
+            model::Errand::TakeOff(task_id) => {
                 crate::week::take_off(&TaskId(task_id), snapshot, store);
                 chosen();
             }
@@ -633,8 +628,8 @@ pub(crate) fn Rambo(
             move |on| {
                 set_talking.set(on);
                 if !on
-                    && matches!(state.get_untracked(), mascot::State::Noting { .. })
-                    && !capture_text.with_untracked(|heard| heard.trim().is_empty())
+                    && capture_text
+                        .with_untracked(|heard| model::sends_heard(&state.get_untracked(), heard))
                     && let Some(form) = form_ref.get_untracked()
                 {
                     let _ = form.request_submit();
@@ -642,11 +637,15 @@ pub(crate) fn Rambo(
             },
             // Typing the task instead of saying it is not a failure to hear one.
             move |note: Option<String>| {
-                let quit = gives_up(note.as_deref(), &typed_in_box());
+                let quit = model::gives_up_noting(
+                    &state.get_untracked(),
+                    mic_failed(note.as_deref()),
+                    &typed_in_box(),
+                );
                 if note.as_deref() != Some(speech::NO_SPEECH_NOTE) {
                     set_error.set(note);
                 }
-                if quit && matches!(state.get_untracked(), mascot::State::Noting { .. }) {
+                if quit {
                     give_up();
                 }
             },
@@ -658,7 +657,7 @@ pub(crate) fn Rambo(
             }
             Err(note) => {
                 set_error.set(Some(note));
-                if typed_in_box().trim().is_empty() {
+                if model::gives_up_noting(&state.get_untracked(), true, &typed_in_box()) {
                     give_up();
                 }
             }
@@ -1519,12 +1518,6 @@ fn mic_failed(note: Option<&str>) -> bool {
     note.is_some_and(|note| note != speech::NO_SPEECH_NOTE)
 }
 
-/// Whether he gives up his note: the microphone failed and nothing is typed, so there is
-/// nothing to send. Typed words keep him Noting, where Enter sends them at that hour.
-fn gives_up(note: Option<&str>, typed: &str) -> bool {
-    mic_failed(note) && typed.trim().is_empty()
-}
-
 /// The words typed in the capture box so far; empty off the page.
 fn typed_in_box() -> String {
     web_sys::window()
@@ -1619,7 +1612,7 @@ fn screen_width() -> Option<f64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{gives_up, mic_failed};
+    use super::mic_failed;
     use crate::speech::{NO_SPEECH_NOTE, UNAVAILABLE_NOTE};
 
     #[test]
@@ -1628,22 +1621,6 @@ mod tests {
         assert!(mic_failed(Some(UNAVAILABLE_NOTE)));
         assert!(!mic_failed(Some(NO_SPEECH_NOTE)));
         assert!(!mic_failed(None));
-    }
-
-    #[test]
-    fn a_microphone_failure_keeps_him_noting_while_words_are_typed() {
-        let failure = Some("Microphone permission was denied.");
-        assert!(gives_up(failure, ""));
-        assert!(gives_up(failure, "   "), "spaces are not words");
-        assert!(
-            !gives_up(failure, "Lab report"),
-            "typed words keep him Noting"
-        );
-        assert!(
-            !gives_up(Some(NO_SPEECH_NOTE), ""),
-            "a quiet pause is not a failure"
-        );
-        assert!(!gives_up(None, ""));
     }
 
     #[test]

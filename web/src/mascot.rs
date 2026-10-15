@@ -144,14 +144,14 @@ mod tests {
     fn edit_in_the_ask_bubble_opens_the_edit_sheet() {
         // QA on 39eb0d9: "Edit" closed the bubble and bumped the task's priority
         // instead of opening the sheet. The button must ask the list for its sheet.
-        // It also listens for the change. The bubble's buttons are `Choice`s, and
-        // what Edit does is its arm in rambo.rs's `choose`.
+        // It also listens for the change. The bubble's buttons are `Choice`s; Edit's
+        // errand (`rambo::chosen`) is its arm in rambo.rs's `choose`.
         let source = include_str!("rambo.rs");
         let (_, arm) = source
-            .split_once("mascot::Choice::Edit =>")
+            .split_once("model::Errand::Edit(")
             .expect("the bubble has an Edit choice");
         let handler = arm
-            .split_once("mascot::Choice::Move")
+            .split_once("model::Errand::Move")
             .map_or(arm, |(edit, _)| edit);
         assert!(handler.contains("listen_for_edit("), "{handler}");
         assert!(
