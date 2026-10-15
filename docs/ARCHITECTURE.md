@@ -377,6 +377,34 @@ The cuts above remove about 4,000 lines, about a seventh of the front end, befor
 
 Each step ends with the full gate and a note in this section moving it from planned to done.
 
+### 8A.5 Step 4 in detail: Rambo has one owner (planned)
+
+**Today.** `App` makes `mascot_state` (`web/src/lib.rs`) and hands its writer to four files. 29 writes set it, each as `transition(&state.get_untracked(), event)`:
+
+| File | Writes | What |
+|---|---|---|
+| `rambo.rs` | 16 | his pointer handlers (grab, drop on nest, hour, row or slip, release, cancel), Space/Enter, the ask's choices and never-mind, noting, a hold while dazed, a scroll that flings him, a throw |
+| `capture.rs` | 4 | the caret write, the linger and the two-stage flight home, Return |
+| `tasks/mod.rs` | 5 | a row to write or skip, and what follows a write |
+| `tasks/write.rs` | 4 | `fly` (off, then on again after `FLY_MS`), and the row's end |
+
+The engine reads the signal back each tick (`world.adopt(state)`, `rambo.rs:199`). Then it writes its own changes (a splat that ends in a daze, the skitter home) back into the signal (`rambo.rs:232`). So two owners each overwrite the other's copy once per tick.
+
+**Shape.** The world holds the only copy of his state. A view never writes the signal; it tells the world an event:
+
+- `World::tell(event) -> State` applies `mascot::transition` to the world's own state, starts his timers when it changes (what `adopt` does today), and answers the new state. It is pure and tested natively: a told event goes through `transition`, and one that changes nothing restarts no timer.
+- The page side is a small `Rambo` handle in Leptos context: `tell(event)` borrows the world, tells it, and mirrors the answer into `mascot_state` when it changed. The answer comes back at once, so a handler that branches on the new state (`after == before`, then `Dragging`) keeps working unchanged.
+- The engine tick stops adopting. It only mirrors the world's state into the signal after `advance`, so the signal is a read-only copy written in one place.
+- `set_mascot_state` leaves `App`, and the props of `Rambo`, `TaskList` and `CaptureBox`. A test fails if a `WriteSignal<mascot::State>` appears outside the handle.
+- Requests between views go through the events queue (step 3, Emilio). The view that answers a request Rambo sends (`EditAsked`, the move) takes it, from an Effect that calls `Queue::track`. The world drains, each step, the requests addressed to him (the sheet opening or closing, a refusal he speaks). `tell` is for the synchronous decisions a pointer handler needs.
+
+**PRs.**
+1. `World::tell` with its tests, and the handle. `rambo.rs`'s own writes go through it, and the tick's adopt is removed.
+2. `capture.rs`, `tasks/mod.rs` and `tasks/write.rs` go through the handle. `set_mascot_state` is deleted, with the guard test.
+3. After that, the component splits listed in step 4 (`Rambo`, `TaskList`, `WeekGrid` as `web-core` models plus thin views), one PR each.
+
+Behaviour stays unchanged throughout.
+
 ## 9. Testing (the definition of done for every change)
 
 - `dates`: a table of phrases at fixed instants, including Sunday 21:00 New York (Monday in UTC), both DST change days, month and year rollover, "next Tuesday" on a Tuesday, and every weekday from every weekday.
