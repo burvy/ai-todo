@@ -1236,3 +1236,54 @@ fn an_anytime_task_still_takes_the_earliest_slot() {
     );
     assert_eq!(start_of(&planned, "floating"), utc(12, 8, 0));
 }
+
+mod queues {
+    use super::*;
+    use crate::plan::Board;
+
+    fn board(hours: &WorkingHours) -> Board<'_> {
+        Board::new(hours, utc(12, 6, 0), None)
+    }
+
+    #[test]
+    fn a_fixed_task_sits_where_it_is_told_even_on_busy_time() {
+        let hours = all_day();
+        let mut board = board(&hours);
+        board.fixed(&task("a", 60, When::At(utc(12, 9, 0)), 0), utc(12, 9, 0));
+        board.fixed(&task("b", 60, When::At(utc(12, 9, 30)), 1), utc(12, 9, 30));
+        let starts: Vec<_> = board.placements.iter().map(|p| p.start).collect();
+        assert_eq!(starts, [utc(12, 9, 0), utc(12, 9, 30)]);
+        assert!(board.unplaced.is_empty());
+    }
+
+    #[test]
+    fn an_overdue_task_takes_the_earliest_free_slot_from_now() {
+        let hours = all_day();
+        let mut board = board(&hours);
+        board.fixed(&task("busy", 60, When::At(utc(12, 8, 0)), 0), utc(12, 8, 0));
+        board.overdue(&task("late", 30, When::DueBy(utc(11, 9, 0)), 1));
+        assert_eq!(board.placements[1].start, utc(12, 9, 0));
+    }
+
+    #[test]
+    fn a_day_only_task_lands_nearest_the_usual_time_on_its_day() {
+        let hours = all_day();
+        let mut board = Board::new(&hours, utc(12, 6, 0), NaiveTime::from_hms_opt(15, 0, 0));
+        board.day_only(&friday_task(), utc(16, 23, 59));
+        assert_eq!(board.placements[0].start, utc(16, 15, 0));
+    }
+
+    #[test]
+    fn an_anytime_task_with_no_room_is_unplaced() {
+        let hours = WorkingHours::default();
+        let mut board = Board::new(&hours, utc(12, 6, 0), None);
+        let mut closed = hours.clone();
+        closed.days.clear();
+        let mut shut = Board::new(&closed, utc(12, 6, 0), None);
+        board.anytime(&task("free", 30, When::Anytime, 0));
+        shut.anytime(&task("none", 30, When::Anytime, 0));
+        assert_eq!(board.placements.len(), 1);
+        assert_eq!(shut.unplaced.len(), 1);
+        assert!(shut.placements.is_empty());
+    }
+}
