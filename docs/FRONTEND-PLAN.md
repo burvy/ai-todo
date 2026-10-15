@@ -201,7 +201,7 @@ Where we are heading. The shape is stable; the exact names are guidance, and eac
 - Files: `web/theme.css`, `web/tack.css`, `web/src/api.rs`, `web/src/mascot.rs`, `web/src/week.rs`, `web/src/tasks/mod.rs`, `web/src/edits.rs`, `web/src/lib.rs`.
 - Do:
   - Delete the CSS rules for selectors no element uses: `.mic`, `.task-editor`, `.delete`, `.import`, `.swipe-deleted`, `.swipe-snapped`, `.rambo.pose-teasing`, `.pose-dozing`, `.pose-happy`, `.pose-sulking`, and the `prefers-color-scheme` block in `tack.css`. Before deleting each one, grep `web/src` for the class name, including in `format!` strings, and keep any that is used.
-  - Delete the unused Rust: `api::use_snapshot`, `api::revise_task`, `api::capture_file`, the `PatchTaskBody::label` and `source` builders, and the `on:drop`/`on:dragover` handlers in `week.rs`. Leave `mascot::is_away` and the native-only stubs alone unless clippy or the wasm32 check pass without them.
+  - Delete the unused Rust: `api::use_snapshot`, `api::revise_task`, `api::capture_file`, the `PatchTaskBody::label` and `source` builders, and the `on:drop`/`on:dragover` handlers in `week.rs`. Leave the native-only stubs alone unless clippy or the wasm32 check pass without them.
   - Fix the undefined colours: the placement grip's `var(--coffee)` becomes `var(--ink)` (the coffee colour). In `tack.css`, `--tack-ink` and `--tack-accent` use `var(--ink)` and `var(--accent)` directly, which is what their fallbacks give today. Add a dark value for `--fold-shadow`, and make the `.error` background a token.
   - Make the body's bottom padding match the phone capture bar's height.
 - Accept:
