@@ -27,9 +27,20 @@ pub struct Tear {
     pub to: Pt,
     /// Makes this tear's ragged edge its own, and the same every time it is drawn.
     pub seed: u32,
-    /// How wide it opens in the middle, in px: `RIP_GAP_PX` for a slit torn by hand, as
-    /// tall as the row for a row that has torn out of the page.
+    /// How wide it opens, in px: at most `RIP_GAP_PX` in the middle of a slit torn by hand,
+    /// all along a strip, where it is a little less than the row's height.
     pub gap: f64,
+    /// How it opens along its length.
+    pub profile: Profile,
+}
+
+/// The shape of a tear's opening along its length.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Profile {
+    /// Torn by hand: pinched shut at both ends, widest in the middle.
+    Slit,
+    /// A row torn out of the page: full height from end to end, with ragged short ends.
+    Strip,
 }
 
 /// Whether a press that has travelled `dx`, `dy` is a rip: far enough to the right and
@@ -82,15 +93,36 @@ impl Tear {
             to,
             seed,
             gap: RIP_GAP_PX,
+            profile: Profile::Slit,
         }
     }
 
-    /// The hole a row leaves when it tears out of the page: along its middle line from
-    /// `left` to `right`, opening as tall as the row (`height`).
+    /// The hole a row leaves when it tears out of the page: a strip along its middle line
+    /// from `left` to `right`, as tall as the row (`height`) less its ragged edge and a
+    /// px, so the rules of the rows above and below stay whole.
     pub fn out_of_row(left: f64, right: f64, middle: f64, height: f64, seed: u32) -> Self {
         Tear {
-            gap: height,
+            gap: (height - 2.0 * RIP_JAG_PX - 2.0).max(0.0),
+            profile: Profile::Strip,
             ..Tear::slit((left, middle), (right, middle), seed)
+        }
+    }
+
+    /// How far open the tear is, `0.0` to `1.0` of its gap, at `t` of the way along it
+    /// (`span` px long).
+    fn opening(&self, t: f64, span: f64) -> f64 {
+        match self.profile {
+            Profile::Slit => (std::f64::consts::PI * t).sin().powf(0.6),
+            Profile::Strip => self.ends(t, span).powf(0.5),
+        }
+    }
+
+    /// How much of the way from a pinched end a point `t` along the tear has come: `0.0` at
+    /// the very end of a pinched slit, `1.0` once past the ragged short end of a strip.
+    fn ends(&self, t: f64, span: f64) -> f64 {
+        match self.profile {
+            Profile::Slit => (std::f64::consts::PI * t).sin(),
+            Profile::Strip => (t.min(1.0 - t) * span / (2.0 * RIP_JAG_STEP_PX)).min(1.0),
         }
     }
 
@@ -111,10 +143,9 @@ impl Tear {
         let lips = |side: f64, salt: u32| {
             (0..=steps).map(move |i| {
                 let t = f64::from(i) / f64::from(steps);
-                let open = self.gap / 2.0 * (std::f64::consts::PI * t).sin().powf(0.6);
-                // The ends stay pinched shut however the edge wanders.
-                let wander =
-                    RIP_JAG_PX * unit(self.seed, i + salt) * (std::f64::consts::PI * t).sin();
+                let open = self.gap / 2.0 * self.opening(t, span);
+                // The ends stay closed however the edge wanders.
+                let wander = RIP_JAG_PX * unit(self.seed, i + salt) * self.ends(t, span);
                 (self.from.0 + span * t, self.from.1 + side * open + wander)
             })
         };
@@ -231,6 +262,25 @@ pub fn slide_px(
         tear_x - (column.left + column.width / 2.0)
     });
     (planner_left - slid_left).max(0.0)
+}
+
+/// How far left the planner slides so that its day grid lies under the whole of a wide hole
+/// (a row torn out, from `hole_left` to `hole_right` in the page's coordinates), with
+/// `planner_left` its own left now. The grid, from the first column's left edge to the last's
+/// right, is kept covering the hole: the planner moves the least that takes, either way, and
+/// a grid narrower than the hole is centred on it. No columns measured: it stays.
+pub fn slide_over(planner_left: f64, hole_left: f64, hole_right: f64, columns: &[Column]) -> f64 {
+    let (Some(first), Some(last)) = (columns.first(), columns.last()) else {
+        return 0.0;
+    };
+    let (grid_left, grid_right) = (first.left, last.left + last.width);
+    let (lowest, highest) = (hole_right - grid_right, hole_left - grid_left);
+    let stands = if lowest <= highest {
+        planner_left.clamp(lowest, highest)
+    } else {
+        (hole_left + hole_right - grid_left - grid_right) / 2.0
+    };
+    planner_left - stands
 }
 
 /// How far down the planner moves, so that an hour line of the column the hole shows lies
@@ -354,29 +404,78 @@ mod tests {
     }
 
     #[test]
-    fn a_row_torn_out_leaves_a_hole_as_tall_as_the_row_across_its_width() {
+    fn a_row_torn_out_leaves_a_strip_as_tall_as_the_row_from_end_to_end() {
         // A row 48 px tall from x 20 to 330, its middle at 300.
         for seed in 0..40 {
             let hole = Tear::out_of_row(20.0, 330.0, 300.0, 48.0, seed);
             let outline = hole.outline();
             assert!(!outline.is_empty());
+            // It stays inside the row's own height, so the rules above and below stay whole.
             for &(x, y) in &outline {
                 assert!((20.0..=330.0).contains(&x));
                 assert!(
-                    (y - 300.0).abs() <= 24.0 + RIP_JAG_PX + 1e-9,
+                    (y - 300.0).abs() <= 24.0 - 1.0 + 1e-9,
                     "seed {seed}: edge at {y}"
                 );
             }
-            // It opens right across the middle of the row, nearly the row's height.
-            let (top, bottom) = outline
+            // The upper lip runs left to right, the lower back: over the middle 80 % of the
+            // width the strip is open nearly the whole height, not just at its centre.
+            let lip = outline.len() / 2;
+            let (upper, lower) = (&outline[..lip], &outline[lip..]);
+            for i in lip / 10..=lip - 1 - lip / 10 {
+                let open = lower[lip - 1 - i].1 - upper[i].1;
+                assert!(
+                    open >= 39.0 - 2.0 * RIP_JAG_PX,
+                    "seed {seed}, point {i}: open {open}"
+                );
+            }
+            // Its ends are short and ragged, not a point: it has opened a short way in.
+            let near_end = upper
                 .iter()
-                .fold((f64::MAX, f64::MIN), |(lo, hi), &(_, y)| {
-                    (lo.min(y), hi.max(y))
-                });
-            assert!(bottom - top >= 40.0, "seed {seed}: {top}..{bottom}");
+                .position(|p| p.0 > 20.0 + 3.0 * RIP_JAG_STEP_PX)
+                .expect("a point beyond the ragged end");
+            assert!(
+                lower[lip - 1 - near_end].1 - upper[near_end].1 >= 25.0,
+                "seed {seed}"
+            );
             // And it is taped like any tear: more than one tape across so wide a hole.
             assert!(hole.tapes().len() >= 2);
         }
+    }
+
+    #[test]
+    fn a_wide_hole_has_the_whole_day_grid_under_it() {
+        let day = |left| Column {
+            left,
+            width: 128.0,
+            has_slips: false,
+            marks: Vec::new(),
+            slips: Vec::new(),
+        };
+        // A phone: the planner at 0, hour labels in the first 68 px, three columns to 452.
+        let columns = [day(68.0), day(196.0), day(324.0)];
+        // A row's hole from 13 to 351: the grid covers it only if the planner moves left.
+        let slid = slide_over(0.0, 13.0, 351.0, &columns);
+        assert_eq!(
+            slid, 55.0,
+            "the first column's edge is brought to the hole's left"
+        );
+        let p = 0.0 - slid;
+        assert!(p + 68.0 <= 13.0 && p + 452.0 >= 351.0);
+        // Already covering it: it stays.
+        assert_eq!(slide_over(-60.0, 13.0, 351.0, &columns), 0.0);
+        // A desk, the planner standing far to the right of the list: it slides under all of it.
+        let slid = slide_over(473.0, 107.0, 418.0, &columns);
+        let p = 473.0 - slid;
+        assert!(p + 68.0 <= 107.0 && p + 452.0 >= 418.0, "{p}");
+        // A grid narrower than the hole is centred on it; no columns: it stays.
+        let narrow = [Column {
+            width: 64.0,
+            ..day(0.0)
+        }];
+        let p = 0.0 - slide_over(0.0, 100.0, 400.0, &narrow);
+        assert_eq!(p + 32.0, 250.0);
+        assert_eq!(slide_over(0.0, 13.0, 351.0, &[]), 0.0);
     }
 
     #[test]

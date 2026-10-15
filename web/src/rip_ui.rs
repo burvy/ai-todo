@@ -226,14 +226,25 @@ mod imp {
                             )
                         });
                         let columns = columns_of(&planner);
-                        let slide = rip::slide_px(
-                            torn.is_some(),
-                            phone(),
-                            f64::from(planner.offset_left()),
-                            f64::from(pane.offset_left()),
-                            tear_x,
-                            &columns,
-                        );
+                        // A hole as wide as a row has the whole grid under it; a slit, the
+                        // column that has something to show under where it starts.
+                        let planner_left = f64::from(planner.offset_left());
+                        let slide = match torn.as_ref() {
+                            Some(tear) if tear.profile == rip::Profile::Strip => rip::slide_over(
+                                planner_left,
+                                f64::from(pane.offset_left()) + tear.from.0,
+                                f64::from(pane.offset_left()) + tear.to.0,
+                                &columns,
+                            ),
+                            _ => rip::slide_px(
+                                torn.is_some(),
+                                phone(),
+                                planner_left,
+                                f64::from(pane.offset_left()),
+                                tear_x,
+                                &columns,
+                            ),
+                        };
                         let lift = rip::lift_px(
                             torn.is_some(),
                             phone(),

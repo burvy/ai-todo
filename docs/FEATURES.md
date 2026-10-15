@@ -278,14 +278,20 @@ The tear is cleared by a one-shot on the engine's clock (`engine::every`), with 
 else that moves. Try it: swipe or drag right across the empty part of the list page.
 h. **A finished row tears out of the page.** When a task is scribbled out (the swipe, or the
 bubble's Done) and its row flies to the tack, the row tears out of the page where it stood: a
-hole as tall as the row and as wide, ragged like any tear (`Tear::out_of_row`), showing the live
-planner beneath (the same slide and lift as a rip, `rip::slide_px`, `lift_px`), then Rambo hops
-there and tapes it and it fades with the tape, all on the same clock as a rip (`rip_ui::row_out`,
-`Ripper::tear_out`). He is **not** annoyed by it (`State::Mending { annoyed: false }`, his usual
-face); the rip on bare paper still annoys him. The rows below wait where they were while the
-hole is open (`scrap::hold_rows`) so none slides into it, and slide up when it heals
-(`scrap::release_rows`). One tear at a time: a second row finished while a hole is open just
-leaves.
+**strip** as tall as the row (less its ragged edge, so the rules above and below stay whole),
+from end to end of the row with short ragged ends (`Tear::out_of_row`, `Profile::Strip`; a hand
+rip keeps the pinched slit, `Profile::Slit`). It shows the live planner beneath: the planner is
+slid so its day grid lies under the whole of the hole (`rip::slide_over`) and an hour line (a
+slip, on a phone) is lifted through its middle (`rip::lift_px`), so day edges and an hour line
+read in it. Then Rambo hops there and tapes it, and it fades with the tape, all on the same
+clock as a rip (`rip_ui::row_out`, `Ripper::tear_out`). He is **not** annoyed by it
+(`State::Mending { annoyed: false }`, his usual face); the rip on bare paper still annoys him.
+The hole is on the page's clock, not Rambo's: it stays open for the length of a rip's repair
+(`rip::total_ms`) and closes by itself even if he is busy and never comes. The rows below wait
+where they were while the hole is open (`scrap::hold_rows`) so none slides into it, and slide up
+when it heals (`scrap::release_rows`). One tear at a time: a second row finished while a hole is
+open just leaves. If the server refuses the done, the row stays under a hole that heals like any
+tear (rare).
 Code: `web/src/rip.rs` (the rules: `is_rip`, `lane`, `Tear::outline`, `sheet_path`,
 `slide_px`; pure and tested), `web/src/rip_ui.rs:Ripper, TearLayer` (the pointer, the hole,
 the tape), `web/src/mascot.rs:State::Mending, Event::Mend`, `web/src/scrap.rs:hold_rows`, `web/theme.css` (`main.torn`,
