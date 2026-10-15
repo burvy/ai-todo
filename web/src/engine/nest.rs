@@ -111,6 +111,11 @@ fn give(impact: f64) -> f64 {
     (impact.abs() * NEST_IMPACT_SAG).max(NEST_LAND_KICK)
 }
 
+/// Characterization of both springs before the physics work replaces them.
+#[cfg(test)]
+#[path = "spring_tests.rs"]
+mod spring_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
