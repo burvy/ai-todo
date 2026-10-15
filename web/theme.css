@@ -181,9 +181,8 @@
   --flip-shade: color-mix(in srgb, black 34%, transparent);
   --flip-cast-w: 4rem; /* how far the leaf's shadow reaches onto the page under it */
 
-  /* The bookmark ribbon (web/src/ribbon.rs): its width, and its tail's length at rest
-     below the day names; a pull adds to it, as far as RIBBON_PULL_MAX_PX in
-     web/src/tuning.rs. */
+  /* The bookmark ribbon (web/src/ribbon.rs): its width, and its tail's length below the
+     day names. */
   --ribbon-w: 18px;
   --ribbon-rest: 46px;
 
@@ -2096,9 +2095,9 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 /* The bookmark ribbon (web/src/ribbon.rs), a satin ribbon in two parts. The head is the
    control: it sticks out of the band of day names at today's column (its height is the
    band's), above the names. The tail lies on today's hours under the slips, from the
-   band's foot down, cut in a notch; it takes no touch. Pulled, the tail stretches with
-   the finger (--pull) and springs back once let go. Scrolled, the tail slides under the
-   band and the head keeps sticking out. */
+   band's foot down, cut in a notch; it takes no touch. A tap on the head slides the
+   planner back to today. Scrolled, the tail slides under the band and the head keeps
+   sticking out. */
 .bookmark-ribbon,
 .ribbon-tail {
   width: var(--ribbon-w);
@@ -2113,8 +2112,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   min-height: 0;
   padding: 0;
   border: 0;
-  cursor: grab;
-  touch-action: none;
+  cursor: pointer;
   transition: left var(--dur) var(--arrive-ease);
 }
 
@@ -2130,11 +2128,6 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   left: calc(var(--ribbon-w) - var(--tap));
 }
 
-.bookmark-ribbon.pulling {
-  cursor: grabbing;
-  transition: none;
-}
-
 /* .hours stops a --space-1 short of the day's right edge, where the head is measured
    from; the tail starts a --space-1 up, at the band's foot. */
 .ribbon-tail {
@@ -2142,15 +2135,10 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   z-index: var(--layer-ribbon-tail);
   top: calc(-1 * var(--space-1));
   right: calc(var(--ribbon-w) / 2 - var(--space-1));
-  height: calc(var(--ribbon-rest) + var(--pull, 0px));
+  height: var(--ribbon-rest);
   clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 7px), 0 100%);
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
   pointer-events: none;
-  transition: height var(--dur) var(--arrive-ease);
-}
-
-.ribbon-tail.pulling {
-  transition: none;
 }
 
 .bookmark-ribbon:focus-visible {
@@ -2159,8 +2147,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .bookmark-ribbon,
-  .ribbon-tail {
+  .bookmark-ribbon {
     transition: none;
   }
 }

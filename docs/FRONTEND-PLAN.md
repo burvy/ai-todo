@@ -258,7 +258,7 @@ Each becomes a ticket when the steps before it have landed, written with what th
 - **Scrap undo** (with the scribble-out): the deleted row's scrap lies in the page corner for a few seconds; a tap tapes it back and the task returns as it was. Accept: a test that undo restores the task unchanged, and that the scrap goes after its time.
 - **Ink dries:** a new row is glossy for a few seconds after Rambo writes it; a tap in that time smudges it. Accept: the gloss time is a tuning constant; the smudge is only a look and never changes the task.
 - **The nib runs dry:** after a long run of rows, Rambo taps his nib on the dish's rim before the next. Accept: a pure test of when the tap comes (a tuning count of rows); it never delays a capture by more than the tap.
-- **Bookmark ribbon:** a cloth ribbon down the planner's edge marks today; pulling it scrolls the planner back to today. Art in an asset slot. Accept: the pull lands on today at both screen sizes.
+- **Bookmark ribbon:** a cloth ribbon at today's column marks today; tapping it scrolls the planner back to today (its pull was cut, ARCHITECTURE §8A.3). Art in an asset slot. Accept: the tap lands on today at both screen sizes.
 - **Desk-lamp theme switch:** a small lamp in the page corner replaces the theme control; pulling its chain lays the night page down (the physical dark-mode switch). Art in an asset slot. The theme still never follows the OS.
 - **One animation clock, then one gesture module.**
 - **Split the big files**, move-only, last.

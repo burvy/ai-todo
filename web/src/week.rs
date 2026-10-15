@@ -200,11 +200,10 @@ pub fn WeekGrid(
     let (at_earliest, set_at_earliest) = signal(true);
     // The bookmark ribbon's head (ribbon.rs) sticks out of the day names at today's
     // column, or at the edge today went past, kept up with the paper as it scrolls; its
-    // tail lies on today's hours and stretches with the head's pull.
+    // tail lies on today's hours, under the slips.
     let (ribbon_left, set_ribbon_left) = signal(0.0_f64);
     let (ribbon_top, set_ribbon_top) = signal(0.0_f64);
     let (ribbon_height, set_ribbon_height) = signal(0.0_f64);
-    let ribbon_pull = RwSignal::new(0.0_f64);
     let hang_ribbon = move || {
         #[cfg(target_arch = "wasm32")]
         if let Some((left, top, height)) =
@@ -294,7 +293,6 @@ pub fn WeekGrid(
                 left=ribbon_left
                 top=ribbon_top
                 height=ribbon_height
-                pull=ribbon_pull
                 back=back_to_today
             />
             <div
@@ -363,7 +361,7 @@ pub fn WeekGrid(
                                     }}
                                 </Show>
                                 {(day == 0).then(|| view! {
-                                    <crate::ribbon::RibbonTail pull=ribbon_pull />
+                                    <crate::ribbon::RibbonTail />
                                 })}
                                 {move || (day == 0).then(|| view! {
                                     <div

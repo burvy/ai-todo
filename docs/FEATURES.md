@@ -410,16 +410,14 @@ hour_prefill_text`; `web/src/capture.rs:CaptureBox, noted`;
 a. A satin ribbon marks today's column, in two parts. Its head sticks out of the band
 of day names at today's column, right of the name; its tail lies on today's hours
 under the slips, so it never covers a word, and slides under the band as the hours
-scroll. When today is scrolled out of sight the head stays at the paper's edge that
-today went past (over the hours' column on the left), the way a bookmark sticks out
-of a closed book. Pull the head down past a short stretch (the tail stretches with the
-finger, ever stiffer) and let go, or tap it, and the paper slides
-back to today, at the hour the planner opens on (about 08:00, or now if later); with reduced motion it jumps
-there at once. A shorter pull springs back and does nothing. The ribbon is drawn in
-CSS; it has no image asset.
-b. Scroll the planner away from today, then pull the ribbon down or tap it.
-c. Code: `web/src/ribbon.rs:Ribbon, RibbonTail, pulled, jumps, hang_left, glide`;
-`web/src/week.rs:WeekGrid, ribbon_spot, slide_to`; tuning `RIBBON_*` in
+scroll. When today is scrolled out of sight the head waits just inside the first column
+still in sight, at the same spot, so it covers no name, the way a bookmark sticks out
+of a closed book. Tap the head and the paper slides back to today, at the hour the
+planner opens on (about 08:00, or now if later); with reduced motion it jumps there at
+once. The ribbon is drawn in CSS; it has no image asset.
+b. Scroll the planner away from today, then tap the ribbon.
+c. Code: `web/src/ribbon.rs:Ribbon, RibbonTail, hang_left, glide`;
+`web/src/week.rs:WeekGrid, ribbon_spot, slide_to`; tuning `RIBBON_GLIDE_MS` in
 `web/src/tuning.rs`.
 
 ## IV. RAMBL, THE MASCOT
