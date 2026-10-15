@@ -1157,6 +1157,29 @@ mod tests {
         assert!(rule.contains("overscroll-behavior-x: none"), "{rule}");
     }
 
+    /// The sheet is centred in the whole screen by auto margins, so however tall it is it
+    /// never starts above the top (it scrolls inside once it is as tall as the screen
+    /// allows); a `top: 50%` with a half-height pull put a tall one off the top.
+    #[test]
+    fn the_edit_sheet_never_starts_above_the_screen() {
+        let css = include_str!("../../theme.css").replace("\r\n", "\n");
+        let sheet = css
+            .split("\n.task-dialog {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("theme.css styles .task-dialog");
+        for wanted in [
+            "inset: 0",
+            "margin: auto",
+            "overflow-y: auto",
+            "max-height:",
+        ] {
+            assert!(sheet.contains(wanted), "{wanted}: {sheet}");
+        }
+        assert!(!sheet.contains("top: 50%"), "{sheet}");
+        assert!(!sheet.contains("transform"), "{sheet}");
+    }
+
     /// FRONTEND-PLAN 1.8 item 7: the edit sheet is a real modal (focus trapped, page
     /// inert, Escape closes), not a dialog merely given the `open` attribute.
     #[test]
