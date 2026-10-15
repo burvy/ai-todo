@@ -198,6 +198,23 @@ mod imp {
             // The page is torn while a tear lasts: the planner shows beneath, and the list,
             // paper, has the slit cut out of it.
             let (tear, scroll, offset) = (ripper.tear, ripper.scroll, ripper.offset);
+            // The part of the planner that has just slid under the hole can be left unpainted
+            // (the day lines were missing from the hole on a desk) until the page's style
+            // changes again: when the slide ends, a changed custom property on `main` makes
+            // the browser paint it.
+            let settled = Cell::new(0_u32);
+            let _ = window_event_listener(leptos::ev::transitionend, move |ev| {
+                let on_planner = ev
+                    .target()
+                    .and_then(|target| target.dyn_into::<Element>().ok())
+                    .is_some_and(|el| el.class_list().contains("planner-page"));
+                if on_planner && ev.property_name() == "transform" {
+                    settled.set(settled.get().wrapping_add(1));
+                    if let Some(main) = main.get_untracked() {
+                        el_style(&main, "--planner-settled", &settled.get().to_string());
+                    }
+                }
+            });
             // A finished row tears out of the page where it stood.
             let row_out = super::ROW_OUT.with(|row| *row);
             Effect::new({
