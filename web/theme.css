@@ -14,12 +14,12 @@
   --ecru: #e1c38c;         /* pressed-in paper: Rambo's nest, sunken bits */
   --chamoisee: #a7865d;    /* rules and lines */
   --ink: #5d4732;          /* coffee: everything written */
-  --accent: #9f682e;       /* golden brown: one emphasis, bold text only */
+  --accent: #815525;       /* golden brown: one emphasis, bold text only */
   --danger: #a5342a;       /* red pencil */
-  --now: #b03a2a;
+  --now: #a83728;
 
   /* Muted inks: 4.9:1 and 4.7:1 on parchment/wheat, so small text passes WCAG AA. */
-  --ink-soft: #75604a;
+  --ink-soft: #6f5b46;
   --ink-faint: #6e5a43;
 
   /* Rambo's body: petrol blue-green, the only cool colour on the desk.
@@ -74,7 +74,8 @@
 
   --paper: var(--parchment);
   --paper-raised: var(--wheat);
-  --paper-sunken: var(--ecru);
+  /* Lighter than ecru, so every text ink stays AA on it (ATD-144, src/contrast.rs). */
+  --paper-sunken: #ebd7b2;
 
   /* Type: every word is handwritten (docs/DESIGN-DIRECTION.md). The three
      self-hosted OFL faces live in web/assets/fonts/ (Ping's set, woff2):
@@ -212,10 +213,11 @@
   --parchment: #241c11;
   --wheat: #2d2315;
   --ecru: #1a140b;
+  --paper-sunken: var(--ecru);
   --ink: #efe3c8;
   --accent: #d9a45c;
   --danger: #e0705f;
-  --now: #d96a4f;
+  --now: #da6e53;
 
   --ink-soft: #c9b693;
   --ink-faint: #b3a17e;

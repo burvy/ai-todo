@@ -25,6 +25,8 @@ pub mod voice;
 pub mod week;
 
 mod capture;
+#[cfg(test)]
+mod contrast;
 mod edits;
 mod engine;
 mod flip;
