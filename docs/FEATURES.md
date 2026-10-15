@@ -15,7 +15,7 @@ c. While the box is empty, Rambo whispers a short prompt in it ("Ramble on…", 
 today?", …); the line rotates every ~6 s with a soft fade, and with reduced motion it stays
 on one line with no fade.
 d. Code: `web/src/capture.rs:CaptureBox, WHISPER_PROMPTS, schedule_whisper`; `web/src/api.rs:capture_text`;
-`crates/capture/src/pipeline.rs:capture_text, clean_title`.
+`crates/capture/src/pipeline.rs:capture_text`; `crates/capture/src/title.rs:clean_title`.
 
 ### 2. Capture from speech
 a. Holding Rambo still for a moment (`LISTEN_HOLD_MS`, a long press) starts speech
@@ -79,7 +79,7 @@ before a link word or colon. Jev is shown the grammar's cut and each candidate s
 picks; the offline judge takes the grammar's.
 b. Say or type `attittask buy milk`: the task is "Buy milk".
 c. Code: `crates/capture/src/leadin.rs:strip, options, heard_right`;
-`crates/capture/src/pipeline.rs:title_spans`; fixtures `crates/capture/tests/fixtures/leadins.txt`.
+`crates/capture/src/title.rs:title_spans`; fixtures `crates/capture/tests/fixtures/leadins.txt`.
 
 ## II. TASK LIST
 
@@ -751,7 +751,7 @@ c. Code: `crates/core/src/lib.rs:LocalContext::at`;
 a. Code finds candidate dates and titles; Jev selects among them instead of doing
 date arithmetic.
 b. Not visible; covered by capture golden tests.
-c. Code: `crates/capture/src/pipeline.rs:question, title_spans, capture_text`;
+c. Code: `crates/capture/src/pipeline.rs:question, capture_text`; `crates/capture/src/title.rs:title_spans`;
 `crates/judge/src/jev.rs:questions`.
 
 ### 2. Task classification and metadata
