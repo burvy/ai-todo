@@ -625,14 +625,31 @@ pub(crate) fn Rambo(
             },
             // Typing the task instead of saying it is not a failure to hear one.
             move |note: Option<String>| {
+                let failed = mic_failed(note.as_deref());
                 if note.as_deref() != Some(speech::NO_SPEECH_NOTE) {
                     set_error.set(note);
                 }
+                // A microphone he cannot use ends the note: he goes home, and the banner says why.
+                if failed && state.get_untracked() == mascot::State::Noting {
+                    set_state.set(mascot::transition(
+                        &mascot::State::Noting,
+                        mascot::Event::Return,
+                    ));
+                }
             },
         );
-        if let Ok(session) = session {
-            *note_session.borrow_mut() = Some(session);
-            set_talking.set(true);
+        match session {
+            Ok(session) => {
+                *note_session.borrow_mut() = Some(session);
+                set_talking.set(true);
+            }
+            Err(note) => {
+                set_error.set(Some(note));
+                set_state.set(mascot::transition(
+                    &mascot::State::Noting,
+                    mascot::Event::Return,
+                ));
+            }
         }
     });
 
@@ -1485,6 +1502,12 @@ fn let_go(on: &web_sys::Element, id: i32) {
 
 /// The task row under a point, looking past Rambo himself: he is under the
 /// pointer while he is carried, so the topmost element there is always him.
+/// Whether a speech note means he cannot listen any more. Anything but "no speech" does:
+/// that one is just a quiet pause, and typing the task instead is fine.
+fn mic_failed(note: Option<&str>) -> bool {
+    note.is_some_and(|note| note != speech::NO_SPEECH_NOTE)
+}
+
 /// The empty planner hour under `(x, y)`, as the date phrase a task starting then is
 /// sent with; None off the planner, over a placed task, or at a time the clock skips.
 fn free_hour_under(
@@ -1605,7 +1628,16 @@ fn bubble_offset(centre_x: f64, width: f64, screen: f64, edge: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{bubble_offset, opens_below};
+    use super::{bubble_offset, mic_failed, opens_below};
+    use crate::speech::{NO_SPEECH_NOTE, UNAVAILABLE_NOTE};
+
+    #[test]
+    fn a_microphone_that_cannot_listen_sends_him_home_but_a_quiet_one_does_not() {
+        assert!(mic_failed(Some("Microphone permission was denied.")));
+        assert!(mic_failed(Some(UNAVAILABLE_NOTE)));
+        assert!(!mic_failed(Some(NO_SPEECH_NOTE)));
+        assert!(!mic_failed(None));
+    }
 
     /// Rambo and the nest's rim are fixed layers placed by measuring the nest, so they
     /// follow the keyboard only if he measures again when the inset changes. He watches
