@@ -207,6 +207,27 @@ function page(cdp, size, errors) {
   };
   // The edit sheet stays in the DOM after it closes; its open property says whether it shows.
   const sheetOpen = () => evaluate(`!!document.querySelector(".task-dialog")?.open`);
+  // A fresh session has no rows: write one through the capture box, then let its ink dry.
+  const withRow = async () => {
+    if (await has("li.task-row")) return;
+    await waitFor(() => has('input[aria-label="Ramble"]'), 10000, "the capture box");
+    const box = await rect('input[aria-label="Ramble"]');
+    await tap(box.x + box.w / 2, box.y + box.h / 2);
+    await type("buy walrus food and call heron vet");
+    await enter();
+    await waitFor(() => has("li.task-row"), 15000, "a row from the capture");
+    await sleep(INK_WET_MS + 500);
+  };
+  // On a stacked layout the gear lives on the planner page; turn there if the list shows.
+  const toPlanner = async () => {
+    if (!(await evaluate(`matchMedia("(max-width: 700px)").matches`))) return;
+    if ((await evaluate(`document.querySelector("main")?.dataset.pane`)) !== "0") return;
+    const foot = await rect(".page-foot");
+    if (!foot) return;
+    await tap(foot.x + foot.w / 2, foot.y + foot.h / 2);
+    // Wait for the turn to land: the pane has changed and no flip is under way.
+    await waitFor(() => evaluate(`document.querySelector("main")?.dataset.pane === "1" && !document.querySelector("main").classList.contains("flipping")`), 5000, "the planner page to show");
+  };
   // A sheet an earlier check failed to close would sit over what the next check taps.
   const closeSheet = async () => {
     if (!(await sheetOpen())) return;
@@ -271,7 +292,7 @@ function page(cdp, size, errors) {
     await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
   };
 
-  return { evaluate, rect, rectByText, text, count, has, sheetOpen, pointer, settled, drag, tap, type, enter, reload, escape, backToList, closeSheet, screenshot, hitAtLastPoint, errors };
+  return { evaluate, rect, rectByText, text, count, has, sheetOpen, withRow, toPlanner, pointer, settled, drag, tap, type, enter, reload, escape, backToList, closeSheet, screenshot, hitAtLastPoint, errors };
 }
 
 const scenarios = {
@@ -291,6 +312,7 @@ const scenarios = {
   },
 
   async "a swipe finishes a row and the tape brings it back"(p) {
+    await p.withRow();
     await waitFor(() => p.has("li.task-row"), 10000, "a row");
     const before = await p.count("li.task-row");
     const row = await p.rect("li.task-row");
@@ -341,10 +363,10 @@ const scenarios = {
   },
 
   async "a row's edit sheet saves a title change"(p) {
+    await p.withRow();
     await p.backToList();
-    // The row written by the capture check is still wet; wait it out before tapping it.
-    await sleep(INK_WET_MS + 500);
     await waitFor(() => p.has("li.task-row .task-open"), 10000, "a row to edit");
+    await p.settled("li.task-row");
     const open = await p.rect("li.task-row .task-open");
     await p.tap(open.x + open.w / 2, open.y + open.h / 2);
     await waitFor(() => p.sheetOpen(), 8000, "the edit sheet");
@@ -367,6 +389,7 @@ const scenarios = {
     // A sheet or planner page left by an earlier check would sit over the gear.
     await p.closeSheet();
     await p.backToList();
+    await p.toPlanner();
     await p.escape();
     await waitFor(() => p.has("button.gear"), 10000, "the gear");
     const gear = await p.rect("button.gear");
@@ -378,6 +401,7 @@ const scenarios = {
     await p.escape();
     await waitFor(async () => !(await p.has(".gear-menu")), 5000, "the menu to close");
     await p.reload();
+    await p.toPlanner();
     await waitFor(() => p.has("button.gear"), 20000, "the gear after reload");
     const gearAgain = await p.rect("button.gear");
     await p.tap(gearAgain.x + gearAgain.w / 2, gearAgain.y + gearAgain.h / 2);
@@ -387,6 +411,7 @@ const scenarios = {
   },
 
   async "a swipe turns the page and the book flip is drawn, not blank, mid-turn"(p) {
+    await p.withRow();
     await waitFor(() => p.has("li.task-row"), 10000, "a row");
     const stacked = await p.evaluate('matchMedia("(max-width: 700px)").matches');
     if (!stacked) {
