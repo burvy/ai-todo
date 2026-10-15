@@ -215,7 +215,16 @@ function page(cdp, size, errors) {
     await waitFor(async () => !(await sheetOpen()), 1500, "the sheet to close");
   };
 
+  // The last point a check pressed or released at, so a failure can name what took the tap.
+  let lastPoint = null;
+  const hitAtLastPoint = () =>
+    lastPoint
+      ? evaluate(`(() => { const e = document.elementFromPoint(${lastPoint.x}, ${lastPoint.y});
+          return e ? e.tagName.toLowerCase() + (e.className && e.className.baseVal === undefined ? "." + String(e.className).trim().split(/\s+/).join(".") : "") : "none"; })()`)
+      : Promise.resolve("no pointer input yet");
+
   const pointer = async (phase, x, y) => {
+    lastPoint = { x, y };
     if (size.phone) {
       const type = { down: "touchStart", move: "touchMove", up: "touchEnd" }[phase];
       await cdp.send("Input.dispatchTouchEvent", {
@@ -262,7 +271,7 @@ function page(cdp, size, errors) {
     await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
   };
 
-  return { evaluate, rect, rectByText, text, count, has, sheetOpen, pointer, settled, drag, tap, type, enter, reload, escape, backToList, closeSheet, screenshot, errors };
+  return { evaluate, rect, rectByText, text, count, has, sheetOpen, pointer, settled, drag, tap, type, enter, reload, escape, backToList, closeSheet, screenshot, hitAtLastPoint, errors };
 }
 
 const scenarios = {
@@ -448,22 +457,26 @@ const TURN_NOW = `(() => {
   };
 })()`;
 
-async function runSize(size) {
-  const results = [];
-  const dataDir = mkdtempSync(join(runDir, `${size.name}-data-`));
-  const profileDir = mkdtempSync(join(runDir, `${size.name}-profile-`));
-  let server = null;
-  let browser = null;
+// Each check runs in its own session: a fresh server with fresh data, a fresh browser
+// profile and a fresh page load, so nothing a check leaves behind (Rambo mid-flight, an
+// open sheet, wet ink) reaches the next one.
+async function openSession(size) {
+  const session = {
+    dataDir: mkdtempSync(join(runDir, `${size.name}-data-`)),
+    profileDir: mkdtempSync(join(runDir, `${size.name}-profile-`)),
+    server: null,
+    browser: null,
+    errors: [],
+  };
   try {
-    server = await launchServer(dataDir);
-    await waitForServer(server);
-    browser = await launchBrowser(profileDir, size);
-    await connectBrowser(browser);
-    const errors = [];
-    const { cdp } = browser;
+    session.server = await launchServer(session.dataDir);
+    await waitForServer(session.server);
+    session.browser = await launchBrowser(session.profileDir, size);
+    await connectBrowser(session.browser);
+    const { cdp } = session.browser;
     cdp.on((method, params) => {
-      if (method === "Runtime.exceptionThrown") errors.push(params.exceptionDetails?.exception?.description ?? "exception");
-      if (method === "Log.entryAdded" && params.entry?.level === "error") errors.push(params.entry.text);
+      if (method === "Runtime.exceptionThrown") session.errors.push(params.exceptionDetails?.exception?.description ?? "exception");
+      if (method === "Log.entryAdded" && params.entry?.level === "error") session.errors.push(params.entry.text);
     });
     await cdp.send("Page.enable");
     await cdp.send("Runtime.enable");
@@ -478,44 +491,77 @@ async function runSize(size) {
       mobile: size.phone,
     });
     await cdp.send("Emulation.setTouchEmulationEnabled", size.phone ? { enabled: true, maxTouchPoints: 1 } : { enabled: false });
-    await cdp.send("Page.navigate", { url: `http://127.0.0.1:${server.port}/` });
-
-    const p = page(cdp, size, errors);
-    p.viewport = { width: size.width, height: size.height };
-    for (const [name, run] of Object.entries(scenarios)) {
-      const label = `${size.name}: ${name}`;
-      try {
-        await run(p);
-        results.push({ label, ok: true });
-      } catch (error) {
-        const picture = await p.screenshot(`${size.name}-${name.replace(/\W+/g, "-").slice(0, 40)}`).catch(() => "");
-        results.push({ label, ok: false, detail: `${String(error.message ?? error).slice(0, 220)}${picture ? ` [${picture}]` : ""}` });
-      }
-    }
-    results.push({
-      label: `${size.name}: no page errors`,
-      ok: errors.length === 0,
-      detail: errors.slice(0, 3).join(" | ").slice(0, 300),
-    });
-    cdp.close();
+    await cdp.send("Page.navigate", { url: `http://127.0.0.1:${session.server.port}/` });
+    session.p = page(cdp, size, session.errors);
+    session.p.viewport = { width: size.width, height: size.height };
+    return session;
   } catch (error) {
-    results.push({ label: `${size.name}: setup`, ok: false, detail: String(error.message ?? error).slice(0, 300) });
-  } finally {
-    if (browser) killTree(browser.child.pid);
-    if (server) killTree(server.child.pid);
-    // Windows keeps the profile's files locked until the browser has gone, so the folders
-    // are removed once both PIDs have exited, with retries. A folder left behind is not a
-    // failed check, so the cleanup is best-effort.
-    if (browser) await waitForExit(browser.child.pid);
-    if (server) await waitForExit(server.child.pid);
-    for (const dir of [profileDir, dataDir]) {
-      try {
-        rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
-      } catch (error) {
-        console.log(`note  could not remove ${dir}: ${error.code ?? error.message}`);
-      }
+    await closeSession(session);
+    throw error;
+  }
+}
+
+async function closeSession(session) {
+  if (session.browser) {
+    session.browser.cdp?.close();
+    killTree(session.browser.child.pid);
+  }
+  if (session.server) killTree(session.server.child.pid);
+  // Windows keeps the profile's files locked until the browser has gone, so the folders
+  // are removed once both PIDs have exited, with retries. A folder left behind is not a
+  // failed check, so the cleanup is best-effort.
+  if (session.browser) await waitForExit(session.browser.child.pid);
+  if (session.server) await waitForExit(session.server.child.pid);
+  for (const dir of [session.profileDir, session.dataDir]) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    } catch (error) {
+      console.log(`note  could not remove ${dir}: ${error.code ?? error.message}`);
     }
   }
+}
+
+// Runs one check in a fresh session. A failure keeps a screenshot and the element that
+// was under the last pointer input, so the cause can be seen.
+async function runCheck(size, name, run) {
+  const label = `${size.name}: ${name}`;
+  let session;
+  try {
+    session = await openSession(size);
+  } catch (error) {
+    return { label, ok: false, detail: `setup: ${String(error.message ?? error).slice(0, 220)}` };
+  }
+  try {
+    await run(session.p);
+    if (session.errors.length) {
+      return { label, ok: false, detail: `page errors: ${session.errors.slice(0, 3).join(" | ").slice(0, 200)}` };
+    }
+    return { label, ok: true };
+  } catch (error) {
+    const picture = await session.p.screenshot(`${size.name}-${name.replace(/\W+/g, "-").slice(0, 40)}`).catch(() => "");
+    const hit = await session.p.hitAtLastPoint().catch(() => "unknown");
+    return {
+      label,
+      ok: false,
+      detail: `${String(error.message ?? error).slice(0, 200)}; under the last tap: ${hit}${picture ? ` [${picture}]` : ""}`,
+    };
+  } finally {
+    await closeSession(session);
+  }
+}
+
+async function runSize(size) {
+  const results = [];
+  for (const [name, run] of Object.entries(scenarios)) {
+    results.push(await runCheck(size, name, run));
+  }
+  // A page that only loads must raise no error either.
+  results.push(
+    await runCheck(size, "no page errors", async (p) => {
+      await waitFor(() => p.has(".rambo"), 20000, "Rambo on the page");
+      await sleep(1000);
+    }),
+  );
   return results;
 }
 
