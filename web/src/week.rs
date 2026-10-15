@@ -198,18 +198,23 @@ pub fn WeekGrid(
     // On the earliest day a right swipe has no days left to scroll, so the page takes it
     // (turner.rs turns back to the list); the class tells the browser to let it through.
     let (at_earliest, set_at_earliest) = signal(true);
-    // The bookmark ribbon (ribbon.rs) hangs at today's column, or at the edge today
-    // went past, kept up with the paper as it scrolls.
+    // The bookmark ribbon's head (ribbon.rs) sticks out of the day names at today's
+    // column, or at the edge today went past, kept up with the paper as it scrolls; its
+    // tail lies on today's hours, under the slips.
     let (ribbon_left, set_ribbon_left) = signal(0.0_f64);
     let (ribbon_top, set_ribbon_top) = signal(0.0_f64);
+    let (ribbon_height, set_ribbon_height) = signal(0.0_f64);
     let hang_ribbon = move || {
         #[cfg(target_arch = "wasm32")]
-        if let Some((left, top)) = grid_ref.get_untracked().and_then(|grid| ribbon_spot(&grid)) {
+        if let Some((left, top, height)) =
+            grid_ref.get_untracked().and_then(|grid| ribbon_spot(&grid))
+        {
             set_ribbon_left.set(left);
             set_ribbon_top.set(top);
+            set_ribbon_height.set(height);
         }
         #[cfg(not(target_arch = "wasm32"))]
-        let _ = (set_ribbon_left, set_ribbon_top);
+        let _ = (set_ribbon_left, set_ribbon_top, set_ribbon_height);
     };
     // It finds today again whenever the days change, and whenever the paper changes
     // size: laid out, shown by a phone's page turn, or the window resized.
@@ -284,7 +289,12 @@ pub fn WeekGrid(
             </div>
             <crate::PageFoot page=1 turn=turn_back />
             <crate::placing::PlacingNote snapshot settings move_request place />
-            <crate::ribbon::Ribbon left=ribbon_left top=ribbon_top back=back_to_today />
+            <crate::ribbon::Ribbon
+                left=ribbon_left
+                top=ribbon_top
+                height=ribbon_height
+                back=back_to_today
+            />
             <div
                 class="week-scroll"
                 class:at-earliest=at_earliest
@@ -350,6 +360,9 @@ pub fn WeekGrid(
                                             ></div>
                                     }}
                                 </Show>
+                                {(day == 0).then(|| view! {
+                                    <crate::ribbon::RibbonTail />
+                                })}
                                 {move || (day == 0).then(|| view! {
                                     <div
                                         class="now-line"
@@ -519,36 +532,41 @@ fn long_press_stop(_: leptos::ev::PointerEvent) {}
 /// height, so the current-time line can be placed from the clock.
 const HOUR_PX: f32 = 64.0;
 
-/// Where the bookmark ribbon hangs on the planner page (its left and top, in px from the
-/// page's top left): just inside today's column, held at the planner's visible edges
-/// when today is scrolled away. It hangs from under the row of day names, so it never
-/// covers one, today's or the name of the column it is held over.
+/// Where the bookmark ribbon's head sticks out on the planner page (its left, top and
+/// height, in px from the page's top left): in the band of day names, just inside
+/// today's column, whose name is written at its left. With today scrolled away it waits
+/// in the first column still in sight, at the same spot, so it covers no name.
 #[cfg(target_arch = "wasm32")]
-fn ribbon_spot(grid: &web_sys::HtmlDivElement) -> Option<(f64, f64)> {
+fn ribbon_spot(grid: &web_sys::HtmlDivElement) -> Option<(f64, f64, f64)> {
     let page_el = grid.closest(".planner-page").ok()??;
     let page = page_el.get_bounding_client_rect();
     let paper = grid.get_bounding_client_rect();
     let today_el = grid.query_selector(".day[data-day='0']").ok()??;
-    let today = today_el.get_bounding_client_rect();
     let ribbon = page_el
         .query_selector(".bookmark-ribbon")
         .ok()??
         .get_bounding_client_rect();
-    // The hours' column: where the first day starts with the paper scrolled to its left.
-    let hours_width = today.left() + f64::from(grid.scroll_left()) - paper.left();
+    // Every day's right edge, today's first: the week's columns are in day order.
+    let days = grid.query_selector(".week").ok()??.children();
+    let rights = (0..days.length())
+        .filter_map(|i| days.item(i))
+        .map(|day| day.get_bounding_client_rect().right() - page.left());
     let left = crate::ribbon::hang_left(
-        today.right() - page.left(),
+        rights,
         ribbon.width(),
-        paper.left() - page.left() + hours_width,
+        paper.left() - page.left(),
         paper.right() - page.left() - 1.5 * ribbon.width(),
     );
-    // The names stick to the top of the paper as it scrolls, so their foot stays put.
-    let names_foot = today_el
+    // The names stick to the top of the paper as it scrolls, so the band stays put.
+    let band = today_el
         .query_selector(".day-name")
-        .ok()
-        .flatten()
-        .map_or(paper.top(), |name| name.get_bounding_client_rect().bottom());
-    Some((left, (names_foot - page.top()).ceil()))
+        .ok()??
+        .get_bounding_client_rect();
+    Some((
+        left,
+        (band.top() - page.top()).floor(),
+        band.height().ceil(),
+    ))
 }
 
 /// Calls `resized` whenever `paper` changes size, for as long as the page lives.

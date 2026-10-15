@@ -115,13 +115,8 @@ pub const INK_WIDTH_EASE: f64 = 0.15;
 pub const INK_TAPER_PX: f64 = 10.0;
 /// The end of a stroke in Rambo's own tint, in px. Safe range 6 to 30.
 pub const INK_TAIL_PX: f64 = 20.0;
-/// The bookmark ribbon (`ribbon.rs`): how far it must stretch before letting go takes
-/// the planner back to today, the most it stretches, how far a finger may tremble and
-/// still tap it, all in px; and how long the slide back to today takes, in ms. Safe
-/// ranges 20 to 60, 50 to 120, 4 to 12, and 250 to 700 (shorter jumps, longer drags).
-pub const RIBBON_PULL_PX: f64 = 36.0;
-pub const RIBBON_PULL_MAX_PX: f64 = 80.0;
-pub const RIBBON_TAP_PX: f64 = 6.0;
+/// How long the bookmark ribbon's slide back to today takes (`ribbon.rs`), in ms. Safe
+/// range 250 to 700 (shorter jumps, longer drags).
 pub const RIBBON_GLIDE_MS: f64 = 450.0;
 /// How long fresh ink takes to dry, in ms, and how much of it shows once dry.
 /// Safe ranges 300 to 2000 ms and 0.6 to 0.95.
