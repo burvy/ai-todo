@@ -34,8 +34,9 @@ pub(crate) fn Rambo(
     capture_text: RwSignal<String>,
     /// Capture form: Rambo calls requestSubmit on release
     form_ref: NodeRef<leptos::html::Form>,
-    /// The task whose edit sheet is open, if any: listening for an edit ends with it
-    open_sheet: RwSignal<Option<TaskId>>,
+    /// The task whose edit sheet is open, if any: listening for an edit ends with it.
+    /// The list's state; he only reads it.
+    open_sheet: ReadSignal<Option<TaskId>>,
     /// The nest button: Rambo measures its bounding box to know where home is
     nest_ref: NodeRef<leptos::html::Button>,
     /// The tool he holds: it decides which drawing of each pose he wears
@@ -1280,7 +1281,7 @@ fn send_heard_edit(
     snapshot: ReadSignal<Snapshot>,
     sink: crate::store::Store,
     events: crate::events::Queue,
-    open_sheet: RwSignal<Option<TaskId>>,
+    open_sheet: ReadSignal<Option<TaskId>>,
 ) {
     let Some(id) = editing.try_update(Option::take).flatten() else {
         return;

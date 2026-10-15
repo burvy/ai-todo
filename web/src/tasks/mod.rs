@@ -434,7 +434,6 @@ pub(crate) fn TaskList(
     mascot_state: ReadSignal<mascot::State>,
     pen_queue: RwSignal<Vec<TaskId>>,
     pen_pos: RwSignal<(f64, f64)>,
-    /// A row to open the edit sheet on, set by Rambo's "Edit".
     /// Set by the + beside the capture box: the sheet opens on a new task.
     new_task: RwSignal<bool>,
     /// The task whose edit sheet is open; Rambo listens for its change while it is.
