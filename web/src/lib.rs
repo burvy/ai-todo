@@ -10,6 +10,7 @@ pub mod gesture;
 pub mod hop;
 pub mod ink;
 pub mod inklayer;
+pub mod lamp;
 pub mod mascot;
 pub mod music;
 pub mod pen;
@@ -75,6 +76,7 @@ pub fn App() -> impl IntoView {
     });
 
     account::start();
+    lamp::provide_switch();
     let main_ref = NodeRef::<leptos::html::Main>::new();
     let (pane, set_pane) = signal(0_u8);
     // The page turn (turner.rs): the list lies over the planner and turns like a book's page,
@@ -279,6 +281,8 @@ pub fn App() -> impl IntoView {
             // The tape and the paper that heals a torn page, above both pages.
             <rip_ui::TearLayer ripper />
         </main>
+        // The desk lamp, the dark-mode switch.
+        <lamp::DeskLamp settings=view_settings set_settings=set_view_settings />
         // Ink laid on no page: above the paper, below him.
         <inklayer::InkLayer strokes on=ink::Surface::Floor />
         // Rambo: independent fixed layer above everything, not part of the capture form

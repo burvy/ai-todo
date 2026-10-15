@@ -21,6 +21,13 @@ pub const ASK_FOLD_MS: u32 = 180;
 /// How loud the background music plays, 0 to 1. Safe range 0.05 to 0.25: the music is
 /// a bed under the cues (whose own volumes are 0.2 to 0.42), not a track to listen to.
 pub const MUSIC_VOLUME: f64 = 0.12;
+/// How long the sheet of the other paper takes to slide down over the page when the desk
+/// lamp (or the gear's Light and Dark) switches the paper, in ms; the page reads it as
+/// `--lamp-slide-ms`. The paper is swapped when it lands, so this is the whole switch. Safe
+/// range 200 to 600: shorter and the swap reads as a flash, longer and the lamp feels slow.
+pub const LAMP_SLIDE_MS: u32 = 340;
+/// How long the lamp's cord stays pulled down after a tap, in ms. Safe range 150 to 400.
+pub const LAMP_PULL_MS: u32 = 240;
 
 const _: () = assert!(60 % MINUTE_STEP == 0);
 
@@ -362,6 +369,11 @@ pub const FLING_REST_SPEED: f64 = 0.03;
 /// How fast he must hit an edge to splat, and only then is he dazed. Safe range 0.8 to
 /// 2.5: lower and every bounce dazes him, higher and only a wild flick does.
 pub const FLING_SPLAT_SPEED: f64 = 1.2;
+/// How fast the paper he lies on may move, in px per ms, before he loses his grip on it:
+/// slower, he rides along on the scrolling page; faster, he is flung with it, as a throw
+/// at the paper's speed (Interview 1 item 2). Safe range 0.4 to 1.5: lower, an ordinary
+/// scroll sweeps him off; higher, only the wildest flick of the page ever does.
+pub const SWEEP_GRIP_PX_MS: f64 = 0.8;
 /// The strokes in a splat, and how far the longest reaches at the least splatting
 /// speed, in px (a harder hit reaches up to twice as far). Safe ranges 4 to 12 and 12
 /// to 48.
@@ -397,6 +409,24 @@ pub const NEST_LEAVE_KICK: f64 = 30.0;
 /// nest fills the bottom-right corner, and this is the reach of its catch there. Safe
 /// range 40 to 120.
 pub const NEST_CATCH_PX: f64 = 70.0;
+
+/// After this much writing, in ms of writing rows and at the caret, his nib has run dry:
+/// home again, he taps it on the nest's rim (Interview 3, idea 2). Safe range 6000 to
+/// 30000: lower and he taps after every few tasks, higher and hardly ever.
+pub const DRY_NIB_AFTER_MS: f64 = 12_000.0;
+/// How long he sits in the nest before the first tap, in ms. Safe range 150 to 600.
+pub const DRY_NIB_PAUSE_MS: f64 = 300.0;
+/// How many times he taps, and how far apart, in ms. Safe ranges 2 to 4 and 120 to 260.
+pub const DRY_NIB_TAPS: u32 = 3;
+pub const DRY_NIB_TAP_MS: f64 = 180.0;
+/// How far he tips toward the rim while he taps, in degrees (negative: his top toward the
+/// page). Safe range -20 to -6.
+pub const DRY_NIB_LEAN_DEG: f64 = -12.0;
+/// How hard each tap knocks the nest, in px/s of sag. Safe range 15 to 50.
+pub const DRY_NIB_TAP_KICK: f64 = 35.0;
+/// How hard each tap rocks the nest toward the side he taps, in degrees/s. Safe range 4
+/// to 15: a tap is a knock, smaller than his leaving it.
+pub const DRY_NIB_TAP_ROCK: f64 = 9.0;
 
 const _: () = assert!(
     FLING_GRAVITY < FLING_FRICTION

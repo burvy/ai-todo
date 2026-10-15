@@ -88,6 +88,8 @@ pub enum Event {
     DropHour,
     /// Put back in his nest.
     DropNest,
+    /// The page he lies on scrolled faster than he can hold on: he is flung with it.
+    Swept,
     /// The throw has stopped sliding (home), the splat is over (dazed), the daze is
     /// over (he skitters), or the skitter ends (home).
     Return,
@@ -159,6 +161,9 @@ pub fn transition(state: &State, event: Event) -> State {
         (State::Thrown, Event::Smack) => State::Splatting,
         (State::Thrown, Event::Return | Event::DropNest) => State::Home,
         (State::Thrown, Event::Grab) => State::Dragging,
+        // Lying on the page (dazed, or asking about a row), a scroll faster than he can
+        // hold on flings him with the paper: a throw like any other (Interview 1 item 2).
+        (State::Dazed | State::Asking { .. }, Event::Swept) => State::Thrown,
         (State::Dragging, Event::DropTask { task_id, title }) => State::Asking { task_id, title },
         (State::Dragging, Event::DropHour) => State::Noting,
 
@@ -222,6 +227,18 @@ pub fn transition(state: &State, event: Event) -> State {
 /// listens: dazed, he writes instead.
 pub fn listens_on_grab(state: &State) -> bool {
     transition(state, Event::Grab) == State::Dragging
+}
+
+/// Whether he lies on the page, so the paper drags him as it scrolls. Already thrown,
+/// he is sliding over it, not lying on it.
+pub fn lies_on_page(state: &State) -> bool {
+    *state != State::Thrown && transition(state, Event::Swept) == State::Thrown
+}
+
+/// Whether his nib has run dry after `written_ms` of writing, so that home again he taps
+/// it on the nest's rim (Interview 3, idea 2).
+pub fn nib_dry(written_ms: f64) -> bool {
+    written_ms >= crate::tuning::DRY_NIB_AFTER_MS
 }
 
 /// Whether a pointer that picked him up at `grab` and is now at `now` is still
@@ -881,6 +898,7 @@ mod tests {
             Event::DropEmpty,
             Event::DropHard,
             Event::DropHour,
+            Event::Swept,
             Event::DropTask {
                 task_id: "t1".into(),
                 title: "Lab report".into(),

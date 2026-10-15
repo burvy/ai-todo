@@ -20,7 +20,7 @@ pub(crate) use sched::{ENGINE_DT_S, Tick};
 pub(crate) use sched::{Flow, Handle};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use world::Leaf;
-pub(crate) use world::{Anchors, Splash, World};
+pub(crate) use world::{Anchors, Splash, Swept, World, swept};
 
 #[cfg(test)]
 mod tests {

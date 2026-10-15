@@ -3,7 +3,8 @@
    at @media (min-width: 701px). Layout behaviour (stacked pages, 64px hour rows)
    comes from Ryan's PR #135 and is kept as it is. Design spec: docs/THEME.md. */
 
-:root {
+:root,
+.lamp-sheet[data-theme="light"] {
   color-scheme: light;
 
   /* Palette, light (docs/DESIGN-DIRECTION.md). Chamoisee is for lines only, never text:
@@ -128,6 +129,11 @@
      1.5). Rambo and his bubbles sit under the gear menu and the edit sheet (which is a
      modal in the browser's top layer, so --layer-sheet only orders it should that
      change); only a drag in progress rides above him. */
+  --lamp-pool: transparent; /* the lamp's light on the page: none by day */
+  --lamp-w: 72px; /* the desk lamp, standing on the bottom edge */
+  --lamp-h: 100px;
+  --lamp-left: var(--space-2);
+  --lamp-bottom: 0px;
   --layer-behind: -1;
   --layer-page: 2; /* ink, curl, placements, a lifted row, the desktop pin column */
   --layer-sticky: 4; /* day names */
@@ -137,6 +143,7 @@
   --layer-rambo: 50;
   --layer-nest-rim: 51; /* the nest's front rim, over his tip (its back is the capture bar's) */
   --layer-rambo-bubble: 52; /* his ask bubble */
+  --layer-switch: 53; /* the sheet of paper the desk lamp lays down: over Rambo and his nest, under a drag */
   --layer-drag: 60; /* the drag ghost, the tack pin */
   --layer-bin: 70; /* the tack bin, a drop target during a drag */
   --layer-menu-backdrop: 80;
@@ -189,8 +196,10 @@
 /* Dark is the same desk at night: deep paper, parchment-coloured ink.
    Only the gear menu's Dark choice sets data-theme="dark" — the page is
    light by default and never follows the OS (owner QA, 2026-10-13). */
-:root[data-theme="dark"] {
+:root[data-theme="dark"],
+.lamp-sheet[data-theme="dark"] {
   color-scheme: dark;
+  --lamp-pool: rgb(255 205 120 / 0.26);
   --listening-dim: rgb(0 0 0 / 0.32);
 
   --parchment: #241c11;
@@ -1330,6 +1339,126 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 
 @media (prefers-reduced-motion: reduce) {
   .listening-dim {
+    transition: none;
+  }
+}
+
+/* The desk lamp (web/src/lamp.rs, web/assets/lamp/ABOUT.md): the dark-mode switch. It
+   stands on the desk's bottom edge in the bottom left, clear of the capture box and the
+   gear; its base is on the screen's edge and by night its light falls on the page's
+   corner. Dark by day, lit by night. */
+.desk-lamp {
+  position: fixed;
+  left: var(--lamp-left);
+  bottom: var(--lamp-bottom);
+  z-index: calc(var(--layer-dim) + 1); /* under Rambo; the sheet covers it with the rest of the desk */
+  width: var(--lamp-w);
+  height: var(--lamp-h);
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+/* On a phone the capture bar is at the foot, so the lamp stands just above it, at the
+   right, clear of the page note. */
+@media (max-width: 700px) {
+  .desk-lamp {
+    left: auto;
+    right: var(--space-2);
+    --lamp-bottom: calc(var(--capture-clear) + var(--space-1));
+    --lamp-w: 44px;
+    --lamp-h: 62px;
+  }
+}
+
+.desk-lamp-art {
+  position: absolute;
+  inset: 0;
+  background: url("assets/lamp/lamp-off.svg") center bottom / contain no-repeat;
+}
+
+.desk-lamp.lit .desk-lamp-art {
+  background-image: url("assets/lamp/lamp-on.svg");
+}
+
+/* By night the shade's light falls on the page's corner: a warm pool, not part of the art
+   frame. */
+.desk-lamp::before {
+  content: "";
+  position: absolute;
+  left: -60%;
+  bottom: -10%;
+  width: calc(var(--lamp-w) * 4);
+  height: calc(var(--lamp-h) * 2);
+  background: radial-gradient(ellipse at 40% 78%, var(--lamp-pool), transparent 62%);
+  pointer-events: none;
+  opacity: 0;
+}
+
+.desk-lamp.lit::before {
+  opacity: 1;
+}
+
+/* The pull cord hangs from the shade and drops 6px when pulled, then springs back. */
+.desk-lamp-cord {
+  position: absolute;
+  top: 36%;
+  right: 4%;
+  width: 3px;
+  height: 34%;
+  background: var(--ink-soft);
+  border-radius: 1.5px;
+  transform-origin: top center;
+  transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.desk-lamp-cord::after {
+  content: "";
+  position: absolute;
+  bottom: -5px;
+  left: -2.5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.desk-lamp.pulled .desk-lamp-cord {
+  transform: translateY(6px);
+}
+
+/* The other paper, laid down from the top edge when the switch is pulled: it carries its
+   own paper tokens (data-theme on the sheet), covers the whole desk (Rambo and his nest
+   too) while the real paper is swapped under it, then lifts back off. It moves; it never
+   fades. */
+.lamp-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-switch);
+  background-color: var(--paper);
+  background-image: var(--texture-paper);
+  box-shadow: 0 6px 22px var(--flip-shade);
+  transform: translateY(-100%);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Down onto the page, and back up off it the way it came: one object, always moving. */
+.lamp-sheet.down {
+  visibility: visible;
+  transform: translateY(0);
+  transition: transform var(--lamp-slide-ms) var(--arrive-ease);
+}
+
+.lamp-sheet.up {
+  visibility: visible;
+  transform: translateY(-100%);
+  transition: transform var(--lamp-slide-ms) var(--leave-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desk-lamp-cord {
     transition: none;
   }
 }

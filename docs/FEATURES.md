@@ -351,6 +351,22 @@ b. Open the gear menu and choose Dark, then Light, and reload the page.
 c. Code: `web/theme.css` (`:root` and `:root[data-theme="dark"]`);
 `web/src/settings.rs:GearMenu, apply_theme`.
 
+### 5a. The desk lamp
+a. A small desk lamp is the dark-mode switch. Tapping it pulls its cord: a sheet of the
+other paper is laid down from the top edge over the page, the page's own paper is swapped
+under it, and the sheet is taken away on the next frame. The page is swapped out; nothing
+fades. The lamp is dark by day and lit by night (by night its light falls on the corner of
+the page), and its own light changes at the tap. The gear menu's Light and Dark choices
+use the same switch, so there is one behaviour; only with reduced motion does the paper
+change at once. It is the same stored Theme setting as ever, and the page still never
+follows the OS. On a desk the lamp stands on the bottom edge of the screen in the bottom
+left corner, clear of the capture box and the gear; on a phone it stands at the foot, just
+above the capture bar.
+b. Tap the lamp (or pick Light or Dark in the gear menu) and watch the new paper slide
+down; reload and see the choice kept.
+c. Code: `web/src/lamp.rs:DeskLamp, switch_to`; `web/theme.css` (`.desk-lamp`,
+`.lamp-sheet`); `web/src/tuning.rs:LAMP_SLIDE_MS`. The art: `web/assets/lamp/ABOUT.md`.
+
 ### 6. Parchment theme
 a. The page is aged paper: warm palette, serif headings, a tiled paper texture that switches to a dark variant in dark mode.
 b. Look at the page background in light and dark mode; with `web/assets/theme/*.svg` deleted it still reads as parchment.
@@ -409,17 +425,23 @@ writes where it goes. After 3
 seconds untouched he skitters home in small hops, each leaving a dot of ink, or
 he comes home at once when dropped on his nest, and forgives you a little for
 putting him back (a small lift in the brain's cheer). A softer throw just slides
-and stops, and he hops home undazed. A throw that comes into the bottom-right corner
+and stops, and he hops home undazed. Lying on the page (dazed, or asking about a
+row), he holds on to the paper as it scrolls: a slow scroll carries him along with it,
+and one faster than he can hold on flings him with the page, a throw like any other,
+so a hard enough one smacks him into the edge of the screen. A throw that comes into the bottom-right corner
 is caught by his nest, however hard: no daze and no ink, he hops in. The nest is
 soft: it sags under him as he lands (deeper the harder he was thrown), rocks as he
 leaves or lands to one side, and settles; with reduced motion it stays still. He leans into where he hops, and eases from
-one pose into the next, never snapping. His ink dries and fades on its own; home
+one pose into the next, never snapping. After a long stretch of writing his nib runs dry:
+home again, he tips toward the nest's rim and taps it there a few times, the nest
+bobbing under each tap, then rests. His ink dries and fades on its own; home
 again, he listens again.
 b. Flick the pen hard at a side of the screen, or into the nest's corner; drag it again to write, or hold
 anywhere and drag; drop it on the nest, or leave it 3 seconds.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/engine/world.rs:World, behaviour`;
-`web/src/engine/look.rs:pose, blended, Look`;
-`web/src/engine/fling.rs:step, splat_strokes`; `web/src/engine/nest.rs:Nest`;
+`web/src/engine/look.rs:pose, blended, Look`; `web/src/mascot.rs:nib_dry`;
+`web/src/engine/nest.rs:Nest::tap`;
+`web/src/engine/fling.rs:step, splat_strokes`; `web/src/engine/world.rs:swept`; `web/src/engine/nest.rs:Nest`;
 `web/src/mascot.rs:transition, listens_on_grab,
 put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `web/src/hop.rs:Hop`;
 `web/src/gesture.rs:Recognizer, release_velocity, flung`;
