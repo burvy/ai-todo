@@ -445,12 +445,13 @@ a. The gear menu's **Sound** picks one of four: **Off** (silence; Rambo does not
 aloud), **A quiet desk** (only the noises paper and ink really make: the nib, the
 scribble, the page turn, the crumple; no voice), **Every touch answers** (the default:
 also a tick on every button and a swish when a ramble is sent) and **Everything + music**
-(the same cues; calm background music is (planned)). It replaces the old Sounds on/off
+(the same cues, plus calm piano under them: two public-domain recordings, looped softly,
+started by the first press after the choice). It replaces the old Sounds on/off
 flag: a stored "off" stays Off, a stored "on" becomes every touch. With reduced motion
 on, the tick and the page sound are dropped.
 b. Open the gear menu, pick each preset, then tap a button, turn the page and add a task.
 c. Code: `web/src/sound.rs:Cue, plays`; `web/src/settings.rs:SoundPreset, with_migrated_sound`;
-`web/src/voice.rs:audible`. Sound files and how to swap one: `web/assets/sounds/ABOUT.md`.
+`web/src/voice.rs:audible`; `web/src/music.rs:sync`. Music files: `web/assets/music/ABOUT.md`. Sound files and how to swap one: `web/assets/sounds/ABOUT.md`.
 
 ### 5. Reduced motion
 a. With reduced motion enabled, Rambo returns immediately instead of animating.
