@@ -45,11 +45,12 @@ pub enum When { Anytime, DueBy(DateTime<Utc>), At(DateTime<Utc>) } // At = fixed
 pub struct Task { id: TaskId, title: String, duration_min: u16, when: When, done: bool,
                   order: i64, label: Label, priority: Priority, source: Source, created: DateTime<Utc>,
                   updated_at: DateTime<Utc>, due_tz: Option<String>,
-                  external_uid: Option<String> }   // iCalendar UID for imported events
+                  external_uid: Option<String>,   // iCalendar UID for imported events
+                  off_planner: bool }             // the user took it off the week (4.2)
 
 pub struct TaskDraft { title, duration_min, when, label, priority, source }      // no id
 pub struct Placement { task: TaskId, start: DateTime<Utc>, end: DateTime<Utc> }
-pub struct Plan { placements: Vec<Placement>, unplaced: Vec<TaskId> }
+pub struct Plan { placements: Vec<Placement>, unplaced: Vec<TaskId>, off_planner: Vec<TaskId> }
 pub struct Snapshot { tasks: Vec<Task>, plan: Plan, tz: String, generated: DateTime<Utc> }
 pub struct ApiError { code: ErrorCode, message: String }
 ```
@@ -63,6 +64,27 @@ pub struct ApiError { code: ErrorCode, message: String }
 New tasks receive the highest position in the list, so the list is newest first. The scheduler still fills time in list order; a deadline takes precedence over list position. `When::At` is an absolute instant, like a calendar event. `When::DueBy` stores the user's time zone at capture time as part of the due date, so the intended local deadline is preserved if the user later travels.
 
 An unfinished task past its `DueBy` remains in the list marked **Overdue**. The scheduler places it in the next free slot, and Rambo teases the user about it.
+
+### 4.2 Off the planner
+
+`Task::off_planner` is the user saying *not this week*: the task stays in the list with its
+deadline and its label, and the scheduler gives it no slot until the flag is cleared. It is a
+flag and not a `When` variant, because the task keeps its `when` — a `DueBy` task taken off the
+planner is still due then, it just is not being scheduled towards it.
+
+The scheduler reports these tasks in `Plan::off_planner`, apart from `unplaced`, because the two
+mean opposite things to the UI: `unplaced` is "wanted on the week, no room left", and
+`off_planner` is "not asked for". Every unfinished task the planner is given lands in exactly one
+of the three buckets.
+
+The flag outranks a pin: an `At` task taken off the planner leaves the week rather than staying
+where it was pinned, because "off the planner" that still shows on the planner is a lie. A task
+that is already done is only done — the flag does not report it anywhere.
+
+Set it with `PATCH /api/v1/tasks/{id}` and `{"off_planner": true|false}`; an absent field leaves
+it alone. It is stored as `v2_tasks.off_planner` (`INTEGER NOT NULL DEFAULT 0`), and `0` is what
+every task written before the column existed reads as, so an old install plans exactly what it
+planned before.
 
 ## 5. Capture pipeline (`crates/capture`)
 
@@ -95,7 +117,7 @@ Anonymous users do not sign in. Their account and tasks are deleted after 30 day
 | `GET /api/v1/snapshot?from=YYYY-MM-DD&days=7` | none | `Snapshot`. The window bounds the plan (today and 7 days by default); the task list is always the whole list, and pinned tasks keep their placement whatever the window is. |
 | `POST /api/v1/capture` | `{text}` or multipart `file` (pdf, eml, txt) | `{created: [id], snapshot, jev_fallback}`. `jev_fallback` is true once the user is past `RAMBL_JEV_DAILY_CAP` captures today (200 by default), when Jev is not called and `FakeJudge` judges instead. |
 | `POST /api/v1/tasks` | `TaskDraft` | `Snapshot` |
-| `PATCH /api/v1/tasks/{id}` | any of `title, duration_min, when, done, label, priority`, plus `updated_at` (the version the page last saw) | `Snapshot`; `409 stale_update` if the task changed since `updated_at` |
+| `PATCH /api/v1/tasks/{id}` | any of `title, duration_min, when, done, label, priority, off_planner` (4.2), plus `updated_at` (the version the page last saw) | `Snapshot`; `409 stale_update` if the task changed since `updated_at` |
 | `POST /api/v1/tasks/{id}/revise` | `{instruction}` (goes through the capture pipeline for one clause) | `Snapshot` |
 | `POST /api/v1/tasks/restore` | `Task` as it was before its delete (the scrap undo); stored under a fresh id with the create checks; its place is kept within one step of the list, an unknown deadline zone is re-anchored, a future `created` is clamped to now and `external_uid` is dropped; a repeat's day is refused | `Snapshot` |
 | `PUT /api/v1/tasks/order` | `{ids: [...]}` (full order) | `Snapshot` |

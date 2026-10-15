@@ -318,6 +318,7 @@ mod tests {
             updated_at: *at,
             due_tz: None,
             external_uid: None,
+            off_planner: false,
         }
     }
 

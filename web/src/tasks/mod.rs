@@ -137,6 +137,7 @@ fn blank_task() -> todo_core::Task {
         updated_at: DateTime::UNIX_EPOCH,
         due_tz: None,
         external_uid: None,
+        off_planner: false,
     }
 }
 
@@ -1491,6 +1492,7 @@ mod tests {
             updated_at: created,
             due_tz: None,
             external_uid: None,
+            off_planner: false,
         });
         snapshot
     }
