@@ -242,7 +242,8 @@ d. Nothing pops in or out. The only thing on main that fades is ink (it appears 
 and fades out over `INK_FADE_OUT_MS`); nothing else
 fades (the page rip and its tape were cut, item h). Everything else moves: a done or
 deleted row flies to the pin, a taped-back task flies back from it, the rows below slide up
-to close a gap (`ROW_SLIDE_OMEGA`), a crumpled strip drops away, and Rambo's ask bubble grows
+to close a gap (`ROW_SLIDE_OMEGA`), the edit sheet slides up from below the screen and
+back down before it closes, Escape too (`PAPER_SLIDE_OMEGA`), a crumpled strip drops away, and Rambo's ask bubble grows
 out of him and folds back into him over `ASK_FOLD_MS` before it leaves the page, at full
 opacity throughout.
 e. Try it: open the app on a phone and see no heading; add enough tasks to overflow and see
@@ -398,12 +399,14 @@ tap Rambo's offer of the next free time, the earliest quarter hour from now insi
 working hours where the task's length fits without overlapping another slip. **Leave
 it**, Esc or turning back to the list leaves the task where it was; the page stays
 on the planner. The note floats over the planner's foot (the grid never moves for it)
-and slides up into place and back down out of sight rather than popping; it never fades. One day of a
+and slides up into place and back down out of sight rather than popping (a glide on the
+engine, `PAPER_SLIDE_OMEGA`); it never fades. One day of a
 repeating series moves as that day only, as a dragged slip does.
 Rambo dropped on a slip in the planner asks about its time: **Move** (the same wait
 for an hour), **Longer** and **Shorter**, a quarter hour each way, never past the
-longest a task may be and never under a quarter hour. The slip stretches at once and
-the new length is saved. **Take off** takes the task off the planner (4a): its slip
+longest a task may be and never under a quarter hour. The slip starts to grow or
+shrink at once (a glide on the engine, `PAPER_SLIDE_OMEGA`; with reduced motion it
+takes its new height at once) and the new length is saved. **Take off** takes the task off the planner (4a): its slip
 slides sideways out of its day and the week is drawn without it, while the task stays
 in the list. One day of a repeating series is only offered Move.
 b. Drop Rambo on a task, choose Move, then tap an hour or the "Next free" scrap. Drop
@@ -434,11 +437,12 @@ of day names at today's column, right of the name; its tail lies on today's hour
 under the slips, so it never covers a word, and slides under the band as the hours
 scroll. When today is scrolled out of sight the head waits just inside the first column
 still in sight, at the same spot, so it covers no name, the way a bookmark sticks out
-of a closed book. Tap the head and the paper slides back to today, at the hour the
+of a closed book. The head moves with the paper as it scrolls; when it hops to
+another day it glides there (`PAPER_SLIDE_OMEGA`, at once with reduced motion). Tap the head and the paper slides back to today, at the hour the
 planner opens on (about 08:00, or now if later); with reduced motion it jumps there at
 once. The ribbon is drawn in CSS; it has no image asset.
 b. Scroll the planner away from today, then tap the ribbon.
-c. Code: `web/src/ribbon.rs:Ribbon, RibbonTail, hang_left, glide`;
+c. Code: `web/src/ribbon.rs:Ribbon, RibbonTail, hang_left, hop_slack, glide`;
 `web/src/week.rs:WeekGrid, ribbon_spot, slide_to`; tuning `RIBBON_GLIDE_MS` in
 `crates/web-core/src/tuning.rs`.
 

@@ -162,22 +162,13 @@ mod tests {
 
     /// The transitions that still move or size something, as `selector: property`: each
     /// goes when its mover joins the world. Delete a line as its transition is deleted.
-    const OWED_TRANSITIONS: [&str; 12] = [
+    const OWED_TRANSITIONS: [&str; 5] = [
         // Rambo's ask bubble (rambo.rs, his owner is moving it).
         ".ask-choice: scale",
         ".ask.folding: scale",
         ".ask.folding: translate",
         ".ask: scale",
         ".ask: translate",
-        // The planner: a slip's drag and stretch, the placing note, the ribbon.
-        ".bookmark-ribbon: left",
-        ".placement.dragging: rotate",
-        ".placement.dragging: translate",
-        ".placement.stretching: height",
-        ".placing-note.open: translate",
-        ".placing-note: translate",
-        // The edit sheet.
-        ".task-dialog: translate",
     ];
 
     /// Every `selector: property` the style sheet's transitions animate that is a motion

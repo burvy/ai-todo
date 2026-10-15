@@ -294,20 +294,29 @@ pub(crate) fn TaskList(
     });
     // The sheet is a real modal: `show_modal` traps focus inside it, makes the page
     // behind it inert, lifts it into the top layer (above Rambo) and lets Escape
-    // close it (the `cancel` event). It follows `editing_task`.
+    // close it (the `cancel` event). It follows `editing_task`, sliding up from below
+    // the screen as it opens and back down before it closes (`sheet_shown`, 0 out of
+    // sight to 1 in it).
     let sheet = NodeRef::<leptos::html::Dialog>::new();
+    let sheet_shown = RwSignal::new(0.0_f64);
     // The task the + sheet is making; it lives here until Save and is never sent before.
     let draft = RwSignal::new(None::<todo_core::Task>);
     Effect::new(move |_| {
         let wanted = editing_task.get().is_some();
-        if let Some(dialog) = sheet.get() {
-            match (wanted, dialog.open()) {
-                (true, false) => {
-                    let _ = dialog.show_modal();
+        let Some(dialog) = sheet.get() else {
+            return;
+        };
+        if wanted && !dialog.open() {
+            sheet_shown.set(0.0);
+            let _ = dialog.show_modal();
+        }
+        if dialog.open() {
+            let to = if wanted { 1.0 } else { 0.0 };
+            crate::slide::show("edit-sheet", sheet_shown, to, move || {
+                if !wanted {
+                    dialog.close();
                 }
-                (false, true) => dialog.close(),
-                _ => {}
-            }
+            });
         }
     });
     // Open the edit sheet on a row: from a click on it, or from Rambo's "Edit".
@@ -708,7 +717,12 @@ pub(crate) fn TaskList(
         <dialog
             class="task-dialog"
             node_ref=sheet
-            on:cancel=move |_: leptos::ev::Event| set_editing_task.set(None)
+            style:--shown=move || format!("{:.4}", sheet_shown.get())
+            // Escape slides the sheet away before it closes, rather than closing it now.
+            on:cancel=move |ev: leptos::ev::Event| {
+                ev.prevent_default();
+                set_editing_task.set(None);
+            }
             on:close=move |_: leptos::ev::Event| set_editing_task.set(None)
         >
             <form method="dialog">
@@ -1155,6 +1169,29 @@ mod tests {
             .and_then(|rest| rest.split('}').next())
             .expect("theme.css has an html, body rule");
         assert!(rule.contains("overscroll-behavior-x: none"), "{rule}");
+    }
+
+    /// The sheet is centred in the whole screen by auto margins, so however tall it is it
+    /// never starts above the top (it scrolls inside once it is as tall as the screen
+    /// allows); a `top: 50%` with a half-height pull put a tall one off the top.
+    #[test]
+    fn the_edit_sheet_never_starts_above_the_screen() {
+        let css = include_str!("../../theme.css").replace("\r\n", "\n");
+        let sheet = css
+            .split("\n.task-dialog {")
+            .nth(1)
+            .and_then(|rest| rest.split('}').next())
+            .expect("theme.css styles .task-dialog");
+        for wanted in [
+            "inset: 0",
+            "margin: auto",
+            "overflow-y: auto",
+            "max-height:",
+        ] {
+            assert!(sheet.contains(wanted), "{wanted}: {sheet}");
+        }
+        assert!(!sheet.contains("top: 50%"), "{sheet}");
+        assert!(!sheet.contains("transform"), "{sheet}");
     }
 
     /// FRONTEND-PLAN 1.8 item 7: the edit sheet is a real modal (focus trapped, page
