@@ -317,7 +317,7 @@ BUG-1 and BUG-2 both change the snapshot effect in `tack.rs`: give them to one a
 - Do not touch: the other events, the brain crate.
 
 **BUG-6: one date window for every snapshot** · Rust · small
-- The bug: the first load and the reload after a refused edit ask the server for `settings.days` days (`lib.rs` about line 69, `edits.rs` about line 126). Every edit response uses the server's own default window. Changing the days setting (`settings.rs` about line 333) never re-fetches. With days = 3, repeat-day rows and their strips come and go depending on which call ran last.
+- The bug: the first load and the reload after a refused edit ask the server for `settings.days` days (`lib.rs` about line 69, `edits.rs` about line 126). Every edit response uses the server's own default window. Changing the days setting (`gear_menu.rs`, the days field) never re-fetches. With days = 3, repeat-day rows and their strips come and go depending on which call ran last.
 - Files: `web/src/lib.rs`, `web/src/edits.rs`, `web/src/api.rs`, `crates/core/src/tuning.rs` (from #270; `crates/core/src/lib.rs` if #270 has not landed), and one line in `server/src/v2/http.rs` (an allowed exception to "no server code": the import only).
 - Do: every fetch asks for the same window as the server's default, `DEFAULT_WINDOW_DAYS = 7` (`server/src/v2/http.rs` about line 980). Move that constant, unchanged, to core's tuning file with a one-line reason, so the server and the page share it. Every `fetch_snapshot` call in the page uses it. The days setting then only chooses how many planner columns show, so changing it needs no fetch.
 - Accept:
