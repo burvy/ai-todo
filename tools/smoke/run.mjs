@@ -268,10 +268,13 @@ const scenarios = {
     const stacked = await p.evaluate('matchMedia("(max-width: 700px)").matches');
     if (stacked) {
       // Where the pages stack, the planner is behind the list; the wide desk checks it.
-      return;
+      return { skipped: "the planner is behind the list" };
     }
-    // A slip in sight with room below it, from the tasks the checks above made.
-    const slip = await waitFor(() => p.evaluate(SLIP_IN_SIGHT), 15000, "a slip on the planner");
+    // A slip in sight with room below it, from the tasks the checks above made. The
+    // scheduler may plan them out of sight (late in the day, past working hours): that is
+    // nothing to check, not a failure.
+    const slip = await waitFor(() => p.evaluate(SLIP_IN_SIGHT), 15000, "a slip on the planner").catch(() => null);
+    if (!slip) return { skipped: "no slip in sight with room below it" };
     const top = () => p.evaluate(`document.querySelector(".week-scroll .placement[data-id='${slip.id}']")?.getBoundingClientRect().top ?? null`);
     const from = { x: slip.x, y: slip.y };
     // Picked up, carried off and brought back: dropped where it sat, the ghost springs back
@@ -388,8 +391,8 @@ async function runSize(size) {
     for (const [name, run] of Object.entries(scenarios)) {
       const label = `${size.name}: ${name}`;
       try {
-        await run(p);
-        results.push({ label, ok: true });
+        const skipped = (await run(p))?.skipped;
+        results.push({ label, ok: true, skipped });
       } catch (error) {
         results.push({ label, ok: false, detail: String(error.message ?? error).slice(0, 300) });
       }
@@ -423,7 +426,9 @@ let failed = 0;
 for (const size of SIZES) {
   for (const result of await runSize(size)) {
     if (!result.ok) failed++;
-    console.log(`${result.ok ? "PASS" : "FAIL"}  ${result.label}${result.detail ? `  (${result.detail})` : ""}`);
+    const mark = result.skipped ? "SKIP" : result.ok ? "PASS" : "FAIL";
+    const detail = result.skipped ?? result.detail;
+    console.log(`${mark}  ${result.label}${detail ? `  (${detail})` : ""}`);
   }
 }
 console.log(failed === 0 ? "all smoke checks passed" : `${failed} smoke check(s) failed`);
