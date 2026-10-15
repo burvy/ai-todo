@@ -1223,7 +1223,12 @@ pub(crate) fn stretch(
                     wasm_bindgen_futures::spawn_local(async move { ease_slip_from(&id, reached) });
                 }
             }
-            Err(e) => set_error.set(Some(format!("Resize failed: {e}"))),
+            Err(e) => {
+                // Refused, the slip goes back to the length it still has.
+                #[cfg(target_arch = "wasm32")]
+                unstretch_slip(&id, from, to);
+                set_error.set(Some(format!("Resize failed: {e}")));
+            }
         }
     });
 }
@@ -1298,14 +1303,51 @@ fn slips_of(id: &TaskId) -> Vec<web_sys::HtmlElement> {
 /// it moves the moment it is asked, before the change is saved.
 #[cfg(target_arch = "wasm32")]
 fn resize_slip(id: &TaskId, from: u16, to: u16) {
-    let px = (f32::from(to) - f32::from(from)) / 60.0 * HOUR_PX;
     for slip in slips_of(id) {
-        let height = slip.get_bounding_client_rect().height() as f32 + px;
+        let height = resized_px(slip.get_bounding_client_rect().height() as f32, from, to);
         let _ = slip.class_list().add_1("stretching");
         let _ = slip
             .style()
-            .set_property("height", &format!("{:.1}px", height.max(0.0)));
+            .set_property("height", &format!("{height:.1}px"));
     }
+}
+
+/// Takes back a stretch whose save was refused: task `id`'s slips ease from the `to`
+/// minutes they were stretched to back to `from`, then lose `.stretching`, so a later
+/// redraw of them does not ease. It starts from the height they were stretched to, not
+/// the one they have reached, since a quick refusal can come mid-ease.
+#[cfg(target_arch = "wasm32")]
+fn unstretch_slip(id: &TaskId, from: u16, to: u16) {
+    use wasm_bindgen::JsCast as _;
+    for slip in slips_of(id) {
+        let style = slip.style();
+        let stretched = style
+            .get_property_value("height")
+            .ok()
+            .and_then(|height| height.trim_end_matches("px").parse::<f32>().ok())
+            .unwrap_or_else(|| slip.get_bounding_client_rect().height() as f32);
+        let _ = style.set_property(
+            "height",
+            &format!("{:.1}px", resized_px(stretched, to, from)),
+        );
+        let eased = slip.clone();
+        let done = wasm_bindgen::closure::Closure::once_into_js(move || {
+            let _ = eased.class_list().remove_1("stretching");
+        });
+        let once = web_sys::AddEventListenerOptions::new();
+        once.set_once(true);
+        let _ = slip.add_event_listener_with_callback_and_add_event_listener_options(
+            "transitionend",
+            done.unchecked_ref(),
+            &once,
+        );
+    }
+}
+
+/// A slip's height once its task goes from `from` to `to` minutes long, from `height` px.
+#[cfg(any(target_arch = "wasm32", test))]
+fn resized_px(height: f32, from: u16, to: u16) -> f32 {
+    (height + (f32::from(to) - f32::from(from)) / 60.0 * HOUR_PX).max(0.0)
 }
 
 /// Eases task `id`'s newly drawn slip from `reached` px to the height the plan gives it
@@ -1535,6 +1577,31 @@ mod tests {
     fn an_unknown_zone_name_falls_back_to_utc() {
         let context = planner_context("Not/AZone");
         assert_eq!(context.tz, chrono_tz::UTC);
+    }
+
+    #[test]
+    fn a_refused_stretch_puts_the_slip_back_to_the_height_it_had() {
+        use crate::placing::{Stretch, stretched};
+        let quarter = HOUR_PX / 4.0;
+        for minutes in (15..=240).step_by(15) {
+            let height = f32::from(minutes) / 60.0 * HOUR_PX;
+            for stretch in [Stretch::Longer, Stretch::Shorter] {
+                let to = stretched(minutes, stretch);
+                let grown = resized_px(height, minutes, to);
+                // What the bubble's stretch draws: a quarter hour, or nothing at a limit.
+                let moved = (grown - height).abs();
+                assert!(
+                    moved == 0.0 || (moved - quarter).abs() < 1e-3,
+                    "{minutes} {stretch:?}"
+                );
+                // And taking it back lands where it started.
+                let back = resized_px(grown, to, minutes);
+                assert!(
+                    (back - height).abs() < 1e-3,
+                    "{minutes} {stretch:?}: {back} vs {height}"
+                );
+            }
+        }
     }
 
     #[test]
