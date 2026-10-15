@@ -2,6 +2,7 @@
 //! no DOM, so `cargo test` covers them natively. `rambl-web` holds the views over it and
 //! re-exports these modules under their old paths.
 
+pub mod body;
 pub mod clock;
 pub mod gesture;
 pub mod hop;
