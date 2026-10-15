@@ -1102,13 +1102,15 @@ pub(crate) fn stretch(
         match crate::api::patch_task(&id, body).await {
             Ok(new_snapshot) => {
                 // The saved plan draws the slip anew; it carries on from the height it
-                // had reached instead of starting at its new one.
+                // had reached instead of starting at its new one. The redraw runs as a
+                // microtask, so the ease queued after it lands before the next paint:
+                // a frame later, the new slip would show once at its planned height.
                 #[cfg(target_arch = "wasm32")]
                 let reached = slips_of(&id).first().map(|slip| slip.offset_height());
                 set_snapshot.set(new_snapshot);
                 #[cfg(target_arch = "wasm32")]
                 if let Some(reached) = reached {
-                    crate::engine::next_frame(move || ease_slip_from(&id, reached));
+                    wasm_bindgen_futures::spawn_local(async move { ease_slip_from(&id, reached) });
                 }
             }
             Err(e) => set_error.set(Some(format!("Resize failed: {e}"))),
