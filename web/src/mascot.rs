@@ -706,15 +706,18 @@ mod tests {
         // colours it already overrides. A token left out of either one paints a
         // light ink on a dark page.
         let css = include_str!("../theme.css");
-        let (light, dark) = (theme_tokens(css, ":root {"), theme_tokens(css, ":root[data-theme=\"dark\"] {"));
+        let (light, dark) = (
+            theme_tokens(css, ":root "),
+            theme_tokens(css, ":root[data-theme=\"dark\"] "),
+        );
         for (file, _) in every_drawing() {
             let svg = std::fs::read_to_string(art_file(&file)).expect("art exists");
             for token in tokens_used_in(&svg) {
-                assert!(light.contains(&token), "{file} names {token}, the page never defines it");
+                assert!(light.contains_key(&token), "{file} names {token}, the page never defines it");
                 let value = light.get(&token).expect("just checked");
                 for leans_on in tokens_used_in(value) {
                     assert!(
-                        dark.contains(&leans_on),
+                        dark.contains_key(&leans_on),
                         "{token} leans on {leans_on}, which the dark theme never defines"
                     );
                 }
@@ -762,20 +765,25 @@ mod tests {
 
     /// `--name:` declarations in one top-level block, with what they are set to.
     fn theme_tokens(css: &str, selector: &str) -> std::collections::HashMap<String, String> {
-        let block = css
+        // Comments in theme.css carry braces and semicolons of their own.
+        let mut bare = String::new();
+        let mut rest = css;
+        while let Some((before, after)) = rest.split_once("/*") {
+            bare.push_str(before);
+            rest = after.split_once("*/").map_or("", |(_, tail)| tail);
+        }
+        bare.push_str(rest);
+
+        let body = bare
             .split_once(selector)
-            .and_then(|(_, rest)| rest.split_once('{').map(|(_, body)| body))
-            .map_or("", |body| body.split_once("}").map_or(body, |(body, _)| body));
-        block
-            .split(";")
+            .and_then(|(_, after)| after.split_once('{').map(|(_, body)| body))
+            .map_or("", |body| body.split_once('}').map_or(body, |(body, _)| body));
+        body.split(';')
             .filter_map(|decl| {
                 let (name, value) = decl.trim().split_once(':')?;
-                name.starts_with("--").then(|| {
-                    (
-                        name.trim().to_owned(),
-                        value.split([';', '\n', '/']).next().unwrap_or("").trim().to_owned(),
-                    )
-                })
+                name.trim()
+                    .starts_with("--")
+                    .then(|| (name.trim().to_owned(), value.trim().to_owned()))
             })
             .collect()
     }
@@ -784,7 +792,7 @@ mod tests {
     fn tokens_used_in(text: &str) -> Vec<String> {
         text.match_indices("var(--")
             .map(|(at, _)| {
-                let rest = &text[at + 5..];
+                let rest = &text[at + 6..];
                 rest[..rest.find([')', ',']).expect("var() closes")].to_owned()
             })
             .collect()
@@ -841,11 +849,11 @@ mod tests {
         let state = State::Home;
         assert_eq!(
             art_for(Pen::Marker, &state, "", false),
-            "assets/rambo/marker/idle.svg"
+            "assets/rambo/marker/idle.svg#art"
         );
         assert_eq!(
             art_for(Pen::Ballpoint, &state, "cheer", false),
-            "assets/rambo/ballpoint/happy.svg"
+            "assets/rambo/ballpoint/happy.svg#art"
         );
     }
 
