@@ -6,6 +6,7 @@ pub mod body;
 pub mod clock;
 #[cfg(test)]
 mod contrast;
+pub mod dabs;
 pub mod events;
 pub mod gesture;
 pub mod hop;
