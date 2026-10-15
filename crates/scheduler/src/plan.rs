@@ -29,10 +29,10 @@ pub fn plan(
     hours: &WorkingHours,
     ctx: &todo_core::LocalContext,
 ) -> todo_core::Plan {
-    let mut occupied = Vec::new();
-    let mut placements = Vec::new();
+    let mut board = Board::new(hours, ctx.now, usual_time(tasks, hours.timezone));
     let mut overdue = Vec::new();
-    let mut flexible = Vec::new();
+    let mut day_only = Vec::new();
+    let mut anytime = Vec::new();
     let mut off_planner = Vec::new();
 
     for (index, task) in tasks.iter().enumerate() {
@@ -47,69 +47,115 @@ pub fn plan(
             continue;
         }
         match task.when {
-            When::At(start) => {
-                let duration = effective_minutes(task);
-                let end = start + Duration::minutes(duration);
-                placements.push(todo_core::Placement {
-                    task: task.id.clone(),
-                    start,
-                    end,
-                });
-                occupied.push((start, end));
-            }
+            When::At(start) => board.fixed(task, start),
             When::DueBy(deadline) if deadline <= ctx.now => overdue.push(index),
-            When::DueBy(_) | When::Anytime => flexible.push(index),
+            When::DueBy(deadline) => day_only.push((deadline, index)),
+            When::Anytime => anytime.push(index),
         }
     }
     overdue.sort_by_key(|&index| (tasks[index].order, index));
     // A deadline takes precedence over list position (ARCHITECTURE.md 4.1): deadlines
     // first, earliest first, so an `Anytime` task above them cannot take their room.
-    flexible.sort_by_key(|&index| {
-        let deadline = deadline_of(&tasks[index]);
-        (deadline.is_none(), deadline, tasks[index].order, index)
-    });
+    day_only.sort_by_key(|&(deadline, index)| (deadline, tasks[index].order, index));
+    anytime.sort_by_key(|&index| (tasks[index].order, index));
 
-    let mut unplaced = Vec::new();
-    let usual = usual_time(tasks, hours.timezone).unwrap_or(hours.day_only_time);
-
-    // Overdue tasks go first and lose their deadline constraint; flexible tasks
-    // keep theirs. One ordered pass feeds the same next_slot/push loop.
-    for (index, deadline) in overdue.into_iter().map(|index| (index, None)).chain(
-        flexible
-            .into_iter()
-            .map(|index| (index, deadline_of(&tasks[index]))),
-    ) {
-        let task = &tasks[index];
-        let duration = effective_minutes(task);
-        let Some(start) = deadline
-            .and_then(|limit| slot_near(task, limit, usual, duration, hours, &occupied, ctx.now))
-            .or_else(|| next_slot(ctx.now, duration, deadline, hours, &occupied))
-        else {
-            unplaced.push(task.id.clone());
-            continue;
-        };
-        let end = start + Duration::minutes(duration);
-        placements.push(todo_core::Placement {
-            task: task.id.clone(),
-            start,
-            end,
-        });
-        occupied.push((start, end));
+    for index in overdue {
+        board.overdue(&tasks[index]);
+    }
+    for (deadline, index) in day_only {
+        board.day_only(&tasks[index], deadline);
+    }
+    for index in anytime {
+        board.anytime(&tasks[index]);
     }
     todo_core::Plan {
-        placements,
-        unplaced,
+        placements: board.placements,
+        unplaced: board.unplaced,
         off_planner,
     }
 }
 
-/// The latest allowed end for a flexible task; `None` when unconstrained
-/// (`Anytime`, or overdue tasks placed from now).
-fn deadline_of(task: &todo_core::Task) -> Option<DateTime<Utc>> {
-    match task.when {
-        When::DueBy(deadline) => Some(deadline),
-        When::Anytime => None,
-        When::At(_) => unreachable!("fixed tasks are placed exactly, never in this queue"),
+/// The plan being built: what is placed so far, and the busy time every later task must
+/// keep clear of. One method per queue; each takes one task.
+pub(crate) struct Board<'a> {
+    hours: &'a WorkingHours,
+    now: DateTime<Utc>,
+    usual: NaiveTime,
+    busy: Vec<(DateTime<Utc>, DateTime<Utc>)>,
+    pub(crate) placements: Vec<todo_core::Placement>,
+    pub(crate) unplaced: Vec<todo_core::TaskId>,
+}
+
+impl<'a> Board<'a> {
+    /// An empty board. `usual` is the user's usual time of day, if they have one;
+    /// day-only tasks otherwise aim for `hours.day_only_time`.
+    pub(crate) fn new(
+        hours: &'a WorkingHours,
+        now: DateTime<Utc>,
+        usual: Option<NaiveTime>,
+    ) -> Self {
+        Self {
+            hours,
+            now,
+            usual: usual.unwrap_or(hours.day_only_time),
+            busy: Vec::new(),
+            placements: Vec::new(),
+            unplaced: Vec::new(),
+        }
+    }
+
+    /// A fixed task sits exactly at `start`, whatever else is there.
+    pub(crate) fn fixed(&mut self, task: &todo_core::Task, start: DateTime<Utc>) {
+        self.put(task, start);
+    }
+
+    /// An overdue task takes the earliest free slot from now, with no deadline left.
+    pub(crate) fn overdue(&mut self, task: &todo_core::Task) {
+        self.earliest(task);
+    }
+
+    /// A day-only task takes the free slot on its deadline's day closest to the usual
+    /// time, else the earliest free slot before the deadline.
+    pub(crate) fn day_only(&mut self, task: &todo_core::Task, deadline: DateTime<Utc>) {
+        let minutes = effective_minutes(task);
+        let slot = slot_near(
+            task, deadline, self.usual, minutes, self.hours, &self.busy, self.now,
+        )
+        .or_else(|| next_slot(self.now, minutes, Some(deadline), self.hours, &self.busy));
+        self.settle(task, slot);
+    }
+
+    /// A task with no time at all takes the earliest free slot from now.
+    pub(crate) fn anytime(&mut self, task: &todo_core::Task) {
+        self.earliest(task);
+    }
+
+    fn earliest(&mut self, task: &todo_core::Task) {
+        let slot = next_slot(
+            self.now,
+            effective_minutes(task),
+            None,
+            self.hours,
+            &self.busy,
+        );
+        self.settle(task, slot);
+    }
+
+    fn settle(&mut self, task: &todo_core::Task, slot: Option<DateTime<Utc>>) {
+        match slot {
+            Some(start) => self.put(task, start),
+            None => self.unplaced.push(task.id.clone()),
+        }
+    }
+
+    fn put(&mut self, task: &todo_core::Task, start: DateTime<Utc>) {
+        let end = start + Duration::minutes(effective_minutes(task));
+        self.placements.push(todo_core::Placement {
+            task: task.id.clone(),
+            start,
+            end,
+        });
+        self.busy.push((start, end));
     }
 }
 
