@@ -551,13 +551,7 @@ pub(crate) fn TaskList(
             let now = scrap::row_tops();
             let slide = rested.with_value(|before| scrap::rows_to_slide(before, &now));
             rested.set_value(now);
-            // A hole where a row tore out stays open for a while: the rows below wait
-            // where they were, and close it when it heals.
-            if crate::rip_ui::hole_open() {
-                scrap::hold_rows(&slide);
-            } else {
-                scrap::slide_rows(&slide);
-            }
+            scrap::slide_rows(&slide);
             scrap::fly_rows_back();
         });
     });

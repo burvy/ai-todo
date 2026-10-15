@@ -375,11 +375,7 @@ impl World {
         let rambo = &self.rambo;
         let timed = matches!(
             rambo.brain,
-            State::Thrown
-                | State::Splatting
-                | State::Dazed
-                | State::Covered
-                | State::Mending { .. }
+            State::Thrown | State::Splatting | State::Dazed | State::Covered
         );
         !timed
             && look::still(&rambo.brain, self.now - rambo.since)
@@ -523,7 +519,6 @@ impl World {
             State::Splatting => (mascot::SPLAT_MS, Event::Return),
             State::Dazed => (mascot::DAZED_MS, Event::Return),
             State::Covered => (mascot::COVERED_MS, Event::Uncovered),
-            State::Mending { .. } => (mascot::MEND_MS, Event::Return),
             _ => return None,
         };
         // Steps of 1/120 s add up a hair short of whole ms.
@@ -1076,30 +1071,6 @@ mod tests {
                 "{dot:?} lies between where he hit and the nest"
             );
         }
-    }
-
-    #[test]
-    fn a_torn_page_sends_him_to_tape_it_and_home_again_with_no_ink() {
-        let tear = (120.0, 300.0);
-        let mut world = World::new(NEST);
-        world.tell(Event::Mend { annoyed: true });
-        assert_eq!(world.rambo.brain, State::Mending { annoyed: true });
-        // He hops there and waits at the tear until the tape is on.
-        let there = steps(f64::from(crate::tuning::FLY_MS) * 2.0);
-        world.advance(there, &anchors(tear));
-        assert_eq!(world.draw().pos, tear);
-        assert_eq!(
-            world.rambo.brain,
-            State::Mending { annoyed: true },
-            "still taping"
-        );
-        world.advance(steps(f64::from(mascot::MEND_MS)), &anchors(tear));
-        assert_eq!(world.rambo.brain, State::Home, "the tape is on");
-        world.advance(there, &anchors(tear));
-        assert_eq!(world.draw().pos, in_nest(&world, NEST), "and he hops home");
-        world.advance(steps(SETTLES_MS), &anchors(tear));
-        assert!(world.at_rest());
-        assert_eq!(world.take_ink(), Vec::new(), "he is not dazed: no dots");
     }
 
     #[test]
