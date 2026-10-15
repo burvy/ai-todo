@@ -335,10 +335,13 @@ impl World {
         std::mem::take(&mut self.knocks)
     }
 
-    /// An event for his brain from outside the world (a gesture, the capture box).
-    pub(crate) fn tell(&mut self, event: Event) {
+    /// An event for his brain, from outside the world (a gesture, the capture box) or
+    /// from within (a landing): his state moves by `mascot::transition`, his timers
+    /// start again only if it changed, and the answer is where it moved to.
+    pub(crate) fn tell(&mut self, event: Event) -> State {
         let next = mascot::transition(&self.rambo.brain, event);
-        self.adopt(next);
+        self.adopt(next.clone());
+        next
     }
 
     /// His brain is now `next`, decided outside the world. On a change his timers start
@@ -762,6 +765,27 @@ mod tests {
                 .wrapping_add(1);
             ((self.0 >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
         }
+    }
+
+    #[test]
+    fn a_told_event_moves_him_by_the_one_rule() {
+        let mut world = World::new(NEST);
+        let picked_up = world.tell(Event::Grab);
+        assert_eq!(picked_up, mascot::transition(&State::Home, Event::Grab));
+        assert_eq!(world.rambo.brain, picked_up);
+        assert!(!world.rambo.settled_home, "out of his nest");
+    }
+
+    #[test]
+    fn an_event_that_changes_nothing_starts_no_timer_again() {
+        let mut world = World::new(NEST);
+        world.tell(Event::Grab);
+        world.advance(steps(500.0), &anchors(NEST));
+        let since = world.rambo.since;
+        let held = world.rambo.brain.clone();
+        // Picked up again while held: the rule keeps him as he is.
+        assert_eq!(world.tell(Event::Grab), held);
+        assert_eq!(world.rambo.since, since);
     }
 
     #[test]

@@ -197,8 +197,8 @@ ink is still wet, IV.3); a tap elsewhere on the row does nothing. The title is a
 reached with Tab, and Enter or Space opens it.
 b. Drag Rambo onto a task, then choose **Edit**, **Move** or **Done**, or tap off the bubble.
 Or tap a task's title.
-c. Code: `web/src/rambo.rs:Rambo`, which sets `edit_request` for
-`web/src/tasks/mod.rs:TaskList` to open its sheet; a tap on the row is decided on its
+c. Code: `web/src/rambo.rs:Rambo`, which pushes `Event::EditAsked`
+(`crates/web-core/src/events.rs`) for `web/src/tasks/mod.rs:TaskList` to open its sheet; a tap on the row is decided on its
 release (`tasks/mod.rs:tapped, on_title`), since the row holds the pointer from the press; `crates/web-core/src/mascot.rs:Choice, asking_dismissed_by`; `web/src/api.rs:patch_task`.
 d. The sheet's days and times are picked on the paper's own pickers (handwritten
 numbers, keyboard reachable, the paper's 12- or 24-hour clock), never the browser's:
@@ -410,8 +410,8 @@ slides sideways out of its day and the week is drawn without it, while the task 
 in the list. One day of a repeating series is only offered Move.
 b. Drop Rambo on a task, choose Move, then tap an hour or the "Next free" scrap. Drop
 him on a slip in the planner and choose Longer, or Take off.
-c. Code: `web/src/rambo.rs:Rambo` sets `move_request`; `web/src/lib.rs:App` turns
-the page; `web/src/placing.rs:PlacingNote`; `crates/web-core/src/placing.rs:next_free`;
+c. Code: `web/src/rambo.rs:Rambo` pushes `Event::MoveAsked`; `web/src/week.rs:WeekGrid`
+takes it, holds the waiting task and turns the page; `web/src/placing.rs:PlacingNote`; `crates/web-core/src/placing.rs:next_free`;
 `web/src/week.rs:WeekGrid, place_at, slip_at, stretch, take_off`;
 `crates/web-core/src/mascot.rs:Asked, offered`; `crates/web-core/src/placing.rs:stretched`.
 
@@ -517,7 +517,7 @@ a. Dropping Rambo on a task opens a small bubble with Edit, Move and Done, drawn
 paper scraps. Tapping anywhere off the bubble (him too) or pressing Esc is never mind. Edit opens the task dialog (`<dialog class="task-dialog">` in `web/src/tasks/mod.rs`).
 b. Drag the pen onto a task row and choose an action.
 c. Code: `web/src/rambo.rs:Rambo`; `crates/web-core/src/mascot.rs:Choice, asking_dismissed_by`;
-`web/src/api.rs:patch_task`. Move sets `move_request`; the planner places the task
+`web/src/api.rs:patch_task`. Move pushes `Event::MoveAsked`; the planner places the task
 (III.7).
 
 ### 4a. Sound presets
