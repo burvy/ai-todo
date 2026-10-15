@@ -551,4 +551,3 @@ const _: () = assert!(WRITE_MIN_MS < WRITE_MAX_MS);
 const _: () = assert!(WRITE_TOUCHDOWN_MS <= WRITE_SETTLE_MS);
 // A title that is merely slow to write is never cut short as "waited too long".
 const _: () = assert!(WRITE_MAX_MS < WRITE_HOLD_MAX_MS);
-

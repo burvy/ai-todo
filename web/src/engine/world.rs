@@ -375,10 +375,7 @@ impl World {
         let rambo = &self.rambo;
         let timed = matches!(
             rambo.brain,
-            State::Thrown
-                | State::Splatting
-                | State::Dazed
-                | State::Covered
+            State::Thrown | State::Splatting | State::Dazed | State::Covered
         );
         !timed
             && look::still(&rambo.brain, self.now - rambo.since)
