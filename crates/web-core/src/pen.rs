@@ -14,9 +14,9 @@
 
 use crate::mascot::State;
 use crate::tuning::{
-    WORD_GAP_W, WRITE_DIP_PX, WRITE_FLICK_DEG, WRITE_FLICK_MS, WRITE_FLICK_PX, WRITE_HOLD_MAX_MS,
-    WRITE_LIFT_PX, WRITE_MAX_MS, WRITE_MIN_MS, WRITE_PER_GLYPH_MS, WRITE_TOUCHDOWN_MS,
-    WRITE_TOUCHDOWN_PX, WRITE_WOBBLE_DEG,
+    INK_STEP_MAX_MS, WORD_GAP_W, WRITE_DIP_PX, WRITE_FLICK_DEG, WRITE_FLICK_MS, WRITE_FLICK_PX,
+    WRITE_HOLD_MAX_MS, WRITE_LIFT_PX, WRITE_MAX_MS, WRITE_MIN_MS, WRITE_PER_GLYPH_MS,
+    WRITE_TOUCHDOWN_MS, WRITE_TOUCHDOWN_PX, WRITE_WOBBLE_DEG,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -328,6 +328,21 @@ pub fn scribble_ms(title: &str) -> u32 {
     SCRIBBLE_BASE_MS
         .saturating_add(glyphs.saturating_mul(SCRIBBLE_MS_PER_GLYPH_MS))
         .min(MAX_SCRIBBLE_MS)
+}
+
+/// How far the pen advances for the time really passed since `last`, in whole ms, and the
+/// time that step accounts for (the next `last`). The loop waits for the engine's next frame,
+/// which may be later than one `INK_TICK_MS` (a fast screen is sooner, a slow one later), so
+/// the pen is paced by the clock and not by counting waits; the part of a ms not yet paid is
+/// kept in the returned time, so no rounding drifts. At least 1 ms, and never past
+/// `INK_STEP_MAX_MS`: a tab that slept does not throw the pen ahead, it simply carries on.
+pub fn step_between(last: f64, now: f64) -> (u32, f64) {
+    let passed = (now - last).floor().max(1.0);
+    if passed > f64::from(INK_STEP_MAX_MS) {
+        (INK_STEP_MAX_MS, now)
+    } else {
+        (passed as u32, last + passed)
+    }
 }
 
 #[cfg(test)]
@@ -734,5 +749,44 @@ mod tests {
         // Scrolled above or below the window.
         assert!(!on_screen((16.0, -80.0, 374.0, -40.0), phone));
         assert!(!on_screen((16.0, 844.0, 374.0, 884.0), phone));
+    }
+
+    #[test]
+    fn the_pen_advances_by_the_time_that_really_passed() {
+        // A frame later at 144 Hz, 60 Hz and 30 Hz is what the pen is owed.
+        assert_eq!(step_between(0.0, 7.0), (7, 7.0));
+        assert_eq!(
+            step_between(100.0, 116.7),
+            (16, 116.0),
+            "the 0.7 stays owed"
+        );
+        assert_eq!(step_between(116.0, 133.4), (17, 133.0));
+    }
+
+    #[test]
+    fn a_step_is_at_least_one_and_a_slept_tab_is_capped() {
+        assert_eq!(
+            step_between(5.0, 5.0).0,
+            1,
+            "a clock that has not moved still moves"
+        );
+        assert_eq!(step_between(5.0, 4.0).0, 1, "and never backwards");
+        assert_eq!(step_between(0.0, 60_000.0), (INK_STEP_MAX_MS, 60_000.0));
+    }
+
+    #[test]
+    fn the_same_stretch_is_written_in_the_same_time_at_any_frame_rate() {
+        // A pen owed 1,000 ms of writing, stepped by frames of each length, gets there in
+        // the same real time give or take a frame.
+        for frame in [7.0_f64, 16.7, 33.4] {
+            let (mut now, mut last, mut written) = (0.0, 0.0, 0u32);
+            while written < 1_000 {
+                now += frame;
+                let (step, next) = step_between(last, now);
+                written += step;
+                last = next;
+            }
+            assert!((now - 1_000.0).abs() <= frame, "{frame}: took {now} ms");
+        }
     }
 }
