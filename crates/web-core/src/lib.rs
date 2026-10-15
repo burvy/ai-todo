@@ -8,6 +8,7 @@ pub mod clock;
 mod contrast;
 pub mod dabs;
 pub mod events;
+pub mod flip;
 pub mod gesture;
 pub mod hop;
 pub mod ink;

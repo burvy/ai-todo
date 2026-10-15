@@ -159,7 +159,7 @@ planner, the forward turn played in reverse (the same poses, in the opposite ord
 finger, the leaf darkens as it turns away, and it throws a shadow on the page under it
 (black in light and dark). Letting go past a share of the width or in a flick finishes
 the turn; short of that the leaf falls back and rebounds a little. The note's turn runs on a fixed time, slow, quick, slow, the same both ways. With reduced motion it
-slides. Geometry, the leaf's spring and decisions: `web/src/flip.rs` (tested); browser
+slides. Geometry, the leaf's spring and decisions: `crates/web-core/src/flip.rs` (tested natively); browser
 side: `web/src/flip_turner.rs`; numbers in `crates/web-core/src/tuning.rs` (`FLIP_*`), looks in
 `web/theme.css` `--flip-*` and `.flip-*`. The leaf moves on a spring with a speed of its own,
 so a flick carries on at the speed of the finger. The two pages lie stacked in one cell
