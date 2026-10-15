@@ -314,6 +314,19 @@ b. Not visible; covered by scheduler and server tests.
 c. Code: `crates/core/src/lib.rs:Placement, Plan`;
 `server/src/v2/app.rs:plan`.
 
+### 4a. Taking a task off the planner
+a. A task can be taken off the planner on purpose: it stays in the list with its
+deadline, and the scheduler leaves it alone until it is placed again, because it is
+reported in `Plan::off_planner` rather than as unplaced. This outranks a pin, so an
+`At` task taken off the planner leaves the week too. Set it with
+`PATCH /api/v1/tasks/{id}` and `{"off_planner": true}`.
+b. Not visible yet: the bubble button that calls it is (planned), and the UI that
+shows why a task is in the list but not on the week is (planned). Covered by
+scheduler, store and server tests.
+c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
+`crates/scheduler/src/lib.rs:plan`; `server/src/v2/app.rs:patch`;
+`server/src/v2/store.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
+
 ### 5. Light and dark paper
 a. The paper is Light or Dark by the reader's own choice in the gear menu, not by
 the operating system's setting. `data-theme="light"` is baked into `web/index.html`
