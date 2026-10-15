@@ -11,6 +11,7 @@ pub mod pdf;
 pub mod pipeline;
 pub mod revise;
 pub mod segment;
+pub mod title;
 pub mod tuning;
 
 pub use email::{Email, Sent, parse_email};
