@@ -5,6 +5,7 @@ use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 
 use crate::{api, mascot, settings};
+use rambl_web_core::store::Command;
 
 /// Rambo's whisper: short handwritten prompts the empty capture line cycles
 /// through, one every few seconds, as if he's quietly suggesting what to type.
@@ -370,6 +371,7 @@ pub(crate) fn CaptureBox(
     // One capture in flight at a time: a second Enter while the first is still on its
     // way would add the same task twice.
     let sending = RwSignal::new(false);
+    let store = expect_context::<crate::store::Store>();
     let handle_submit = {
         let linger_timer = linger_timer.clone();
         move |ev: leptos::ev::SubmitEvent| {
@@ -400,17 +402,14 @@ pub(crate) fn CaptureBox(
             if let Some(hour) = hour {
                 let before = snapshot.get_untracked();
                 wasm_bindgen_futures::spawn_local(async move {
-                    match api::create_task(&noted(&hour, &title)).await {
-                        Ok(after) => {
-                            pen_queue.update(|queue| queue.extend(added(&before, &after)));
-                            set_snapshot.set(after);
-                        }
-                        Err(error) => {
-                            if text.get_untracked().trim().is_empty() {
-                                set_text.set(title.clone());
-                            }
-                            set_error.set(Some(capture_note(&title, &error)));
-                        }
+                    if store.send(Command::CreateTask(noted(&hour, &title))).await {
+                        pen_queue.update(|queue| {
+                            queue.extend(added(&before, &snapshot.get_untracked()));
+                        });
+                    } else if text.get_untracked().trim().is_empty() {
+                        // Never lose what was said: it goes back in the box when the box
+                        // is still empty; the store's note says why it was not kept.
+                        set_text.set(title.clone());
                     }
                     sending.set(false);
                 });

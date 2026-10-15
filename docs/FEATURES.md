@@ -411,9 +411,9 @@ in the list. One day of a repeating series is only offered Move.
 b. Drop Rambo on a task, choose Move, then tap an hour or the "Next free" scrap. Drop
 him on a slip in the planner and choose Longer, or Take off.
 c. Code: `web/src/rambo.rs:Rambo` sets `move_request`; `web/src/lib.rs:App` turns
-the page; `web/src/placing.rs:PlacingNote, next_free`;
+the page; `web/src/placing.rs:PlacingNote`; `crates/web-core/src/placing.rs:next_free`;
 `web/src/week.rs:WeekGrid, place_at, slip_at, stretch, take_off`;
-`crates/web-core/src/mascot.rs:Asked, offered`; `web/src/placing.rs:stretched`.
+`crates/web-core/src/mascot.rs:Asked, offered`; `crates/web-core/src/placing.rs:stretched`.
 
 ### 8. A new task on an empty hour
 a. Drop Rambo on an hour of the planner with nothing placed there and he stays on it,
