@@ -57,11 +57,8 @@ impl DayTime {
 /// is read again, since the planner places tasks by them. A refused change (the server
 /// does not take a 00:00 deadline) puts the old time back and says why.
 #[component]
-fn DayTimes(
-    clock: Signal<Clock>,
-    set_snapshot: WriteSignal<crate::Snapshot>,
-    set_error: WriteSignal<Option<String>>,
-) -> impl IntoView {
+fn DayTimes(clock: Signal<Clock>) -> impl IntoView {
+    let store = expect_context::<crate::store::Store>();
     // The defaults show until the server's own answer comes in, so nothing jumps.
     let held = RwSignal::new(DaySettings::default());
     wasm_bindgen_futures::spawn_local(async move {
@@ -80,13 +77,14 @@ fn DayTimes(
             match crate::api::patch_day_settings(&which.patch(time)).await {
                 Ok(saved) => {
                     held.set(saved);
-                    if let Ok(plan) = crate::api::fetch_snapshot(&crate::api::today_date()).await {
-                        set_snapshot.set(plan);
-                    }
+                    // Saved. A failed re-read is the store's to retry, not "not saved".
+                    store.reload().await;
                 }
                 Err(error) => {
                     held.set(before);
-                    set_error.set(Some(format!("Could not save that time: {error}")));
+                    store
+                        .set_error
+                        .set(Some(format!("Could not save that time: {error}")));
                 }
             }
         });
@@ -335,11 +333,7 @@ pub fn GearMenu(
                                 } />
                         </label>
                         <h3>"A day with no time"</h3>
-                        <DayTimes
-                            clock=Signal::derive(move || settings.get().clock)
-                            set_snapshot
-                            set_error
-                        />
+                        <DayTimes clock=Signal::derive(move || settings.get().clock) />
                         <div class="gear-rule"></div>
                         <button
                             type="button"
