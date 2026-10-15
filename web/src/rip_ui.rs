@@ -10,7 +10,28 @@
 use leptos::prelude::*;
 
 use crate::rip::{self, Tape, Tear};
+use crate::scrap::Spot;
 use crate::tuning::{TAPE_AT_MS, TAPE_LAY_MS, TEAR_FADE_MS, TEAR_HOLD_MS};
+
+thread_local! {
+    /// A row that has just torn out of the page, finished: where it stood. The `Ripper` takes
+    /// it and opens the hole.
+    static ROW_OUT: RwSignal<Option<Spot>> = RwSignal::new(None);
+    /// Whether a row's hole is open now: the rows below it wait where they were until it
+    /// heals (`scrap::hold_rows`), so none slides into the hole.
+    static HOLE_OPEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A row, finished, tears out of the page where it stood (`spot`, in viewport px): the hole
+/// shows the planner, Rambo tapes it, and the hole heals like any tear.
+pub(crate) fn row_out(spot: Spot) {
+    ROW_OUT.with(|row| row.set(Some(spot)));
+}
+
+/// Whether a row's hole is open: the rows below it hold their places until it heals.
+pub(crate) fn hole_open() -> bool {
+    HOLE_OPEN.with(std::cell::Cell::get)
+}
 
 /// The rip, as the page shares it: the tear (if any), how far the list has scrolled, and
 /// whether the finger has let go (the repair is under way).
@@ -177,6 +198,17 @@ mod imp {
             // The page is torn while a tear lasts: the planner shows beneath, and the list,
             // paper, has the slit cut out of it.
             let (tear, scroll, offset) = (ripper.tear, ripper.scroll, ripper.offset);
+            // A finished row tears out of the page where it stood.
+            let row_out = super::ROW_OUT.with(|row| *row);
+            Effect::new({
+                let ripper = ripper.clone();
+                move |_| {
+                    if let Some(spot) = row_out.get() {
+                        row_out.set(None);
+                        ripper.tear_out(spot);
+                    }
+                }
+            });
             Effect::new(move |_| {
                 let torn = tear.get();
                 let scrolled = scroll.get();
@@ -291,11 +323,11 @@ mod imp {
                     if rip::is_rip(dx, dy) {
                         let seed = dom.made.get().wrapping_add(1);
                         dom.made.set(seed);
-                        let tear = Tear {
-                            from: (*x0, *y),
-                            to: (*x0, *y),
-                            seed: seed.wrapping_mul(2_654_435_761) ^ (*y as u32),
-                        };
+                        let tear = Tear::slit(
+                            (*x0, *y),
+                            (*x0, *y),
+                            seed.wrapping_mul(2_654_435_761) ^ (*y as u32),
+                        );
                         let _ = pane.set_pointer_capture(*id);
                         *phase = Phase::Tearing { id: *id };
                         drop(phase);
@@ -347,23 +379,58 @@ mod imp {
                 return;
             }
             *dom.phase.borrow_mut() = Phase::Idle;
-            let (Some(tear), Some(pane)) = (self.tear.get_untracked(), dom.pane.get()) else {
+            let Some(tear) = self.tear.get_untracked() else {
                 return;
             };
-            // Torn is torn: letting go starts the repair.
+            // Torn is torn, and it vexes him: letting go starts the repair.
+            self.mend(&tear, true);
+        }
+
+        /// A row that has finished tears out of the page where it stood (`spot`, in viewport
+        /// px): the hole is as tall as the row, and Rambo tapes it without a sulk. One tear
+        /// at a time: while one lasts, a second row just leaves.
+        fn tear_out(&self, spot: crate::scrap::Spot) {
+            let dom = &self.dom;
+            let Some(pane) = dom.pane.get() else { return };
+            if self.tear.with_untracked(Option::is_some) {
+                return;
+            }
+            let (left, top) = Self::origin(&pane);
+            let seed = dom.made.get().wrapping_add(1);
+            dom.made.set(seed);
+            let tear = Tear::out_of_row(
+                spot.x - left,
+                spot.x + spot.w - left,
+                spot.y + spot.h / 2.0 - top,
+                spot.h,
+                seed.wrapping_mul(2_654_435_761) ^ (spot.y as u32),
+            );
+            super::HOLE_OPEN.with(|open| open.set(true));
+            self.tear.set(Some(tear.clone()));
+            self.mend(&tear, false);
+        }
+
+        /// The repair: Rambo goes to the tear (put out by it, or not), tapes it, and the tear
+        /// heals on the engine's clock. A row's hole lets the rows below close it then.
+        fn mend(&self, tear: &Tear, annoyed: bool) {
+            let dom = &self.dom;
+            let Some(pane) = dom.pane.get() else { return };
             self.released.set(true);
             let (left, top) = Self::origin(&pane);
             let (mx, my) = tear.middle();
             if dom.state.get_untracked() == State::Home {
                 dom.pen_pos.set((left + mx, top + my));
                 dom.set_state
-                    .set(mascot::transition(&State::Home, Event::Mend));
+                    .set(mascot::transition(&State::Home, Event::Mend { annoyed }));
             }
             let (tear_signal, released) = (self.tear, self.released);
             // On the engine's clock, with everything else that moves.
             crate::engine::every(f64::from(rip::total_ms()), move || {
                 tear_signal.set(None);
                 released.set(false);
+                if super::HOLE_OPEN.with(|open| open.replace(false)) {
+                    crate::scrap::release_rows();
+                }
                 crate::engine::Flow::Stop
             });
         }
@@ -374,7 +441,7 @@ mod imp {
             };
             self.scroll.set(f64::from(pane.scroll_top()));
             // The list moved under the tear: he stays on it while he tapes.
-            if let (State::Mending, Some(tear)) =
+            if let (State::Mending { .. }, Some(tear)) =
                 (self.dom.state.get_untracked(), self.tear.get_untracked())
             {
                 let (left, top) = Self::origin(&pane);

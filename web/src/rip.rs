@@ -27,6 +27,9 @@ pub struct Tear {
     pub to: Pt,
     /// Makes this tear's ragged edge its own, and the same every time it is drawn.
     pub seed: u32,
+    /// How wide it opens in the middle, in px: `RIP_GAP_PX` for a slit torn by hand, as
+    /// tall as the row for a row that has torn out of the page.
+    pub gap: f64,
 }
 
 /// Whether a press that has travelled `dx`, `dy` is a rip: far enough to the right and
@@ -72,6 +75,25 @@ fn unit(seed: u32, i: u32) -> f64 {
 }
 
 impl Tear {
+    /// A slit torn by hand along the swipe, `RIP_GAP_PX` wide at most.
+    pub fn slit(from: Pt, to: Pt, seed: u32) -> Self {
+        Tear {
+            from,
+            to,
+            seed,
+            gap: RIP_GAP_PX,
+        }
+    }
+
+    /// The hole a row leaves when it tears out of the page: along its middle line from
+    /// `left` to `right`, opening as tall as the row (`height`).
+    pub fn out_of_row(left: f64, right: f64, middle: f64, height: f64, seed: u32) -> Self {
+        Tear {
+            gap: height,
+            ..Tear::slit((left, middle), (right, middle), seed)
+        }
+    }
+
     /// How far the tear runs, in px.
     pub fn span(&self) -> f64 {
         (self.to.0 - self.from.0).max(0.0)
@@ -89,7 +111,7 @@ impl Tear {
         let lips = |side: f64, salt: u32| {
             (0..=steps).map(move |i| {
                 let t = f64::from(i) / f64::from(steps);
-                let open = RIP_GAP_PX / 2.0 * (std::f64::consts::PI * t).sin().powf(0.6);
+                let open = self.gap / 2.0 * (std::f64::consts::PI * t).sin().powf(0.6);
                 // The ends stay pinched shut however the edge wanders.
                 let wander =
                     RIP_JAG_PX * unit(self.seed, i + salt) * (std::f64::consts::PI * t).sin();
@@ -259,11 +281,7 @@ mod tests {
     }
 
     fn tear(span: f64) -> Tear {
-        Tear {
-            from: (40.0, 300.0),
-            to: (40.0 + span, 300.0),
-            seed: 7,
-        }
+        Tear::slit((40.0, 300.0), (40.0 + span, 300.0), 7)
     }
 
     #[test]
@@ -299,11 +317,7 @@ mod tests {
             for span in [30.0, 90.0, 220.0] {
                 let y = 140.0 + reach_px() + 0.5;
                 assert!(lane(y, &rows).is_some());
-                let torn = Tear {
-                    from: (20.0, y),
-                    to: (20.0 + span, y),
-                    seed,
-                };
+                let torn = Tear::slit((20.0, y), (20.0 + span, y), seed);
                 for (_, py) in torn.outline() {
                     assert!(py > 140.0, "seed {seed}, span {span}: edge at {py}");
                 }
@@ -337,6 +351,32 @@ mod tests {
         assert!(ys.windows(2).any(|w| (w[0] - w[1]).abs() > 0.5));
         assert_eq!(outline, torn.outline());
         assert_ne!(outline, Tear { seed: 8, ..torn }.outline());
+    }
+
+    #[test]
+    fn a_row_torn_out_leaves_a_hole_as_tall_as_the_row_across_its_width() {
+        // A row 48 px tall from x 20 to 330, its middle at 300.
+        for seed in 0..40 {
+            let hole = Tear::out_of_row(20.0, 330.0, 300.0, 48.0, seed);
+            let outline = hole.outline();
+            assert!(!outline.is_empty());
+            for &(x, y) in &outline {
+                assert!((20.0..=330.0).contains(&x));
+                assert!(
+                    (y - 300.0).abs() <= 24.0 + RIP_JAG_PX + 1e-9,
+                    "seed {seed}: edge at {y}"
+                );
+            }
+            // It opens right across the middle of the row, nearly the row's height.
+            let (top, bottom) = outline
+                .iter()
+                .fold((f64::MAX, f64::MIN), |(lo, hi), &(_, y)| {
+                    (lo.min(y), hi.max(y))
+                });
+            assert!(bottom - top >= 40.0, "seed {seed}: {top}..{bottom}");
+            // And it is taped like any tear: more than one tape across so wide a hole.
+            assert!(hole.tapes().len() >= 2);
+        }
     }
 
     #[test]
