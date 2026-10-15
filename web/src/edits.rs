@@ -63,7 +63,7 @@ pub(crate) async fn patch_and_show(
     body: api::PatchTaskBody,
     store: Store,
 ) -> bool {
-    store.send(Command::Patch(id.clone(), body)).await
+    store.send(Command::Patch(id.clone(), body)).await.is_some()
 }
 
 /// The same for a spoken change, which Jev turns into an edit on the server.
@@ -72,7 +72,10 @@ pub(crate) async fn revise_and_show(
     body: api::ReviseBody,
     store: Store,
 ) -> bool {
-    store.send(Command::Revise(id.clone(), body)).await
+    store
+        .send(Command::Revise(id.clone(), body))
+        .await
+        .is_some()
 }
 
 /// The change for `id` that Rambo heard while its edit sheet was open, or `None`

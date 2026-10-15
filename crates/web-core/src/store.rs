@@ -39,6 +39,17 @@ pub enum Command {
     },
     /// One day's mark taken off again, putting that day back to the rule.
     ClearOccurrence { series: String, date: String },
+    /// A ramble, typed or heard, that Jev turns into tasks.
+    Capture(String),
+}
+
+/// What the server answers besides the list, for the view that sent the command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Reply {
+    /// Only the list.
+    Nothing,
+    /// The tasks it made, in the order it made them (the pen writes them in).
+    Created(Vec<TaskId>),
 }
 
 /// What one day of a repeat is marked as.
@@ -77,7 +88,8 @@ impl Command {
             | Command::PatchSeries { .. }
             | Command::DeleteSeries(_)
             | Command::MarkOccurrence { .. }
-            | Command::ClearOccurrence { .. } => {}
+            | Command::ClearOccurrence { .. }
+            | Command::Capture(_) => {}
         }
     }
 }
@@ -426,6 +438,42 @@ mod tests {
     }
 
     #[test]
+    fn of_two_reorders_on_their_way_a_refusal_takes_back_only_its_own() {
+        // Three stored tasks, so the second reorder differs from both the start and the
+        // first: refusing the first must leave the second showing on the start.
+        let mut start = fixture();
+        let mut third = start
+            .tasks
+            .iter()
+            .find(|task| task.source != Source::Series)
+            .expect("a stored task")
+            .clone();
+        third.id = TaskId("third".into());
+        start.tasks.push(third);
+        let mut first = ids(&start);
+        assert_eq!(
+            first.len(),
+            3,
+            "the fixture's two stored tasks and the third"
+        );
+        first.swap(0, 1);
+        let mut second = ids(&start);
+        second.swap(1, 2);
+        let mut store = Store::new(start.clone());
+        let refused = store.send(&Command::Reorder(first));
+        store.send(&Command::Reorder(second.clone()));
+        assert_eq!(
+            store.answer(refused, Err(Refusal::Refused)),
+            Outcome::Refused(Refusal::Refused)
+        );
+        assert_eq!(
+            ids(store.snapshot()),
+            second,
+            "the other reorder still shows"
+        );
+    }
+
+    #[test]
     fn a_list_from_elsewhere_is_taken_only_when_newer() {
         let start = fixture();
         let mut store = Store::new(start.clone());
@@ -496,6 +544,7 @@ mod tests {
                 series: "s1".into(),
                 patch: SeriesPatchBody::default(),
             },
+            Command::Capture("buy stamps tomorrow".into()),
         ];
         for command in commands {
             let mut store = Store::new(start.clone());

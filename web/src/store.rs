@@ -7,7 +7,7 @@
 
 use crate::api;
 use leptos::prelude::*;
-use rambl_web_core::store::{Command, Outcome, Refusal, Store as Core};
+use rambl_web_core::store::{Command, Outcome, Refusal, Reply, Store as Core};
 use todo_core::{ErrorCode, Snapshot};
 
 /// Why the server did not take a change, as the store's one refusal policy sees it.
@@ -22,8 +22,25 @@ pub(crate) fn refusal(error: &api::ApiError) -> Refusal {
     }
 }
 
-async fn request(command: Command) -> Result<Snapshot, api::ApiError> {
-    match command {
+/// A server's answer split for the store: the list (or why there is none) goes to the
+/// core, and what it said besides the list goes back to the caller, only if it took the
+/// change.
+fn split(
+    answer: Result<(Snapshot, Reply), api::ApiError>,
+) -> (Result<Snapshot, Refusal>, Option<Reply>) {
+    match answer {
+        Ok((snapshot, reply)) => (Ok(snapshot), Some(reply)),
+        Err(error) => (Err(refusal(&error)), None),
+    }
+}
+
+/// Send `command`; the list the server answers with, and anything more it says.
+async fn request(command: Command) -> Result<(Snapshot, Reply), api::ApiError> {
+    let listed = match command {
+        Command::Capture(text) => {
+            let captured = api::capture_text(&text).await?;
+            return Ok((captured.snapshot, Reply::Created(captured.created)));
+        }
         Command::Reorder(ids) => api::reorder_tasks(ids).await,
         Command::Patch(id, body) => api::patch_task(&id, body).await,
         Command::Revise(id, body) => api::revise_task(&id, body).await,
@@ -36,7 +53,8 @@ async fn request(command: Command) -> Result<Snapshot, api::ApiError> {
             api::mark_occurrence(&series, &date, mark.word()).await
         }
         Command::ClearOccurrence { series, date } => api::clear_occurrence(&series, &date).await,
-    }
+    };
+    listed.map(|snapshot| (snapshot, Reply::Nothing))
 }
 
 /// The store, shared with every view through Leptos context.
@@ -87,36 +105,31 @@ impl Store {
         });
     }
 
-    /// The same, for a caller that acts on the result: whether the server took it (an
-    /// edit sheet closes only then).
-    pub async fn send(self, command: Command) -> bool {
-        let Some(ticket) = self.core.try_update_value(|core| core.send(&command)) else {
-            return false;
-        };
+    /// The same, for a caller that acts on the result: what the server said besides the
+    /// list if it took the change (an edit sheet closes only then; the pen writes in the
+    /// tasks a capture made), or `None` if it did not.
+    pub async fn send(self, command: Command) -> Option<Reply> {
+        let ticket = self.core.try_update_value(|core| core.send(&command))?;
         self.show();
-        let reply = request(command).await.map_err(|error| refusal(&error));
-        let Some(outcome) = self
+        let (listed, reply) = split(request(command).await);
+        let outcome = self
             .core
-            .try_update_value(|core| core.answer(ticket, reply))
-        else {
-            return false;
-        };
+            .try_update_value(|core| core.answer(ticket, listed))?;
         match outcome {
             Outcome::Shown => {
                 // A note about an earlier refusal must not outlive the change that worked.
                 self.set_error.set(None);
                 self.show();
-                true
             }
             // Taken, but a newer list is already shown.
-            Outcome::Stale => true,
+            Outcome::Stale => {}
             Outcome::Refused(why) => {
                 self.show();
                 let reloaded = self.reload().await;
                 self.set_error.set(Some(why.note(reloaded).to_owned()));
-                false
             }
         }
+        reply
     }
 
     /// Fetch the list again; whether a list came back.
@@ -156,6 +169,21 @@ mod tests {
     }
 
     /// The note names why the edit failed, not whether the reload after it worked.
+    #[test]
+    fn a_capture_hands_back_what_it_made_only_when_taken() {
+        let snapshot: Snapshot =
+            serde_json::from_str(include_str!("../fixtures/snapshot.json")).expect("fixture");
+        let made = Reply::Created(vec![snapshot.tasks[0].id.clone()]);
+        assert_eq!(
+            split(Ok((snapshot.clone(), made.clone()))),
+            (Ok(snapshot), Some(made))
+        );
+        assert_eq!(
+            split(Err(server(ErrorCode::StaleUpdate))),
+            (Err(Refusal::Stale), None)
+        );
+    }
+
     #[test]
     fn a_refused_edit_says_why() {
         let stale = server(ErrorCode::StaleUpdate);
