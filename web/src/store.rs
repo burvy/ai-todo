@@ -18,7 +18,12 @@ pub(crate) fn refusal(error: &api::ApiError) -> Refusal {
             code: ErrorCode::StaleUpdate,
             ..
         }) => Refusal::Stale,
-        _ => Refusal::Refused,
+        api::ApiError::Server(refused) => Refusal::Refused(
+            Some(refused.message.trim())
+                .filter(|why| !why.is_empty())
+                .map(str::to_owned),
+        ),
+        api::ApiError::Decode(_) => Refusal::Refused(None),
     }
 }
 
@@ -146,7 +151,7 @@ impl Store {
             Outcome::Refused(why) => {
                 self.show();
                 let reloaded = self.reload().await;
-                self.set_error.set(Some(why.note(reloaded).to_owned()));
+                self.set_error.set(Some(why.note(reloaded)));
             }
         }
         reply
@@ -234,7 +239,15 @@ mod tests {
         assert_eq!(refusal(&server(ErrorCode::StaleUpdate)), Refusal::Stale);
         assert_eq!(
             refusal(&api::ApiError::Decode("junk".into())),
-            Refusal::Refused
+            Refusal::Refused(None)
+        );
+        let mut said = server(ErrorCode::BadRequest);
+        if let api::ApiError::Server(error) = &mut said {
+            error.message = "a deadline cannot be at midnight".into();
+        }
+        assert_eq!(
+            refusal(&said),
+            Refusal::Refused(Some("a deadline cannot be at midnight".into()))
         );
     }
 }
