@@ -227,6 +227,7 @@ pub fn WeekGrid(
     };
     let days = move || (0..settings.get().days).collect::<Vec<_>>();
     let hours = move || (settings.get().start_hour..settings.get().end_hour).collect::<Vec<_>>();
+    let ctx = move || planner_context(&snapshot.get().tz);
     view! {
         <section class="planner-page" aria-label="Planner">
             // The settings gear and the account link live on this page only, at its top right.
@@ -246,7 +247,11 @@ pub fn WeekGrid(
                     <For each=days key=|day| *day let:day>
                         <div class="day" data-day=day>
                             <h3 class="day-name" class:today=day == 0>
-                                {day_label(&planner_context(&snapshot.get().tz), i64::from(day))}
+                                {move || {
+                                    // Re-read every minute, so the header moves on at midnight.
+                                    let _ = now_minutes.get();
+                                    day_label(&ctx(), i64::from(day))
+                                }}
                             </h3>
                             <div
                                 class="hours"
@@ -330,10 +335,10 @@ pub fn WeekGrid(
                                         on:pointercancel=long_press_stop
                                     >
                                         {(day == 0).then(|| view! {
-                                            <span>{clock::format_time(
-                                u16::from(hour) * 60,
-                                settings.get().clock,
-                            )}</span>
+                                            <span>{move || clock::format_time(
+                                                u16::from(hour) * 60,
+                                                settings.get().clock,
+                                            )}</span>
                                         })}
                                     </div>
                                 </For>
@@ -482,6 +487,7 @@ fn day_label(ctx: &LocalContext, day: i64) -> String {
         .format("%a %-d")
         .to_string()
 }
+
 /// A slip shorter than a full hour writes its words a size smaller (see
 /// theme.css on `.placement.short`); every slip holds them inside its edges.
 const SHORT_SLIP_PX: f32 = HOUR_PX;
