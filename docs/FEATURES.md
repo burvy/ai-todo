@@ -59,7 +59,7 @@ words like "tomorrow": a `Date:` with an offset is that instant, while Outlook's
 b. Not visible; upload through `POST /api/v1/capture`. Covered by tests in
 `crates/capture/src/pdf.rs` and `crates/capture/src/email.rs`.
 c. Code: `crates/capture/src/pdf.rs:pdf_to_text`;
-`crates/capture/src/email.rs:parse_email, Sent`; `server/src/v2/http.rs:file_text`.
+`crates/capture/src/email.rs:parse_email, Sent`; `server/src/v2/http/ramble.rs:file_text`.
 
 ### 6. Offline capture fallback
 a. Capture still works without a Jev key by using deterministic rules (see 4 for what counts
@@ -106,7 +106,7 @@ ramble, has no +. Code: `web/src/capture.rs:CaptureBox` (the button), `web/src/t
 new_task_draft, DRAFT_ID`, `web/src/api.rs:create_task`.
 c. Code: `web/src/capture.rs:CaptureBox`; `web/src/tasks/mod.rs:TaskList`;
 `web/src/api.rs:capture_text, patch_task, delete_task`;
-`server/src/v2/http.rs:capture, update, remove`.
+`server/src/v2/http/ramble.rs:capture`, `http/tasks.rs:update, remove`.
 
 ### 3. Reorder tasks
 a. Dragging task rows changes their saved order.
@@ -183,7 +183,7 @@ earlier change never puts an older list back.
 i. Code: `crates/web-core/src/row.rs` (the gesture rules, unit-tested) and `web/src/row.rs`'s `dom` module
 (pointer events); `crates/web-core/src/task_list.rs:reorder_ids`; `web/src/tasks/mod.rs`, the row's handlers;
 `crates/web-core/src/store.rs` (`Command::Reorder`) and `web/src/store.rs`;
-`web/src/api.rs:reorder_tasks`; `server/src/v2/http.rs:reorder`;
+`web/src/api.rs:reorder_tasks`; `server/src/v2/http/tasks.rs:reorder`;
 `server/src/v2/app.rs:reorder`.
 
 ### 4. Edit through Rambo
@@ -336,7 +336,7 @@ and shows the reason. The picker keeps the minute it was on, so choosing 5 from 
 c. Code: `web/src/gear_menu.rs:DayTimes, DayTime`; `web/src/api.rs:fetch_day_settings, patch_day_settings`;
 `crates/scheduler/src/lib.rs:plan, usual_time, slot_near`;
 `crates/core/src/lib.rs:DaySettings`; `crates/dates/src/lib.rs:when_from`;
-`server/src/v2/app.rs:patch_day_settings`; `server/src/v2/http.rs:get_settings`.
+`server/src/v2/app.rs:patch_day_settings`; `server/src/v2/http/tasks.rs:get_settings`.
 
 ### 4. Unplaced tasks are reported
 a. A task that cannot fit is reported as unplaced rather than silently dropped.
@@ -576,7 +576,7 @@ a. An `.ics` calendar becomes editable tasks with their original times. Recurrin
 become repeating series (§7).
 b. Choose a file in **Import .ics**.
 c. Code: `web/src/gear_menu.rs:GearMenu`; `web/src/api.rs:import_ics`;
-`server/src/v2/http.rs:import`; `server/src/v2/ics_import.rs`.
+`server/src/v2/http/tasks.rs:import`; `server/src/v2/ics_import.rs`.
 
 ### 2. Re-import without duplicates
 a. Importing the same event again updates it by its calendar identifier instead
@@ -587,7 +587,7 @@ c. Code: `server/src/v2/app.rs:import, ImportedEvent`;
 
 ### 3. Skip cancelled and transparent events
 a. Cancelled events and transparent free-time events do not become tasks.
-b. Not visible; covered by tests in `server/src/v2/http.rs` and `server/src/v2/ics_import.rs`.
+b. Not visible; covered by tests in `server/src/v2/http/tests.rs` and `server/src/v2/ics_import.rs`.
 c. Code: `server/src/v2/ics_import.rs`.
 
 ### 4. Edit imported-event tasks
@@ -600,13 +600,13 @@ dialog; `crates/core/src/lib.rs:Source`.
 a. The current plan can be downloaded as a standard iCalendar file.
 b. Click **Download calendar (.ics)** in **View settings**, or call `GET /api/v1/calendar.ics`.
 c. Code: `web/src/api.rs:export_calendar`;
-`server/src/v2/http.rs:calendar_ics`; `server/src/v2/ics_export.rs:build_ics`.
+`server/src/v2/http/feed.rs:calendar_ics`; `server/src/v2/ics_export.rs:build_ics`.
 
 ### 6. Accepted import formats
 a. Calendars use `.ics`; capture accepts PDF, email and text; Outlook `.pst` is
 not read.
 b. Not visible; covered by the capture and HTTP tests.
-c. Code: `server/src/v2/http.rs:file_text`;
+c. Code: `server/src/v2/http/ramble.rs:file_text`;
 `crates/capture/src/pdf.rs:pdf_to_text`; `crates/capture/src/email.rs:parse_email`.
 
 ### 7. Recurring events become series
@@ -673,14 +673,14 @@ c. Code: `server/src/v2/app.rs:create, import, add_drafts` (new task order, newe
 a. A deployment with `GOOGLE_CLIENT_ID` accepts a verified Google ID token and
 returns a 90-day session.
 b. Call `POST /api/v1/auth/google` with `{ "credential": "..." }`.
-c. Code: `server/src/v2/http.rs:sign_in_google`;
+c. Code: `server/src/v2/http/account.rs:sign_in_google`;
 `server/src/v2/auth.rs:GoogleVerifier, open_session`.
 
 ### 2. Account and session controls
 a. Signed-in users can identify themselves, sign out, or delete their account and
 its tasks.
 b. Use `GET /api/v1/me`, `POST /api/v1/auth/signout`, or `DELETE /api/v1/me`.
-c. Code: `server/src/v2/http.rs:me, sign_out, delete_me`;
+c. Code: `server/src/v2/http/account.rs:me, sign_out, delete_me`;
 `server/src/v2/auth.rs:session_user, sign_out, delete_user`.
 
 ### 3. Local mode
@@ -702,13 +702,13 @@ c. Code: `server/src/v2/admin.rs`; blocks and usage are in `server/src/v2/store.
 ### 6. Web administration
 a. With `RAMBL_ADMIN_EMAILS` set (a comma-separated list of emails), a signed-in user whose email is in the list can open `/admin` and block or unblock a user or address, move users between plans, and see today's usage (captures by user and address, and totals per plan; one capture is one Jev call). The page is a single static document served by the server, with no build step; it signs in through the same Google session the main page uses. Unset or empty `RAMBL_ADMIN_EMAILS` turns the whole surface off (404).
 b. Open `/admin` in a browser after signing in on the main page.
-c. Code: `server/src/v2/admin_web.rs` (data lives in `server/src/v2/admin.rs` and `server/src/v2/store.rs`); routes in `server/src/v2/http.rs:admin_page, admin_of`.
+c. Code: `server/src/v2/admin_web.rs` (data lives in `server/src/v2/admin.rs` and `server/src/v2/store.rs`); routes in `server/src/v2/http/admin.rs:admin_page, admin_of`.
 d. Block and plan actions reuse the console's resolution: a user may be named by id or email, and the same `block`, `unblock`, `blocked` and `plan` storage calls serve both.
 
 ### 7. Data export
 a. Everything the caller owns can be downloaded as one JSON file: the task list with every field. Planner settings are not included; they are stored in the browser, not on the server. The response is `Cache-Control: no-store`, so a cache does not keep a person's task list.
 b. Call `GET /api/v1/export`, signed in or with the anonymous id; the download is named `rambl-export-YYYY-MM-DD.json` (the date is the caller's own). A request with no credentials at all is a brand-new anonymous account: it downloads an empty list, not a 401, exactly as the rest of the API treats a signed-out visitor.
-c. Code: `server/src/v2/http.rs:export`, reading through `App::tasks` rather than `App::snapshot`, so a download does not run the planner.
+c. Code: `server/src/v2/http/feed.rs:export`, reading through `App::tasks` rather than `App::snapshot`, so a download does not run the planner.
 
 ## VIII. DATES
 
@@ -791,13 +791,13 @@ c. Code: `server/src/v2/app.rs:plan`; `crates/scheduler/src/lib.rs:plan`;
 a. Reads and mutations return a complete `Snapshot` containing tasks and placements.
 b. Not visible; call `GET /api/v1/snapshot` or any mutating task endpoint.
 c. Code: `crates/core/src/lib.rs:Snapshot`;
-`server/src/v2/http.rs:snapshot, create, update, remove`.
+`server/src/v2/http/tasks.rs:snapshot, create, update, remove`.
 
 ### 2. Capture, task and calendar routes
 a. The API supports capture, task creation and changes, reorder, revise, calendar
 import and iCalendar export.
 b. Not visible; see the route table in `docs/ARCHITECTURE.md`.
-c. Code: `server/src/v2/http.rs:build_router, capture, import, revise_task, calendar_ics`.
+c. Code: `server/src/v2/http.rs:build_router`; `http/ramble.rs:capture, revise_task`; `http/tasks.rs:import`; `http/feed.rs:calendar_ics`.
 
 ### 3. User scoping and errors
 a. Requests are scoped to the authenticated user and return structured API errors.
