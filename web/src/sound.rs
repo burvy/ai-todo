@@ -171,13 +171,23 @@ fn player(cue: Cue) -> Option<web_sys::HtmlAudioElement> {
     Some(audio)
 }
 
-/// Play a cue once. A browser that will not play before the first gesture
-/// rejects the promise, and there is nothing a user could do about it, so the
-/// rejection is dropped here rather than surfaced.
+/// Start an element playing. A browser that will not play before the first gesture
+/// rejects the promise (`NotAllowedError`), and nothing a user could do about it, so
+/// the rejection is caught here, in the one place every cue starts from, and dropped.
+#[cfg(target_arch = "wasm32")]
+fn start(audio: &web_sys::HtmlAudioElement) {
+    if let Ok(playing) = audio.play() {
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = wasm_bindgen_futures::JsFuture::from(playing).await;
+        });
+    }
+}
+
+/// Play a cue once.
 #[cfg(target_arch = "wasm32")]
 pub fn play(cue: Cue) {
     let Some(audio) = player(cue) else { return };
-    let _ = audio.play();
+    start(&audio);
 }
 
 /// Off the browser there is nothing to play.
@@ -190,7 +200,7 @@ pub fn play(_cue: Cue) {}
 pub fn looping(cue: Cue) -> Option<Loop> {
     let audio = player(cue)?;
     audio.set_loop(true);
-    let _ = audio.play();
+    start(&audio);
     Some(Loop { audio })
 }
 
