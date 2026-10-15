@@ -186,7 +186,8 @@ Rambo also listens: say the change ("make it Friday at 3") and the server's revi
 call (Jev) applies it, then the sheet shows the result. A repeating task's sheet
 edits its series, which revise cannot, so he does not listen there.
 A tap or click on a task's title opens the same sheet, by finger or mouse (unless its
-ink is still wet, IV.3); a tap elsewhere on the row does nothing.
+ink is still wet, IV.3); a tap elsewhere on the row does nothing. The title is also
+reached with Tab, and Enter or Space opens it.
 b. Drag Rambo onto a task, then choose **Edit**, **Move** or **Done**, or tap off the bubble.
 Or tap a task's title.
 c. Code: `web/src/rambo.rs:Rambo`, which sets `edit_request` for

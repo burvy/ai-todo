@@ -1881,6 +1881,11 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 }
 
 /* The title in the human's own hand (system handwriting stack, no downloads). */
+.task-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .task-open > strong {
   font-family: var(--font-hand);
   font-weight: 500;

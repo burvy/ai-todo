@@ -364,8 +364,9 @@ fn tapped(wet: bool, on_title: bool) -> Tapped {
     }
 }
 
-/// Whether a point on the screen is on a row's title. The row holds the pointer from
-/// the press on, so the click lands on the row, never on what was under the finger.
+/// Whether a point on the screen is on a row's title: what lies under the point, which
+/// `elementFromPoint` finds whatever holds the pointer. The click itself cannot say,
+/// because the row captures the pointer on press and the click then lands on the row.
 fn on_title(x: f64, y: f64) -> bool {
     leptos::prelude::document()
         .element_from_point(x as f32, y as f32)
@@ -773,11 +774,16 @@ pub(crate) fn TaskList(
                                     // A tap on a control never reaches here (the
                                     // row does not take that press); a scroll and a
                                     // backed-out swipe leave the list as it was.
-                                    row::Release::Tap => match tapped(is_wet(written, &dragged), on_title(x, y)) {
-                                        Tapped::Smudge => smudge_if_wet(written, smudges, &dragged, (x, y)),
-                                        Tapped::Open => open_editor(&dragged),
-                                        Tapped::Nothing => {}
-                                    },
+                                    row::Release::Tap => {
+                                        let wet = is_wet(written, &dragged);
+                                        match tapped(wet, on_title(x, y)) {
+                                            Tapped::Smudge => {
+                                                smudge_if_wet(written, smudges, &dragged, (x, y))
+                                            }
+                                            Tapped::Open => open_editor(&dragged),
+                                            Tapped::Nothing => {}
+                                        }
+                                    }
                                     row::Release::Scroll | row::Release::SnapBack => {}
                                     row::Release::Done => {
                                         let task_id = TaskId(drop_task_id_clone.clone());
@@ -862,7 +868,22 @@ pub(crate) fn TaskList(
                             }
                         }
                     >
-                        <span class="task-open">
+                        // Reached by Tab, Enter or Space opens the row as a tap on it
+                        // does; a key leaves no fingerprint, so wet ink does not stop it.
+                        <span
+                            class="task-open"
+                            tabindex="0"
+                            role="button"
+                            on:keydown={
+                                let id = task.id.clone();
+                                move |ev: leptos::ev::KeyboardEvent| {
+                                    if matches!(ev.key().as_str(), "Enter" | " ") {
+                                        ev.prevent_default();
+                                        open_editor(&id);
+                                    }
+                                }
+                            }
+                        >
                             <span class="pen-title-wrap">
                                 <strong class="pen-title">{render_task_title.clone()}</strong>
                                 {repeat_mark}
