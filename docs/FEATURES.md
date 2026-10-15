@@ -587,7 +587,7 @@ c. Code: `server/src/v2/app.rs:import, ImportedEvent`;
 
 ### 3. Skip cancelled and transparent events
 a. Cancelled events and transparent free-time events do not become tasks.
-b. Not visible; covered by tests in `server/src/v2/http/tests.rs` and `server/src/v2/ics_import.rs`.
+b. Not visible; covered by tests in `server/src/v2/http/tests.rs` and `server/src/v2/ics_import/tests.rs`.
 c. Code: `server/src/v2/ics_import.rs`.
 
 ### 4. Edit imported-event tasks
