@@ -132,7 +132,7 @@ pub fn sync(preset: SoundPreset) {
         });
         if let Some(audio) = slot.as_ref() {
             if audio.paused() {
-                let _ = audio.play();
+                crate::sound::start(audio);
             }
             return;
         }
@@ -152,13 +152,13 @@ pub fn sync(preset: SoundPreset) {
             Closure::<dyn FnMut()>::new(move || {
                 next.set(next_track(next.get()));
                 audio.set_src(&track_url(next.get()));
-                let _ = audio.play();
+                crate::sound::start(&audio);
             })
         };
         audio.set_onended(Some(on_end.as_ref().unchecked_ref()));
         // The element is kept for as long as the page lives, and so is its handler.
         on_end.forget();
-        let _ = audio.play();
+        crate::sound::start(&audio);
         *slot = Some(audio);
     });
 }
