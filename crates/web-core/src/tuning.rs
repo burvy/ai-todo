@@ -206,6 +206,10 @@ pub const ROW_SLIDE_OMEGA: f64 = 22.0;
 /// bin, in radians per second (critically damped, so no bounce). 20 is about a third of a
 /// second. Safe range 12 to 35.
 pub const STRIP_RELEASE_OMEGA: f64 = 20.0;
+/// How quickly a strip slides forward in the stack when the one above it is taped back or
+/// gone, in radians per second (critically damped). 20 is about a third of a second. Safe
+/// range 12 to 35.
+pub const STRIP_STACK_OMEGA: f64 = 20.0;
 /// The done tasks hang at the pin as a stack: the newest on top, the rest under it. This many
 /// edges of the older ones show below the top strip, a few px each, to say how deep the stack
 /// is; the rest sit behind the last edge. Safe range 1 to 5.

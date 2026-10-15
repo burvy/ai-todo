@@ -20,7 +20,7 @@ use crate::tasks::occurrence_parts;
 use crate::tuning::{
     BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGE_PX, PIN_EDGES, PIN_ROOM_PX, ROW_SLIDE_OMEGA,
     SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX, STRIP_GAP_PX,
-    STRIP_H_PX, STRIP_RELEASE_OMEGA,
+    STRIP_H_PX, STRIP_RELEASE_OMEGA, STRIP_STACK_OMEGA,
 };
 use rambl_web_core::events::{Event, any_row_back, row_back, row_left};
 use rambl_web_core::store::Command;
@@ -576,6 +576,38 @@ fn strip_key(id: &str) -> String {
     format!("strip:{id}")
 }
 
+/// The engine key of the glide that moves the strip of task `id` forward in the stack.
+fn depth_key(id: &str) -> String {
+    format!("depth:{id}")
+}
+
+/// Slide the strip of task `id` to `to` edges deep in the stack from where `depth` is: a
+/// spring (`engine::glide_keyed`) moves `depth`, which the page writes as `--depth`. With
+/// reduced motion it is there at once.
+fn slide_depth(id: &str, depth: RwSignal<f64>, to: f64) {
+    let from = depth.get_untracked();
+    if crate::mascot::prefers_reduced_motion() || (from - to).abs() < DEPTH_NEAR {
+        depth.set(to);
+        return;
+    }
+    let pull = crate::engine::Pull {
+        omega: STRIP_STACK_OMEGA,
+        zeta: 1.0,
+    };
+    crate::engine::glide_keyed(
+        &depth_key(id),
+        [from],
+        [to],
+        pull,
+        DEPTH_NEAR,
+        move |[now]| depth.set(now),
+        move || depth.set(to),
+    );
+}
+
+/// How near, in edges, a strip's depth must come to its place to count as there.
+const DEPTH_NEAR: f64 = 0.02;
+
 /// Where a press at `finger` must anchor so a drag keeps the strip where it is: a strip let
 /// go mid-swing is `offset` away from its pin, and the first move must not snap it back.
 fn grip_at(finger: (f64, f64), offset: (f64, f64)) -> (f64, f64) {
@@ -660,6 +692,14 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                     let rank_id = hung.id.clone();
                     let rank = Memo::new(move |_| snapshot.with(|held| stack_rank(held, &rank_id)));
                     let top = Memo::new(move |_| rank.get() == Some(0));
+                    // How many edges deep the strip hangs, on a spring: it slides forward
+                    // when the strip above it goes.
+                    let depth = RwSignal::new(edge_depth(rank.get_untracked().unwrap_or(PIN_EDGES)) as f64);
+                    let depth_id = hung.id.0.clone();
+                    Effect::new(move |_| {
+                        let to = edge_depth(rank.get().unwrap_or(PIN_EDGES)) as f64;
+                        slide_depth(&depth_id, depth, to);
+                    });
                     let label = format!("Tape \"{}\" back: not done after all", hung.title);
                     // Only the top strip carries its title; the edges under it are plain paper.
                     let title = hung.title.clone();
@@ -675,7 +715,7 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                             class:dragging=move || dragging.get() || homing.get()
                             class:over-bin=move || binned.get() && dragging.get()
                             class:binned=move || binned.get() && !dragging.get()
-                            style:--depth=move || edge_depth(rank.get().unwrap_or(PIN_EDGES)).to_string()
+                            style:--depth=move || format!("{:.3}", depth.get())
                             style:z-index=move || (PIN_EDGES + 1 - edge_depth(rank.get().unwrap_or(PIN_EDGES))).to_string()
                             class:on-top=move || top.get()
                             aria-label=label
@@ -1060,6 +1100,12 @@ mod tests {
     fn a_strip_has_its_own_glide_key_apart_from_its_row() {
         assert_ne!(strip_key("t1"), "t1");
         assert_ne!(strip_key("t1"), strip_key("t2"));
+        assert_ne!(
+            depth_key("t1"),
+            strip_key("t1"),
+            "the drag and the stack never share a glide"
+        );
+        assert_ne!(depth_key("t1"), "t1");
     }
 
     #[test]
