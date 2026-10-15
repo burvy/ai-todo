@@ -505,7 +505,10 @@ const HOUR_PX: f32 = 64.0;
 /// when today is scrolled away, its top tucked under the top of the paper.
 #[cfg(target_arch = "wasm32")]
 fn ribbon_spot(grid: &web_sys::HtmlDivElement) -> Option<(f64, f64)> {
-    let page = grid.closest(".planner-page").ok()??.get_bounding_client_rect();
+    let page = grid
+        .closest(".planner-page")
+        .ok()??
+        .get_bounding_client_rect();
     let paper = grid.get_bounding_client_rect();
     let today = grid
         .query_selector(".day[data-day='0']")
@@ -548,7 +551,10 @@ fn slide_to(paper: web_sys::HtmlElement, to: (f64, f64)) {
         paper.set_scroll_top(to.1 as i32);
         return;
     }
-    let from = (f64::from(paper.scroll_left()), f64::from(paper.scroll_top()));
+    let from = (
+        f64::from(paper.scroll_left()),
+        f64::from(paper.scroll_top()),
+    );
     let began = crate::engine::now();
     crate::engine::on_tick(move |tick| {
         let ms = tick.now - began;

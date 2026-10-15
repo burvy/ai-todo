@@ -127,9 +127,20 @@ mod tests {
         assert!(!jumps(RIBBON_TAP_PX), "a tap's tremble is not a pull");
         assert!(!jumps(-200.0));
         // The first finger position that jumps, and everything past it.
-        let first = (0..2000).map(f64::from).find(|dy| jumps(*dy)).expect("a long pull jumps");
-        assert!(first >= RIBBON_PULL_PX, "the stretch, not the finger, decides");
-        assert!((0..2000).map(f64::from).filter(|dy| *dy >= first).all(jumps));
+        let first = (0..2000)
+            .map(f64::from)
+            .find(|dy| jumps(*dy))
+            .expect("a long pull jumps");
+        assert!(
+            first >= RIBBON_PULL_PX,
+            "the stretch, not the finger, decides"
+        );
+        assert!(
+            (0..2000)
+                .map(f64::from)
+                .filter(|dy| *dy >= first)
+                .all(jumps)
+        );
     }
 
     #[test]
@@ -142,7 +153,11 @@ mod tests {
                 assert_eq!(at, today_right - 1.5 * width, "on today's column");
             }
         }
-        assert_eq!(hang_left(-300.0, width, lo, hi), lo, "today scrolled off to the left");
+        assert_eq!(
+            hang_left(-300.0, width, lo, hi),
+            lo,
+            "today scrolled off to the left"
+        );
     }
 
     #[test]
@@ -155,8 +170,16 @@ mod tests {
                 .map(|i| glide(from, to, RIBBON_GLIDE_MS * f64::from(i) / 60.0))
                 .collect();
             // Always on the way, never past it.
-            assert!(steps.windows(2).all(|pair| (pair[1] - pair[0]) * (to - from) >= 0.0));
-            assert!(steps.iter().all(|at| (from.min(to)..=from.max(to)).contains(at)));
+            assert!(
+                steps
+                    .windows(2)
+                    .all(|pair| (pair[1] - pair[0]) * (to - from) >= 0.0)
+            );
+            assert!(
+                steps
+                    .iter()
+                    .all(|at| (from.min(to)..=from.max(to)).contains(at))
+            );
         }
     }
 }
