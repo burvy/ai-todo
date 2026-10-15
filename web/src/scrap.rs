@@ -55,11 +55,12 @@ pub fn note_departure(events: Queue, id: &str) {
     }
 }
 
-/// The tick on row `id` is answered: if it was refused, drop the noted departure, for no
-/// strip will take it. One that went through is left for its strip, which mounts after
-/// this runs; dropping it here sent every strip to the pin without its flight.
+/// The tick on row `id` is answered: the noted departure is left for its strip, which
+/// mounts after this runs (dropping it here sent every strip to the pin without its
+/// flight), and dropped when no strip will take it: the tick was refused, or the strip
+/// landed past what the pin mounts.
 pub fn settle_departure(events: Queue, snapshot: &Snapshot, id: &str) {
-    if tick_refused(snapshot, id, true) {
+    if !hung_at_the_pin(snapshot).iter().any(|hung| hung.id.0 == id) {
         events.take_all(row_left(id));
     }
 }
@@ -74,18 +75,18 @@ fn note_return(events: Queue, id: &str, from: Spot) {
     });
 }
 
-/// The same for a strip taped back: a refused tape drops the noted spot, and one that went
-/// through leaves it for the row, which the list lays out a frame after this runs.
+/// The same for a strip taped back: the noted spot is left for the row, which the list
+/// lays out a frame after this runs, and dropped when no row will come: the tape was
+/// refused, or the task is gone.
 fn settle_return(events: Queue, snapshot: &Snapshot, id: &str) {
-    if tick_refused(snapshot, id, false) {
+    if !crate::edits::held(snapshot, id).is_some_and(|task| !task.done) {
         events.take_all(row_back(id));
     }
 }
 
-/// Whether a tick on `id` asking for `done` was refused: the task is still listed, and
-/// not as asked.
-pub fn tick_refused(snapshot: &Snapshot, id: &str, done: bool) -> bool {
-    crate::edits::held(snapshot, id).is_some_and(|task| task.done != done)
+/// Whether a tick on `id` was refused: the row is still listed, not done.
+pub fn tick_refused(snapshot: &Snapshot, id: &str) -> bool {
+    crate::edits::held(snapshot, id).is_some_and(|task| !task.done)
 }
 
 /// Whether a point (`x`, `y`) in a `width` x `height` window is in the bin corner: the
@@ -733,7 +734,7 @@ mod tests {
     use crate::api;
 
     /// A tick that went through leaves the row's departure for its strip, which mounts
-    /// after the tick returns; only a refused one drops it.
+    /// after the tick returns; one no strip will take is dropped.
     #[test]
     fn a_done_rows_departure_waits_for_its_strip_unless_the_tick_was_refused() {
         let mut snapshot = api::fixture_snapshot();
@@ -764,19 +765,27 @@ mod tests {
                 "done: kept for the strip"
             );
 
+            // Done, but older than every strip the pin mounts: no strip will take it.
+            let newer = snapshot.tasks[0].updated_at + chrono::Duration::minutes(1);
+            for n in 0..PIN_EDGES + 2 {
+                let mut other = snapshot.tasks[0].clone();
+                other.id = TaskId(format!("newer-{n}"));
+                other.updated_at = newer;
+                snapshot.tasks.push(other);
+            }
+            events.push(left());
+            settle_departure(events, &snapshot, &id);
+            assert_eq!(events.take(row_left(&id)), None, "past what fits: dropped");
+
             snapshot.tasks.remove(0);
             events.push(left());
             settle_departure(events, &snapshot, &id);
-            assert_eq!(
-                events.take(row_left(&id)),
-                Some(from),
-                "gone from the list: kept"
-            );
+            assert_eq!(events.take(row_left(&id)), None, "gone: dropped");
         });
     }
 
     /// The same for a strip taped back: its spot waits for the row, which the list lays
-    /// out a frame after the tick returns; only a refused tape drops it.
+    /// out a frame after the tick returns; one no row will take is dropped.
     #[test]
     fn a_taped_back_rows_spot_waits_for_the_row_unless_the_tick_was_refused() {
         let mut snapshot = api::fixture_snapshot();
@@ -802,6 +811,11 @@ mod tests {
                 Some(from),
                 "back: kept for the row"
             );
+
+            snapshot.tasks.remove(0);
+            note_return(events, &id, from);
+            settle_return(events, &snapshot, &id);
+            assert_eq!(events.take(row_back(&id)), None, "gone: dropped");
         });
     }
 

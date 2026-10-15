@@ -801,7 +801,7 @@ pub(crate) fn TaskList(
                                             }
                                             snapshot.with_untracked(|s| scrap::settle_departure(events, s, &task_id.0));
                                             // Refused: the ink comes off and the row stays.
-                                            if snapshot.with_untracked(|s| scrap::tick_refused(s, &task_id.0, true)) {
+                                            if snapshot.with_untracked(|s| scrap::tick_refused(s, &task_id.0)) {
                                                 row::dom::clear_ink(&task_id.0);
                                             }
                                         });
