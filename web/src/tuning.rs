@@ -424,6 +424,9 @@ pub const DRY_NIB_TAP_MS: f64 = 180.0;
 pub const DRY_NIB_LEAN_DEG: f64 = -12.0;
 /// How hard each tap knocks the nest, in px/s of sag. Safe range 15 to 50.
 pub const DRY_NIB_TAP_KICK: f64 = 35.0;
+/// How hard each tap rocks the nest toward the side he taps, in degrees/s. Safe range 4
+/// to 15: a tap is a knock, smaller than his leaving it.
+pub const DRY_NIB_TAP_ROCK: f64 = 9.0;
 
 const _: () = assert!(
     FLING_GRAVITY < FLING_FRICTION

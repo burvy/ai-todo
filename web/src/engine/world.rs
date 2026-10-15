@@ -844,7 +844,9 @@ mod tests {
             seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
             let ms = 2000.0 + (seed >> 33) as f64 % 20_000.0;
             let (_, taps, _) = home_after_writing(ms);
-            let expected = match mascot::nib_dry(ms) {
+            // The world counts whole steps of writing, so judge by what it counted.
+            let counted = f64::from(steps(ms)) * STEP_MS;
+            let expected = match mascot::nib_dry(counted) {
                 true => tuning::DRY_NIB_TAPS,
                 false => 0,
             };

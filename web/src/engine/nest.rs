@@ -9,8 +9,8 @@
 
 use super::world::Vec2;
 use crate::tuning::{
-    DRY_NIB_TAP_KICK, NEST_CATCH_KICK_PER_PX_MS, NEST_DAMPING, NEST_LAND_KICK, NEST_LEAVE_KICK,
-    NEST_OMEGA, NEST_ROCK_MAX_DEG, NEST_ROCK_PER_PX, NEST_SAG_MAX_PX,
+    DRY_NIB_TAP_KICK, DRY_NIB_TAP_ROCK, NEST_CATCH_KICK_PER_PX_MS, NEST_DAMPING, NEST_LAND_KICK,
+    NEST_LEAVE_KICK, NEST_OMEGA, NEST_ROCK_MAX_DEG, NEST_ROCK_PER_PX, NEST_SAG_MAX_PX,
 };
 
 /// A damped spring about 0, stepped semi-implicitly so it stays stable at the fixed
@@ -90,7 +90,7 @@ impl Nest {
     /// He taps his nib on its rim: a small knock down, tipping it toward the page.
     pub(crate) fn tap(&mut self) {
         self.sag.kick(DRY_NIB_TAP_KICK, NEST_SAG_MAX_PX);
-        self.rock.kick(-NEST_LEAVE_KICK * 0.3, NEST_ROCK_MAX_DEG);
+        self.rock.kick(-DRY_NIB_TAP_ROCK, NEST_ROCK_MAX_DEG);
     }
 
     /// He leaves it heading `dx` across: it springs up as his weight goes and rocks
