@@ -1558,12 +1558,6 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   white-space: nowrap;
 }
 
-/* Longer or shorter from Rambo's bubble (week.rs:stretch), a slip stretches rather
-   than jumps. Only that slip: every other slip takes its new height at once. */
-.placement.stretching {
-  transition: height var(--dur) var(--arrive-ease);
-}
-
 /* Taken off the planner (week.rs:take_off), a slip slides sideways out of its day,
    under the column's edge, and the week is then drawn without it: paper slides, it
    never fades. */
@@ -1677,7 +1671,8 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 
 /* The slip in hand is lifted off the board, not faded: its shadow grows and it
    tilts a little, as a card does when it is picked up. `translate` and `rotate`
-   compose with the slip's own transform. */
+   compose with the slip's own transform. The lift and tilt are there the moment it is
+   held (a few px; easing them only slowed the answer to the press); the shadow grows. */
 .placement.dragging {
   translate: 0 -3px;
   rotate: -1deg;
@@ -1686,7 +1681,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 
 @media (prefers-reduced-motion: no-preference) {
   .placement.dragging {
-    transition: translate var(--arrive-ms) var(--arrive-ease), rotate var(--arrive-ms) var(--arrive-ease), box-shadow var(--arrive-ms) ease;
+    transition: box-shadow var(--arrive-ms) ease;
   }
 }
 
@@ -1812,6 +1807,18 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 
 .task-dialog::backdrop {
   background-color: var(--backdrop);
+}
+
+/* The sheet slides up from below the screen as it opens and back down before it closes:
+   --shown (tasks/mod.rs, glided by the engine) runs from 0, fully below the screen
+   (100vh clears the bottom edge on a phone and the centring on wide screens), to 1. The
+   shade behind it comes and goes with it. */
+.task-dialog {
+  translate: 0 calc((1 - var(--shown, 1)) * 100vh);
+}
+
+.task-dialog::backdrop {
+  opacity: var(--shown, 1);
 }
 
 /* On a phone the sheet rises from the bottom edge instead of being centred: a
@@ -1954,33 +1961,19 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   border: 1px solid var(--rule);
   border-radius: 12px;
   box-shadow: var(--shadow);
-  /* Its own height, the gap under it and room for its shadow: just out of sight. */
-  translate: 0 calc(100% + var(--placing-bottom) + var(--space-4));
-  visibility: hidden;
-  transition:
-    translate var(--dur) var(--leave-ease),
-    visibility 0s linear var(--dur);
+  /* --shown (placing.rs, glided by the engine) runs from 0 to 1. Out of sight is its own
+     height, the gap under it and room for its shadow below its place. */
+  translate: 0 calc((1 - var(--shown, 0)) * (100% + var(--placing-bottom) + var(--space-4)));
 }
 
-.placing-note.open {
-  translate: 0 0;
-  visibility: visible;
-  transition:
-    translate var(--dur) var(--arrive-ease),
-    visibility 0s;
+.placing-note.gone {
+  visibility: hidden;
 }
 
 /* On a phone the capture bar is at the foot of the screen: the note sits above it. */
 @media (max-width: 700px) {
   .placing-note {
     --placing-bottom: calc(var(--capture-clear) + var(--space-2));
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .placing-note,
-  .placing-note.open {
-    transition: none;
   }
 }
 
@@ -2005,7 +1998,6 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   padding: 0;
   border: 0;
   cursor: pointer;
-  transition: left var(--dur) var(--arrive-ease);
 }
 
 /* The head is only as tall as the band, so a finger gets a --tap wide target that reaches
@@ -2036,12 +2028,6 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 .bookmark-ribbon:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .bookmark-ribbon {
-    transition: none;
-  }
 }
 
 /* Every hour is somewhere to put it. */
@@ -2856,42 +2842,5 @@ svg {
   .overdue {
     transform-origin: left;
     animation: unfold-across var(--arrive-ms) var(--arrive-ease) backwards;
-  }
-
-  /* The edit sheet is a native dialog, so it can animate in and out: the
-     discrete display and overlay properties keep it on screen until the close
-     finishes. It starts fully below the screen (100vh, which clears the
-     bottom edge on a phone and the centring on wide screens) and slides up. */
-  .task-dialog {
-    translate: 0 100vh;
-    transition:
-      translate var(--arrive-ms) var(--arrive-ease),
-      display var(--arrive-ms) allow-discrete,
-      overlay var(--arrive-ms) allow-discrete;
-  }
-
-  .task-dialog[open] {
-    translate: 0 0;
-  }
-
-  @starting-style {
-    .task-dialog[open] {
-      translate: 0 100vh;
-    }
-  }
-
-  .task-dialog::backdrop {
-    transition: opacity var(--arrive-ms) ease;
-  }
-
-  @starting-style {
-    .task-dialog[open]::backdrop {
-      opacity: 0;
-    }
-  }
-
-  .task-dialog:not([open]) {
-    transition-duration: var(--leave-ms);
-    transition-timing-function: var(--leave-ease);
   }
 }

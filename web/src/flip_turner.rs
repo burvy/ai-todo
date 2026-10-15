@@ -327,10 +327,12 @@ mod imp {
             let main = self.0.main.get()?;
             let fx = self.0.fx.get()?;
             // Both pages show while a turn is on: the list is the leaf, the planner under it.
-            let _ = main.class_list().add_2("bending", "flipping");
+            // Both are found before the stack is made, so a turn that cannot start leaves
+            // the page as it was and not half stacked.
             let panes = main.children();
             let front = panes.item(u32::from(turn.turning_pane()))?;
             let under = panes.item(u32::from(turn.revealed_pane()))?;
+            let _ = main.class_list().add_2("bending", "flipping");
             // The visible part of the page: a long list runs below the screen.
             let rect = main.get_bounding_client_rect();
             let view_h = window()
