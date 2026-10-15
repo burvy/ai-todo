@@ -39,7 +39,8 @@ pub struct Store {
 impl Store {
     /// A store over the page's list. Call sites not yet moved here still write
     /// `snapshot` themselves; every list they write is offered to the store, which takes
-    /// it only if it is newer than what the server last confirmed to it.
+    /// it only if it is newer than what the server last confirmed to it, and otherwise
+    /// puts its own list back on screen.
     pub fn provide(
         snapshot: ReadSignal<Snapshot>,
         set_snapshot: WriteSignal<Snapshot>,
@@ -52,9 +53,14 @@ impl Store {
         };
         Effect::new(move |_| {
             let written = snapshot.get();
-            store.core.update_value(|core| {
-                core.adopt(written);
-            });
+            // The write-back equals the store's list, which it then accepts: no loop.
+            if let Some(back) = store
+                .core
+                .try_update_value(|core| core.offer(written))
+                .flatten()
+            {
+                store.set_snapshot.set(back);
+            }
         });
         provide_context(store);
         store

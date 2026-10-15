@@ -141,16 +141,18 @@ impl Store {
         self.issued
     }
 
-    /// A list the page got some other way (the first load, or a call site not yet sent
-    /// through the store): taken as confirmed only if it was made later than the one
-    /// confirmed. The store's own lists come back here too, and are not newer.
-    pub fn adopt(&mut self, snapshot: Snapshot) -> bool {
-        let newer = snapshot.generated > self.confirmed.generated;
-        if newer {
-            self.shown = snapshot.clone();
-            self.confirmed = snapshot;
+    /// A list the page already put on screen some other way (the first load, or a call
+    /// site not yet sent through the store). It is taken as confirmed only if it was made
+    /// later than the one confirmed; otherwise the store's list goes back on screen, and
+    /// this returns it. The store's own lists come back here too, and return nothing.
+    pub fn offer(&mut self, written: Snapshot) -> Option<Snapshot> {
+        if written.generated > self.confirmed.generated {
+            self.shown = written.clone();
+            self.confirmed = written;
+            None
+        } else {
+            (written != self.shown).then(|| self.shown.clone())
         }
-        newer
     }
 
     /// The server answered `ticket`. A list is kept only if it is newer than the one
@@ -273,20 +275,30 @@ mod tests {
     #[test]
     fn a_list_from_elsewhere_is_taken_only_when_newer() {
         let start = fixture();
-        let mut order = ids(&start);
-        order.reverse();
         let mut store = Store::new(start.clone());
-        store.send(&Command::Reorder(order));
-        let shown = store.snapshot().clone();
-        assert!(!store.adopt(shown.clone()), "its own list is not news");
-        assert!(!store.adopt(start.clone()), "nor is an older one");
-        assert_eq!(store.snapshot(), &shown);
         let newer = later(&start, 5);
-        assert!(store.adopt(newer.clone()));
+        assert_eq!(store.offer(newer.clone()), None);
         assert_eq!(store.snapshot(), &newer);
+        assert_eq!(store.offer(newer.clone()), None, "its own list is not news");
         // A reply to a request sent before it is now stale.
         let ticket = store.reload();
         assert_eq!(store.answer(ticket, Ok(later(&start, 1))), Outcome::Stale);
+    }
+
+    #[test]
+    fn an_older_list_written_elsewhere_is_put_back_by_the_newer_one() {
+        // A reorder answered at T2 races an edit not yet sent through the store, whose
+        // reply was made at T1 but lands last: the page must end on the T2 list.
+        let start = fixture();
+        let mut order = ids(&start);
+        order.reverse();
+        let mut store = Store::new(start.clone());
+        let ticket = store.send(&Command::Reorder(order.clone()));
+        let mut reordered = later(&start, 2);
+        reorder(&mut reordered, &order);
+        assert_eq!(store.answer(ticket, Ok(reordered.clone())), Outcome::Shown);
+        assert_eq!(store.offer(later(&start, 1)), Some(reordered.clone()));
+        assert_eq!(store.snapshot(), &reordered);
     }
 
     #[test]
