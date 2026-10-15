@@ -21,6 +21,13 @@ pub const ASK_FOLD_MS: u32 = 180;
 /// How loud the background music plays, 0 to 1. Safe range 0.05 to 0.25: the music is
 /// a bed under the cues (whose own volumes are 0.2 to 0.42), not a track to listen to.
 pub const MUSIC_VOLUME: f64 = 0.12;
+/// How long the sheet of the other paper takes to slide down over the page when the desk
+/// lamp (or the gear's Light and Dark) switches the paper, in ms; the page reads it as
+/// `--lamp-slide-ms`. The paper is swapped when it lands, so this is the whole switch. Safe
+/// range 200 to 600: shorter and the swap reads as a flash, longer and the lamp feels slow.
+pub const LAMP_SLIDE_MS: u32 = 340;
+/// How long the lamp's cord stays pulled down after a tap, in ms. Safe range 150 to 400.
+pub const LAMP_PULL_MS: u32 = 240;
 
 const _: () = assert!(60 % MINUTE_STEP == 0);
 
