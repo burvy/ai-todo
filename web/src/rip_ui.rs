@@ -495,8 +495,8 @@ mod imp {
         }
     }
 
-    /// Whether the list page has anything to scroll: it or the `main` around it is a scroll
-    /// box with more content than room (which of the two it is depends on the layout).
+    /// Whether the list page has anything to scroll: it, the `main` around it or the document
+    /// is a scroll box with more content than room (which it is depends on the layout).
     fn scrolls(pane: &Element) -> bool {
         let scroll_box = |el: &Element| {
             let overflows = el.scroll_height() > el.client_height();
@@ -506,7 +506,14 @@ mod imp {
                 .is_some_and(|value| matches!(value.as_str(), "auto" | "scroll"));
             overflows && auto
         };
-        scroll_box(pane) || pane.parent_element().is_some_and(|main| scroll_box(&main))
+        // On a desk the page itself can scroll, as the document.
+        let document_scrolls = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.scrolling_element())
+            .is_some_and(|root| root.scroll_height() > root.client_height());
+        scroll_box(pane)
+            || pane.parent_element().is_some_and(|main| scroll_box(&main))
+            || document_scrolls
     }
 
     /// Keep `.fits` on the list page while its content fits it: it lets a finger drag
