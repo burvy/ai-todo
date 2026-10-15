@@ -25,13 +25,19 @@ pub const SLIP_OFF_MS: u32 = 260;
 /// How loud the background music plays, 0 to 1. Safe range 0.05 to 0.25: the music is
 /// a bed under the cues (whose own volumes are 0.2 to 0.42), not a track to listen to.
 pub const MUSIC_VOLUME: f64 = 0.12;
-/// How long the sheet of the other paper takes to slide down over the page when the desk
-/// lamp (or the gear's Light and Dark) switches the paper, in ms; the page reads it as
-/// `--lamp-slide-ms`. The paper is swapped when it lands, so this is the whole switch. Safe
-/// range 200 to 600: shorter and the swap reads as a flash, longer and the lamp feels slow.
-pub const LAMP_SLIDE_MS: u32 = 340;
+/// How quickly the sheet of the other paper comes down over the page, and goes back up,
+/// when the desk lamp (or the gear's Light and Dark) switches the paper, in radians per
+/// second: a critically damped spring (`engine/glide.rs`) lands in about 6 over this, so
+/// 18 is about a third of a second each way. The paper is swapped when it lands. Safe
+/// range 10 to 30: slower and the lamp feels sluggish, faster and the swap reads as a flash.
+pub const LAMP_SHEET_OMEGA: f64 = 18.0;
 /// How long the lamp's cord stays pulled down after a tap, in ms. Safe range 150 to 400.
 pub const LAMP_PULL_MS: u32 = 240;
+/// How quickly a strip flies from its row to its pin, in radians per second, and how
+/// damped (below 1 it swings a little past the pin, like a paper dropped on a table).
+/// Safe ranges 10 to 30 and 0.6 to 1.0: a lower damping swings long past the pin.
+pub const SCRAP_FLY_OMEGA: f64 = 16.0;
+pub const SCRAP_FLY_ZETA: f64 = 0.8;
 
 // Rambo's dance to that music (`engine/dance.rs`): he hears each note's attack in how
 // loud the music is, and every beat kicks his sway and bounces the nest.
