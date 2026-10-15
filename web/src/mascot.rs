@@ -368,11 +368,6 @@ pub fn over_nest(point: (f64, f64), nest: (f64, f64, f64, f64)) -> bool {
         && (top - NEST_SLACK_PX..=bottom + NEST_SLACK_PX).contains(&y)
 }
 
-/// Is he away from home (not resting at his circle)?
-pub fn is_away(state: &State) -> bool {
-    !matches!(state, State::Home)
-}
-
 /// True if the state is one where Rambo is physically away from his nest
 /// (dragging, dropped somewhere, skittering, writing, or asking).
 pub fn is_off_nest(state: &State) -> bool {
@@ -1136,14 +1131,6 @@ mod tests {
         assert!(rambo_class(&State::WritingCaret, "").contains("is-caret"));
         assert!(rambo_class(&State::WritingRow, "").contains("is-writing"));
         assert!(rambo_class(&State::Home, "listening").contains("pose-listening"));
-    }
-
-    #[test]
-    fn is_away_returns_true_for_non_home_states() {
-        assert!(!is_away(&State::Home));
-        assert!(is_away(&State::Dragging));
-        assert!(is_away(&State::WritingCaret));
-        assert!(is_away(&State::Flying));
     }
 
     #[test]
