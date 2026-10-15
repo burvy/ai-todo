@@ -41,7 +41,8 @@ vectorize steps: `art/GUIDE.md`.
 
 Small overlays the rig composes over poses. Convention (agreed with Chuan):
 viewBox `0 0 48 48`, artwork centred on (24, 24), stroke-based,
-`currentColor`, **no animation inside the SVG** (opacity/transform are
+painted with `var(--rambo-fx, #4a939f)` on the `<g id="art">` group (shown through
+`<use>`, so the page's theme colours it, not the operating system), **no animation inside the SVG** (opacity/transform are
 animated from CSS so `prefers-reduced-motion` can switch them off).
 
 | File | Used for |

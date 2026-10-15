@@ -1,10 +1,12 @@
-<!-- PLACEHOLDER: replace me, see web/assets/README.md. Ink splat fx: stroke outline + droplets, follows text colour. -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="ink splat" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M24 15 C30 14 34 18 33 23 C38 24 38 30 33 32 C32 36 26 37 24 34 C20 37 14 35 15 31 C10 29 11 23 16 22 C15 17 19 14 24 15 Z"/>
-  <path d="M24 21 C26 21.5 27 23 26.5 25"/>
-  <circle cx="37.5" cy="12" r="1.4" fill="currentColor" stroke="none"/>
-  <circle cx="11" cy="15" r="1.1" fill="currentColor" stroke="none"/>
-  <circle cx="35" cy="38" r="1.2" fill="currentColor" stroke="none"/>
-  <circle cx="13" cy="36" r=".9" fill="currentColor" stroke="none"/>
-  <path d="M41 20 L43 18.5 M6.5 24 L4.5 23.5"/>
+<!-- PLACEHOLDER: replace me, see web/assets/README.md. Ink splat fx: stroke outline + droplets, coloured by the page's rambo-fx token and shown through use. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="ink splat">
+  <g id="art" fill="none" stroke="var(--rambo-fx, #4a939f)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M24 15 C30 14 34 18 33 23 C38 24 38 30 33 32 C32 36 26 37 24 34 C20 37 14 35 15 31 C10 29 11 23 16 22 C15 17 19 14 24 15 Z"/>
+    <path d="M24 21 C26 21.5 27 23 26.5 25"/>
+    <circle cx="37.5" cy="12" r="1.4" fill="var(--rambo-fx, #4a939f)" stroke="none"/>
+    <circle cx="11" cy="15" r="1.1" fill="var(--rambo-fx, #4a939f)" stroke="none"/>
+    <circle cx="35" cy="38" r="1.2" fill="var(--rambo-fx, #4a939f)" stroke="none"/>
+    <circle cx="13" cy="36" r=".9" fill="var(--rambo-fx, #4a939f)" stroke="none"/>
+    <path d="M41 20 L43 18.5 M6.5 24 L4.5 23.5"/>
+  </g>
 </svg>

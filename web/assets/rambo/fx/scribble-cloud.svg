@@ -1,5 +1,7 @@
-<!-- PLACEHOLDER: replace me, see web/assets/README.md. Annoyed scribble cloud; the inner zigzag doubles as the scribble-out effect over a task row. Follows text colour. -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="annoyed scribble cloud" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
-  <path stroke-width="1.9" d="M10 21 C8 12 18 8 24 12 C27 6 39 8 38 15 C44 16 44 25 38 27 C40 34 30 38 26 33 C22 39 10 36 12 29 C5 28 5 22 10 21 Z"/>
-  <path stroke-width="2.2" d="M14 24 L18 20 L22 27 L26 20 L30 27 L34 20"/>
+<!-- PLACEHOLDER: replace me, see web/assets/README.md. Annoyed scribble cloud; the inner zigzag doubles as the scribble-out effect over a task row. Coloured by the page's rambo-fx token and shown through use. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="annoyed scribble cloud">
+  <g id="art" fill="none" stroke="var(--rambo-fx, #4a939f)" stroke-linecap="round" stroke-linejoin="round">
+    <path stroke-width="1.9" d="M10 21 C8 12 18 8 24 12 C27 6 39 8 38 15 C44 16 44 25 38 27 C40 34 30 38 26 33 C22 39 10 36 12 29 C5 28 5 22 10 21 Z"/>
+    <path stroke-width="2.2" d="M14 24 L18 20 L22 27 L26 20 L30 27 L34 20"/>
+  </g>
 </svg>
