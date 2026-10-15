@@ -1383,4 +1383,98 @@ mod tests {
         let every = rule_on_a_wednesday("FREQ=WEEKLY;BYDAY=MO,WE;WKST=SU");
         assert_eq!(every.series.len(), 1);
     }
+
+    /// COUNT with a day step counts every second day from the start: Wed 14, Fri 16, Sun 18.
+    #[test]
+    fn daily_with_interval_and_count_ends_on_the_right_day() {
+        let calendar = rule_on_a_wednesday("FREQ=DAILY;INTERVAL=2;COUNT=3");
+        assert!(calendar.unmapped.is_empty(), "{:?}", calendar.unmapped);
+        let series = &calendar.series[0];
+        assert_eq!(series.interval, 2);
+        assert_eq!(series.until, Some(ymd(2026, 10, 18)));
+    }
+
+    /// UNTIL with an interval: the named day is the last one, and the next step after it is
+    /// gone. UNTIL is UTC midnight 1 Nov, which is still Sat 31 Oct in New York.
+    #[test]
+    fn until_with_interval_stops_on_the_named_day() {
+        let calendar =
+            rule_on_a_wednesday("FREQ=WEEKLY;INTERVAL=2;BYDAY=WE;UNTIL=20261101T000000Z");
+        assert!(calendar.unmapped.is_empty(), "{:?}", calendar.unmapped);
+        let series = &calendar.series[0];
+        assert_eq!(series.until, Some(ymd(2026, 10, 31)));
+        let rule = Recurrence::with_interval([Weekday::Wed], 2, series.until).unwrap();
+        assert!(
+            rule.covers(series.start_day, ymd(2026, 10, 28)),
+            "two weeks on"
+        );
+        assert!(
+            !rule.covers(series.start_day, ymd(2026, 11, 11)),
+            "four weeks on is past UNTIL"
+        );
+    }
+
+    /// BYDAY days that fall before DTSTART in its week (Mon 12 Oct, DTSTART Wed 14) are not
+    /// occurrences, and the week after the step is skipped: Fri 16, then Mon 26 and Fri 30.
+    #[test]
+    fn by_day_before_the_start_with_an_interval_is_not_an_occurrence() {
+        let calendar = rule_on_a_wednesday("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,FR;COUNT=3");
+        assert!(calendar.unmapped.is_empty(), "{:?}", calendar.unmapped);
+        let series = &calendar.series[0];
+        assert_eq!(series.until, Some(ymd(2026, 10, 30)));
+        let rule =
+            Recurrence::with_interval([Weekday::Mon, Weekday::Fri], 2, series.until).unwrap();
+        let start = series.start_day;
+        assert!(
+            !rule.covers(start, ymd(2026, 10, 12)),
+            "Mon 12 is before the start"
+        );
+        assert!(rule.covers(start, ymd(2026, 10, 16)), "Fri 16 is the first");
+        assert!(
+            !rule.covers(start, ymd(2026, 10, 19)),
+            "the week between is skipped"
+        );
+        assert!(
+            rule.covers(start, ymd(2026, 10, 26)),
+            "Mon 26 is two weeks on"
+        );
+        assert!(
+            !rule.covers(start, ymd(2026, 11, 2)),
+            "COUNT=3 ends on Fri 30"
+        );
+    }
+
+    /// BYDAY takes a list, not a range: `MO-FR` names no weekday, so the rule falls back to one
+    /// task and says why.
+    #[test]
+    fn daily_by_day_range_falls_back_to_one_task() {
+        let calendar = rule_on_a_wednesday("FREQ=DAILY;BYDAY=MO-FR");
+        assert!(calendar.series.is_empty());
+        assert_eq!(calendar.events.len(), 1);
+        assert_eq!(calendar.unmapped.len(), 1);
+        assert!(
+            calendar.unmapped[0].contains("not a weekday"),
+            "{:?}",
+            calendar.unmapped
+        );
+    }
+
+    /// INTERVAL of 0 and of 5000 (past the cap) fall back to one task, for a daily and a
+    /// weekly rule alike.
+    #[test]
+    fn interval_zero_and_5000_fall_back_to_one_task() {
+        for freq in ["DAILY", "WEEKLY"] {
+            for interval in ["0", "5000"] {
+                let calendar = rule_on_a_wednesday(&format!("FREQ={freq};INTERVAL={interval}"));
+                assert!(calendar.series.is_empty(), "{freq} INTERVAL={interval}");
+                assert_eq!(calendar.events.len(), 1, "{freq} INTERVAL={interval}");
+                assert_eq!(calendar.unmapped.len(), 1, "{freq} INTERVAL={interval}");
+                assert!(
+                    calendar.unmapped[0].contains("INTERVAL"),
+                    "{:?}",
+                    calendar.unmapped
+                );
+            }
+        }
+    }
 }
