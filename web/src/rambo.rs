@@ -172,34 +172,6 @@ pub(crate) fn Rambo(
         bubble_below.set(below);
     });
 
-    // His line slides in from a screen edge rather than run off it, and near the top
-    // it drops below him, as the ask does.
-    let line_ref = NodeRef::<leptos::html::Span>::new();
-    let line_shift = RwSignal::new((0.0_f64, 0.0_f64));
-    Effect::new(move |_| {
-        refusal_line.track();
-        brain_speech.track();
-        let shift = line_ref
-            .get()
-            .zip(screen_width())
-            .map_or((0.0, 0.0), |(line, screen)| {
-                let (width, height) = (
-                    f64::from(line.offset_width()),
-                    f64::from(line.offset_height()),
-                );
-                let (x, y) = shown.get();
-                let his_h = rambo_height();
-                let edge = tuning::BUBBLE_EDGE_PX;
-                let drop = if opens_below(y - his_h / 2.0, height, edge) {
-                    his_h + height + 2.0 * edge
-                } else {
-                    0.0
-                };
-                (bubble_offset(x, width, screen, edge), drop)
-            });
-        line_shift.set(shift);
-    });
-
     // Where he is drawn: his body in the engine's world (`engine::World`), which hops,
     // rides after the finger, keeps his notice beat and times his splat and daze. Once
     // a frame the page reads where the nest and his spot (`pen_pos`) are, steps the
@@ -210,6 +182,43 @@ pub(crate) fn Rambo(
     // His pose on top of where he is: lean, size, sink, the writing pose
     // (`engine::look`). With `shown`, his button's only transform.
     let look = RwSignal::new(world.borrow().look());
+    // His line slides in from a screen edge rather than run off it, and near the top
+    // it drops below him, as the ask does. It is fitted from where it is drawn, on every
+    // frame his place or pose changes: his lean and size move it too.
+    let line_ref = NodeRef::<leptos::html::Span>::new();
+    let line_shift = RwSignal::new((0.0_f64, 0.0_f64));
+    Effect::new(move |_| {
+        refusal_line.track();
+        brain_speech.track();
+        shown.track();
+        let scale = look.with(|look| look.scale);
+        let Some((line, screen)) = line_ref.get().zip(screen_width()) else {
+            return;
+        };
+        let his_bottom = line
+            .closest(".rambo")
+            .ok()
+            .flatten()
+            .map_or(0.0, |him| him.get_bounding_client_rect().bottom());
+        let drawn = line.get_bounding_client_rect();
+        let fitted = model::fit_line(
+            model::Rect {
+                left: drawn.left(),
+                top: drawn.top(),
+                width: drawn.width(),
+                height: drawn.height(),
+            },
+            line_shift.get_untracked(),
+            scale,
+            his_bottom,
+            screen,
+            tuning::BUBBLE_EDGE_PX,
+        );
+        if fitted != line_shift.get_untracked() {
+            line_shift.set(fitted);
+        }
+    });
+
     // How the nest sags and rocks under him (`engine::Nest`): both its layers, the
     // back on its button and the rim over him, move by it.
     let nest_shift = StoredValue::new((0.0_f64, 0.0_f64));
