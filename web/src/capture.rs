@@ -86,6 +86,11 @@ fn noted(at: &NotedHour, title: &str) -> todo_core::TaskDraft {
     }
 }
 
+/// The note when a capture was refused: it names the words, so they are never lost silently.
+fn not_added_note(title: &str) -> String {
+    format!("\"{title}\" was not added. Say or type it again.")
+}
+
 /// The tasks in `after` that were not in `before`: what a create just added.
 fn added(before: &Snapshot, after: &Snapshot) -> Vec<TaskId> {
     after
@@ -408,9 +413,11 @@ pub(crate) fn CaptureBox(
                         }
                         pen_queue.update(|queue| queue.extend(created));
                     }
-                    // A refusal: the store has shown its note. Never lose what was said: it
-                    // goes back in the box when the box is still empty.
-                    Some(Reply::Nothing) | None => {
+                    // A refusal: the store has shown its own note, which does not name the
+                    // words. Overwrite it with one that does, and put the words back in the
+                    // box when it is still empty.
+                    _ => {
+                        set_error.set(Some(not_added_note(&title)));
                         if text.get_untracked().trim().is_empty() {
                             set_text.set(title.clone());
                         }
@@ -573,6 +580,14 @@ mod tests {
                 todo_core::tuning::TASK_DEFAULT_DURATION_MIN
             );
         }
+    }
+
+    #[test]
+    fn a_refused_capture_names_the_words_it_lost() {
+        assert_eq!(
+            not_added_note("buy milk"),
+            "\"buy milk\" was not added. Say or type it again."
+        );
     }
 
     #[test]
