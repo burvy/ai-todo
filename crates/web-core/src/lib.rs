@@ -5,6 +5,7 @@
 pub mod clock;
 pub mod gesture;
 pub mod hop;
+pub mod ink;
 pub mod settings;
 pub mod store;
 pub mod tuning;
