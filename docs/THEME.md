@@ -12,12 +12,12 @@ The look is **one page of parchment, written on in ink** (owner brief, `docs/DES
 |---|---|---|
 | `--parchment` (`--paper`) | `#f2e8cf` | the page |
 | `--wheat` (`--paper-raised`) | `#ecd7af` | a sheet laid on the page: dialog, capture bar |
-| `--ecru` | `#e1c38c` | pressed-in paper: Rambo's nest circle; never under text |
-| `--paper-sunken` | `#ebd7b2` | a pressed choice, the picker page: between wheat and ecru, light enough that every text ink is AA on it |
+| `--ecru` (`--paper-sunken`) | `#e1c38c` | pressed-in paper: Rambo's nest circle, a pressed choice (with the `--pressed` inset shadow); carries `--ink` only |
 | `--chamoisee` | `#a7865d` | **rules and lines only, never text** (2.8:1 on parchment) |
 | `--ink` | `#5d4732` | coffee: everything written |
 | `--ink-soft` | `#6f5b46` | secondary text (5.3:1 on parchment, 4.6:1 on wheat) |
 | `--ink-faint` | `#6e5a43` | muted text, hour labels, version (4.7:1 on wheat, so 12px passes WCAG AA) |
+| `--brass` | `#9f682e` | Rambo's cap, clip and nib: a shape, not text |
 | `--accent` | `#815525` | golden brown: focus, the active tab/filter underline, the placement bar, a picked choice (5.3:1 on parchment, 4.6:1 on wheat) |
 | `--danger` | `#a5342a` | red pencil: errors, Overdue, Delete |
 | `--now` | `#a83728` | the current-time line (held to 4.5:1 like text) |
@@ -27,9 +27,9 @@ The look is **one page of parchment, written on in ink** (owner brief, `docs/DES
 | `--wash` | `rgba(159,104,46,.1)` | tint behind a placement |
 | `--backdrop` | `rgba(46,35,21,.35)` | dialog backdrop |
 
-`--paper` and `--paper-raised` are kept as aliases so existing rules read naturally; `--paper-sunken` is its own colour in light and `--ecru` in dark.
+`--paper`, `--paper-raised`, `--paper-sunken` are kept as aliases so existing rules read naturally.
 
-Every text ink (`--ink`, `--ink-soft`, `--ink-faint`, `--accent`, `--danger`) is at least 4.5:1 (WCAG AA) on every paper (`--paper`, `--paper-raised`, `--paper-sunken`) in both themes, and so is `--now` on the page and raised paper: `web/src/contrast.rs` reads `web/theme.css` and fails on any pair below it (ATD-144).
+Every text ink (`--ink`, `--ink-soft`, `--ink-faint`, `--accent`, `--danger`) is at least 4.5:1 (WCAG AA) on `--paper` and `--paper-raised` in both themes, `--ink` (the only ink written on it) is on `--paper-sunken`, and `--now` is on the page and raised paper: `web/src/contrast.rs` reads `web/theme.css` and fails on any pair below it (ATD-144).
 
 **Dark** (the same desk at night: deep paper, parchment-coloured ink), under `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }` and `:root[data-theme="dark"]`:
 

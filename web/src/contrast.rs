@@ -10,9 +10,9 @@ const AA_TEXT: f64 = 4.5;
 
 /// The inks that colour text.
 const TEXT_INKS: [&str; 5] = ["ink", "ink-soft", "ink-faint", "accent", "danger"];
-/// The papers text is written on: the page, the raised sheets and scraps, and the
-/// sunken bits (the picker page, a pressed choice).
-const PAPERS: [&str; 3] = ["paper", "paper-raised", "paper-sunken"];
+/// The papers text in any ink is written on: the page, and the sheets and scraps laid
+/// on it (the picker page among them).
+const PAPERS: [&str; 2] = ["paper", "paper-raised"];
 
 /// The theme's tokens: the light ones, and the dark ones laid over them.
 fn themes() -> [(&'static str, HashMap<String, String>); 2] {
@@ -112,6 +112,19 @@ fn every_text_ink_meets_aa_on_every_paper_in_both_themes() {
         })
         .collect();
     assert!(failing.is_empty(), "below AA {AA_TEXT}:1: {failing:#?}");
+}
+
+#[test]
+fn ink_is_aa_on_sunken_paper_the_only_ink_written_there() {
+    // A pressed choice or button sinks into ecru and carries only --ink: the other
+    // inks never go there, so ecru keeps its depth instead of lightening for them.
+    for (theme, tokens) in themes() {
+        let contrast = ratio(colour(&tokens, "ink"), colour(&tokens, "paper-sunken"));
+        assert!(
+            contrast >= AA_TEXT,
+            "{theme}: --ink on --paper-sunken is {contrast:.2}"
+        );
+    }
 }
 
 #[test]

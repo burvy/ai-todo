@@ -19,7 +19,7 @@ Every paper and ink colour sits between OKLCH hue 64° and 89° (warm yellow-bro
 | `--rambo` | `#146272` | `#64bbc4` | body |
 | `--rambo-deep` | `#004552` | `#358e9b` | outline, the shaded side, pupils |
 | `--rambo-tint` | `#4a939f` | `#a3dde0` | the highlight stripe, the ink tail of a stroke, his bubble's rim |
-| `--rambo-brass` | `--accent` `#815525` | `--accent` `#d9a45c` | cap, clip, nib |
+| `--rambo-brass` | `--brass` `#9f682e` | `--brass` `#d9a45c` | cap, clip, nib |
 | `--rambo-eye` | `#fcfaf4` | `#fcfaf4` | eye whites |
 
 Contrast of the body as a shape: 5.7:1 on parchment and 4.1:1 on the ecru dish in light; 7.6:1 on dark paper. All above the 3:1 non-text floor, and the deep outline keeps his silhouette at 40px. At nest size: outline at least 1.5px in `--rambo-deep`, eyes at least 8px across, cap at least a quarter of his height. All five tools share these tokens; the tool changes the shape (pencil has a wood cone and a pink eraser, marker a flat chisel, quill a feather in `--rambo-tint`), never the family colour, so he stays one character.
@@ -64,8 +64,7 @@ Light stays the owner's six. Dark is the same desk at night. New: the five Rambo
 |---|---|---|---|
 | `--parchment` | `#f2e8cf` | `#241c11` | the page |
 | `--wheat` | `#ecd7af` | `#2d2315` | a sheet laid on the page (dialog, gear menu, capture bar on phone, the bubble) |
-| `--ecru` | `#e1c38c` | `#1a140b` | pressed-in paper (the dish); never under text |
-| `--paper-sunken` | `#ebd7b2` | `#1a140b` (ecru) | a pressed choice, the picker page |
+| `--ecru` | `#e1c38c` | `#1a140b` | pressed-in paper (the dish, a pressed choice); carries `--ink` only |
 | `--chamoisee` | `#a7865d` | `#a7865d` at 46% | rules only, never text |
 | `--ink` | `#5d4732` | `#efe3c8` | everything written |
 | `--ink-soft` | `#6f5b46` | `#c9b693` | meta lines, day names, hour labels |
