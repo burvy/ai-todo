@@ -558,7 +558,7 @@ pub(crate) fn TaskList(
             let slide = rested.with_value(|before| scrap::rows_to_slide(before, &now));
             rested.set_value(now);
             scrap::slide_rows(&slide);
-            scrap::fly_rows_back(events);
+            snapshot.with_untracked(|s| scrap::fly_rows_back(events, s));
         });
     });
 

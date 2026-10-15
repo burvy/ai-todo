@@ -79,9 +79,14 @@ fn note_return(events: Queue, id: &str, from: Spot) {
 /// lays out a frame after this runs, and dropped when no row will come: the tape was
 /// refused, or the task is gone.
 fn settle_return(events: Queue, snapshot: &Snapshot, id: &str) {
-    if !crate::edits::held(snapshot, id).is_some_and(|task| !task.done) {
+    if !coming_back(snapshot, id) {
         events.take_all(row_back(id));
     }
+}
+
+/// Whether a row for `id` is on its way into the list: the task is listed, not done.
+fn coming_back(snapshot: &Snapshot, id: &str) -> bool {
+    crate::edits::held(snapshot, id).is_some_and(|task| !task.done)
 }
 
 /// Whether a tick on `id` was refused: the row is still listed, not done.
@@ -415,9 +420,11 @@ pub fn slide_rows(moved: &[(String, i32)]) {
     }
 }
 
-/// Fly each row that has just come back from the pin from where its strip hung. A strip
-/// not yet answered for (the row is not in the list) is kept for the next look.
-pub fn fly_rows_back(events: Queue) {
+/// Fly each row that has just come back from the pin from where its strip hung. One whose
+/// row is not drawn yet is kept for the next look while its task is listed, and dropped
+/// once the task is gone (deleted elsewhere). It may still be done here: the store redraws
+/// the list the moment the tape is sent, before the server answers.
+pub fn fly_rows_back(events: Queue, snapshot: &Snapshot) {
     let Some(doc) = web_sys::window().and_then(|window| window.document()) else {
         return;
     };
@@ -431,7 +438,9 @@ pub fn fly_rows_back(events: Queue) {
             .flatten()
             .and_then(|row| row.dyn_into::<web_sys::HtmlElement>().ok());
         let Some(row) = row else {
-            note_return(events, &id, strip);
+            if crate::edits::held(snapshot, &id).is_some() {
+                note_return(events, &id, strip);
+            }
             continue;
         };
         if !motion {
