@@ -304,8 +304,10 @@ where they were while the hole is open (`scrap::hold_rows`) so none slides into 
 when it heals (`scrap::release_rows`). One tear at a time: a second row finished while a hole is
 open waits its turn and tears out where it stood when the first has healed (the rows
 below stay put until the last hole has healed). Up to `RIP_MAX_WAITING_HOLES` (2) rows wait,
-kept by id and by their place in the page, so scrolling does not move their hole; one that is
-back on the page by its turn (undone) is skipped, and without a list page the queue is dropped
+kept by id and by their place in the page, so scrolling does not move their hole, which is
+measured again from the row that stood above it, so a row added or removed above does not
+shift it; one that is back on the page by its turn (undone), or whose task is no longer done
+(deleted from the pin), is skipped, and without a list page the queue is dropped
 and the held rows let go. A row beyond the cap just leaves. If the server refuses the done, the row stays under a hole that heals like any
 tear (rare).
 Code: `web/src/rip.rs` (the rules: `is_rip`, `is_page_gesture`, `starts_on_paper`, `Tear::outline`, `sheet_path`,

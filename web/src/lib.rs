@@ -97,6 +97,7 @@ pub fn App() -> impl IntoView {
     let ripper = rip_ui::Ripper::new(
         main_ref,
         pane_ref,
+        snapshot,
         pane,
         mascot_state,
         set_mascot_state,

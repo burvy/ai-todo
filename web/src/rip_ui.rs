@@ -16,16 +16,33 @@ use crate::tuning::{TAPE_AT_MS, TAPE_LAY_MS, TEAR_FADE_MS, TEAR_HOLD_MS};
 thread_local! {
     /// A row that has just torn out of the page, finished: where it stood. The `Ripper` takes
     /// it and opens the hole.
-    static ROW_OUT: RwSignal<Option<(String, Spot)>> = RwSignal::new(None);
+    static ROW_OUT: RwSignal<Option<Departed>> = RwSignal::new(None);
     /// Whether a row's hole is open now: the rows below it wait where they were until it
     /// heals (`scrap::hold_rows`), so none slides into the hole.
     static HOLE_OPEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// A row that has finished: its task, where it stood, and the row above it (see
+/// [`rip::Waiting::anchor`]).
+// Only the browser's `Ripper` reads it.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[derive(Clone)]
+struct Departed {
+    id: String,
+    spot: Spot,
+    anchor: Option<(String, f64)>,
+}
+
 /// A row, finished, tears out of the page where it stood (`spot`, in viewport px): the hole
 /// shows the planner, Rambo tapes it, and the hole heals like any tear.
-pub(crate) fn row_out(id: &str, spot: Spot) {
-    ROW_OUT.with(|row| row.set(Some((id.to_owned(), spot))));
+pub(crate) fn row_out(id: &str, spot: Spot, anchor: Option<(String, f64)>) {
+    ROW_OUT.with(|row| {
+        row.set(Some(Departed {
+            id: id.to_owned(),
+            spot,
+            anchor,
+        }))
+    });
 }
 
 /// Whether a row's hole is open: the rows below it hold their places until it heals.
@@ -52,6 +69,7 @@ impl Ripper {
     pub(crate) fn new(
         _main: NodeRef<leptos::html::Main>,
         _pane: NodeRef<leptos::html::Div>,
+        _snapshot: ReadSignal<todo_core::Snapshot>,
         _pane_shown: ReadSignal<u8>,
         _state: ReadSignal<crate::mascot::State>,
         _set_state: WriteSignal<crate::mascot::State>,
@@ -162,6 +180,7 @@ mod imp {
 
     pub(super) struct Dom {
         pane: NodeRef<leptos::html::Div>,
+        snapshot: ReadSignal<todo_core::Snapshot>,
         shown: ReadSignal<u8>,
         state: ReadSignal<State>,
         set_state: WriteSignal<State>,
@@ -178,6 +197,7 @@ mod imp {
         pub(crate) fn new(
             main: NodeRef<leptos::html::Main>,
             pane: NodeRef<leptos::html::Div>,
+            snapshot: ReadSignal<todo_core::Snapshot>,
             shown: ReadSignal<u8>,
             state: ReadSignal<State>,
             set_state: WriteSignal<State>,
@@ -190,6 +210,7 @@ mod imp {
                 released: RwSignal::new(false),
                 dom: Rc::new(Dom {
                     pane,
+                    snapshot,
                     shown,
                     state,
                     set_state,
@@ -231,9 +252,9 @@ mod imp {
             Effect::new({
                 let ripper = ripper.clone();
                 move |_| {
-                    if let Some((id, spot)) = row_out.get() {
+                    if let Some(super::Departed { id, spot, anchor }) = row_out.get() {
                         row_out.set(None);
-                        ripper.tear_out(id, spot);
+                        ripper.tear_out(id, spot, anchor);
                     }
                 }
             });
@@ -434,6 +455,16 @@ mod imp {
             self.mend(&tear, true);
         }
 
+        /// Whether a waiting row's hole is still due: its task is still done, and it has
+        /// not come back to the list (taped back, refused). A task deleted from the pin
+        /// while its row waited is gone from the snapshot and has no hole.
+        fn still_due(&self, id: &str) -> bool {
+            self.dom
+                .snapshot
+                .with_untracked(|snapshot| snapshot.tasks.iter().any(|t| t.id.0 == id && t.done))
+                && !crate::scrap::row_on_page(id)
+        }
+
         /// The page has no list to tear: forget the rows waiting and let the held rows go.
         fn give_up(&self) {
             self.dom.waiting.borrow_mut().clear();
@@ -447,7 +478,7 @@ mod imp {
         /// without a sulk. One tear at a time: a row that finishes while one lasts waits its
         /// turn (the first few; one beyond that just leaves), and the rows below stay where
         /// they were until the last hole has healed, so each hole opens where its row stood.
-        fn tear_out(&self, id: String, spot: crate::scrap::Spot) {
+        fn tear_out(&self, id: String, spot: crate::scrap::Spot, anchor: Option<(String, f64)>) {
             let dom = &self.dom;
             let Some(pane) = dom.pane.get() else {
                 return self.give_up();
@@ -461,6 +492,7 @@ mod imp {
                     spot.x + spot.w - left,
                     spot.y + spot.h - top,
                 ),
+                anchor,
             };
             if self.tear.with_untracked(Option::is_some) {
                 super::HOLE_OPEN.with(|open| open.set(true));
@@ -473,7 +505,13 @@ mod imp {
         /// Open the hole a row leaves, from its place in the page's coordinates.
         fn open_hole(&self, waiting: &rip::Waiting) {
             let dom = &self.dom;
-            let (left, top, right, bottom) = waiting.place;
+            // Where its row stood, measured again from the row above it as it is now.
+            let anchor_top = waiting.anchor.as_ref().and_then(|(id, _)| {
+                let pane = dom.pane.get_untracked()?;
+                let (_, top) = Self::origin(&pane);
+                Some(crate::scrap::row_top_in_view(id)? - top)
+            });
+            let (left, top, right, bottom) = waiting.place_now(anchor_top);
             let seed = dom.made.get().wrapping_add(1);
             dom.made.set(seed);
             let tear = Tear::out_of_row(
@@ -516,7 +554,7 @@ mod imp {
                         .dom
                         .waiting
                         .borrow_mut()
-                        .next_due(crate::scrap::row_on_page);
+                        .next_due(|id| ripper.still_due(id));
                     match next {
                         Some(waiting) => ripper.open_hole(&waiting),
                         None => ripper.give_up(),
