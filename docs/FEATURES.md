@@ -236,8 +236,8 @@ which is a second layer drawn over him (`.nest::before` is the back, `.nest-rim`
 Tapping the nest submits the box. On a phone, when the keyboard opens the capture bar rides
 up on top of it, with the nest and Rambo in it, and goes back down when it closes.
 d. Nothing pops in or out. The only thing on main that fades is ink (it appears over `INK_FADE_MS`
-and fades out over `INK_FADE_OUT_MS`); the one other thing allowed to fade is Rambo's
-tape patch and the tear it mends (item h). Everything else moves: a done or
+and fades out over `INK_FADE_OUT_MS`); nothing else
+fades (the page rip and its tape were cut, item h). Everything else moves: a done or
 deleted row flies to the pin, a taped-back task flies back from it, the rows below slide up
 to close a gap (`ROW_CLOSE_MS`), a crumpled strip drops away, and Rambo's ask bubble grows
 out of him and folds back into him over `ASK_FOLD_MS` before it leaves the page, at full
@@ -260,63 +260,8 @@ paper cut-out x that scribbles the text out and lays down a fresh scrap is *(pla
 g. Code: `web/src/lib.rs:App, PageFoot`; `web/src/week.rs:WeekGrid` (the planner page, the
 gear); `web/src/scrap.rs` (the pin); `web/theme.css` (`.capture`, `.nest`, `.nest-rim`, the
 phone block with `100dvh`); numbers in `web/src/tuning.rs`.
-h. **The page rips.** A drag in **any direction** on bare paper of the list page (a finger on a
-phone, a mouse drag on a desk; not on a task; at least `RIP_MIN_PX`) tears the page along the
-drag: right, down, up, diagonal. It is a straight tear from where the finger went down to
-where it has gone furthest, and it never closes up again (`Tear::follow`). The page keeps two
-gestures of its own (`rip::is_page_gesture`): a swipe back to the left (no steeper than it is
-long) turns the page, and a finger going mostly up or down (steeper than `RIP_SCROLL_SLOPE`) on
-a list that scrolls is scrolling it. A list that fits its page has nothing to scroll, so the
-page is marked `.fits` (`touch-action: none`, kept by `rip_ui::keep_fit`) and a finger can tear
-it up or down too; a mouse never scrolls. The tapes lie across the tear whichever way it runs. The tear is a real hole, a ragged slit up to `RIP_GAP_PX` wide: the
-planner page shows through it live (its own slips and lines, not a picture), in shade, so the
-hole reads as a hole even where the planner is empty paper. The planner is brought to the
-tear while it lasts (`rip::slide_px`, `lift_px`, `TEAR_SLIDE_MS`): the first day column with a
-slip (else today's) is put under the tear, and an hour line (a slip, on a phone) across it. On a
-desk, where the two pages are a spread side by side, it slides under the list and back, its
-column's middle under where the tear starts, an hour line to the tear's level (never more than
-half a gap). On a phone the planner lies under the list already; the column's left edge is
-brought `TEAR_EDGE_IN_PX` inside the tear's start and its nearest slip across the tear, so a
-day edge and a slip's edge and first word show in the slit. While a tear lasts the planner's hour
-lines and day edges are drawn firmer (`main.torn` in theme.css).
-The tear follows the finger, stops short of the pin's column, the page's edge and any task's
-words (`rip::reach_towards`, so a tear towards a row stops short of it), and a press too near a
-row tears nothing (`rip::starts_on_paper`). One tear at a
-time. When the finger lets go Rambo notices, hops to the tear and tapes it: a strip of tape
-every `TAPE_EVERY_PX` across it is laid from one end over `TAPE_LAY_MS`, `TAPE_AT_MS` after
-the finger lets go. After `TEAR_HOLD_MS` the tape and the tear fade away together over
-`TEAR_FADE_MS`, the one thing besides ink that fades; Rambo has hopped home by then. Only a
-resting Rambo (in his nest) goes; a busy one leaves the repair to the page. He is grumpy
-while he mends a rip made in bare paper (`Pose::Sulking`, `State::Mending { annoyed: true }`).
-The tear is cleared by a one-shot on the engine's clock (`engine::every`), with everything
-else that moves. Try it: swipe or drag right across the empty part of the list page.
-h. **A finished row tears out of the page.** When a task is scribbled out (the swipe, or the
-bubble's Done) and its row flies to the tack, the row tears out of the page where it stood: a
-**strip** as tall as the row (less its ragged edge, so the rules above and below stay whole),
-from end to end of the row with short ragged ends (`Tear::out_of_row`, `Profile::Strip`; a hand
-rip keeps the pinched slit, `Profile::Slit`). It shows the live planner beneath: the planner is
-slid so its day grid lies under the whole of the hole (`rip::slide_over`) and an hour line (a
-slip, on a phone) is lifted through its middle (`rip::lift_px`), so day edges and an hour line
-read in it. Then Rambo hops there and tapes it, and it fades with the tape, all on the same
-clock as a rip (`rip_ui::row_out`, `Ripper::tear_out`). He is **not** annoyed by it
-(`State::Mending { annoyed: false }`, his usual face); the rip on bare paper still annoys him.
-The hole is on the page's clock, not Rambo's: it stays open for the length of a rip's repair
-(`rip::total_ms`) and closes by itself even if he is busy and never comes. The rows below wait
-where they were while the hole is open (`scrap::hold_rows`) so none slides into it, and slide up
-when it heals (`scrap::release_rows`). One tear at a time: a second row finished while a hole is
-open waits its turn and tears out where it stood when the first has healed (the rows
-below stay put until the last hole has healed). Up to `RIP_MAX_WAITING_HOLES` (2) rows wait,
-kept by id and by their place in the page, so scrolling does not move their hole, which is
-measured again from the row that stood above it, so a row added or removed above does not
-shift it; one that is back on the page by its turn (undone), or whose task is no longer done
-(deleted from the pin), is skipped, and without a list page the queue is dropped
-and the held rows let go. A row beyond the cap just leaves. If the server refuses the done, the row stays under a hole that heals like any
-tear (rare).
-Code: `web/src/rip.rs` (the rules: `is_rip`, `is_page_gesture`, `starts_on_paper`, `Tear::outline`, `sheet_path`,
-`slide_px`; pure and tested), `web/src/rip_ui.rs:Ripper, TearLayer` (the pointer, the hole,
-the tape), `web/src/mascot.rs:State::Mending, Event::Mend`, `web/src/scrap.rs:hold_rows`, `web/theme.css` (`main.torn`,
-`.tear-layer`, `.tape`); numbers in `web/src/tuning.rs` (`RIP_*`, `TAPE_*`, `TEAR_*`,
-`MEND_MS`).
+h. **The page rip was cut** (2026-10-15, ARCHITECTURE §8A.3): a drag on bare paper does nothing, and a
+finished row flies to the pin while the rows below slide up into its place (`scrap::slide_rows`).
 
 ### 9. The list paper is lightly lined
 a. The list page is ruled like a notebook's, ruled before anything is written on it: one grid

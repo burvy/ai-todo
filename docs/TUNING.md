@@ -45,7 +45,7 @@ pub const DEFAULT_JEV_DAILY_CAP: u32 = 200;
 
 ### On the web
 
-`web/src/tuning.rs` holds the paper pickers' numbers and the page rip's (`RIP_*`, `TAPE_*`, `TEAR_*`, `MEND_MS`) so far. It follows the same rules; a
+`web/src/tuning.rs` holds the paper pickers' numbers so far. It follows the same rules; a
 behaviour value lives there and a look value is a CSS token:
 
 ```rust
