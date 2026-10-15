@@ -66,6 +66,24 @@ fn measuring_canvas(el: &web_sys::Element) -> Option<web_sys::CanvasRenderingCon
     Some(ctx)
 }
 
+/// Where the nib stands to write `text` on a line of `el`'s font whose box is `top` and
+/// `height` on screen: how far across the text runs (px) and the baseline's height.
+pub(crate) fn text_on_line(el: &web_sys::Element, text: &str, top: f64, height: f64) -> (f64, f64) {
+    measuring_canvas(el)
+        .and_then(|ctx| ctx.measure_text(text).ok())
+        .map_or((0.0, top + height / 2.0), |metrics| {
+            (
+                metrics.width(),
+                pen::baseline_y(
+                    top,
+                    height,
+                    metrics.font_bounding_box_ascent(),
+                    metrics.font_bounding_box_descent(),
+                ),
+            )
+        })
+}
+
 /// The writing font measured once: how wide each glyph is on the page,
 /// and how far the em box runs above and below the baseline.
 struct Writing {

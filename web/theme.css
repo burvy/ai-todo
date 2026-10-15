@@ -189,6 +189,8 @@
 
   /* Paper grain (web/assets/theme/); the flat colours carry the page if missing. */
   --texture-paper: url("assets/theme/paper.svg");
+  /* The ripped scrap the desktop capture line is written on (web/assets/scratch/ABOUT.md). */
+  --scratch-art: url("assets/scratch/paper.svg");
 }
 
 /* Dark is the same desk at night: deep paper, parchment-coloured ink.
@@ -238,6 +240,7 @@
   --backdrop: rgba(10, 8, 5, 0.55);
 
   --texture-paper: url("assets/theme/paper-dark.svg");
+  --scratch-art: url("assets/scratch/paper-dark.svg");
 }
 
 * {
@@ -2365,10 +2368,33 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
     padding-bottom: var(--gutter);
   }
 
-  /* The bar is in the page's flow on a desk; on a phone it is fixed and its slot is empty. */
+  /* The bar is pinned on a desk too: it stays on screen while the page scrolls, as the phone's
+     does at its bottom edge (docs/DESIGN-DIRECTION.md, the desktop capture box). It is the
+     page's own paper, so the list's rows pass under it and never show above the scrap. */
   .capture-slot {
+    position: sticky;
+    top: 0;
+    z-index: var(--layer-capture);
     margin-bottom: var(--space-4);
     padding-top: var(--space-2);
+    background-color: var(--paper);
+    background-image: var(--texture-paper);
+    background-attachment: fixed;
+  }
+
+  /* The line is a piece of ripped scratch paper laid on the desk, and Rambo writes on it: his
+     nib stands at the end of the words, on the writing line (capture.rs measures the caret).
+     The art is a border image: its torn ends are the box's side borders at their own shape
+     and the middle stretches between them, so a wide line does not flatten the tears. Its
+     shadow is drawn in it. */
+  .capture input {
+    min-height: var(--scrap-h);
+    padding: 0;
+    border: solid transparent;
+    border-width: 0 var(--scrap-pad-x);
+    border-image: var(--scratch-art) 0 var(--scrap-cap) fill / 0 var(--scrap-pad-x) / 0 stretch;
+    background-color: transparent;
+    filter: drop-shadow(0 2px 3px rgb(0 0 0 / 18%));
   }
 
   main {
@@ -2429,6 +2455,9 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   :root {
     --nest-w: 112px;
     --nest-h: 96px;
+    --scrap-h: 64px; /* the scratch paper's height, and the room the nib has on it */
+    --scrap-pad-x: 28px; /* the width of its torn ends, and the words start inside them */
+    --scrap-cap: 40; /* how much of the art (of its 800 units) is each torn end */
   }
 
   .capture {
