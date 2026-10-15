@@ -40,7 +40,9 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// How loud the music playing now is (0 to 1), or `None` when none plays.
+/// How loud the music playing now is (0 to 1), or `None` when none plays. The analyser
+/// hears it after its volume is turned down, so this undoes that: how loud the recording
+/// is, whatever `MUSIC_VOLUME` is set to.
 #[cfg(target_arch = "wasm32")]
 pub fn level() -> Option<f64> {
     let playing = PLAYER.with(|slot| slot.borrow().as_ref().is_some_and(|audio| !audio.paused()));
@@ -52,7 +54,7 @@ pub fn level() -> Option<f64> {
         let (_, analyser) = ear.as_ref()?;
         let mut samples = vec![0.0_f32; analyser.fft_size() as usize];
         analyser.get_float_time_domain_data(&mut samples);
-        Some(loudness(&samples))
+        Some(loudness(&samples) / crate::tuning::MUSIC_VOLUME)
     })
 }
 

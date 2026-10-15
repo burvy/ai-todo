@@ -38,8 +38,9 @@ pub const LAMP_PULL_MS: u32 = 240;
 pub const DANCE_FAST_MS: f64 = 30.0;
 pub const DANCE_SLOW_MS: f64 = 400.0;
 /// How far above lately's loudness a sound must rise to be a beat. Safe range 1.2 to 2.5:
-/// lower and he twitches at every swell, higher and only the loudest chords move him.
-pub const DANCE_ONSET_RATIO: f64 = 1.5;
+/// lower and he twitches at every swell, higher and only the loudest chords move him. At
+/// 1.35 the Nocturne (the first track) moves him about every 1.6 s; at 1.5, half as often.
+pub const DANCE_ONSET_RATIO: f64 = 1.35;
 /// Softer than this is silence to him (loudness, 0 to 1). Safe range 0.001 to 0.01.
 pub const DANCE_FLOOR: f64 = 0.003;
 /// The shortest gap between two beats he moves to, in ms. Safe range 180 to 500.
