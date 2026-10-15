@@ -411,13 +411,13 @@ c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:Choice, asking_dismissed_b
 (III.7).
 
 ### 4a. Sound presets
-a. The gear menu's **Sound** picks one of three presets: **A quiet desk** (only the noises
-paper and ink really make: the nib, the scribble, the page turn, the crumple; Rambo does
-not speak aloud), **Every touch answers** (the default: also a tick on every button and a
-swish when a ramble is sent) and **Everything + music** (the same cues; calm background
-music is (planned)). It replaces the old Sounds on/off flag: a stored "off" opens as a
-quiet desk, a stored "on" as every touch. With reduced motion on, the tick and the page
-sound are dropped.
+a. The gear menu's **Sound** picks one of four: **Off** (silence; Rambo does not speak
+aloud), **A quiet desk** (only the noises paper and ink really make: the nib, the
+scribble, the page turn, the crumple; no voice), **Every touch answers** (the default:
+also a tick on every button and a swish when a ramble is sent) and **Everything + music**
+(the same cues; calm background music is (planned)). It replaces the old Sounds on/off
+flag: a stored "off" stays Off, a stored "on" becomes every touch. With reduced motion
+on, the tick and the page sound are dropped.
 b. Open the gear menu, pick each preset, then tap a button, turn the page and add a task.
 c. Code: `web/src/sound.rs:Cue, plays`; `web/src/settings.rs:SoundPreset, with_migrated_sound`;
 `web/src/voice.rs:audible`. Sound files and how to swap one: `web/assets/sounds/ABOUT.md`.

@@ -85,9 +85,11 @@ impl PageTurn {
 }
 
 /// How much the page makes noise, the gear menu's Sound choice. It replaces the old
-/// on/off flag: off became `Quiet`, on became `Touch`.
+/// on/off flag: off became `Off`, on became `Touch`.
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SoundPreset {
+    /// Silence: nothing plays and Rambo does not speak.
+    Off,
     /// A quiet desk: only what paper and ink really make a noise doing, and Rambo keeps
     /// his voice to himself.
     Quiet,
@@ -99,19 +101,25 @@ pub enum SoundPreset {
 }
 
 impl SoundPreset {
-    pub const ALL: [SoundPreset; 3] = [SoundPreset::Quiet, SoundPreset::Touch, SoundPreset::Music];
+    pub const ALL: [SoundPreset; 4] = [
+        SoundPreset::Off,
+        SoundPreset::Quiet,
+        SoundPreset::Touch,
+        SoundPreset::Music,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
+            SoundPreset::Off => "Off",
             SoundPreset::Quiet => "A quiet desk",
             SoundPreset::Touch => "Every touch answers",
             SoundPreset::Music => "Everything + music",
         }
     }
 
-    /// Whether Rambo may speak aloud: not at a quiet desk.
+    /// Whether Rambo may speak aloud: not when it is off or at a quiet desk.
     pub fn allows_voice(self) -> bool {
-        self != SoundPreset::Quiet
+        !matches!(self, SoundPreset::Off | SoundPreset::Quiet)
     }
 }
 
@@ -211,7 +219,7 @@ fn with_migrated_sound(mut stored: serde_json::Value) -> serde_json::Value {
         let preset = if old {
             SoundPreset::Touch
         } else {
-            SoundPreset::Quiet
+            SoundPreset::Off
         };
         object
             .entry("sound")
@@ -841,7 +849,7 @@ mod tests {
             ))
             .sound
         };
-        assert_eq!(stored("false"), SoundPreset::Quiet, "off is a quiet desk");
+        assert_eq!(stored("false"), SoundPreset::Off, "silence stays silence");
         assert_eq!(stored("true"), SoundPreset::Touch, "on is every touch");
         let both = r#"{"start_hour":8,"end_hour":18,"days":7,"sounds":false,"sound":"Music"}"#;
         assert_eq!(

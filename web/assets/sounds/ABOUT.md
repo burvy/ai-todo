@@ -3,14 +3,14 @@
 Short mono MP3 cues. The gear menu's **Sound** preset decides which play
 (`web/src/sound.rs:plays` is the one event-to-sound table):
 
-| Cue | File | Plays when | A quiet desk | Every touch | Everything + music |
-|---|---|---|---|---|---|
-| Write | `write.mp3` | the pen writes a title (looped while the nib moves) | yes | yes | yes |
-| Scribble | `scribble.mp3` | a task is crossed out | yes | yes | yes |
-| Page | `page.mp3` | a page turns (dropped under reduced motion) | yes | yes | yes |
-| Crumple | `crumple.mp3` | a strip is crumpled into the bin | yes | yes | yes |
-| Tap | `tick.mp3` | any button is pressed (dropped under reduced motion) | no | yes | yes |
-| Send | `send.mp3` | a ramble becomes tasks | no | yes | yes |
+| Cue | File | Plays when | Off | A quiet desk | Every touch | Everything + music |
+|---|---|---|---|---|---|---|
+| Write | `write.mp3` | the pen writes a title (looped while the nib moves) | no | yes | yes | yes |
+| Scribble | `scribble.mp3` | a task is crossed out | no | yes | yes | yes |
+| Page | `page.mp3` | a page turns (dropped under reduced motion) | no | yes | yes | yes |
+| Crumple | `crumple.mp3` | a strip is crumpled into the bin | no | yes | yes | yes |
+| Tap | `tick.mp3` | any button is pressed (dropped under reduced motion) | no | no | yes | yes |
+| Send | `send.mp3` | a ramble becomes tasks | no | no | yes | yes |
 
 The other files here (`delete`, `drop`, `listen`, `pin`, `toss`) are not wired yet.
 The music for the last preset is (planned).

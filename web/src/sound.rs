@@ -44,12 +44,13 @@ impl Cue {
     }
 }
 
-/// The event-to-sound table: does `preset` play `cue`? A quiet desk keeps to the noises
+/// The event-to-sound table: does `preset` play `cue`? Off plays nothing. A quiet desk keeps to the noises
 /// paper and ink really make (the nib, the scribble, the page, the crumple); the other
 /// two answer every touch (the music of `Music` is a separate track, not a cue).
 /// Reduced motion drops the cues that only decorate a movement.
 pub fn plays(preset: SoundPreset, cue: Cue, reduced_motion: bool) -> bool {
     let wanted = match preset {
+        SoundPreset::Off => false,
         SoundPreset::Quiet => matches!(cue, Cue::Write | Cue::Scribble | Cue::Page | Cue::Crumple),
         SoundPreset::Touch | SoundPreset::Music => true,
     };
@@ -165,6 +166,13 @@ mod tests {
             );
             assert!((0.0..=1.0).contains(&cue.volume()), "{cue:?} is too loud");
             assert!(cue.volume() <= 0.5, "Rambo is gentle by default");
+        }
+    }
+
+    #[test]
+    fn off_plays_nothing() {
+        for cue in Cue::ALL {
+            assert!(!plays(SoundPreset::Off, cue, false), "{cue:?} while off");
         }
     }
 

@@ -220,6 +220,7 @@ mod tests {
             !audible(SoundPreset::Quiet, true),
             "a quiet desk: he does not"
         );
+        assert!(!audible(SoundPreset::Off, true), "off: he does not");
         assert!(
             !audible(SoundPreset::Touch, false),
             "Rambo talks off: he does not"
