@@ -419,12 +419,15 @@ so a hard enough one smacks him into the edge of the screen. A throw that comes 
 is caught by his nest, however hard: no daze and no ink, he hops in. The nest is
 soft: it sags under him as he lands (deeper the harder he was thrown), rocks as he
 leaves or lands to one side, and settles; with reduced motion it stays still. He leans into where he hops, and eases from
-one pose into the next, never snapping. His ink dries and fades on its own; home
+one pose into the next, never snapping. After a long stretch of writing his nib runs dry:
+home again, he tips toward the nest's rim and taps it there a few times, the nest
+bobbing under each tap, then rests. His ink dries and fades on its own; home
 again, he listens again.
 b. Flick the pen hard at a side of the screen, or into the nest's corner; drag it again to write, or hold
 anywhere and drag; drop it on the nest, or leave it 3 seconds.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/engine/world.rs:World, behaviour`;
-`web/src/engine/look.rs:pose, blended, Look`;
+`web/src/engine/look.rs:pose, blended, Look`; `web/src/mascot.rs:nib_dry`;
+`web/src/engine/nest.rs:Nest::tap`;
 `web/src/engine/fling.rs:step, splat_strokes`; `web/src/engine/world.rs:swept`; `web/src/engine/nest.rs:Nest`;
 `web/src/mascot.rs:transition, listens_on_grab,
 put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `web/src/hop.rs:Hop`;
