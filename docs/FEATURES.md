@@ -180,7 +180,7 @@ h. The new order shows the moment the row is dropped, before the server answers.
 the server refuses it, the list goes back to the last order the server confirmed, is
 reloaded, and the page says why (the same note an edit gives). A slower answer to an
 earlier change never puts an older list back.
-i. Code: `web/src/row.rs` (the gesture rules, unit-tested) and its `dom` module
+i. Code: `crates/web-core/src/row.rs` (the gesture rules, unit-tested) and `web/src/row.rs`'s `dom` module
 (pointer events); `web/src/tasks/mod.rs:reorder_ids`, the row's handlers;
 `crates/web-core/src/store.rs` (`Command::Reorder`) and `web/src/store.rs`;
 `web/src/api.rs:reorder_tasks`; `server/src/v2/http.rs:reorder`;
