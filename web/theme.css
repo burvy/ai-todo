@@ -203,10 +203,10 @@
   /* The ripped scrap the desktop capture line is written on (web/assets/scratch/ABOUT.md). */
   --scratch-art: url("assets/scratch/paper.svg");
   /* A planner slip's paper (.placement::before): the body up to its torn right edge, and
-     that edge's teeth, one tile per 14px of height. Masks, so the colour stays the theme's. */
+     that edge's three uneven teeth, one tile per 42px of height, so it reads torn, not perforated. Masks, so the colour stays the theme's. */
   --slip-tear-w: 5px;
   --slip-cut: linear-gradient(#000, #000) left / calc(100% - var(--slip-tear-w)) 100% no-repeat;
-  --slip-tear: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='14'%3E%3Cpath d='M0 0H3L5 3L2 6L4 9L1 12L3 14H0Z'/%3E%3C/svg%3E") right / var(--slip-tear-w) 14px repeat-y;
+  --slip-tear: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='42'%3E%3Cpath d='M0 0H4L3 4.5L5 9L0 17L4.5 27L2 35L4 42H0Z'/%3E%3C/svg%3E") right / var(--slip-tear-w) 42px repeat-y;
 }
 
 /* Dark is the same desk at night: deep paper, parchment-coloured ink.
