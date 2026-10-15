@@ -1,4 +1,3 @@
-use chrono::Weekday;
 use gloo_net::http::{Request, RequestBuilder, Response};
 #[cfg(target_arch = "wasm32")]
 use js_sys;

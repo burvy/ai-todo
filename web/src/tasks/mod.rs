@@ -407,7 +407,6 @@ fn smudge_if_wet(
 #[component]
 pub(crate) fn TaskList(
     snapshot: ReadSignal<Snapshot>,
-    set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
     view_settings: ReadSignal<settings::Settings>,
     mascot_state: ReadSignal<mascot::State>,
