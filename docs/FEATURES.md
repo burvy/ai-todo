@@ -327,7 +327,14 @@ divide things, with its own dark value). The paper fills what is left of the pag
 makes it longer.
 b. Add a few tasks, one with a long title: the rows stand on lines that carry on to the page's
 foot, with the long title on two, in light and dark paper, on a phone and on a desk.
-c. Code: `web/theme.css` (`--paper-line`, `--line-pitch`, `.task-list`, `.task-open`).
+c. Code: `web/theme.css` (`--paper-line`, `--line-pitch`, `--text-list`, `--margin-line`,
+`.tasks-pane`, `.task-list`, `.task-open`).
+d. A line is 44 px (`--line-pitch`, one finger), and the writing on it is small, as in a
+notebook: titles `--text-list` (0.95 rem), the time and length beside them `--text-list-meta`
+(0.8 rem).
+e. Down the left of the page runs the notebook's red margin rule (`--margin-line`, a pink-red
+in light and dark paper), full height of the list page; on a phone it is set in from the
+screen's edge, not cut by it.
 
 ## III. WEEK PLANNER
 

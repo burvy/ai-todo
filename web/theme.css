@@ -64,8 +64,11 @@
   --rule-strong: color-mix(in srgb, var(--chamoisee) 62%, transparent);
   /* The list page's ruled lines: fainter than the rules that divide things, and one row apart. */
   --paper-line: color-mix(in srgb, var(--rule) 70%, transparent);
-  --line-pitch: 3.25rem;
-  --margin-line: rgba(165, 52, 42, 0.24);
+  --line-pitch: 2.75rem; /* one ruled line: as tall as a finger needs (--tap) */
+  /* The list's writing runs smaller than the page's body text, as a notebook's does. */
+  --text-list: 0.95rem;
+  --text-list-meta: 0.8rem;
+  --margin-line: rgba(165, 52, 42, 0.42); /* a notebook's red margin rule */
   --shadow: 0 1px 2px rgba(93, 71, 50, 0.14);
   /* The same shadow for a torn shape (filter: drop-shadow), which box-shadow cannot follow. */
   --shadow-drop: 0 1px 1.5px rgba(93, 71, 50, 0.28);
@@ -249,7 +252,7 @@
 
   --rule: rgba(167, 134, 93, 0.3);
   --rule-strong: rgba(167, 134, 93, 0.46);
-  --margin-line: rgba(224, 112, 95, 0.26);
+  --margin-line: rgba(224, 112, 95, 0.42);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-drop: 0 1px 1.5px rgba(0, 0, 0, 0.55);
   --sheet-shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.8);
@@ -555,6 +558,14 @@ main.flipping > .bend-front {
   /* The list is the written page: it alone gets the notebook's red margin. */
   border-left: 1px solid var(--margin-line);
   padding-left: var(--space-3);
+}
+
+/* On a phone the page has no gutter of its own: the margin rule is set in from the screen's
+   edge, as it is on a real notebook, not cut by it. */
+@media (max-width: 700px) {
+  .tasks-pane {
+    margin-left: var(--space-3);
+  }
 }
 
 /* Sections are parts of one page, not cards: space and rules divide them. */
@@ -1987,6 +1998,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   padding: 0;
   /* Each line of a wrapped title sits on its own rule. */
   line-height: var(--line-pitch);
+  font-size: var(--text-list);
   cursor: pointer;
 }
 
@@ -2011,7 +2023,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 
 .task-time {
   color: var(--ink-soft);
-  font-size: var(--text-sm);
+  font-size: var(--text-list-meta);
 }
 
 .overdue {

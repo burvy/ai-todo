@@ -1390,6 +1390,13 @@ mod tests {
         );
         assert!(text.contains("line-height: var(--line-pitch)"), "{text}");
         assert!(text.contains("padding: 0"), "{text}");
+        // Small, notebook writing, and the red margin rule down the left of the page.
+        assert!(text.contains("font-size: var(--text-list)"), "{text}");
+        let pane = rule(".tasks-pane {");
+        assert!(
+            pane.contains("border-left: 1px solid var(--margin-line)"),
+            "{pane}"
+        );
     }
 
     /// FRONTEND-PLAN 1.8 item 7: the edit sheet is a real modal (focus trapped, page
