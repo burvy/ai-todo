@@ -33,6 +33,47 @@ pub(crate) fn slide(
     crate::engine::glide_keyed(key, [from], [to], PULL, near, move |[at]| draw(at), done);
 }
 
+/// A node reference for an element that arrives when it is put on the page (`arrive`).
+pub(crate) fn arriving<E>() -> NodeRef<E>
+where
+    E: leptos::tachys::html::element::ElementType,
+    E::Output: wasm_bindgen::JsCast + Clone + 'static,
+{
+    use wasm_bindgen::JsCast as _;
+    let node = NodeRef::<E>::new();
+    node.on_load(|el| {
+        if let Ok(el) = el.dyn_into::<web_sys::HtmlElement>() {
+            arrive(&el);
+        }
+    });
+    node
+}
+
+/// An element arriving on the page: its `--arrive` goes from 0 to 1 on the paper's spring,
+/// and `data-arriving` marks it while that lasts, so the style sheet draws the arrival
+/// (an unfold, a drop, a slot opening) only then and the element rests as it is drawn.
+/// With reduced motion it is simply there.
+pub(crate) fn arrive(el: &web_sys::HtmlElement) {
+    if crate::mascot::prefers_reduced_motion() {
+        return;
+    }
+    let _ = el.set_attribute("data-arriving", "");
+    let (drawn, finished) = (el.clone(), el.clone());
+    crate::engine::glide(
+        [0.0],
+        [1.0],
+        PULL,
+        crate::tuning::SHOWN_NEAR,
+        move |[at]| {
+            let _ = drawn.style().set_property("--arrive", &format!("{at:.4}"));
+        },
+        move || {
+            let _ = finished.style().remove_property("--arrive");
+            let _ = finished.remove_attribute("data-arriving");
+        },
+    );
+}
+
 /// Slides `shown`, how far the paper `key` names is in sight, to `to`, then runs `done`.
 pub(crate) fn show(key: &str, shown: RwSignal<f64>, to: f64, done: impl FnOnce() + 'static) {
     slide(

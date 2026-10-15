@@ -279,7 +279,7 @@ fn call(target: &wasm_bindgen::JsValue, method: &str, args: &[wasm_bindgen::JsVa
 pub fn AccountSection() -> impl IntoView {
     view! {
         <Show when=sign_in_offered>
-            <div class="account">
+            <div class="account" node_ref=crate::slide::arriving()>
                 <div id="google-button" hidden=move || user().get().is_some()></div>
                 <button
                     type="button"

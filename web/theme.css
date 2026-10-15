@@ -726,17 +726,14 @@ li.task-row.row-lifted {
   scale: 0.96;
 }
 
-/* The crumple lasts as long as BIN_CRUMPLE_MS in tuning.rs (scrap.rs writes it as
-   `--bin-crumple-ms`); the delete waits for it. */
+/* The crumple lasts BIN_CRUMPLE_MS (tuning.rs); the delete waits for it. The page
+   (scrap.rs, `crumple`) writes how far through it is as `--crumple` (0 to 1) and how
+   far it has fallen as `--fall` (that squared): it squashes, twists and drops away. */
 .scrap-undo.done.binned {
-  animation: bin-crumple var(--bin-crumple-ms) cubic-bezier(0.55, 0, 1, 0.45) forwards;
+  scale: calc(0.96 - 0.36 * var(--crumple, 0)) calc(0.96 - 0.46 * var(--crumple, 0));
+  rotate: calc(-12deg + 36deg * var(--crumple, 0));
+  translate: var(--drag-x, 0px) calc(var(--drag-y, 0px) + var(--fall, 0) * 100vh);
   pointer-events: none;
-}
-
-@keyframes bin-crumple {
-  0% { scale: 0.96; rotate: -12deg; }
-  45% { scale: 0.8 0.5; rotate: -4deg; }
-  100% { translate: var(--drag-x, 0px) calc(var(--drag-y, 0px) + 100vh); scale: 0.6; rotate: 24deg; }
 }
 
 /* The pin it hangs from. */
@@ -2650,11 +2647,10 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   border: 1px solid var(--rule);
   box-shadow: var(--shadow);
   transform-origin: top left;
-  animation: paper-page-in var(--dur-fast) ease-out both;
 }
 /* The paper drops onto the page: it moves, it does not fade or grow. */
-@keyframes paper-page-in {
-  from { translate: 0 calc(-1 * var(--space-2)); }
+.paper-page[data-arriving] {
+  translate: 0 calc((var(--arrive, 1) - 1) * var(--space-2));
 }
 .paper-month { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .paper-month-name { font-family: var(--font-hand); font-size: var(--text-xl); }
@@ -2790,57 +2786,33 @@ svg {
    A new row makes room first (its slot opens from zero height, the rows below
    step down), then its contents fall from above the slot, clipped by the slot,
    and settle with a 2px bounce. */
-@keyframes row-make-room {
-  from { max-height: 0; overflow: hidden; }
-  to { max-height: 200px; overflow: hidden; }
+/* An arrival (`slide::arrive`): the page walks `--arrive` from 0 to 1 on a spring and marks
+   the element `data-arriving` meanwhile, so these draw it only then. */
+li.task-row[data-arriving] {
+  max-height: calc(var(--arrive, 1) * 200px);
+  overflow: hidden;
 }
 
-@keyframes row-fall {
-  0% { transform: translateY(-100%); }
-  80% { transform: translateY(2px); }
-  100% { transform: translateY(0); }
+li.task-row[data-arriving] > * {
+  translate: 0 calc((var(--arrive, 1) - 1) * 100%);
 }
 
-@keyframes landing-unfold {
-  from { transform: scaleY(0); }
+.landing[data-arriving],
+.account[data-arriving],
+.gear-menu[data-arriving] {
+  transform: scaleY(var(--arrive, 1));
 }
 
-/* The gear menu unfolds from the gear, the account block from its top edge, the
-   overdue tag from its left edge. */
-@keyframes unfold-down {
-  from { transform: scaleY(0); }
+.landing[data-arriving],
+.account[data-arriving] {
+  transform-origin: top;
 }
 
-@keyframes unfold-across {
-  from { transform: scaleX(0); }
+.gear-menu[data-arriving] {
+  transform-origin: top right;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-  li.task-row {
-    animation: row-make-room 180ms var(--arrive-ease) backwards;
-  }
-
-  li.task-row > * {
-    animation: row-fall 260ms var(--arrive-ease) backwards;
-  }
-
-  .landing {
-    transform-origin: top;
-    animation: landing-unfold var(--arrive-ms) var(--arrive-ease) backwards;
-  }
-
-  .account {
-    transform-origin: top;
-    animation: unfold-down var(--arrive-ms) var(--arrive-ease) backwards;
-  }
-
-  .gear-menu {
-    transform-origin: top right;
-    animation: unfold-down var(--arrive-ms) var(--arrive-ease) backwards;
-  }
-
-  .overdue {
-    transform-origin: left;
-    animation: unfold-across var(--arrive-ms) var(--arrive-ease) backwards;
-  }
+.overdue[data-arriving] {
+  transform-origin: left;
+  transform: scaleX(var(--arrive, 1));
 }
