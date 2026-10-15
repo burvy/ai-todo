@@ -15,7 +15,7 @@ mod world;
 
 pub(crate) use body::{Pull, Spring1};
 pub(crate) use fling::Walls;
-pub(crate) use glide::glide;
+pub(crate) use glide::{glide, glide_keyed};
 pub(crate) use link::{leaf, on_leaf, set_push};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use link::{push, show};

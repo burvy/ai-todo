@@ -5,6 +5,7 @@
 #![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// The longest frame a job is told about, in seconds: after a hidden tab or a stall, time
@@ -108,9 +109,35 @@ pub(crate) struct Loop {
     last: Option<f64>,
     /// Time not yet stepped, in seconds, always less than one fixed step.
     left_over: f64,
+    /// The jobs that move a body the page names by key (a task's id), each with the number
+    /// of the start that made it: one per key.
+    bodies: HashMap<String, (u64, Handle)>,
+    starts: u64,
 }
 
 impl Loop {
+    /// A number for a new start of a keyed job, never given twice.
+    pub(crate) fn next_start(&mut self) -> u64 {
+        self.starts += 1;
+        self.starts
+    }
+
+    /// Keeps `handle` as the job of `key`, made by start `start`, and stops the one it
+    /// takes over from.
+    pub(crate) fn hold(&mut self, key: &str, start: u64, handle: Handle) {
+        if let Some((_, old)) = self.bodies.insert(key.to_owned(), (start, handle)) {
+            old.stop();
+        }
+    }
+
+    /// Lets go of the job of `key` once it has finished, unless a newer start has taken
+    /// the key since.
+    pub(crate) fn release(&mut self, key: &str, start: u64) {
+        if self.bodies.get(key).is_some_and(|(made, _)| *made == start) {
+            self.bodies.remove(key);
+        }
+    }
+
     /// A job run on every frame until it returns [`Flow::Stop`].
     pub(crate) fn every_frame(&mut self, body: impl FnMut(Tick) -> Flow + 'static) -> Handle {
         self.add(When::EveryFrame, Box::new(body))
@@ -239,6 +266,24 @@ mod tests {
 
     fn log() -> Rc<RefCell<Vec<Tick>>> {
         Rc::default()
+    }
+
+    #[test]
+    fn one_job_runs_per_key_and_a_newer_start_takes_the_key_over() {
+        let mut lp = Loop::default();
+        let (first, second) = (lp.next_start(), lp.next_start());
+        assert_ne!(first, second);
+        let old = lp.every_frame(|_| Flow::Go);
+        lp.hold("task", first, old.clone());
+        let new = lp.every_frame(|_| Flow::Go);
+        lp.hold("task", second, new.clone());
+        assert!(!old.is_live(), "the older job is stopped");
+        assert!(new.is_live());
+        // The older one ending late must not let go of the newer one's key.
+        lp.release("task", first);
+        assert!(lp.bodies.contains_key("task"));
+        lp.release("task", second);
+        assert!(lp.bodies.is_empty());
     }
 
     #[test]

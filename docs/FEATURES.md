@@ -142,7 +142,7 @@ of time the page is in view; up to `SCRAP_MAX` (two quick deletes leave two, eac
 back its own task; a third sends the oldest away). Tap one and the task is taped back as
 it was (`POST /api/v1/tasks/restore`; a repeat's day has its skip cleared), otherwise it
 slides away. Paper slides and never fades. The rows below a row that left slide up to close the
-gap (`ROW_CLOSE_MS`), never jump. A deleted scrap lands below the stack, never on it. Times and counts are in `crates/web-core/src/tuning.rs`;
+gap (`ROW_SLIDE_OMEGA`), never jump. A deleted scrap lands below the stack, never on it. Times and counts are in `crates/web-core/src/tuning.rs`;
 the pin is `web/src/scrap.rs`.
 e. A finger that slides before the hold is a **scroll**, and the row keeps its
 hands off it. That is also what keeps the gestures apart from the page flip: a
@@ -244,7 +244,7 @@ d. Nothing pops in or out. The only thing on main that fades is ink (it appears 
 and fades out over `INK_FADE_OUT_MS`); nothing else
 fades (the page rip and its tape were cut, item h). Everything else moves: a done or
 deleted row flies to the pin, a taped-back task flies back from it, the rows below slide up
-to close a gap (`ROW_CLOSE_MS`), a crumpled strip drops away, and Rambo's ask bubble grows
+to close a gap (`ROW_SLIDE_OMEGA`), a crumpled strip drops away, and Rambo's ask bubble grows
 out of him and folds back into him over `ASK_FOLD_MS` before it leaves the page, at full
 opacity throughout.
 e. Try it: open the app on a phone and see no heading; add enough tasks to overflow and see
