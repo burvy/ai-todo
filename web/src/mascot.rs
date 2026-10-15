@@ -235,6 +235,12 @@ pub fn lies_on_page(state: &State) -> bool {
     *state != State::Thrown && transition(state, Event::Swept) == State::Thrown
 }
 
+/// Whether his nib has run dry after `written_ms` of writing, so that home again he taps
+/// it on the nest's rim (Interview 3, idea 2).
+pub fn nib_dry(written_ms: f64) -> bool {
+    written_ms >= crate::tuning::DRY_NIB_AFTER_MS
+}
+
 /// Whether a pointer that picked him up at `grab` and is now at `now` is still
 /// holding him (a long press can listen) rather than dragging him.
 pub fn held_still(grab: (f64, f64), now: (f64, f64)) -> bool {

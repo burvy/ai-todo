@@ -197,6 +197,10 @@ pub(crate) struct Rambo {
     /// Where a throw left him, which his splat and daze stay on: his spot is still
     /// where the finger let go.
     fell: Option<Vec2>,
+    /// How long he has written, in ms, since he last tapped his nib dry.
+    written_ms: f64,
+    /// Tapping his dry nib on the rim, home: when the taps began, and how many are done.
+    tapping: Option<(f64, u32)>,
 }
 
 /// What the paper he lies on does to him when it moves: he stays (he is not on it), rides
@@ -257,6 +261,8 @@ impl World {
                 look: look::pose(&State::Home, 0.0, false),
                 sway: 0.0,
                 fell: None,
+                written_ms: 0.0,
+                tapping: None,
             },
             now: 0.0,
             ink: Vec::new(),
@@ -277,9 +283,20 @@ impl World {
             _ => 0.0,
         };
         Look {
-            lean_deg: self.rambo.look.lean_deg + self.rambo.sway + rock,
+            lean_deg: self.rambo.look.lean_deg + self.rambo.sway + rock + self.tap_lean(),
             ..self.rambo.look
         }
+    }
+
+    /// How far he tips toward the rim while he taps his nib: eased in before the first
+    /// tap and out after the last, so he never snaps.
+    fn tap_lean(&self) -> f64 {
+        let Some((began, _)) = self.rambo.tapping else {
+            return 0.0;
+        };
+        let ms = self.now - began;
+        let edge = (ms.min(tapping_ms() - ms) / tuning::DRY_NIB_PAUSE_MS).clamp(0.0, 1.0);
+        tuning::DRY_NIB_LEAN_DEG * edge * edge * (3.0 - 2.0 * edge)
     }
 
     /// How the nest is drawn now: sagged by `.0` px and rocked by `.1` degrees.
@@ -325,6 +342,8 @@ impl World {
         rambo.brain = next;
         rambo.since = self.now;
         rambo.settled_home = false;
+        // Anything he is asked to do stops the tapping; the nib stays as dry as it was.
+        rambo.tapping = None;
     }
 
     /// Whether nothing in the world will change until something outside does (his
@@ -345,6 +364,7 @@ impl World {
             && !mascot::hops_there(&rambo.brain, rambo.settled_home)
             && !rambo.settling
             && rambo.run.is_none()
+            && rambo.tapping.is_none()
             && self.nest.at_rest()
     }
 
@@ -369,6 +389,10 @@ impl World {
             // With less motion the nest never sags or rocks.
             self.nest = Nest::default();
         }
+        if matches!(self.rambo.brain, State::WritingRow | State::WritingCaret) {
+            self.rambo.written_ms += STEP_MS;
+        }
+        self.tap_nib();
         self.nest.step(STEP_MS / 1000.0);
         self.move_body(anchors);
         let rambo = &mut self.rambo;
@@ -563,6 +587,21 @@ impl World {
         }
     }
 
+    /// The taps of his dry nib on the rim that have come due: each one knocks the nest,
+    /// and he bobs on it as it springs back. Done, he rests.
+    fn tap_nib(&mut self) {
+        let Some((began, done)) = self.rambo.tapping else {
+            return;
+        };
+        let ms = self.now - began;
+        let due = ((ms - tuning::DRY_NIB_PAUSE_MS) / tuning::DRY_NIB_TAP_MS)
+            .floor()
+            .clamp(-1.0, f64::from(tuning::DRY_NIB_TAPS) - 1.0);
+        let due = (due + 1.0) as u32;
+        (done..due).for_each(|_| self.nest.tap());
+        self.rambo.tapping = (ms < tapping_ms()).then_some((began, due));
+    }
+
     /// He has arrived at `at`: still, unsquashed, and home if he was on his way home.
     fn land(&mut self, at: Vec2) {
         let rambo = &mut self.rambo;
@@ -581,8 +620,18 @@ impl World {
         if rambo.settled_home {
             // Still moving a little sideways as he comes down, he lands off its middle.
             self.nest.land(sideways * LANDING_LEAN);
+            // Home after a long stretch of writing, he taps his dry nib on the rim.
+            if mascot::nib_dry(rambo.written_ms) {
+                rambo.written_ms = 0.0;
+                rambo.tapping = Some((self.now, 0));
+            }
         }
     }
+}
+
+/// How long his taps of a dry nib take, from landing to the end of the last tap's swing.
+fn tapping_ms() -> f64 {
+    tuning::DRY_NIB_PAUSE_MS + f64::from(tuning::DRY_NIB_TAPS + 1) * tuning::DRY_NIB_TAP_MS
 }
 
 /// How far off the nest's middle a landing pushes, in px per px/s he was still moving
@@ -755,6 +804,92 @@ mod tests {
         assert!(!seen.contains(&State::Splatting), "{seen:?}");
         assert_eq!(seen.last(), Some(&State::Home));
         assert_eq!(ink, Vec::new());
+    }
+
+    /// Written at the caret for `ms`, then sent home and settled there: how many times he
+    /// tapped his nib on the rim, and whether he tipped toward it meanwhile.
+    fn home_after_writing(ms: f64) -> (World, u32, bool) {
+        let mut world = World::new(NEST);
+        world.tell(Event::WriteCaret);
+        world.advance(steps(ms), &anchors((60.0, 700.0)));
+        world.tell(Event::FlyHome);
+        world.tell(Event::FlyHome);
+        assert_eq!(world.rambo.brain, State::Home);
+        let (mut taps, mut tipped) = (0, false);
+        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + SETTLES_MS) {
+            world.advance(1, &anchors(NEST));
+            if let Some((_, done)) = world.rambo.tapping {
+                taps = taps.max(done);
+                tipped |= world.look().lean_deg < -1.0;
+            }
+        }
+        (world, taps, tipped)
+    }
+
+    #[test]
+    fn after_a_long_stretch_of_writing_he_taps_his_dry_nib_on_the_rim_then_rests() {
+        let (world, taps, tipped) = home_after_writing(tuning::DRY_NIB_AFTER_MS + 500.0);
+        assert_eq!(taps, tuning::DRY_NIB_TAPS);
+        assert!(tipped, "he tips toward the rim to tap");
+        assert_eq!(world.rambo.written_ms, 0.0, "a fresh nib");
+        assert!(world.at_rest(), "then the loop may sleep");
+        assert_eq!(world.draw().pos, in_nest(&world, NEST));
+    }
+
+    #[test]
+    fn only_a_dry_nib_is_tapped_and_only_once_he_is_home() {
+        // Seeded writing lengths either side of the dry point.
+        let mut seed = 3_u64;
+        for _ in 0..6 {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            let ms = 2000.0 + (seed >> 33) as f64 % 20_000.0;
+            let (_, taps, _) = home_after_writing(ms);
+            let expected = match mascot::nib_dry(ms) {
+                true => tuning::DRY_NIB_TAPS,
+                false => 0,
+            };
+            assert_eq!(taps, expected, "after {ms} ms of writing");
+        }
+        // Writing is never interrupted by a tap: away from home there is none.
+        let mut world = World::new(NEST);
+        world.tell(Event::WriteCaret);
+        for _ in 0..steps(tuning::DRY_NIB_AFTER_MS + 2000.0) {
+            world.advance(1, &anchors((60.0, 700.0)));
+            assert_eq!(world.rambo.tapping, None);
+        }
+    }
+
+    #[test]
+    fn picked_up_mid_tap_he_stops_and_the_nest_settles() {
+        let mut world = World::new(NEST);
+        world.tell(Event::WriteCaret);
+        world.advance(
+            steps(tuning::DRY_NIB_AFTER_MS + 500.0),
+            &anchors((60.0, 700.0)),
+        );
+        world.tell(Event::FlyHome);
+        world.tell(Event::FlyHome);
+        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + 1000.0) {
+            world.advance(1, &anchors(NEST));
+            if world.rambo.tapping.is_some() {
+                break;
+            }
+        }
+        assert!(world.rambo.tapping.is_some(), "tapping");
+        world.tell(Event::Grab);
+        assert_eq!(world.rambo.tapping, None);
+        world.advance(steps(SETTLES_MS), &anchors((200.0, 400.0)));
+        assert_eq!(world.tap_lean(), 0.0, "no tap lean left");
+        world.tell(Event::DropEmpty);
+        world.advance(
+            steps(f64::from(crate::tuning::FLY_MS) + SETTLES_MS),
+            &anchors((200.0, 400.0)),
+        );
+        assert_eq!(
+            world.rambo.tapping, None,
+            "the nib was dried: no second round"
+        );
+        assert!(world.at_rest());
     }
 
     /// Dazed at `spot`, as a smack or a writing drag that ends there leaves him.

@@ -410,6 +410,21 @@ pub const NEST_LEAVE_KICK: f64 = 30.0;
 /// range 40 to 120.
 pub const NEST_CATCH_PX: f64 = 70.0;
 
+/// After this much writing, in ms of writing rows and at the caret, his nib has run dry:
+/// home again, he taps it on the nest's rim (Interview 3, idea 2). Safe range 6000 to
+/// 30000: lower and he taps after every few tasks, higher and hardly ever.
+pub const DRY_NIB_AFTER_MS: f64 = 12_000.0;
+/// How long he sits in the nest before the first tap, in ms. Safe range 150 to 600.
+pub const DRY_NIB_PAUSE_MS: f64 = 300.0;
+/// How many times he taps, and how far apart, in ms. Safe ranges 2 to 4 and 120 to 260.
+pub const DRY_NIB_TAPS: u32 = 3;
+pub const DRY_NIB_TAP_MS: f64 = 180.0;
+/// How far he tips toward the rim while he taps, in degrees (negative: his top toward the
+/// page). Safe range -20 to -6.
+pub const DRY_NIB_LEAN_DEG: f64 = -12.0;
+/// How hard each tap knocks the nest, in px/s of sag. Safe range 15 to 50.
+pub const DRY_NIB_TAP_KICK: f64 = 35.0;
+
 const _: () = assert!(
     FLING_GRAVITY < FLING_FRICTION
         && FLING_REST_SPEED < GESTURE_FLING_MIN_SPEED
