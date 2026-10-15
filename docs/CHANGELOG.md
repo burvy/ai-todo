@@ -5,6 +5,11 @@ Plain-language list of what changed, newest first. Each line names the pull requ
 
 ## 2026-10-15
 
+- #416 Rambo goes home when the microphone cannot listen while he notes.
+- #414 A stray swipe on the edit sheet no longer triggers the browser's back, which left a blank page.
+- #413 The page rip is cut, as a step of the core redesign.
+- #409 Docs: the target architecture, one core with thin views (approved design).
+- #400 The bookmark ribbon is static and split: its head sits in the day names, its tail under the slips.
 - #397 A planner slip you drag stays under your pointer where you took it.
 - #396 Planner slips look like torn paper, like the scraps in the task list.
 - #395 A waiting gap in the planner skips a deleted row and is measured from the row above it.
