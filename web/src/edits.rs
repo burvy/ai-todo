@@ -1,9 +1,11 @@
-//! Sending an edit to a task and showing what the server holds afterwards.
+//! Building an edit to a task, and sending it through the store (`web/src/store.rs`),
+//! which shows what the server holds afterwards and explains a refusal.
 
-use leptos::prelude::*;
+use rambl_web_core::store::Command;
 use todo_core::Snapshot;
 
 use crate::api;
+use crate::store::Store;
 
 /// The task `id` as the list holds it right now.
 ///
@@ -51,42 +53,26 @@ pub(crate) fn confirmed(message: &str) -> bool {
     }
 }
 
-/// What the page tells the user when an edit did not apply.
-///
-/// The wording follows why the edit failed, not whether the reload afterwards worked: a
-/// refusal from the server is not "could not reach the server" just because the reload
-/// that followed also failed.
-fn refused_note(error: &api::ApiError, reloaded: bool) -> &'static str {
-    crate::store::refusal(error).note(reloaded)
-}
-
-/// Where an edit's result goes: the list it replaces and the note that explains a refusal.
-#[derive(Clone, Copy)]
-pub(crate) struct EditSink {
-    pub(crate) set_snapshot: WriteSignal<Snapshot>,
-    pub(crate) set_error: WriteSignal<Option<String>>,
-}
-
 /// Sends an edit and shows what the server now holds. Returns whether the edit applied.
 ///
 /// A refused edit (the task changed on another device, or the network failed) is not an
-/// error to hide: the list is reloaded so the next click starts from the server's copy,
-/// and a short note says why nothing happened.
+/// error to hide: the store reloads the list so the next click starts from the server's
+/// copy, and a short note says why nothing happened.
 pub(crate) async fn patch_and_show(
     id: &todo_core::TaskId,
     body: api::PatchTaskBody,
-    sink: EditSink,
+    store: Store,
 ) -> bool {
-    show(api::patch_task(id, body).await, sink).await
+    store.send(Command::Patch(id.clone(), body)).await
 }
 
 /// The same for a spoken change, which Jev turns into an edit on the server.
 pub(crate) async fn revise_and_show(
     id: &todo_core::TaskId,
     body: api::ReviseBody,
-    sink: EditSink,
+    store: Store,
 ) -> bool {
-    show(api::revise_task(id, body).await, sink).await
+    store.send(Command::Revise(id.clone(), body)).await
 }
 
 /// The change for `id` that Rambo heard while its edit sheet was open, or `None`
@@ -130,29 +116,6 @@ fn revisable_task<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a todo_core:
     held(snapshot, id).filter(|task| task.source != todo_core::Source::Series)
 }
 
-async fn show(result: Result<Snapshot, api::ApiError>, sink: EditSink) -> bool {
-    match result {
-        Ok(snapshot) => {
-            // A note about an earlier refusal must not outlive the retry that worked.
-            sink.set_error.set(None);
-            sink.set_snapshot.set(snapshot);
-            true
-        }
-        Err(error) => {
-            let reloaded = match api::fetch_snapshot(&api::today_date()).await {
-                Ok(snapshot) => {
-                    sink.set_snapshot.set(snapshot);
-                    true
-                }
-                Err(_) => false,
-            };
-            sink.set_error
-                .set(Some(refused_note(&error, reloaded).to_owned()));
-            false
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,29 +136,6 @@ mod tests {
         let second = toggle_done_body(&snapshot, &id).expect("task is listed");
         assert_eq!(second.done, Some(false), "must flip the current state");
         assert_eq!(second.updated_at, Some(snapshot.tasks[0].updated_at));
-    }
-
-    #[test]
-    fn a_refused_edit_says_why() {
-        let stale = api::ApiError::Server(todo_core::ApiError {
-            code: todo_core::ErrorCode::StaleUpdate,
-            message: String::new(),
-        });
-        assert!(refused_note(&stale, true).contains("changed elsewhere"));
-        assert!(refused_note(&stale, false).contains("Reload the page"));
-        let offline = api::ApiError::Network("offline".into());
-        for reloaded in [true, false] {
-            assert!(refused_note(&offline, reloaded).contains("Could not reach the server"));
-        }
-        // A server refusal is never reported as an unreachable server, reload or not.
-        let refused = api::ApiError::Server(todo_core::ApiError {
-            code: todo_core::ErrorCode::BadRequest,
-            message: String::new(),
-        });
-        for reloaded in [true, false] {
-            assert!(!refused_note(&refused, reloaded).contains("reach"));
-            assert!(refused_note(&refused, reloaded).contains("not saved"));
-        }
     }
 
     #[test]

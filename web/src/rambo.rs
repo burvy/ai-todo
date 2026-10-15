@@ -6,9 +6,7 @@ use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 
-use crate::edits::{
-    EditSink, heard_edit_applies, revisable, revise_and_show, revise_body, sheet_left,
-};
+use crate::edits::{heard_edit_applies, revisable, revise_and_show, revise_body, sheet_left};
 use crate::tasks::{apply_tick, tick_action};
 use crate::{gesture, ink, mascot, settings, sound, speech, tuning, voice};
 
@@ -54,6 +52,8 @@ pub(crate) fn Rambo(
     /// What a dazed Rambo has written on the page, one path per drag
     strokes: RwSignal<Vec<ink::Stroke>>,
 ) -> impl IntoView {
+    // Edits go through the store, which shows the reply and explains a refusal.
+    let store = expect_context::<crate::store::Store>();
     // Where he is drawn, and how squashed by a hop: see the hop mover below.
     let shown = RwSignal::new(pen_pos.get_untracked());
     let squash = RwSignal::new(0.0_f64);
@@ -472,17 +472,7 @@ pub(crate) fn Rambo(
             move |on| {
                 set_talking.set(on);
                 if !on {
-                    send_heard_edit(
-                        editing,
-                        heard,
-                        snapshot,
-                        EditSink {
-                            set_snapshot,
-                            set_error,
-                        },
-                        edit_request,
-                        open_sheet,
-                    );
+                    send_heard_edit(editing, heard, snapshot, store, edit_request, open_sheet);
                 }
             },
             // Silence is fine here: the sheet is open, so typing the change works too.
@@ -553,10 +543,7 @@ pub(crate) fn Rambo(
                 // The list's tick, so a repeat's day is marked on its own date.
                 let action = snapshot.with_untracked(|s| tick_action(s, &task_id));
                 crate::scrap::note_departure(&task_id);
-                let sink = EditSink {
-                    set_snapshot,
-                    set_error,
-                };
+                let sink = store;
                 // He has his answer before the tick is saved, so a second tap on
                 // Done finds him no longer asking and cannot tick it back.
                 chosen();
@@ -1321,7 +1308,7 @@ fn send_heard_edit(
     editing: RwSignal<Option<TaskId>>,
     heard: RwSignal<String>,
     snapshot: ReadSignal<Snapshot>,
-    sink: EditSink,
+    sink: crate::store::Store,
     edit_request: RwSignal<Option<TaskId>>,
     open_sheet: RwSignal<Option<TaskId>>,
 ) {

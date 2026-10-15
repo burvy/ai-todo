@@ -11,8 +11,9 @@ use leptos::prelude::*;
 use todo_core::{Snapshot, Source, TaskDraft, TaskId, When};
 
 use crate::clock::Clock;
-use crate::edits::{EditSink, confirmed, held, patch_and_show, series_note, toggle_done_body};
+use crate::edits::{confirmed, held, patch_and_show, series_note, toggle_done_body};
 use crate::pickers::{PaperDate, PaperDateTime, PaperRadios, PaperTime};
+use crate::store::Store;
 use crate::{api, mascot, row, scrap, settings, smudge, tuning, week};
 use fields::{
     EditWhen, WEEKDAY_CHOICES, due_display, local_input_value, series_from_dialog,
@@ -252,7 +253,7 @@ pub(crate) fn tick_action(snapshot: &Snapshot, id: &str) -> Option<TickAction> {
 /// Writes a tick. A task edit is refused with a reload-and-retry note
 /// (`patch_and_show`); a series write has nothing to reload, so its refusals speak
 /// for themselves.
-pub(crate) async fn apply_tick(id: &TaskId, action: TickAction, sink: EditSink) {
+pub(crate) async fn apply_tick(id: &TaskId, action: TickAction, sink: Store) {
     let written = match action {
         TickAction::Task(body) => {
             patch_and_show(id, body, sink).await;
@@ -764,7 +765,6 @@ pub(crate) fn TaskList(
 
                         let handle_pointer_up = {
                             let presses = presses.clone();
-                            let set_snapshot_clone = set_snapshot;
                             let drop_task_id_clone = drop_task_id.clone();
                             move |ev: leptos::ev::PointerEvent| {
                                 let Some((outcome, row_id, x, y)) = row::dom::up(&presses, &ev)
@@ -789,7 +789,6 @@ pub(crate) fn TaskList(
                                     row::Release::Scroll | row::Release::SnapBack => {}
                                     row::Release::Done => {
                                         let task_id = TaskId(drop_task_id_clone.clone());
-                                        let set_snapshot = set_snapshot_clone;
                                         #[cfg(target_arch = "wasm32")]
                                         crate::sound::play(crate::sound::Cue::Scribble);
                                         wasm_bindgen_futures::spawn_local(async move {
@@ -798,7 +797,7 @@ pub(crate) fn TaskList(
                                             gloo_timers::future::TimeoutFuture::new(tuning::SCRIBBLE_FINISH_MS).await;
                                             scrap::note_departure(&task_id.0);
                                             if let Some(action) = snapshot.with_untracked(|s| tick_action(s, &task_id.0)) {
-                                                apply_tick(&task_id, action, EditSink { set_snapshot, set_error }).await;
+                                                apply_tick(&task_id, action, store).await;
                                             }
                                             scrap::forget_departure(&task_id.0);
                                             // Refused: the ink comes off and the row stays.
@@ -1178,7 +1177,7 @@ pub(crate) fn TaskList(
                                             let Some(body) = snapshot.with_untracked(|s| toggle_done_body(s, &task_id.0)) else {
                                                 return;
                                             };
-                                            let sink = EditSink { set_snapshot, set_error };
+                                            let sink = store;
                                             wasm_bindgen_futures::spawn_local(async move {
                                                 if patch_and_show(&task_id, body, sink).await {
                                                     set_editing_task.set(None);
@@ -1313,7 +1312,7 @@ pub(crate) fn TaskList(
                                             let Some(seen) = snapshot.with_untracked(|s| held(s, &task_id.0).map(|task| task.updated_at)) else {
                                                 return;
                                             };
-                                            let sink = EditSink { set_snapshot, set_error };
+                                            let sink = store;
                                             let body = api::PatchTaskBody::new()
                                                 .title(title)
                                                 .duration_min(duration.unwrap_or(1))

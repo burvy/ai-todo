@@ -6,6 +6,7 @@
 //!
 //! Pure: the page (`web/src/store.rs`) does the sending and the signals.
 
+use crate::body::{PatchTaskBody, ReviseBody};
 use todo_core::{Snapshot, Source, TaskId};
 
 /// What a view asks the store to change.
@@ -13,6 +14,10 @@ use todo_core::{Snapshot, Source, TaskId};
 pub enum Command {
     /// The stored tasks in this order, every one exactly once.
     Reorder(Vec<TaskId>),
+    /// Fields of one task, against the version the page last saw (`updated_at`).
+    Patch(TaskId, PatchTaskBody),
+    /// One spoken or typed sentence Jev turns into an edit of a task.
+    Revise(TaskId, ReviseBody),
 }
 
 impl Command {
@@ -21,6 +26,9 @@ impl Command {
     fn apply(&self, snapshot: &mut Snapshot) {
         match self {
             Command::Reorder(ids) => reorder(snapshot, ids),
+            // What an edit changes is the server's to say: a stale one is refused, and a
+            // sentence is read by Jev. Nothing shows until the reply.
+            Command::Patch(..) | Command::Revise(..) => {}
         }
     }
 }
@@ -255,6 +263,22 @@ mod tests {
         assert_eq!(store.answer(second, Ok(b.clone())), Outcome::Shown);
         assert_eq!(store.answer(first, Ok(a)), Outcome::Stale);
         assert_eq!(store.snapshot(), &b);
+    }
+
+    #[test]
+    fn an_edit_shows_nothing_until_the_server_answers() {
+        let start = fixture();
+        let id = ids(&start)[0].clone();
+        let mut store = Store::new(start.clone());
+        store.send(&Command::Patch(id.clone(), PatchTaskBody::new().done(true)));
+        store.send(&Command::Revise(
+            id,
+            ReviseBody {
+                instruction: "make it Friday".into(),
+                updated_at: None,
+            },
+        ));
+        assert_eq!(store.snapshot(), &start);
     }
 
     #[test]
