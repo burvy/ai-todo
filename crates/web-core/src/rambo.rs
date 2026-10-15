@@ -5,6 +5,21 @@
 use crate::gesture::Vec2;
 use crate::mascot::{self, Asked, Event, NotedHour, State};
 
+/// A task under the finger, as the page shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TaskUnder {
+    pub id: String,
+    pub title: String,
+}
+
+/// A slip on the planner under the finger.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SlipUnder {
+    pub task: TaskUnder,
+    /// One day of a repeating series.
+    pub repeats: bool,
+}
+
 /// What lies where he is let go, as the page found it there.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Under {
@@ -12,10 +27,23 @@ pub struct Under {
     pub nest: bool,
     /// An empty planner hour.
     pub hour: Option<NotedHour>,
-    /// A task row: its id and title.
-    pub row: Option<(String, String)>,
-    /// A slip on the planner: its id, its title, and whether it is one day of a repeat.
-    pub slip: Option<(String, String, bool)>,
+    /// A task row.
+    pub row: Option<TaskUnder>,
+    /// A slip on the planner.
+    pub slip: Option<SlipUnder>,
+}
+
+/// How he was let go.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LetGo {
+    /// The finger moved since it picked him up.
+    pub moved: bool,
+    /// He was listening.
+    pub listening: bool,
+    /// The flick's speed, if he was let go mid-flick.
+    pub flick: Option<Vec2>,
+    /// The page asks for reduced motion.
+    pub reduced_motion: bool,
 }
 
 /// What letting go of him does.
@@ -37,25 +65,17 @@ pub enum Released {
     },
 }
 
-/// Letting go of him, held as `before`: whether the finger `moved`, whether he was
-/// `listening`, the flick's speed if it was let go mid-flick, and what lies there
+/// Letting go of him, held as `before`, the way `how` says, over what lies there
 /// (`under`, looked up only when it decides anything). The nest wins over everything;
 /// carried, an empty hour, then a row, then a slip; otherwise he lands on the page.
-pub fn released(
-    before: &State,
-    moved: bool,
-    listening: bool,
-    flick: Option<Vec2>,
-    reduced_motion: bool,
-    under: impl FnOnce() -> Under,
-) -> Released {
+pub fn released(before: &State, how: LetGo, under: impl FnOnce() -> Under) -> Released {
     let carried = *before == State::Dragging;
     if !carried && *before != State::Inking {
         return Released::NotHeld;
     }
-    if !moved {
+    if !how.moved {
         return Released::Tapped {
-            submit: carried && !listening,
+            submit: carried && !how.listening,
         };
     }
     let under = under();
@@ -78,17 +98,21 @@ pub fn released(
         if let Some(at) = under.hour {
             return dropped(Event::DropHour(at), None);
         }
-        if let Some((task_id, title)) = under.row {
-            return dropped(Event::DropTask { task_id, title }, Some(Asked::Row));
+        if let Some(TaskUnder { id, title }) = under.row {
+            return dropped(Event::DropTask { task_id: id, title }, Some(Asked::Row));
         }
-        if let Some((task_id, title, repeats)) = under.slip {
+        if let Some(SlipUnder {
+            task: TaskUnder { id, title },
+            repeats,
+        }) = under.slip
+        {
             return dropped(
-                Event::DropTask { task_id, title },
+                Event::DropTask { task_id: id, title },
                 Some(Asked::Slip { repeats }),
             );
         }
     }
-    let (event, throw) = on_page(before, flick, reduced_motion);
+    let (event, throw) = on_page(before, how.flick, how.reduced_motion);
     Released::Dropped {
         event,
         asked: None,
@@ -97,13 +121,61 @@ pub fn released(
     }
 }
 
-/// Let go on the page (or the browser took the finger): carried and let go mid-flick,
-/// he is thrown at the flick's speed, unless motion is reduced; otherwise he drops.
+/// Let go on the page: carried and let go mid-flick, he is thrown at the flick's
+/// speed, unless motion is reduced; otherwise he drops.
 fn on_page(before: &State, flick: Option<Vec2>, reduced_motion: bool) -> (Event, Option<Vec2>) {
     match flick {
         Some(vel) if *before == State::Dragging && !reduced_motion => (Event::DropHard, Some(vel)),
         _ => (Event::DropEmpty, None),
     }
+}
+
+/// What picking him up does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Grabbed {
+    /// He is carried: held still, he listens; a drag only carries him.
+    Carried,
+    /// Dazed, he writes: the drag is ink from his nib.
+    Writing,
+}
+
+/// Picking him up, as `before`: `None` while his pen is busy or when a grab changes
+/// nothing (splatting, on his way home, asking).
+pub fn grabbed(before: &State) -> Option<Grabbed> {
+    if mascot::pen_busy(before) {
+        return None;
+    }
+    match mascot::transition(before, Event::Grab) {
+        State::Dragging => Some(Grabbed::Carried),
+        State::Inking => Some(Grabbed::Writing),
+        _ => None,
+    }
+}
+
+/// What his key does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Keyed {
+    /// He was listening: he stops and is released.
+    StopsListening,
+    /// He is picked up and listens.
+    Listens,
+    /// Nothing, but the key is still his.
+    Nothing,
+}
+
+/// Space or Enter on him, as `before`, `talking` or not; any other `key` is not his
+/// (`None`), so the page keeps it.
+pub fn keyed(key: &str, talking: bool, before: &State) -> Option<Keyed> {
+    if key != " " && key != "Enter" {
+        return None;
+    }
+    Some(if talking {
+        Keyed::StopsListening
+    } else if mascot::listens_on_grab(before) {
+        Keyed::Listens
+    } else {
+        Keyed::Nothing
+    })
 }
 
 /// Whether a bubble `height` tall would run off the top of the screen sitting on
@@ -137,15 +209,36 @@ mod tests {
         }
     }
 
+    fn task(id: &str, title: &str) -> TaskUnder {
+        TaskUnder {
+            id: id.into(),
+            title: title.into(),
+        }
+    }
+
     /// Everything at once under the finger: the nest, an hour, a row and a slip.
     fn everything() -> Under {
         Under {
             nest: true,
             hour: Some(hour()),
-            row: Some(("t1".into(), "Lab report".into())),
-            slip: Some(("t2".into(), "Gym".into(), true)),
+            row: Some(task("t1", "Lab report")),
+            slip: Some(SlipUnder {
+                task: task("t2", "Gym"),
+                repeats: true,
+            }),
         }
     }
+
+    /// Let go where he was picked up.
+    const TAP: LetGo = LetGo {
+        moved: false,
+        listening: false,
+        flick: None,
+        reduced_motion: false,
+    };
+
+    /// Let go somewhere else, gently.
+    const MOVED: LetGo = LetGo { moved: true, ..TAP };
 
     fn event_of(released: Released) -> Event {
         match released {
@@ -157,7 +250,7 @@ mod tests {
     #[test]
     fn only_a_held_rambo_is_let_go() {
         for before in [State::Home, State::Dazed, State::Thrown, State::Flying] {
-            let released = released(&before, true, false, None, false, || {
+            let released = released(&before, MOVED, || {
                 panic!("nothing is looked up for {before:?}")
             });
             assert_eq!(released, Released::NotHeld);
@@ -168,16 +261,20 @@ mod tests {
     fn let_go_where_he_was_picked_up_he_is_tapped_and_sends_what_is_typed() {
         let nothing = || panic!("a tap looks nothing up");
         assert_eq!(
-            released(&State::Dragging, false, false, None, false, nothing),
+            released(&State::Dragging, TAP, nothing),
             Released::Tapped { submit: true }
         );
+        let listening = LetGo {
+            listening: true,
+            ..TAP
+        };
         assert_eq!(
-            released(&State::Dragging, false, true, None, false, nothing),
+            released(&State::Dragging, listening, nothing),
             Released::Tapped { submit: false },
             "listening, what he heard is what is sent"
         );
         assert_eq!(
-            released(&State::Inking, false, false, None, false, nothing),
+            released(&State::Inking, TAP, nothing),
             Released::Tapped { submit: false },
             "writing, a tap is ink"
         );
@@ -186,7 +283,7 @@ mod tests {
     #[test]
     fn the_nest_wins_and_a_dazed_rambo_put_back_is_heard() {
         assert_eq!(
-            released(&State::Dragging, true, false, None, false, everything),
+            released(&State::Dragging, MOVED, everything),
             Released::Dropped {
                 event: Event::DropNest,
                 asked: None,
@@ -194,9 +291,7 @@ mod tests {
                 throw: None
             }
         );
-        let Released::Dropped { put_back, .. } =
-            released(&State::Inking, true, false, None, false, everything)
-        else {
+        let Released::Dropped { put_back, .. } = released(&State::Inking, MOVED, everything) else {
             panic!("a drop")
         };
         assert!(put_back, "writing, he was dazed: put back");
@@ -204,7 +299,7 @@ mod tests {
 
     #[test]
     fn carried_an_hour_comes_before_a_row_and_a_row_before_a_slip() {
-        let carried = |under: Under| released(&State::Dragging, true, false, None, false, || under);
+        let carried = |under: Under| released(&State::Dragging, MOVED, || under);
         let no_nest = Under {
             nest: false,
             ..everything()
@@ -212,7 +307,7 @@ mod tests {
         assert_eq!(event_of(carried(no_nest.clone())), Event::DropHour(hour()));
         let row_and_slip = Under {
             hour: None,
-            ..no_nest.clone()
+            ..no_nest
         };
         assert_eq!(
             carried(row_and_slip.clone()),
@@ -250,15 +345,12 @@ mod tests {
             nest: false,
             ..everything()
         };
+        let flicked = LetGo {
+            flick: Some((3.0, 0.0)),
+            ..MOVED
+        };
         assert_eq!(
-            event_of(released(
-                &State::Inking,
-                true,
-                false,
-                Some((3.0, 0.0)),
-                false,
-                || under
-            )),
+            event_of(released(&State::Inking, flicked, || under)),
             Event::DropEmpty
         );
     }
@@ -266,8 +358,9 @@ mod tests {
     #[test]
     fn let_go_mid_flick_he_is_thrown_unless_motion_is_reduced() {
         let flick = Some((2.0, -1.0));
+        let flicked = LetGo { flick, ..MOVED };
         assert_eq!(
-            released(&State::Dragging, true, false, flick, false, Under::default),
+            released(&State::Dragging, flicked, Under::default),
             Released::Dropped {
                 event: Event::DropHard,
                 asked: None,
@@ -275,14 +368,56 @@ mod tests {
                 throw: flick
             }
         );
+        let reduced = LetGo {
+            reduced_motion: true,
+            ..flicked
+        };
         assert_eq!(
-            on_page(&State::Dragging, flick, true),
-            (Event::DropEmpty, None)
+            event_of(released(&State::Dragging, reduced, Under::default)),
+            Event::DropEmpty
         );
         assert_eq!(
-            on_page(&State::Dragging, None, false),
-            (Event::DropEmpty, None)
+            event_of(released(&State::Dragging, MOVED, Under::default)),
+            Event::DropEmpty
         );
+    }
+
+    #[test]
+    fn he_is_carried_from_home_and_a_throw_and_writes_when_dazed() {
+        assert_eq!(grabbed(&State::Home), Some(Grabbed::Carried));
+        assert_eq!(grabbed(&State::Thrown), Some(Grabbed::Carried), "caught");
+        assert_eq!(grabbed(&State::WritingRow), Some(Grabbed::Carried));
+        assert_eq!(grabbed(&State::Dazed), Some(Grabbed::Writing));
+    }
+
+    #[test]
+    fn a_busy_pen_or_a_grab_that_changes_nothing_is_not_a_grab() {
+        for before in [
+            State::Flying,
+            State::WritingCaret,
+            State::Splatting,
+            State::Skittering,
+            State::Covered,
+        ] {
+            assert_eq!(grabbed(&before), None, "{before:?}");
+        }
+    }
+
+    #[test]
+    fn space_or_enter_starts_and_stops_his_listening() {
+        assert_eq!(keyed(" ", false, &State::Home), Some(Keyed::Listens));
+        assert_eq!(keyed("Enter", false, &State::Home), Some(Keyed::Listens));
+        assert_eq!(
+            keyed(" ", true, &State::Dragging),
+            Some(Keyed::StopsListening)
+        );
+        assert_eq!(
+            keyed("Enter", false, &State::Dazed),
+            Some(Keyed::Nothing),
+            "dazed, he does not listen"
+        );
+        assert_eq!(keyed("a", false, &State::Home), None);
+        assert_eq!(keyed("Escape", true, &State::Dragging), None);
     }
 
     #[test]

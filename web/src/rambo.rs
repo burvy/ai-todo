@@ -999,15 +999,9 @@ pub(crate) fn Rambo(
                     if other_finger(&ev) {
                         return;
                     }
-                    let before = state.get_untracked();
-                    if mascot::pen_busy(&before) {
+                    let Some(grab) = model::grabbed(&state.get_untracked()) else {
                         return;
-                    }
-                    let after = mascot::transition(&before, mascot::Event::Grab);
-                    if after == before {
-                        // Splatting, on his way home, or asking: not now.
-                        return;
-                    }
+                    };
                     set_brain_event.set(Some(rambl_brain::Event::Poked));
                     *moved_down.borrow_mut() = false;
                     // Save grab state: pointer position and pen position at grab
@@ -1024,13 +1018,10 @@ pub(crate) fn Rambo(
                         id: ev.pointer_id(),
                     });
                     rambo_world.tell(mascot::Event::Grab);
-                    if after == mascot::State::Dragging {
-                        pen_pos.set(held_spot(&ev, (gx, gy)));
-                    }
                     let ticket = hold.get().wrapping_add(1);
                     hold.set(ticket);
-                    if mascot::listens_on_grab(&before) {
-                        // Held still, he listens; a drag only carries him.
+                    if grab == model::Grabbed::Carried {
+                        pen_pos.set(held_spot(&ev, (gx, gy)));
                         still.set(true);
                         let (hold, still) = (hold.clone(), still.clone());
                         let start = start_speech_down.clone();
@@ -1043,7 +1034,7 @@ pub(crate) fn Rambo(
                             }
                         });
                     } else if let Some(rambo) = rambo_ref.get() {
-                        // Dazed: this drag writes, starting where the nib is now.
+                        // Writing starts where the nib is now.
                         let below = rambo.get_bounding_client_rect().height() * mascot::NIB_BELOW;
                         nib_below.set(below);
                         start_stroke((ox, oy + below), ev.time_stamp());
@@ -1129,23 +1120,24 @@ pub(crate) fn Rambo(
                             &snapshot.get_untracked(),
                             &view_settings.get_untracked(),
                         ),
-                        row: row_under(client_x, client_y).map(|row| {
-                            (
-                                row.get_attribute("data-id").unwrap_or_default(),
-                                row.get_attribute("data-title").unwrap_or_default(),
-                            )
+                        row: row_under(client_x, client_y).map(|row| model::TaskUnder {
+                            id: row.get_attribute("data-id").unwrap_or_default(),
+                            title: row.get_attribute("data-title").unwrap_or_default(),
                         }),
-                        slip: crate::week::slip_at(client_x, client_y)
-                            .map(|(id, title, repeats)| (id.0, title, repeats)),
+                        slip: crate::week::slip_at(client_x, client_y).map(
+                            |(id, title, repeats)| model::SlipUnder {
+                                task: model::TaskUnder { id: id.0, title },
+                                repeats,
+                            },
+                        ),
                     };
-                    match model::released(
-                        &before,
-                        *moved_for_up.borrow(),
-                        was_listening,
+                    let how = model::LetGo {
+                        moved: *moved_for_up.borrow(),
+                        listening: was_listening,
                         flick,
-                        mascot::prefers_reduced_motion(),
-                        under,
-                    ) {
+                        reduced_motion: mascot::prefers_reduced_motion(),
+                    };
+                    match model::released(&before, how, under) {
                         model::Released::NotHeld => {}
                         model::Released::Tapped { submit } => {
                             *grab_state_up.borrow_mut() = None;
@@ -1209,16 +1201,22 @@ pub(crate) fn Rambo(
                 }
             }
             on:keydown=move |ev| {
-                if ev.key() == " " || ev.key() == "Enter" {
-                    ev.prevent_default();
-                    if talking.get_untracked() {
+                let Some(keyed) = model::keyed(&ev.key(), talking.get_untracked(), &state.get_untracked())
+                else {
+                    return;
+                };
+                ev.prevent_default();
+                match keyed {
+                    model::Keyed::StopsListening => {
                         stop_speech_key();
                         rambo_world.tell(mascot::Event::Release);
-                    } else if mascot::listens_on_grab(&state.get_untracked()) {
+                    }
+                    model::Keyed::Listens => {
                         rambo_world.tell(mascot::Event::Grab);
                         set_talking.set(true);
                         start_speech_key();
                     }
+                    model::Keyed::Nothing => {}
                 }
             }
         >
