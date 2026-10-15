@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 84" width="60" height="84">
+  <!-- The desk lamp by day: unlit. Brass arm and base, a green-grey shade. -->
+  <ellipse cx="30" cy="80" rx="18" ry="3.5" fill="#000" opacity="0.18"/>
+  <path d="M14 78 Q14 71 30 71 Q46 71 46 78 Z" fill="#7a5c2e" stroke="#4a3719" stroke-width="1.5"/>
+  <path d="M30 71 L30 46" stroke="#7a5c2e" stroke-width="4" stroke-linecap="round"/>
+  <path d="M30 46 L40 22" stroke="#7a5c2e" stroke-width="3.5" stroke-linecap="round"/>
+  <circle cx="30" cy="46" r="3" fill="#a07c3a" stroke="#4a3719" stroke-width="1"/>
+  <path d="M26 24 Q30 6 52 12 Q54 18 46 28 Z" fill="#5f7466" stroke="#3a4a3f" stroke-width="1.5"/>
+  <path d="M26 24 Q36 30 46 28" fill="none" stroke="#3a4a3f" stroke-width="1.5"/>
+</svg>
