@@ -1,6 +1,5 @@
 //! Rambo the pen: dragging, flying, landing on a row, and listening.
 
-use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
@@ -1025,15 +1024,14 @@ pub(crate) fn Rambo(
                         still.set(true);
                         let (hold, still) = (hold.clone(), still.clone());
                         let start = start_speech_down.clone();
-                        Timeout::new(mascot::LISTEN_HOLD_MS, move || {
+                        crate::engine::after(f64::from(mascot::LISTEN_HOLD_MS), move || {
                             if hold.get() == ticket
                                 && still.get()
                                 && state.get_untracked() == mascot::State::Dragging
                             {
                                 start();
                             }
-                        })
-                        .forget();
+                        });
                     } else if let Some(rambo) = rambo_ref.get() {
                         // Dazed: this drag writes, starting where the nib is now.
                         let below = rambo.get_bounding_client_rect().height() * mascot::NIB_BELOW;
