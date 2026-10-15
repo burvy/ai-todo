@@ -628,11 +628,22 @@ a {
   margin: 0;
   padding: 0;
   list-style: none;
-  /* The list page is lightly lined like a notebook's: each row sits on a rule, and the
-     rules run on down the page below the last row, at the same pitch. */
+  /* The list page is ruled paper, ruled before anything is written on it: one grid of
+     rules from the top of the list, every --line-pitch, down to the foot of the page and
+     out under the pin's column. Rows are laid on it: each is a whole number of pitches
+     tall (its text's line height is the pitch), so a title that wraps takes two rules
+     and every rule below stays where it was. */
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
+  margin-right: calc(var(--pin-w) * -1);
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(var(--line-pitch) - 1px),
+    var(--paper-line) calc(var(--line-pitch) - 1px),
+    var(--paper-line) var(--line-pitch)
+  );
 }
 
 .task-list li {
@@ -642,23 +653,8 @@ a {
   gap: var(--space-2);
   align-items: center;
   min-height: var(--line-pitch);
-  padding: var(--space-1) 0;
-  border-bottom: 1px solid var(--paper-line);
-}
-
-/* The empty ruled paper under the last row: it fills what is left of the page and never
-   makes it longer. Its rules start where the last row's ends, so they continue it. */
-.task-list::after {
-  content: "";
-  flex: 1 1 0;
-  min-height: 0;
-  background: repeating-linear-gradient(
-    to bottom,
-    transparent 0,
-    transparent calc(var(--line-pitch) - 1px),
-    var(--paper-line) calc(var(--line-pitch) - 1px),
-    var(--paper-line) var(--line-pitch)
-  );
+  padding: 0;
+  margin-right: var(--pin-w);
 }
 
 /* Section 4 row delete (Angela): hover mark on desktop, faint x + swipe right on phone */
@@ -1903,8 +1899,18 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   display: block;
   flex: 1 1 0;
   min-width: 0;
-  padding: var(--space-2) 0;
+  padding: 0;
+  /* Each line of a wrapped title sits on its own rule. */
+  line-height: var(--line-pitch);
   cursor: pointer;
+}
+
+/* Mixed sizes on one line (the title, the small meta) would grow its box by a pixel and walk
+   the rows off the rules, so each part is aligned to the line box itself. */
+.task-open > *,
+.task-open strong,
+.task-time {
+  vertical-align: top;
 }
 
 /* The title in the human's own hand (system handwriting stack, no downloads). */

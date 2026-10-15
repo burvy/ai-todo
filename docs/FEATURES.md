@@ -283,17 +283,17 @@ the tape), `web/src/mascot.rs:State::Mending, Event::Mend`, `web/theme.css` (`ma
 `MEND_MS`).
 
 ### 9. The list paper is lightly lined
-a. The list page is ruled like a notebook's: each row sits on a faint line, and the lines
-run on down the page below the last row at the same spacing, to the foot of the page. The
-planner keeps its own grid. The lines are a token (`--paper-line`, fainter than the rules
-that divide things, with its own dark value) and the spacing is `--line-pitch`, which is
-also each row's least height, so a one-line row is exactly one line. A title that wraps
-makes its row taller; the lines below it continue from where it ends. The ruled paper fills
-what is left of the page and never makes it longer.
-b. Add a few tasks: the rows stand on lines that carry on to the page's foot, in light and
-dark paper, on a phone and on a desk.
-c. Code: `web/theme.css` (`--paper-line`, `--line-pitch`, `.task-list li`,
-`.task-list::after`).
+a. The list page is ruled like a notebook's, ruled before anything is written on it: one grid
+of faint rules from the top of the list down to the foot of the page and out under the pin's
+column, every `--line-pitch`. Each row is laid on it: a row is a whole number of pitches tall
+(its text's line height is the pitch), so a one-line title sits on one rule and a title that
+wraps takes two, each line on its own rule, and every rule below stays where it was. The
+planner keeps its own grid. The rules are a token (`--paper-line`, fainter than the rules that
+divide things, with its own dark value). The paper fills what is left of the page and never
+makes it longer.
+b. Add a few tasks, one with a long title: the rows stand on lines that carry on to the page's
+foot, with the long title on two, in light and dark paper, on a phone and on a desk.
+c. Code: `web/theme.css` (`--paper-line`, `--line-pitch`, `.task-list`, `.task-open`).
 
 ## III. WEEK PLANNER
 

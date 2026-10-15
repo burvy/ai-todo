@@ -1313,10 +1313,11 @@ fn task_time(snapshot: &Snapshot, id: &str, clock: Clock) -> String {
 
 #[cfg(test)]
 mod tests {
-    /// The list's ruled lines: a row is exactly one line tall at least, and the ruled paper
-    /// under the last row repeats the same pitch in the same colour, so the lines continue.
+    /// The list's ruled lines are one grid on the paper, and rows are laid on it: the grid
+    /// is drawn on the list itself at the pitch, and a row's height and its text's line
+    /// height are the pitch, so a wrapped title takes whole rules.
     #[test]
-    fn the_ruled_paper_continues_the_rows_at_their_pitch() {
+    fn the_rows_are_laid_on_one_grid_of_rules() {
         let css = include_str!("../../theme.css");
         let rule = |selector: &str| {
             css.split(selector)
@@ -1325,12 +1326,23 @@ mod tests {
                 .unwrap_or_else(|| panic!("theme.css styles {selector}"))
                 .to_owned()
         };
+        let list = rule(
+            "
+.task-list {",
+        );
         let row = rule(".task-list li {");
-        let filler = rule(".task-list::after {");
+        let text = rule(".task-open {");
+        assert!(list.contains("repeating-linear-gradient"), "{list}");
+        assert!(list.matches("var(--line-pitch)").count() >= 2, "{list}");
+        assert!(list.contains("var(--paper-line)"), "{list}");
         assert!(row.contains("min-height: var(--line-pitch)"), "{row}");
-        assert!(row.contains("var(--paper-line)"), "{row}");
-        assert!(filler.matches("var(--line-pitch)").count() >= 2, "{filler}");
-        assert!(filler.contains("var(--paper-line)"), "{filler}");
+        assert!(row.contains("padding: 0"), "{row}");
+        assert!(
+            !row.contains("border-bottom"),
+            "the grid is the rules: {row}"
+        );
+        assert!(text.contains("line-height: var(--line-pitch)"), "{text}");
+        assert!(text.contains("padding: 0"), "{text}");
     }
 
     /// FRONTEND-PLAN 1.8 item 7: the edit sheet is a real modal (focus trapped, page
