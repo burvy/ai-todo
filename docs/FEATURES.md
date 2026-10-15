@@ -184,7 +184,7 @@ i. Code: `crates/web-core/src/row.rs` (the gesture rules, unit-tested) and `web/
 (pointer events); `crates/web-core/src/task_list.rs:reorder_ids`; `web/src/tasks/mod.rs`, the row's handlers;
 `crates/web-core/src/store.rs` (`Command::Reorder`) and `web/src/store.rs`;
 `web/src/api.rs:reorder_tasks`; `server/src/v2/http/tasks.rs:reorder`;
-`server/src/v2/app.rs:reorder`.
+`server/src/v2/app/tasks.rs:reorder`.
 
 ### 4. Edit through Rambo
 a. Dropping Rambo on a task offers actions: **Edit** opens that task's edit sheet,
@@ -221,7 +221,7 @@ c. Code: `server/src/v2/store/sqlite.rs:SqliteStore`; `server/src/v2/store.rs:St
 a. A `DueBy` deadline remembers the zone it was set in (`due_tz`), so a deadline set as Friday 17:00 in New York reads Friday 17:00 New York even after the user travels or changes zone; the instant itself never moves. Day-only captures become the end of that day (the user's deadline setting, 23:59 by default) in the capture zone (the same end of day either side of a DST change). Editing a task's instant re-anchors the deadline to the zone the edit is made in — an edit that leaves the instant alone (a title-only save, or a revision that repeats the day the task already has) keeps the stored zone — and a task that stops being a deadline has no zone.
 b. Open a task whose due date was set in another zone: the edit box still shows the original zone's time, names the zone next to the date field, and saving keeps the same instant. A deadline typed into the dialog is read as that zone's wall clock; a repeated fall-back hour resolves to its first occurrence. A clock time inside a spring-forward gap names no instant, so saving shows a short inline message and leaves the dialog open instead of doing nothing.
 c. Code: `crates/core/src/lib.rs:Task::due_tz, When::DueBy`;
-`server/src/v2/app.rs:due_zone, set_when, patch, apply_revision`;
+`server/src/v2/app/tasks.rs:due_zone, set_when, patch, apply_revision`;
 `web/src/tasks/fields.rs:due_display, parse_edited_due, parse_due_input, typed_when`.
 
 ### 8. The page: no chrome, always-visible capture box, nothing pops
@@ -317,7 +317,7 @@ a. Tasks with an explicit start stay there; other tasks flow into available
 working hours around them. Tasks with a deadline are planned first, earliest
 deadline first, so a task higher in the list cannot take the only room a deadline has.
 b. Capture a phrase such as `dinner Friday at 7`, then inspect the Friday block.
-c. Code: `server/src/v2/app.rs:plan, working_hours`;
+c. Code: `server/src/v2/app.rs:plan`, `server/src/v2/app/settings.rs:working_hours`;
 `crates/scheduler/src/plan.rs:plan`, `crates/scheduler/src/hours.rs:WorkingHours`.
 
 ### 3a. Day-only tasks
@@ -336,7 +336,7 @@ and shows the reason. The picker keeps the minute it was on, so choosing 5 from 
 c. Code: `web/src/gear_menu.rs:DayTimes, DayTime`; `web/src/api.rs:fetch_day_settings, patch_day_settings`;
 `crates/scheduler/src/plan.rs:plan, usual_time, slot_near`;
 `crates/core/src/lib.rs:DaySettings`; `crates/dates/src/lib.rs:when_from`;
-`server/src/v2/app.rs:patch_day_settings`; `server/src/v2/http/tasks.rs:get_settings`.
+`server/src/v2/app/settings.rs:patch_day_settings`; `server/src/v2/http/tasks.rs:get_settings`.
 
 ### 4. Unplaced tasks are reported
 a. A task that cannot fit is reported as unplaced rather than silently dropped.
@@ -356,7 +356,7 @@ shows why a task is in the list but not on the week is (planned). Covered by
 scheduler, store and server tests.
 c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
 `web/src/week.rs:take_off, place_at`; `web/src/api.rs:PatchTaskBody::off_planner`;
-`crates/scheduler/src/plan.rs:plan`; `server/src/v2/app.rs:patch`;
+`crates/scheduler/src/plan.rs:plan`; `server/src/v2/app/tasks.rs:patch`;
 `server/src/v2/store/schema.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
 
 ### 5. Light and dark paper
@@ -582,7 +582,7 @@ c. Code: `web/src/gear_menu.rs:GearMenu`; `web/src/api.rs:import_ics`;
 a. Importing the same event again updates it by its calendar identifier instead
 of creating a duplicate.
 b. Import the same `.ics` file twice.
-c. Code: `server/src/v2/app.rs:import, ImportedEvent`;
+c. Code: `server/src/v2/app/import.rs:import, ImportedEvent`;
 `server/src/v2/store.rs:find_by_uid`; `crates/core/src/lib.rs:Task`.
 
 ### 3. Skip cancelled and transparent events
@@ -625,7 +625,7 @@ calendar weeks, Monday first, from the week that holds the first event.
 b. Import a `.ics` with `RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO` and check that the
 snapshot contains one series that fires every other Monday.
 c. Code: `server/src/v2/ics_import.rs:parse_calendar, rrule_series`;
-`server/src/v2/app.rs:import_series`; `crates/core/src/lib.rs:Recurrence, Series`.
+`server/src/v2/app/import.rs:import_series`; `crates/core/src/lib.rs:Recurrence, Series`.
 Tests: `server/src/v2/ics_import/tests.rs` (hand-written `.ics` strings for weekly,
 weekly with interval, daily, daily with interval);
 `crates/core/src/lib.rs` (covers math for interval and daily).
@@ -659,8 +659,8 @@ a. New tasks appear newest first (docs/ARCHITECTURE.md 4.1). Unfinished tasks pa
 `DueBy` deadline remain in the list as overdue and are scheduled into the next free slot
 from now, before any normal flexible tasks. Rambo teases about overdue tasks.
 b. Add tasks in sequence, then inspect the list and a task whose due time has passed.
-c. Code: `server/src/v2/app.rs:create, import, add_drafts` (new task order, newest first),
-`server/src/v2/app.rs:sort_tasks`;
+c. Code: `server/src/v2/app/tasks.rs:create, add_drafts`, `server/src/v2/app/import.rs:import` (new task order, newest first),
+`server/src/v2/app/snapshot.rs:sort_tasks`;
 `crates/scheduler/src/plan.rs:plan` (overdue detection and priority placement);
 `web/src/tasks/mod.rs:is_overdue, TaskList` (overdue badge);
 `web/src/brain.rs:142` (emits `TaskOverdue`);
@@ -816,7 +816,7 @@ c. Code: `server/src/v2/store/sqlite.rs:SqliteStore`; `server/src/v2/store/schem
 a. An imported event keeps its external UID so re-import can update it.
 b. Not visible; import the same `.ics` twice.
 c. Code: `crates/core/src/lib.rs:Task.external_uid`;
-`server/src/v2/store.rs:find_by_uid`; `server/src/v2/app.rs:import`.
+`server/src/v2/store.rs:find_by_uid`; `server/src/v2/app/import.rs:import`.
 
 ### 3. In-memory test store
 a. Tests use an in-memory store so they do not write production data.
