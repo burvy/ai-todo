@@ -275,7 +275,7 @@ pub fn lay(scraps: RwSignal<Vec<Scrap>>, title: String, undo: Undo, from: Option
     });
     for gone in pushed {
         wasm_bindgen_futures::spawn_local(async move {
-            gloo_timers::future::TimeoutFuture::new(SCRAP_SLIDE_MS).await;
+            crate::engine::wait(f64::from(SCRAP_SLIDE_MS)).await;
             scraps.update(|pile| pile.retain(|scrap| scrap.ticket != gone));
         });
     }
@@ -283,7 +283,7 @@ pub fn lay(scraps: RwSignal<Vec<Scrap>>, title: String, undo: Undo, from: Option
     wasm_bindgen_futures::spawn_local(async move {
         let mut left_ms = SCRAP_UNDO_MS;
         while left_ms > 0 {
-            gloo_timers::future::TimeoutFuture::new(SCRAP_TICK_MS).await;
+            crate::engine::wait(f64::from(SCRAP_TICK_MS)).await;
             if !still_ours() {
                 return;
             }
@@ -294,7 +294,7 @@ pub fn lay(scraps: RwSignal<Vec<Scrap>>, title: String, undo: Undo, from: Option
             left_ms = after_tick(left_ms, page_hidden() || taping);
         }
         scraps.update(|pile| edit(pile, ticket, |scrap| scrap.leaving = true));
-        gloo_timers::future::TimeoutFuture::new(SCRAP_SLIDE_MS).await;
+        crate::engine::wait(f64::from(SCRAP_SLIDE_MS)).await;
         scraps.update(|pile| pile.retain(|scrap| scrap.ticket != ticket));
     });
 }
@@ -315,19 +315,14 @@ fn row_spot(id: &str) -> Option<Spot> {
 }
 
 /// Fly a scrap that has just been laid from the row it tore from to its place: it starts
-/// at the row, turned flat like the row's own line, and the page's transition carries it
-/// to where it hangs. Done in one task (move, read, release) so the start is never drawn
-/// in the wrong place; with reduced motion it simply hangs. Either way it is pinned with
-/// a tack's sound, as it arrives.
+/// at the row, turned flat like the row's own line, and a spring (`engine::glide`) carries
+/// it to where it hangs, swinging a little past it. With reduced motion it simply hangs.
+/// Either way it is pinned with a tack's sound, as it arrives.
 fn fly(scrap: &web_sys::HtmlElement, from: Spot) {
     if crate::mascot::prefers_reduced_motion() {
         crate::sound::play(crate::sound::Cue::Pin);
         return;
     }
-    set_timeout(
-        || crate::sound::play(crate::sound::Cue::Pin),
-        std::time::Duration::from_millis(SCRAP_SLIDE_MS.into()),
-    );
     let rect = scrap.get_bounding_client_rect();
     let hung = Spot {
         x: rect.left(),
@@ -336,15 +331,39 @@ fn fly(scrap: &web_sys::HtmlElement, from: Spot) {
         h: rect.height(),
     };
     let (dx, dy) = fly_offset(from, hung);
-    let style = scrap.style();
-    let _ = style.set_property("--fly-x", &format!("{dx:.1}px"));
-    let _ = style.set_property("--fly-y", &format!("{dy:.1}px"));
-    let classes = scrap.class_list();
-    let _ = classes.add_1("flying");
-    // Reading a layout value makes the browser settle the start before the release.
-    let _ = scrap.offset_width();
-    let _ = classes.remove_1("flying");
+    let (style, landed) = (scrap.style(), scrap.style());
+    let pull = crate::engine::Pull {
+        omega: crate::tuning::SCRAP_FLY_OMEGA,
+        zeta: crate::tuning::SCRAP_FLY_ZETA,
+    };
+    // The flight turns the strip from lying flat (90 degrees) to its own hang.
+    crate::engine::glide(
+        [dx, dy, FLY_START_TURN_DEG],
+        [0.0; 3],
+        pull,
+        FLY_NEAR,
+        move |[x, y, turn]| {
+            let _ = style.set_property("transition", "none");
+            let _ = style.set_property(
+                "transform",
+                &format!(
+                    "translate({x:.1}px, {y:.1}px) rotate(calc(var(--hang, 0deg) + {turn:.1}deg))"
+                ),
+            );
+        },
+        move || {
+            // Where the flight ends is where the page's own rule hangs it.
+            let _ = landed.remove_property("transform");
+            let _ = landed.remove_property("transition");
+            crate::sound::play(crate::sound::Cue::Pin);
+        },
+    );
 }
+
+/// How far, in degrees, a strip lies turned from its hang when it leaves the row.
+const FLY_START_TURN_DEG: f64 = 90.0;
+/// How near, in px and degrees, its flight must come to its end to count as landed.
+const FLY_NEAR: f64 = 0.3;
 
 /// Where each list row sits, as its offset from the list's top in px, in list order.
 /// An offset ignores transforms, so a row still sliding reads where it will rest.
@@ -628,18 +647,15 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                                 if binned.get_untracked() {
                                     crate::sound::play(crate::sound::Cue::Crumple);
                                     let id = task_id.get_value();
-                                    set_timeout(
-                                        move || {
-                                            wasm_bindgen_futures::spawn_local(async move {
-                                                // Refused: the scrap comes back off the bin.
-                                                if store.send(Command::DeleteTask(id)).await.is_none() {
-                                                    binned.set(false);
-                                                    offset.set((0.0, 0.0));
-                                                }
-                                            });
-                                        },
-                                        std::time::Duration::from_millis(BIN_CRUMPLE_MS),
-                                    );
+                                    crate::engine::after(BIN_CRUMPLE_MS as f64, move || {
+                                        wasm_bindgen_futures::spawn_local(async move {
+                                            // Refused: the scrap comes back off the bin.
+                                            if store.send(Command::DeleteTask(id)).await.is_none() {
+                                                binned.set(false);
+                                                offset.set((0.0, 0.0));
+                                            }
+                                        });
+                                    });
                                 } else {
                                     offset.set((0.0, 0.0));
                                 }
