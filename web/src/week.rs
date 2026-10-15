@@ -1139,6 +1139,7 @@ fn resize_slip(id: &TaskId, from: u16, to: u16) {
     let px = (f32::from(to) - f32::from(from)) / 60.0 * HOUR_PX;
     for slip in slips_of(id) {
         let height = slip.get_bounding_client_rect().height() as f32 + px;
+        let _ = slip.class_list().add_1("stretching");
         let _ = slip
             .style()
             .set_property("height", &format!("{:.1}px", height.max(0.0)));
@@ -1146,7 +1147,7 @@ fn resize_slip(id: &TaskId, from: u16, to: u16) {
 }
 
 /// Eases task `id`'s newly drawn slip from `reached` px to the height the plan gives it
-/// (the slip's height transition).
+/// (`.stretching`'s height transition, which only a stretched slip has).
 #[cfg(target_arch = "wasm32")]
 fn ease_slip_from(id: &TaskId, reached: f64) {
     for slip in slips_of(id) {
@@ -1159,6 +1160,7 @@ fn ease_slip_from(id: &TaskId, reached: f64) {
         // Lay it out at the height reached before it eases on.
         let _ = slip.offset_height();
         let _ = style.remove_property("transition");
+        let _ = slip.class_list().add_1("stretching");
         let _ = style.set_property("height", &planned);
     }
 }
