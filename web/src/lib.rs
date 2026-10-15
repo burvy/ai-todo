@@ -2,12 +2,11 @@ use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
 
+// The core (crates/web-core), under the paths the page has always used.
+pub use rambl_web_core::{clock, gesture, hop, tuning};
 pub mod account;
 pub mod api;
 pub mod brain;
-pub mod clock;
-pub mod gesture;
-pub mod hop;
 pub mod ink;
 pub mod inklayer;
 pub mod lamp;
@@ -19,7 +18,7 @@ pub mod row;
 pub mod settings;
 pub mod sound;
 pub mod speech;
-pub mod tuning;
+pub mod store;
 pub mod voice;
 pub mod week;
 
@@ -63,6 +62,7 @@ pub fn App() -> impl IntoView {
     let (snapshot, set_snapshot) = signal(empty_snapshot());
     let (view_settings, set_view_settings) = signal(settings::load());
     let (error, set_error) = signal::<Option<String>>(None);
+    store::Store::provide(snapshot, set_snapshot, set_error);
     let (brain_speech, set_brain_speech) = signal::<Option<String>>(None);
     let (brain_pose, set_brain_pose) = signal("home".to_owned());
     let (brain_event, set_brain_event) = signal::<Option<rambl_brain::Event>>(None);

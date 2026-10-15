@@ -7,7 +7,7 @@
 //! Here pointer samples go in and gestures come out, with one slop
 //! ([`GESTURE_SLOP_PX`]) and one hold time ([`GESTURE_HOLD_MS`]). Who a gesture
 //! belongs to is decided by whoever routes it (the target found at `Down`, and
-//! first of all Rambo: [`crate::mascot::wants`]).
+//! first of all Rambo: `mascot::wants`).
 //!
 //! It is pure: times are the pointer events' `timeStamp` in ms (the clock the
 //! page's frames run on) and speeds are px per ms. Each sample names its finger
