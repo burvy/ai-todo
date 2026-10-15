@@ -1,9 +1,0 @@
-<!-- PLACEHOLDER: replace me, see web/assets/README.md. Torn task strip, plain tear. Huang stretches to 140x32. -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 46" role="img" aria-label="torn paper strip">
-  <path fill="#FCFAF4" stroke="#A7865D" stroke-width="1" stroke-linejoin="round"
-        d="M2 8 L9 5 L18 8 L28 4 L40 7 L52 4 L64 8 L78 4 L90 7 L102 4 L114 8 L126 4 L138 7 L150 4 L162 8 L174 4 L184 7 L192 5 L198 8
-           L198 37 L191 40 L182 36 L170 41 L158 37 L146 41 L134 37 L122 41 L110 37 L98 41 L86 37 L74 41 L62 37 L50 41 L38 37 L26 41 L14 37 L6 40 L2 37 Z"/>
-  <path fill="none" stroke="#5D4732" stroke-width="1.6" stroke-linecap="round" opacity=".55"
-        d="M14 24 C 44 20.5, 76 27.5, 106 23.5 S 166 20.5, 186 24"/>
-  <path fill="none" stroke="#A7865D" stroke-width=".8" opacity=".5" d="M2 15 H198 M2 31 H198"/>
-</svg>

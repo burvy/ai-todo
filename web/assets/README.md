@@ -59,7 +59,6 @@ backgrounds, paper palette, they render inside fixed boxes and scale.
 
 | File | What | Box |
 |---|---|---|
-| `strip-1.svg` `strip-2.svg` `strip-3.svg` | torn task strips (plain tear / corner fold / ragged), stretched to 140×32, picked per task by hash | viewBox 200×46 |
 | `pin.svg` | push pin, ~16 px head, needle down | 24×24 |
 | `pin-pressed.svg` | pin pressed flat (tidy-up beat) | 24×16 |
 | `tape.svg` | translucent tape piece, torn ends | 64×24 |
