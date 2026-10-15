@@ -14,9 +14,8 @@ use leptos::prelude::*;
 use todo_core::{Snapshot, Task, TaskId};
 use wasm_bindgen::JsCast;
 
-use crate::api;
-use crate::edits::series_note;
 use crate::events::Queue;
+use crate::store::Store;
 use crate::tasks::occurrence_parts;
 use crate::tuning::{
     BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGE_PX, PIN_EDGES, PIN_ROOM_PX, ROW_CLOSE_MS,
@@ -24,6 +23,7 @@ use crate::tuning::{
     STRIP_H_PX,
 };
 use rambl_web_core::events::{Event, row_left};
+use rambl_web_core::store::Command;
 
 /// What taping a scrap back does.
 #[derive(Clone, Debug, PartialEq)]
@@ -497,34 +497,24 @@ where
 /// Tape the scrap's task back, then show the list the server answers with. The
 /// scrap stays until the server has the task again, so a refused tape-back keeps
 /// the undo.
-async fn tape_back(
-    scrap: Scrap,
-    scraps: RwSignal<Vec<Scrap>>,
-    set_snapshot: WriteSignal<Snapshot>,
-    set_error: WriteSignal<Option<String>>,
-) {
-    let result = match scrap.undo {
-        Undo::Task(task) => api::restore_task(&task).await,
-        Undo::Day { series, date } => api::clear_occurrence(&series, &date.to_string()).await,
+async fn tape_back(scrap: Scrap, scraps: RwSignal<Vec<Scrap>>, store: Store) {
+    let command = match scrap.undo {
+        Undo::Task(task) => Command::RestoreTask(task),
+        Undo::Day { series, date } => Command::ClearOccurrence {
+            series,
+            date: date.to_string(),
+        },
     };
-    scraps.update(|pile| *pile = after_tape(std::mem::take(pile), scrap.ticket, result.is_ok()));
-    match result {
-        Ok(snapshot) => set_snapshot.set(snapshot),
-        Err(error) => set_error.set(Some(series_note(&error))),
-    }
+    let taken = store.send(command).await.is_some();
+    scraps.update(|pile| *pile = after_tape(std::mem::take(pile), scrap.ticket, taken));
 }
 
 /// The pin's side of the list's page, where the scraps hang. Nothing is drawn while there is
 /// none. Each scrap is kept by its ticket, so a new one arriving does not replay the others.
 #[component]
-pub fn ScrapCorner(
-    snapshot: ReadSignal<Snapshot>,
-    scraps: RwSignal<Vec<Scrap>>,
-    set_snapshot: WriteSignal<Snapshot>,
-    set_error: WriteSignal<Option<String>>,
-) -> impl IntoView {
+pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>) -> impl IntoView {
     // Edits go through the store, which shows the reply and explains a refusal.
-    let store = expect_context::<crate::store::Store>();
+    let store = expect_context::<Store>();
     let events = expect_context::<Queue>();
     view! {
         <div
@@ -626,13 +616,10 @@ pub fn ScrapCorner(
                                     set_timeout(
                                         move || {
                                             wasm_bindgen_futures::spawn_local(async move {
-                                                match api::delete_task(&id).await {
-                                                    Ok(snapshot) => set_snapshot.set(snapshot),
-                                                    Err(e) => {
-                                                        binned.set(false);
-                                                        offset.set((0.0, 0.0));
-                                                        set_error.set(Some(series_note(&e)));
-                                                    }
+                                                // Refused: the scrap comes back off the bin.
+                                                if store.send(Command::DeleteTask(id)).await.is_none() {
+                                                    binned.set(false);
+                                                    offset.set((0.0, 0.0));
                                                 }
                                             });
                                         },
@@ -657,7 +644,7 @@ pub fn ScrapCorner(
                                 let Some(action) = snapshot.with_untracked(|s| crate::tasks::tick_action(s, &id.0)) else {
                                     return;
                                 };
-                                let sink = store;
+
                                 // The row flies back from where this strip hangs.
                                 if let Some(button) = hung_ref.get_untracked() {
                                     let rect = button.get_bounding_client_rect();
@@ -669,7 +656,7 @@ pub fn ScrapCorner(
                                     });
                                 }
                                 wasm_bindgen_futures::spawn_local(async move {
-                                    crate::tasks::apply_tick(&id, action, sink).await;
+                                    crate::tasks::apply_tick(&id, action, store).await;
                                     forget_return(&id.0);
                                     // The strip is gone: keep the keyboard on the new top strip.
                                     crate::engine::next_frame(focus_top_strip);
@@ -721,8 +708,7 @@ pub fn ScrapCorner(
                                     wasm_bindgen_futures::spawn_local(tape_back(
                                         tapped.clone(),
                                         scraps,
-                                        set_snapshot,
-                                        set_error,
+                                        store,
                                     ));
                                 }
                             }
@@ -739,6 +725,7 @@ pub fn ScrapCorner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api;
 
     /// A tick that went through leaves the row's departure for its strip, which mounts
     /// after the tick returns; only a refused one drops it.

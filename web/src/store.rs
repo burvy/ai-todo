@@ -48,6 +48,7 @@ async fn request(command: Command) -> Result<(Snapshot, Reply), api::ApiError> {
             api::move_series_occurrence(&series, date, to).await
         }
         Command::CreateTask(draft) => api::create_task(&draft).await,
+        Command::RestoreTask(task) => api::restore_task(&task).await,
         Command::DeleteTask(id) => api::delete_task(&id).await,
         Command::CreateSeries(body) => api::create_series(body).await,
         Command::PatchSeries { series, patch } => api::patch_series(&series, patch).await,
