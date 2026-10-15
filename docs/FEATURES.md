@@ -438,6 +438,19 @@ c. Code: `web/src/rambo.rs:Rambo, free_hour_under`; `web/src/week.rs:hour_at, fr
 hour_prefill_text`; `web/src/capture.rs:CaptureBox, noted`;
 `web/src/mascot.rs:State::Noting, Event::DropHour, asking_dismissed_by`.
 
+### 9. The bookmark ribbon marks today
+a. A satin ribbon hangs from the top of the planner's paper at today's column. When
+today is scrolled out of sight it stays at the paper's edge that today went past, the
+way a bookmark sticks out of a closed book. Pull it down past a short stretch (it
+stretches with the finger, ever stiffer) and let go, or tap it, and the paper slides
+back to today, at the hour the planner opens on (about 08:00, or now if later); with reduced motion it jumps
+there at once. A shorter pull springs back and does nothing. The ribbon is drawn in
+CSS; it has no image asset.
+b. Scroll the planner away from today, then pull the ribbon down or tap it.
+c. Code: `web/src/ribbon.rs:Ribbon, pulled, jumps, hang_left, glide`;
+`web/src/week.rs:WeekGrid, ribbon_spot, slide_to`; tuning `RIBBON_*` in
+`web/src/tuning.rs`.
+
 ## IV. RAMBL, THE MASCOT
 
 ### 1. Talk button
