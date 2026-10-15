@@ -21,11 +21,11 @@ use wasm_bindgen::closure::Closure;
 /// A little brisker than the browser default, so Rambo reads as a small cheerful pen
 /// rather than a newsreader.
 pub const RATE: f32 = 1.1;
-/// Rambo is a boy (ATD-206). A grown-up's voice is raised this much (0 to 2, 1 is the
-/// voice's own) so it reads young; safe range 1.2 to 1.6, higher turns cartoonish.
-pub const PITCH: f32 = 1.4;
-/// A voice that is already a child's keeps nearly its own pitch. Safe range 1.0 to 1.2.
-pub const PITCH_YOUNG: f32 = 1.05;
+/// Rambo is a young boy (ATD-206). A man's voice is raised this much (0 to 2, 1 is the
+/// voice's own) so it reads as a boy's; safe range 1.3 to 1.7, higher turns cartoonish.
+pub const PITCH: f32 = 1.5;
+/// A voice that is already a boy's keeps nearly its own pitch. Safe range 1.0 to 1.2.
+pub const PITCH_BOY: f32 = 1.05;
 
 /// How long the bubble stays after his voice stops.
 pub const BUBBLE_AFTER_VOICE_MS: u32 = 800;
@@ -54,47 +54,40 @@ pub fn audible(sound: SoundPreset, rambl_talks: bool) -> bool {
     sound.allows_voice() && rambl_talks
 }
 
-/// Voices that are a child's, best first: Apple's Junior, Edge's Ana (US) and Maisie
-/// (UK). Matched as a whole word, so "English (Canada)" is not Ana.
-const YOUNG: [&str; 3] = ["Junior", "Ana", "Maisie"];
+/// Voices that are a boy's: Apple's Junior. Names are matched as whole words.
+const BOY: [&str; 1] = ["Junior"];
 
-/// Voice names that read warm rather than newsy, best first, for when no child's voice
-/// is offered. Any other English voice is acceptable; these are preferences, not a
-/// whitelist.
-const FRIENDLY: [&str; 8] = [
-    "Samantha",
-    "Aria",
-    "Karen",
-    "Serena",
-    "Moira",
-    "Tessa",
-    "Zira",
-    "Google UK English Female",
+/// Men's English voices, the younger-sounding first, for when no boy's voice is
+/// offered: pitched up they read as a boy. "Male" catches the browsers that name a
+/// voice by it ("Google UK English Male"). Any other English voice is acceptable;
+/// these are preferences, not a whitelist.
+const MALE: [&str; 10] = [
+    "Guy", "Andrew", "Eric", "Aaron", "Alex", "Daniel", "Mark", "David", "George", "Male",
 ];
 
-/// Whether `name` holds `word` as a whole word, in any case.
+/// Whether `name` holds `word` as a whole word, in any case: "Female" is not "Male".
 fn names(name: &str, word: &str) -> bool {
     name.split(|c: char| !c.is_alphanumeric())
         .any(|part| part.eq_ignore_ascii_case(word))
 }
 
-/// Whether the voice called `name` is a child's.
-fn is_young(name: &str) -> bool {
-    YOUNG.iter().any(|young| names(name, young))
+/// Whether the voice called `name` is a boy's.
+fn is_boy(name: &str) -> bool {
+    BOY.iter().any(|boy| names(name, boy))
 }
 
 /// The pitch to speak with in the voice called `name` (`None`: the browser's own
-/// choice): a child's voice near its own, any other raised so he sounds like a boy.
+/// choice): a boy's voice near its own, any other raised so he sounds like a boy.
 pub fn pitch_for(name: Option<&str>) -> f32 {
-    if name.is_some_and(is_young) {
-        PITCH_YOUNG
+    if name.is_some_and(is_boy) {
+        PITCH_BOY
     } else {
         PITCH
     }
 }
 
-/// One voice for the whole page: a child's English voice if one is offered, else the
-/// friendliest English one.
+/// One voice for the whole page: a boy's English voice if one is offered, else a
+/// man's, else any English one.
 ///
 /// `offered` is each voice's `(name, language)` as the browser reports it. Chrome
 /// fills `getVoices()` in after the page loads, so this is called again until it
@@ -106,16 +99,10 @@ pub fn pick_voice<'a>(offered: &'a [(&'a str, &'a str)]) -> Option<&'a (&'a str,
             .iter()
             .filter(|(_, language)| language.to_ascii_lowercase().starts_with("en"))
     };
-    let young = YOUNG
-        .iter()
-        .find_map(|wanted| english().find(|(name, _)| names(name, wanted)));
-    let friendly = || {
-        FRIENDLY.iter().find_map(|wanted| {
-            let wanted = wanted.to_ascii_lowercase();
-            english().find(|(name, _)| name.to_ascii_lowercase().contains(&wanted))
-        })
-    };
-    young.or_else(friendly).or_else(|| english().next())
+    BOY.iter()
+        .chain(&MALE)
+        .find_map(|wanted| english().find(|(name, _)| names(name, wanted)))
+        .or_else(|| english().next())
 }
 
 /// The live handle to the browser's speech synthesiser. Only the browser ever
@@ -242,7 +229,7 @@ pub fn cancel() {
 
 #[cfg(test)]
 mod tests {
-    use super::{PITCH, PITCH_YOUNG, SoundPreset, audible, bubble_ms, pick_voice, pitch_for};
+    use super::{PITCH, PITCH_BOY, SoundPreset, audible, bubble_ms, pick_voice, pitch_for};
 
     #[test]
     fn either_switch_stops_him_and_they_are_alone_enough() {
@@ -272,64 +259,68 @@ mod tests {
     }
 
     #[test]
-    fn a_childs_english_voice_beats_every_grown_up_one() {
+    fn a_boys_english_voice_beats_every_other() {
         let offered = [
             ("Samantha", "en-US"),
+            ("Daniel", "en-GB"),
+            ("Junior", "en-US"),
+        ];
+        assert_eq!(pick_voice(&offered), Some(&("Junior", "en-US")));
+    }
+
+    #[test]
+    fn with_no_boy_a_mans_voice_beats_a_womans() {
+        // Edge's girls (Ana, Maisie) and women are passed over for a man pitched up.
+        let edge = [
             (
                 "Microsoft Ana Online (Natural) - English (United States)",
                 "en-US",
             ),
-            ("Junior", "en-US"),
-        ];
-        assert_eq!(pick_voice(&offered), Some(&("Junior", "en-US")));
-        let edge = [
             (
                 "Microsoft Aria Online (Natural) - English (United States)",
                 "en-US",
             ),
             (
-                "Microsoft Maisie Online (Natural) - English (United Kingdom)",
-                "en-GB",
+                "Microsoft Guy Online (Natural) - English (United States)",
+                "en-US",
             ),
         ];
-        assert_eq!(pick_voice(&edge), Some(&edge[1]));
+        assert_eq!(pick_voice(&edge), Some(&edge[2]));
+        let windows = [
+            ("Microsoft Zira - English (United States)", "en-US"),
+            ("Microsoft David - English (United States)", "en-US"),
+        ];
+        assert_eq!(pick_voice(&windows), Some(&windows[1]));
+        let chrome = [
+            ("Google UK English Female", "en-GB"),
+            ("Google UK English Male", "en-GB"),
+        ];
+        assert_eq!(pick_voice(&chrome), Some(&chrome[1]));
     }
 
     #[test]
-    fn a_childs_name_counts_only_as_a_whole_word() {
-        // "Canada" and "Diana" hold "ana"; neither is Edge's child voice Ana.
+    fn a_name_counts_only_as_a_whole_word() {
+        // "Female" holds "male", "Guyana" holds "Guy": neither is a man's voice.
         let offered = [
-            ("Microsoft Clara - English (Canada)", "en-CA"),
-            ("Diana", "en-US"),
+            ("Google US English Female", "en-US"),
+            ("Reader (Guyana)", "en-GY"),
             ("Samantha", "en-US"),
         ];
-        assert_eq!(pick_voice(&offered), Some(&("Samantha", "en-US")));
-        assert_eq!(pitch_for(Some("Microsoft Clara - English (Canada)")), PITCH);
+        assert_eq!(pick_voice(&offered), Some(&offered[0]));
+        assert_eq!(pitch_for(Some("Juniors Reader")), PITCH);
     }
 
     #[test]
     fn he_sounds_like_a_boy_whichever_voice_speaks() {
-        // A child's voice is near its own pitch; a grown-up's, or the browser's own
-        // choice, is raised.
-        assert_eq!(pitch_for(Some("Junior")), PITCH_YOUNG);
+        // A boy's voice is near its own pitch; a man's, a woman's, or the browser's
+        // own choice is raised.
+        assert_eq!(pitch_for(Some("Junior")), PITCH_BOY);
         assert_eq!(
-            pitch_for(Some(
-                "Microsoft Ana Online (Natural) - English (United States)"
-            )),
-            PITCH_YOUNG
+            pitch_for(Some("Microsoft David - English (United States)")),
+            PITCH
         );
         assert_eq!(pitch_for(Some("Samantha")), PITCH);
         assert_eq!(pitch_for(None), PITCH);
-    }
-
-    #[test]
-    fn a_friendly_english_voice_beats_any_other_english_one() {
-        let offered = [
-            ("Zira", "en-US"),
-            ("Samantha", "en-US"),
-            ("Daniel", "en-GB"),
-        ];
-        assert_eq!(pick_voice(&offered), Some(&("Samantha", "en-US")));
     }
 
     #[test]
@@ -346,17 +337,17 @@ mod tests {
     }
 
     #[test]
-    fn a_friendly_voice_in_another_language_is_never_picked() {
-        // A voice called "Karen" speaking German must not win on the name.
-        let offered = [("Karen", "de-DE"), ("Daniel", "en-GB")];
-        assert_eq!(pick_voice(&offered), Some(&("Daniel", "en-GB")));
+    fn a_wanted_voice_in_another_language_is_never_picked() {
+        // A voice called "Daniel" speaking German must not win on the name.
+        let offered = [("Daniel", "de-DE"), ("Samantha", "en-GB")];
+        assert_eq!(pick_voice(&offered), Some(&("Samantha", "en-GB")));
     }
 
     #[test]
     fn the_browser_reports_languages_with_mixed_case_and_regions() {
         assert_eq!(
-            pick_voice(&[("Moira", "EN-ie"), ("Daniel", "en-GB")]),
-            Some(&("Moira", "EN-ie"))
+            pick_voice(&[("Samantha", "en-US"), ("Daniel", "EN-ie")]),
+            Some(&("Daniel", "EN-ie"))
         );
     }
 }

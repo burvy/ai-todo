@@ -559,9 +559,9 @@ c. Code: `crates/rambl-brain/src/lib.rs:Brain, step, step_with`;
 
 ### 7. Rambo's voice
 a. A line Rambo shows in his speech bubble is also spoken, in one English voice that
-sounds like a boy: a child's voice where the browser offers one (Apple's Junior, Edge's
-Ana or Maisie) at nearly its own pitch, otherwise a friendly grown-up voice raised in
-pitch, and a little brisker than the browser default. The bubble and
+sounds like a young boy: a boy's voice where the browser offers one (Apple's Junior) at
+nearly its own pitch, otherwise a man's voice raised in pitch (any English voice if no
+man's is offered), and a little brisker than the browser default. The bubble and
 the voice are one thing: the bubble appears when the voice starts and goes 800ms after
 it ends. With no voice — muted, the toggle off, or a browser without speech — the
 bubble shows alone for 1.5s. He never speaks while the microphone is listening, because
