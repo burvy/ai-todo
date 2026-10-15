@@ -2,6 +2,7 @@
 //! free, how a day is counted in the user's zone. No DOM; `web/src/week.rs` draws it.
 
 use crate::settings::Settings;
+use crate::tuning::{EDGE_MAX_PX, EDGE_ZONE_PX, HOUR_PX};
 use chrono::{DateTime, Timelike, Utc};
 use todo_core::{LocalContext, Placement, TaskId};
 
@@ -12,13 +13,6 @@ pub struct Slot {
     pub minutes: u16,
 }
 
-/// The band near a scroll-box edge where a held slip makes the paper slide
-/// along so slots beyond the edge can be reached without letting go.
-pub const EDGE_ZONE_PX: f32 = 48.0;
-
-/// The loudest the paper slides per auto-scroll tick, right at an edge.
-pub const EDGE_MAX_PX: f32 = 6.0;
-
 /// Pixels per auto-scroll tick while a held slip is `distance_to_edge` from
 /// the edge: zero outside the band, fastest right at it.
 pub fn edge_nudge(distance_to_edge: f32) -> f32 {
@@ -28,10 +22,6 @@ pub fn edge_nudge(distance_to_edge: f32) -> f32 {
         ((EDGE_ZONE_PX - distance_to_edge) / EDGE_ZONE_PX) * EDGE_MAX_PX
     }
 }
-
-/// One hour of the week grid, in CSS pixels. The .hour rule in index.html has the same
-/// height, so the current-time line can be placed from the clock.
-pub const HOUR_PX: f32 = 64.0;
 
 /// How far down the hour rows the current time sits. The rows start at start_hour.
 pub fn now_line_top(now_minutes: u16, start_hour: u8, hour_px: f32) -> f32 {
@@ -56,10 +46,6 @@ pub fn day_label(ctx: &LocalContext, day: i64) -> String {
         .format("%a %-d")
         .to_string()
 }
-
-/// A slip shorter than a full hour writes its words a size smaller (see
-/// theme.css on `.placement.short`); every slip holds them inside its edges.
-pub const SHORT_SLIP_PX: f32 = HOUR_PX;
 
 /// What a slip's row in the week grid is keyed on: the task AND its slot. Keying
 /// on the task alone would leave a slip that moves or is re-planned inside its
@@ -198,6 +184,7 @@ pub fn occurrence_of(id: &TaskId) -> Option<(String, chrono::NaiveDate)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tuning::SHORT_SLIP_PX;
     use chrono::TimeZone;
 
     fn zone(name: &str, now: DateTime<Utc>) -> LocalContext {
