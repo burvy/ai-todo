@@ -258,9 +258,15 @@ paper cut-out x that scribbles the text out and lays down a fresh scrap is *(pla
 g. Code: `web/src/lib.rs:App, PageFoot`; `web/src/week.rs:WeekGrid` (the planner page, the
 gear); `web/src/scrap.rs` (the pin); `web/theme.css` (`.capture`, `.nest`, `.nest-rim`, the
 phone block with `100dvh`); numbers in `web/src/tuning.rs`.
-h. **The page rips.** A swipe to the right on bare paper of the list page (a finger on a phone, a
-mouse drag on a desk; not on a task, and mostly level: `RIP_MIN_PX`, `RIP_MAX_SLOPE`) tears the
-page along the swipe. The tear is a real hole, a ragged slit up to `RIP_GAP_PX` wide: the
+h. **The page rips.** A drag in **any direction** on bare paper of the list page (a finger on a
+phone, a mouse drag on a desk; not on a task; at least `RIP_MIN_PX`) tears the page along the
+drag: right, down, up, diagonal. It is a straight tear from where the finger went down to
+where it has gone furthest, and it never closes up again (`Tear::follow`). The page keeps two
+gestures of its own (`rip::is_page_gesture`): a swipe back to the left (no steeper than it is
+long) turns the page, and a finger going mostly up or down (steeper than `RIP_SCROLL_SLOPE`) on
+a list that scrolls is scrolling it. A list that fits its page has nothing to scroll, so the
+page is marked `.fits` (`touch-action: none`, kept by `rip_ui::keep_fit`) and a finger can tear
+it up or down too; a mouse never scrolls. The tapes lie across the tear whichever way it runs. The tear is a real hole, a ragged slit up to `RIP_GAP_PX` wide: the
 planner page shows through it live (its own slips and lines, not a picture), in shade, so the
 hole reads as a hole even where the planner is empty paper. The planner is brought to the
 tear while it lasts (`rip::slide_px`, `lift_px`, `TEAR_SLIDE_MS`): the first day column with a
@@ -271,8 +277,9 @@ half a gap). On a phone the planner lies under the list already; the column's le
 brought `TEAR_EDGE_IN_PX` inside the tear's start and its nearest slip across the tear, so a
 day edge and a slip's edge and first word show in the slit. While a tear lasts the planner's hour
 lines and day edges are drawn firmer (`main.torn` in theme.css).
-The tear follows the finger, never goes back, stops short of the pin's column, and never
-touches a task's words: a press too near a row tears nothing (`rip::lane`). One tear at a
+The tear follows the finger, stops short of the pin's column, the page's edge and any task's
+words (`rip::reach_towards`, so a tear towards a row stops short of it), and a press too near a
+row tears nothing (`rip::starts_on_paper`). One tear at a
 time. When the finger lets go Rambo notices, hops to the tear and tapes it: a strip of tape
 every `TAPE_EVERY_PX` across it is laid from one end over `TAPE_LAY_MS`, `TAPE_AT_MS` after
 the finger lets go. After `TEAR_HOLD_MS` the tape and the tear fade away together over
@@ -297,7 +304,7 @@ where they were while the hole is open (`scrap::hold_rows`) so none slides into 
 when it heals (`scrap::release_rows`). One tear at a time: a second row finished while a hole is
 open just leaves. If the server refuses the done, the row stays under a hole that heals like any
 tear (rare).
-Code: `web/src/rip.rs` (the rules: `is_rip`, `lane`, `Tear::outline`, `sheet_path`,
+Code: `web/src/rip.rs` (the rules: `is_rip`, `is_page_gesture`, `starts_on_paper`, `Tear::outline`, `sheet_path`,
 `slide_px`; pure and tested), `web/src/rip_ui.rs:Ripper, TearLayer` (the pointer, the hole,
 the tape), `web/src/mascot.rs:State::Mending, Event::Mend`, `web/src/scrap.rs:hold_rows`, `web/theme.css` (`main.torn`,
 `.tear-layer`, `.tape`); numbers in `web/src/tuning.rs` (`RIP_*`, `TAPE_*`, `TEAR_*`,
@@ -587,7 +594,8 @@ c. Code: `web/src/voice.rs:say, cancel, audible, pick_voice, pitch_for`, called 
 ## V. IMPORT AND EXPORT
 
 ### 1. Import an iCalendar file
-a. An `.ics` calendar becomes ordinary editable tasks with their original times.
+a. An `.ics` calendar becomes editable tasks with their original times. Recurring events
+become repeating series (§7).
 b. Choose a file in **Import .ics**.
 c. Code: `web/src/settings.rs:GearMenu`; `web/src/api.rs:import_ics`;
 `server/src/v2/http.rs:import`; `server/src/v2/ics_import.rs`.
@@ -622,6 +630,27 @@ not read.
 b. Not visible; covered by the capture and HTTP tests.
 c. Code: `server/src/v2/http.rs:file_text`;
 `crates/capture/src/pdf.rs:pdf_to_text`; `crates/capture/src/email.rs:parse_email`.
+
+### 7. Recurring events become series
+a. When an `.ics` file contains a recurring event, it becomes one repeating series,
+not one task or many copies. Weekly events (`FREQ=WEEKLY`), including every N weeks
+(`INTERVAL=n`), repeat on the days named by `BYDAY` (or the event's own weekday).
+Daily events (`FREQ=DAILY`), including every N days (`INTERVAL=n`), repeat from the
+first occurrence. The series respects `UNTIL` and `COUNT` for its end, and keeps
+`EXDATE` dates as skipped occurrences. A re-import by UID updates the same series
+without duplicating it. Rules the import cannot follow (monthly, yearly, `BYSETPOS`,
+…) fall back to a single task and are listed in the import result under `unmapped`
+so the client can tell the user. So are a daily rule with both `BYDAY` and `INTERVAL`,
+an `INTERVAL` outside 1 to 1000, and a `WKST` other than Monday with an `INTERVAL`.
+`FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR` is a weekly series on those days. Every N weeks counts
+calendar weeks, Monday first, from the week that holds the first event.
+b. Import a `.ics` with `RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO` and check that the
+snapshot contains one series that fires every other Monday.
+c. Code: `server/src/v2/ics_import.rs:parse_calendar, rrule_series`;
+`server/src/v2/app.rs:import_series`; `crates/core/src/lib.rs:Recurrence, Series`.
+Tests: `server/src/v2/ics_import.rs` (hand-written `.ics` strings for weekly,
+weekly with interval, daily, daily with interval);
+`crates/core/src/lib.rs` (covers math for interval and daily).
 
 ## VI. SETTINGS
 
