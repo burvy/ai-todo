@@ -345,6 +345,34 @@ fn is_wet(written: StoredValue<Vec<(TaskId, f64)>>, id: &TaskId) -> bool {
     })
 }
 
+/// What a tap on a row does.
+#[derive(Debug, PartialEq, Eq)]
+enum Tapped {
+    /// Its ink is still wet: the finger smears it, wherever on the row it lands.
+    Smudge,
+    /// Dry, on the title: the row opens to edit.
+    Open,
+    /// Dry, anywhere else on the row.
+    Nothing,
+}
+
+fn tapped(wet: bool, on_title: bool) -> Tapped {
+    match (wet, on_title) {
+        (true, _) => Tapped::Smudge,
+        (false, true) => Tapped::Open,
+        (false, false) => Tapped::Nothing,
+    }
+}
+
+/// Whether a point on the screen is on a row's title. The row holds the pointer from
+/// the press on, so the click lands on the row, never on what was under the finger.
+fn on_title(x: f64, y: f64) -> bool {
+    leptos::prelude::document()
+        .element_from_point(x as f32, y as f32)
+        .and_then(|el| el.closest(".task-open").ok().flatten())
+        .is_some()
+}
+
 /// A tap at `tap` (on the screen) on row `id` while its ink is wet smears it there.
 fn smudge_if_wet(
     written: StoredValue<Vec<(TaskId, f64)>>,
@@ -742,10 +770,14 @@ pub(crate) fn TaskList(
                                 };
                                 let dragged = TaskId(row_id);
                                 match outcome {
-                                    // A tap belongs to the controls, which answer
-                                    // it themselves; a scroll and a backed-out
-                                    // swipe leave the list exactly as it was.
-                                    row::Release::Tap => smudge_if_wet(written, smudges, &dragged, (x, y)),
+                                    // A tap on a control never reaches here (the
+                                    // row does not take that press); a scroll and a
+                                    // backed-out swipe leave the list as it was.
+                                    row::Release::Tap => match tapped(is_wet(written, &dragged), on_title(x, y)) {
+                                        Tapped::Smudge => smudge_if_wet(written, smudges, &dragged, (x, y)),
+                                        Tapped::Open => open_editor(&dragged),
+                                        Tapped::Nothing => {}
+                                    },
                                     row::Release::Scroll | row::Release::SnapBack => {}
                                     row::Release::Done => {
                                         let task_id = TaskId(drop_task_id_clone.clone());
@@ -830,19 +862,7 @@ pub(crate) fn TaskList(
                             }
                         }
                     >
-                        <span
-                            class="task-open"
-                            on:click={
-                                let id = task.id.clone();
-                                // Wet, a tap smudges the ink (the row's release does
-                                // that) instead of opening the row.
-                                move |_| {
-                                    if !is_wet(written, &id) {
-                                        open_editor(&id);
-                                    }
-                                }
-                            }
-                        >
+                        <span class="task-open">
                             <span class="pen-title-wrap">
                                 <strong class="pen-title">{render_task_title.clone()}</strong>
                                 {repeat_mark}
@@ -1329,6 +1349,18 @@ mod tests {
 
     use super::*;
     use chrono::TimeZone;
+
+    #[test]
+    fn a_tap_on_a_dry_title_opens_the_row_and_wet_ink_only_smudges() {
+        assert_eq!(tapped(false, true), Tapped::Open);
+        assert_eq!(tapped(false, false), Tapped::Nothing);
+        assert_eq!(
+            tapped(true, true),
+            Tapped::Smudge,
+            "wet, the row does not open"
+        );
+        assert_eq!(tapped(true, false), Tapped::Smudge);
+    }
 
     #[test]
     fn a_new_sheet_starts_empty_with_the_default_length_and_no_day() {

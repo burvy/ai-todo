@@ -185,9 +185,13 @@ a. Dropping Rambo on a task offers actions: **Edit** opens that task's edit shee
 Rambo also listens: say the change ("make it Friday at 3") and the server's revise
 call (Jev) applies it, then the sheet shows the result. A repeating task's sheet
 edits its series, which revise cannot, so he does not listen there.
+A tap or click on a task's title opens the same sheet, by finger or mouse (unless its
+ink is still wet, IV.3); a tap elsewhere on the row does nothing.
 b. Drag Rambo onto a task, then choose **Edit**, **Move** or **Done**, or tap off the bubble.
+Or tap a task's title.
 c. Code: `web/src/rambo.rs:Rambo`, which sets `edit_request` for
-`web/src/tasks/mod.rs:TaskList` to open its sheet; `web/src/mascot.rs:Choice, asking_dismissed_by`; `web/src/api.rs:patch_task`.
+`web/src/tasks/mod.rs:TaskList` to open its sheet; a tap on the row is decided on its
+release (`tasks/mod.rs:tapped, on_title`), since the row holds the pointer from the press; `web/src/mascot.rs:Choice, asking_dismissed_by`; `web/src/api.rs:patch_task`.
 d. The sheet's days and times are picked on the paper's own pickers (handwritten
 numbers, keyboard reachable, the paper's 12- or 24-hour clock), never the browser's:
 `web/src/pickers.rs:PaperDate, PaperTime, PaperDateTime`; numbers in `web/src/tuning.rs`.
