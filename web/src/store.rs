@@ -44,6 +44,9 @@ async fn request(command: Command) -> Result<(Snapshot, Reply), api::ApiError> {
         Command::Reorder(ids) => api::reorder_tasks(ids).await,
         Command::Patch(id, body) => api::patch_task(&id, body).await,
         Command::Revise(id, body) => api::revise_task(&id, body).await,
+        Command::MoveOccurrence { series, date, to } => {
+            api::move_series_occurrence(&series, date, to).await
+        }
         Command::CreateTask(draft) => api::create_task(&draft).await,
         Command::DeleteTask(id) => api::delete_task(&id).await,
         Command::CreateSeries(body) => api::create_series(body).await,

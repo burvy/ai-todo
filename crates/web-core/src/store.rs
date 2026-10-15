@@ -7,7 +7,8 @@
 //! Pure: the page (`web/src/store.rs`) does the sending and the signals.
 
 use crate::body::{PatchTaskBody, ReviseBody, SeriesBody, SeriesPatchBody};
-use todo_core::{Snapshot, Source, TaskDraft, TaskId};
+use chrono::NaiveDate;
+use todo_core::{Snapshot, Source, TaskDraft, TaskId, When};
 
 /// What a view asks the store to change.
 #[derive(Clone, Debug, PartialEq)]
@@ -18,6 +19,12 @@ pub enum Command {
     Patch(TaskId, PatchTaskBody),
     /// One spoken or typed sentence Jev turns into an edit of a task.
     Revise(TaskId, ReviseBody),
+    /// One day of a series moved to another time (the rule itself unchanged).
+    MoveOccurrence {
+        series: String,
+        date: NaiveDate,
+        to: When,
+    },
     /// A task made by hand, already shaped.
     CreateTask(TaskDraft),
     /// A stored task removed. (A day of a repeat is [`Command::MarkOccurrence`] skipped.)
@@ -82,6 +89,7 @@ impl Command {
             // nothing yet.
             Command::Patch(..)
             | Command::Revise(..)
+            | Command::MoveOccurrence { .. }
             | Command::CreateTask(_)
             | Command::DeleteTask(_)
             | Command::CreateSeries(_)
@@ -529,6 +537,11 @@ mod tests {
                 time_of_day: None,
                 until: None,
             }),
+            Command::MoveOccurrence {
+                series: "s1".into(),
+                date: NaiveDate::from_ymd_opt(2026, 10, 16).expect("a date"),
+                to: When::Anytime,
+            },
             Command::DeleteTask(task),
             Command::DeleteSeries("s1".into()),
             Command::MarkOccurrence {
