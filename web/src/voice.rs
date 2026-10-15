@@ -76,6 +76,13 @@ fn is_boy(name: &str) -> bool {
     BOY.iter().any(|boy| names(name, boy))
 }
 
+/// Whether the voice called `name` is one he keeps once found: a boy's or a man's. Any
+/// other voice was only the best offered so far, and a browser that fills its list in
+/// late (Chrome) may still offer a better one.
+fn is_kept(name: &str) -> bool {
+    BOY.iter().chain(&MALE).any(|wanted| names(name, wanted))
+}
+
 /// The pitch to speak with in the voice called `name` (`None`: the browser's own
 /// choice): a boy's voice near its own, any other raised so he sounds like a boy.
 pub fn pitch_for(name: Option<&str>) -> f32 {
@@ -110,7 +117,8 @@ pub fn pick_voice<'a>(offered: &'a [(&'a str, &'a str)]) -> Option<&'a (&'a str,
 /// the line on its own.
 struct Speaker {
     synthesis: web_sys::SpeechSynthesis,
-    /// Resolved once the browser has offered a voice, and then kept.
+    /// The best voice offered so far: picked again before each line until it is one
+    /// he keeps (`is_kept`).
     voice: Option<web_sys::SpeechSynthesisVoice>,
     /// Chrome drops an utterance that nothing references, so it is held here.
     speaking: Option<web_sys::SpeechSynthesisUtterance>,
@@ -139,10 +147,16 @@ impl Speaker {
         })
     }
 
-    /// The voice to speak the next line with, found on first use and kept after.
-    /// Chrome populates the list late, so an empty list is "not yet", not "none".
+    /// The voice to speak the next line with. Chrome populates the list late, so an
+    /// empty list is "not yet", not "none", and a woman's voice found early is only a
+    /// stand-in: the list is read again before each line until a boy's or a man's
+    /// voice is found, and that one is kept.
     fn voice(&mut self) -> Option<web_sys::SpeechSynthesisVoice> {
-        if self.voice.is_none() {
+        let settled = self
+            .voice
+            .as_ref()
+            .is_some_and(|voice| is_kept(&voice.name()));
+        if !settled {
             let listed = self.synthesis.get_voices();
             let voices: Vec<web_sys::SpeechSynthesisVoice> = (0..listed.length())
                 .filter_map(|index| listed.get(index).dyn_into().ok())
@@ -155,8 +169,11 @@ impl Speaker {
                 .iter()
                 .map(|(name, language)| (name.as_str(), language.as_str()))
                 .collect::<Vec<_>>();
-            self.voice = pick_voice(&offered)
+            let picked = pick_voice(&offered)
                 .and_then(|(name, _)| voices.iter().find(|voice| voice.name() == *name).cloned());
+            if picked.is_some() {
+                self.voice = picked;
+            }
         }
         self.voice.clone()
     }
@@ -229,7 +246,9 @@ pub fn cancel() {
 
 #[cfg(test)]
 mod tests {
-    use super::{PITCH, PITCH_BOY, SoundPreset, audible, bubble_ms, pick_voice, pitch_for};
+    use super::{
+        PITCH, PITCH_BOY, SoundPreset, audible, bubble_ms, is_kept, pick_voice, pitch_for,
+    };
 
     #[test]
     fn either_switch_stops_him_and_they_are_alone_enough() {
@@ -256,6 +275,23 @@ mod tests {
         assert_eq!(bubble_ms(true), 800);
         // With no voice the bubble is the only channel, so it holds longer.
         assert!(bubble_ms(false) > bubble_ms(true));
+    }
+
+    #[test]
+    fn only_a_boys_or_a_mans_voice_is_kept_so_a_late_list_can_still_win() {
+        // Chrome lists its voices late: a woman's voice found first is picked again
+        // before the next line, so Junior or a man still wins once listed.
+        assert!(is_kept("Junior"));
+        assert!(is_kept("Microsoft David - English (United States)"));
+        assert!(is_kept("Google UK English Male"));
+        assert!(!is_kept("Google UK English Female"));
+        assert!(!is_kept("Samantha"));
+        assert!(!is_kept("Some Reader"));
+        // What is kept is always what the full list would pick first among its kind.
+        let early = [("Samantha", "en-US")];
+        let late = [("Samantha", "en-US"), ("Daniel", "en-GB")];
+        assert!(!is_kept(pick_voice(&early).unwrap().0));
+        assert!(is_kept(pick_voice(&late).unwrap().0));
     }
 
     #[test]
