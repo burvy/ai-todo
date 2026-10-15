@@ -282,7 +282,7 @@ pub fn WeekGrid(
             // The settings gear and the account link live on this page only, at its top right.
             <div class="planner-corner">
                 <crate::account::HeaderLink />
-                <crate::settings::GearMenu settings set_settings set_snapshot set_error />
+                <crate::gear_menu::GearMenu settings set_settings set_snapshot set_error />
             </div>
             <crate::PageFoot page=1 turn=turn_back />
             <crate::placing::PlacingNote snapshot settings to_place=waiting place />

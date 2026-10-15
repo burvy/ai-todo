@@ -7,6 +7,7 @@ pub use rambl_web_core::{clock, gesture, hop, ink, pen, tuning};
 pub mod account;
 pub mod api;
 pub mod brain;
+pub mod gear_menu;
 pub mod inklayer;
 pub mod lamp;
 pub mod mascot;

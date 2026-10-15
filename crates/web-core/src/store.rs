@@ -141,33 +141,44 @@ fn reorder(snapshot: &mut Snapshot, ids: &[TaskId]) {
 pub struct Ticket(u64);
 
 /// Why the server did not take a command.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Refusal {
     /// The server could not be reached.
     Network,
     /// The task changed elsewhere since this page last saw it.
     Stale,
-    /// Anything else the server refused.
-    Refused,
+    /// Anything else the server refused, with its own words for why when it gave them
+    /// (a repeat's day that cannot move, a deadline at midnight).
+    Refused(Option<String>),
 }
 
 impl Refusal {
     /// What the page says about it: why the change failed, not whether the reload after
     /// it worked, so a refusal is never called "could not reach the server" just because
     /// the reload also failed.
-    pub fn note(self, reloaded: bool) -> &'static str {
-        match (self, reloaded) {
-            (Refusal::Network, _) => "Could not reach the server, so that change was not saved.",
-            (Refusal::Stale, true) => "That task changed elsewhere, so it was reloaded. Try again.",
-            (Refusal::Stale, false) => "That task changed elsewhere. Reload the page to see it.",
-            (Refusal::Refused, true) => "That change was not saved. The list was reloaded.",
-            (Refusal::Refused, false) => "That change was not saved.",
+    pub fn note(&self, reloaded: bool) -> String {
+        let reload = if reloaded {
+            " The list was reloaded."
+        } else {
+            ""
+        };
+        match self {
+            Refusal::Network => "Could not reach the server, so that change was not saved.".into(),
+            Refusal::Stale if reloaded => {
+                "That task changed elsewhere, so it was reloaded. Try again.".into()
+            }
+            Refusal::Stale => "That task changed elsewhere. Reload the page to see it.".into(),
+            Refusal::Refused(Some(why)) => format!(
+                "That change was not saved: {}.{reload}",
+                why.trim().trim_end_matches('.')
+            ),
+            Refusal::Refused(None) => format!("That change was not saved.{reload}"),
         }
     }
 }
 
 /// What came of a reply.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     /// It is the newest list: it is shown.
     Shown,
@@ -381,8 +392,8 @@ mod tests {
         let ticket = store.send(&Command::Reorder(order));
         assert_ne!(store.snapshot(), &start, "shown at once");
         assert_eq!(
-            store.answer(ticket, Err(Refusal::Refused)),
-            Outcome::Refused(Refusal::Refused)
+            store.answer(ticket, Err(Refusal::Refused(None))),
+            Outcome::Refused(Refusal::Refused(None))
         );
         assert_eq!(store.snapshot(), &start, "and taken back when refused");
     }
@@ -474,8 +485,8 @@ mod tests {
         let refused = store.send(&Command::Reorder(first));
         store.send(&Command::Reorder(second.clone()));
         assert_eq!(
-            store.answer(refused, Err(Refusal::Refused)),
-            Outcome::Refused(Refusal::Refused)
+            store.answer(refused, Err(Refusal::Refused(None))),
+            Outcome::Refused(Refusal::Refused(None))
         );
         assert_eq!(
             ids(store.snapshot()),
@@ -517,7 +528,24 @@ mod tests {
     fn a_refusal_says_why_it_failed_not_how_the_reload_went() {
         assert_eq!(Refusal::Network.note(true), Refusal::Network.note(false));
         assert!(Refusal::Stale.note(true).contains("reloaded"));
-        assert!(!Refusal::Refused.note(false).contains("reloaded"));
+        assert!(!Refusal::Refused(None).note(false).contains("reloaded"));
+    }
+
+    #[test]
+    fn a_refusal_carries_the_servers_own_words() {
+        let why = Refusal::Refused(Some("a repeat's day cannot move to another week.".into()));
+        assert_eq!(
+            why.note(false),
+            "That change was not saved: a repeat's day cannot move to another week."
+        );
+        assert_eq!(
+            why.note(true),
+            "That change was not saved: a repeat's day cannot move to another week. The list was reloaded."
+        );
+        assert_eq!(
+            Refusal::Refused(None).note(false),
+            "That change was not saved."
+        );
     }
 
     #[test]

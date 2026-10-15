@@ -302,7 +302,7 @@ truncated with an ellipsis when the block is too narrow. Drag a slip and it stay
 your pointer where you took it.
 b. Open the **Week** panel and scroll through the grid; drag a slip and let go.
 c. Code: `web/src/week.rs:WeekGrid` (the slip's grab offset is kept in `week.rs`);
-`web/src/settings.rs:GearMenu`; `crates/web-core/src/settings.rs:Settings`;
+`web/src/gear_menu.rs:GearMenu`; `crates/web-core/src/settings.rs:Settings`;
 `web/theme.css` (`.placement::before`, `--slip-cut`, `--slip-tear`).
 
 ### 2. One server snapshot
@@ -333,7 +333,7 @@ saved at once with `PATCH /api/v1/settings` (only that field), the plan is read 
 planner moves its day-only tasks, and a refused one (a 00:00 deadline) puts the old time back
 and shows the reason. The picker keeps the minute it was on, so choosing 5 from 11:59 pm gives
 5:59 pm; pick the minute too.
-c. Code: `web/src/settings.rs:DayTimes, DayTime`; `web/src/api.rs:fetch_day_settings, patch_day_settings`;
+c. Code: `web/src/gear_menu.rs:DayTimes, DayTime`; `web/src/api.rs:fetch_day_settings, patch_day_settings`;
 `crates/scheduler/src/lib.rs:plan, usual_time, slot_near`;
 `crates/core/src/lib.rs:DaySettings`; `crates/dates/src/lib.rs:when_from`;
 `server/src/v2/app.rs:patch_day_settings`; `server/src/v2/http.rs:get_settings`.
@@ -367,7 +367,7 @@ pictures follow the page's own theme, the same as the rest of him, never the ope
 system. The muted text inks pass WCAG AA (4.5:1 for small text) on both papers.
 b. Open the gear menu and choose Dark, then Light, and reload the page.
 c. Code: `web/theme.css` (`:root` and `:root[data-theme="dark"]`, the muted inks);
-`web/src/settings.rs:GearMenu, apply_theme`; `web/src/mascot.rs` (mood pictures use the
+`web/src/gear_menu.rs:GearMenu`; `web/src/settings.rs:apply_theme`; `web/src/mascot.rs` (mood pictures use the
 page theme; test `fx_art_takes_the_page_theme`).
 
 ### 5a. The desk lamp
@@ -574,7 +574,7 @@ c. Code: `web/src/voice.rs:say, cancel, audible, pick_voice, pitch_for`, called 
 a. An `.ics` calendar becomes editable tasks with their original times. Recurring events
 become repeating series (§7).
 b. Choose a file in **Import .ics**.
-c. Code: `web/src/settings.rs:GearMenu`; `web/src/api.rs:import_ics`;
+c. Code: `web/src/gear_menu.rs:GearMenu`; `web/src/api.rs:import_ics`;
 `server/src/v2/http.rs:import`; `server/src/v2/ics_import.rs`.
 
 ### 2. Re-import without duplicates
@@ -634,12 +634,12 @@ weekly with interval, daily, daily with interval);
 ### 1. Planner settings
 a. You can choose the first hour, last hour and number of days shown in the planner.
 b. Open the **gear menu** and change the fields.
-c. Code: `web/src/settings.rs:GearMenu, load, save`; `crates/web-core/src/settings.rs:Settings`.
+c. Code: `web/src/gear_menu.rs:GearMenu`; `web/src/settings.rs:load, save`; `crates/web-core/src/settings.rs:Settings`.
 
 ### 2. Version and calendar export
 a. The gear menu displays the Rambl version and build date and links to an iCalendar export.
 b. Open the **gear menu**.
-c. Code: `web/src/settings.rs:GearMenu`; `web/src/api.rs:export_calendar`.
+c. Code: `web/src/gear_menu.rs:GearMenu`; `web/src/api.rs:export_calendar`.
 
 ### 3. Browser time zone
 a. Requests carry the browser's IANA time zone so dates and working hours are local.
