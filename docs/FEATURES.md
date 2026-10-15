@@ -336,6 +336,19 @@ c. Code: `web/src/rambo.rs:Rambo` sets `move_request`; `web/src/lib.rs:App` turn
 the page; `web/src/placing.rs:PlacingNote, next_free`;
 `web/src/week.rs:WeekGrid, place_at`.
 
+### 8. A new task on an empty hour
+a. Drop Rambo on an hour of the planner with nothing placed there and he stays on it,
+listening, for a new task that starts then (snapped to the quarter hour): the capture
+box takes the focus and asks for it ("A task for today 14:30"). Say it, and it is sent
+as you stop speaking; or type it and press Enter or tap the nest. Tapping or clicking
+anywhere off the capture box, him included, or Esc, is never mind: nothing is created and
+the box empties. Dropped on a placed task, or at a time the clock skips that day, he
+does not start one.
+b. Turn to the planner, drag Rambo onto an empty hour, then speak or type a title.
+c. Code: `web/src/rambo.rs:Rambo, free_hour_under`; `web/src/week.rs:hour_at, free_at,
+hour_prefill_text`; `web/src/capture.rs:CaptureBox, noted`;
+`web/src/mascot.rs:State::Noting, Event::DropHour, asking_dismissed_by`.
+
 ## IV. RAMBL, THE MASCOT
 
 ### 1. Talk button

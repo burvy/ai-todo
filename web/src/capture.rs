@@ -75,6 +75,15 @@ fn capture_title(transcript: &str, typed: &str) -> Option<String> {
     (!title.is_empty()).then(|| title.to_owned())
 }
 
+/// What is sent for `title` while Rambo notes a task at the hour `at` (a date phrase
+/// Jev reads): the hour first, so the task starts then.
+fn noted(at: Option<&str>, title: &str) -> String {
+    match at {
+        Some(at) => format!("{} {title}", at.trim()),
+        None => title.to_owned(),
+    }
+}
+
 /// The note when a capture was not added, naming it so it is never silently lost.
 fn capture_note(title: &str, error: &api::ApiError) -> String {
     match error {
@@ -100,6 +109,8 @@ pub(crate) fn CaptureBox(
     view_settings: ReadSignal<settings::Settings>,
     pen_pos: RwSignal<(f64, f64)>,
     capture_text: RwSignal<String>,
+    /// The hour Rambo was dropped on, as a date phrase: what is sent starts then.
+    noting_at: RwSignal<Option<String>>,
     pen_queue: RwSignal<Vec<TaskId>>,
     set_typing: WriteSignal<bool>,
     set_error: WriteSignal<Option<String>>,
@@ -114,6 +125,15 @@ pub(crate) fn CaptureBox(
         }
     });
     let input_ref = NodeRef::<leptos::html::Input>::new();
+    // Never mind on the hour he was dropped on: nothing is sent, and the box empties.
+    Effect::new(move |was: Option<mascot::State>| {
+        let now = state.get();
+        if was == Some(mascot::State::Noting) && now != mascot::State::Noting {
+            set_text.set(String::new());
+            capture_text.set(String::new());
+        }
+        now
+    });
 
     // Rambo's whisper: the placeholder is the rotating prompt. Read the index
     // before the node ref so a ref that loads later can't drop a swap.
@@ -124,7 +144,10 @@ pub(crate) fn CaptureBox(
         let Some(input) = input_ref.get() else {
             return;
         };
-        input.set_placeholder(WHISPER_PROMPTS[index]);
+        match noting_at.get() {
+            Some(at) => input.set_placeholder(&format!("A task for {}", at.trim())),
+            None => input.set_placeholder(WHISPER_PROMPTS[index]),
+        }
     });
     Effect::new(move |_| {
         let fading = whisper_fading.get();
@@ -209,7 +232,8 @@ pub(crate) fn CaptureBox(
         if mascot::pen_busy(&st) {
             return;
         }
-        if matches!(st, mascot::State::Dragging) {
+        // Held, or waiting on an hour for the task you type, he stays where he is.
+        if matches!(st, mascot::State::Dragging | mascot::State::Noting) {
             return;
         }
         if view_settings.get_untracked().mode == settings::RamblMode::Lobotomized {
@@ -234,6 +258,12 @@ pub(crate) fn CaptureBox(
             else {
                 return;
             };
+            // Sent from an hour he was dropped on: the task starts then, and he goes home.
+            let title = noted(noting_at.get_untracked().as_deref(), &title);
+            let st = state.get_untracked();
+            if st == mascot::State::Noting {
+                set_state.set(mascot::transition(&st, mascot::Event::Return));
+            }
             if let Some(timer) = linger_timer.borrow_mut().take() {
                 timer.cancel();
             }
@@ -342,6 +372,15 @@ mod tests {
         assert_eq!(capture_title("", "call mum ").as_deref(), Some("call mum"));
         assert_eq!(capture_title("", "   "), None, "blank adds nothing");
         assert_eq!(capture_title(" ", ""), None);
+    }
+
+    #[test]
+    fn a_task_noted_on_an_hour_starts_then() {
+        assert_eq!(
+            noted(Some("tomorrow 14:00 "), "call mum"),
+            "tomorrow 14:00 call mum"
+        );
+        assert_eq!(noted(None, "call mum"), "call mum");
     }
 
     #[test]
