@@ -204,7 +204,10 @@ mod tests {
 
     #[test]
     fn reduced_motion_drops_only_the_ambient_cues() {
-        for preset in SoundPreset::ALL {
+        for preset in SoundPreset::ALL
+            .into_iter()
+            .filter(|p| *p != SoundPreset::Off)
+        {
             assert!(!plays(preset, Cue::Tap, true) && !plays(preset, Cue::Page, true));
             for cue in [Cue::Write, Cue::Scribble, Cue::Crumple] {
                 assert!(
