@@ -283,7 +283,7 @@ a. The planner shows a configurable number of days and a scrollable 24-hour rang
 Each placement block shows the task's title in the handwriting font and its start time,
 truncated with an ellipsis when the block is too narrow.
 b. Open the **Week** panel and scroll through the grid.
-c. Code: `web/src/week.rs:WeekGrid`; `web/src/settings.rs:GearMenu, Settings`.
+c. Code: `web/src/week.rs:WeekGrid`; `web/src/settings.rs:GearMenu`; `crates/web-core/src/settings.rs:Settings`.
 
 ### 2. One server snapshot
 a. The task list and planner use the same server snapshot, so a task cannot show
@@ -513,7 +513,7 @@ never while held, flying or writing, and not with reduced motion. It replaces th
 flag: a stored "off" stays Off, a stored "on" becomes every touch. With reduced motion
 on, the tick and the page sound are dropped.
 b. Open the gear menu, pick each preset, then tap a button, turn the page and add a task.
-c. Code: `web/src/sound.rs:Cue, plays, for_change`; `web/src/settings.rs:SoundPreset, with_migrated_sound`;
+c. Code: `web/src/sound.rs:Cue, plays, for_change`; `crates/web-core/src/settings.rs:SoundPreset, with_migrated_sound`;
 `web/src/voice.rs:audible`; `web/src/music.rs:sync, level, loudness`; `web/src/engine/dance.rs:Dance`. Music files: `web/assets/music/ABOUT.md`. Sound files and how to swap one: `web/assets/sounds/ABOUT.md`.
 
 ### 5. Reduced motion
@@ -611,7 +611,7 @@ weekly with interval, daily, daily with interval);
 ### 1. Planner settings
 a. You can choose the first hour, last hour and number of days shown in the planner.
 b. Open the **gear menu** and change the fields.
-c. Code: `web/src/settings.rs:GearMenu, Settings, load, save`.
+c. Code: `web/src/settings.rs:GearMenu, load, save`; `crates/web-core/src/settings.rs:Settings`.
 
 ### 2. Version and calendar export
 a. The gear menu displays the Rambl version and build date and links to an iCalendar export.

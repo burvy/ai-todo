@@ -4,4 +4,5 @@
 
 pub mod clock;
 pub mod hop;
+pub mod settings;
 pub mod tuning;
