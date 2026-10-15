@@ -52,19 +52,13 @@ animated from CSS so `prefers-reduced-motion` can switch them off).
 | `sparks.svg` | celebration stars (task done, list empty) |
 | `scribble-cloud.svg` | annoyed cloud; inner zigzag doubles as the scribble-out over a deleted row |
 
-## Tack board — `tackboard/`
+## Scrap pin — `tackboard/`
 
-Per Huang's layout (`web/tack.css`, `web/src/tack.rs`); transparent
-backgrounds, paper palette, they render inside fixed boxes and scale.
+The tack board is gone; its strips, tape, crumple and bin art went with it. The one piece left is the pin that holds the scrap pile (`theme.css`, `.scrap-pile`). Transparent background, paper palette, it scales inside a fixed box.
 
 | File | What | Box |
 |---|---|---|
-| `strip-1.svg` `strip-2.svg` `strip-3.svg` | torn task strips (plain tear / corner fold / ragged), stretched to 140×32, picked per task by hash | viewBox 200×46 |
 | `pin.svg` | push pin, ~16 px head, needle down | 24×24 |
-| `pin-pressed.svg` | pin pressed flat (tidy-up beat) | 24×16 |
-| `tape.svg` | translucent tape piece, torn ends | 64×24 |
-| `crumple.svg` | crumpled paper ball (end state ~20 px) | 40×40 |
-| `bin.svg` | small waste basket, drop target | 48×64 |
 
 ## The pen used by the running app — root of `assets/`
 

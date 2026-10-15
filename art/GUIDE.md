@@ -14,7 +14,7 @@ This folder is the source of art for the v2 front end (Leptos, see `docs/ARCHITE
 | `web/assets/rambo/<skin>/<pose>.svg` | Rambo tool skins: `fountain` (default), `pencil`, `ballpoint`, `quill`, `marker` — same 11 poses, class names and viewBox `0 0 64 112` per skin, so the app swaps by skin id | mascot rig (`web/src/mascot.rs`), tool picker | 5 skins × 11 poses | placeholder, AI (scripted edits of the fountain art) |
 | `web/assets/nest/back.svg`, `rim.svg` | Rambo's nest in two layers: the back behind him, the front rim over his tip (`web/assets/nest/ABOUT.md`) | end of the capture line, filling the bottom-right corner on a phone; tapping it submits | SVG, both viewBox 0 0 170 100 | placeholder, AI |
 | `web/assets/rambo/fx/` (`ink-splat`, `sleepy-z`, `sparks`, `scribble-cloud`) | mood fx overlays, `var(--rambo-fx)` on `<g id="art">`, no inner animation | moods, scribble-out on delete | SVG, viewBox 0 0 48 48 | placeholder, AI |
-| `web/assets/tackboard/` (`strip-1..3`, `pin`, `pin-pressed`, `tape`, `crumple`, `bin`) | tack board art for Huang (`web/src/tack.rs`) | done-task strips, pins, tape, crumple throw, bin drop target | SVG, boxes listed in `web/assets/README.md` | placeholder, AI |
+| `web/assets/tackboard/pin.svg` | push pin on the scrap pile (the tack board's other art is gone) | `.scrap-pile` in `theme.css` | SVG, box in `web/assets/README.md` | placeholder, AI |
 | `fonts.md` (Caveat, Inter) | the handwriting and interface fonts | everywhere, via `--hand` and `--chrome` | Google Fonts web fonts | stock fonts (OFL licence), not hand-made |
 
 Notes:
