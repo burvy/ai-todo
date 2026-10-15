@@ -76,6 +76,7 @@ pub fn App() -> impl IntoView {
     });
 
     account::start();
+    lamp::provide_switch();
     let main_ref = NodeRef::<leptos::html::Main>::new();
     let (pane, set_pane) = signal(0_u8);
     // The page turn (turner.rs): the list lies over the planner and turns like a book's page,

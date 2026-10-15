@@ -363,12 +363,9 @@ pub fn GearMenu(
     // The stored choice wins over the OS from the first paint on.
     Effect::new(move |_| apply_theme(settings.get().theme));
 
-    let set_theme = move |theme: Theme| {
-        update(Settings {
-            theme,
-            ..settings.get()
-        })
-    };
+    // The gear's Light and Dark go through the desk lamp's switch: the other paper is laid
+    // down over the page, never a cut.
+    let set_theme = crate::lamp::switch_to;
     let set_sound = move |sound: SoundPreset| {
         update(Settings {
             sound,
