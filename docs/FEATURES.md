@@ -558,8 +558,10 @@ c. Code: `crates/rambl-brain/src/lib.rs:Brain, step, step_with`;
 `crates/rambl-brain/src/rng.rs:Seeded`.
 
 ### 7. Rambo's voice
-a. A line Rambo shows in his speech bubble is also spoken, in one friendly English
-voice, a little brisker and a little higher than the browser default. The bubble and
+a. A line Rambo shows in his speech bubble is also spoken, in one English voice that
+sounds like a boy: a child's voice where the browser offers one (Apple's Junior, Edge's
+Ana or Maisie) at nearly its own pitch, otherwise a friendly grown-up voice raised in
+pitch, and a little brisker than the browser default. The bubble and
 the voice are one thing: the bubble appears when the voice starts and goes 800ms after
 it ends. With no voice — muted, the toggle off, or a browser without speech — the
 bubble shows alone for 1.5s. He never speaks while the microphone is listening, because
@@ -567,7 +569,7 @@ his own voice would come back as a transcript.
 b. Let Rambo react to the list (add a task, complete one, let one go overdue) and
 listen. Toggle **Rambo talks** in the gear menu: the bubble still shows, the voice does
 not.
-c. Code: `web/src/voice.rs:say, cancel, audible, pick_voice`, called from
+c. Code: `web/src/voice.rs:say, cancel, audible, pick_voice, pitch_for`, called from
 `web/src/brain.rs` where the brain says a line; the toggle is
 `settings::Settings::rambo_talks`. Spec: docs/DESIGN-DIRECTION.md 3.
 

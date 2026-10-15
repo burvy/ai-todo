@@ -18,10 +18,14 @@ use crate::settings::SoundPreset;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 
-/// A little brisker and a little higher than the browser default, so Rambo reads
-/// as a small cheerful pen rather than a newsreader.
+/// A little brisker than the browser default, so Rambo reads as a small cheerful pen
+/// rather than a newsreader.
 pub const RATE: f32 = 1.1;
-pub const PITCH: f32 = 1.2;
+/// Rambo is a boy (ATD-206). A grown-up's voice is raised this much (0 to 2, 1 is the
+/// voice's own) so it reads young; safe range 1.2 to 1.6, higher turns cartoonish.
+pub const PITCH: f32 = 1.4;
+/// A voice that is already a child's keeps nearly its own pitch. Safe range 1.0 to 1.2.
+pub const PITCH_YOUNG: f32 = 1.05;
 
 /// How long the bubble stays after his voice stops.
 pub const BUBBLE_AFTER_VOICE_MS: u32 = 800;
@@ -50,8 +54,13 @@ pub fn audible(sound: SoundPreset, rambl_talks: bool) -> bool {
     sound.allows_voice() && rambl_talks
 }
 
-/// Voice names that read warm rather than newsy, best first. Any other English
-/// voice is acceptable; these are preferences, not a whitelist.
+/// Voices that are a child's, best first: Apple's Junior, Edge's Ana (US) and Maisie
+/// (UK). Matched as a whole word, so "English (Canada)" is not Ana.
+const YOUNG: [&str; 3] = ["Junior", "Ana", "Maisie"];
+
+/// Voice names that read warm rather than newsy, best first, for when no child's voice
+/// is offered. Any other English voice is acceptable; these are preferences, not a
+/// whitelist.
 const FRIENDLY: [&str; 8] = [
     "Samantha",
     "Aria",
@@ -63,7 +72,29 @@ const FRIENDLY: [&str; 8] = [
     "Google UK English Female",
 ];
 
-/// One voice for the whole page: the friendliest English one on offer.
+/// Whether `name` holds `word` as a whole word, in any case.
+fn names(name: &str, word: &str) -> bool {
+    name.split(|c: char| !c.is_alphanumeric())
+        .any(|part| part.eq_ignore_ascii_case(word))
+}
+
+/// Whether the voice called `name` is a child's.
+fn is_young(name: &str) -> bool {
+    YOUNG.iter().any(|young| names(name, young))
+}
+
+/// The pitch to speak with in the voice called `name` (`None`: the browser's own
+/// choice): a child's voice near its own, any other raised so he sounds like a boy.
+pub fn pitch_for(name: Option<&str>) -> f32 {
+    if name.is_some_and(is_young) {
+        PITCH_YOUNG
+    } else {
+        PITCH
+    }
+}
+
+/// One voice for the whole page: a child's English voice if one is offered, else the
+/// friendliest English one.
 ///
 /// `offered` is each voice's `(name, language)` as the browser reports it. Chrome
 /// fills `getVoices()` in after the page loads, so this is called again until it
@@ -75,13 +106,16 @@ pub fn pick_voice<'a>(offered: &'a [(&'a str, &'a str)]) -> Option<&'a (&'a str,
             .iter()
             .filter(|(_, language)| language.to_ascii_lowercase().starts_with("en"))
     };
-    FRIENDLY
+    let young = YOUNG
         .iter()
-        .find_map(|wanted| {
+        .find_map(|wanted| english().find(|(name, _)| names(name, wanted)));
+    let friendly = || {
+        FRIENDLY.iter().find_map(|wanted| {
             let wanted = wanted.to_ascii_lowercase();
             english().find(|(name, _)| name.to_ascii_lowercase().contains(&wanted))
         })
-        .or_else(|| english().next())
+    };
+    young.or_else(friendly).or_else(|| english().next())
 }
 
 /// The live handle to the browser's speech synthesiser. Only the browser ever
@@ -147,11 +181,12 @@ impl Speaker {
         let Ok(utterance) = web_sys::SpeechSynthesisUtterance::new_with_text(line) else {
             return;
         };
-        if let Some(voice) = self.voice() {
-            utterance.set_voice(Some(&voice));
+        let voice = self.voice();
+        if let Some(voice) = &voice {
+            utterance.set_voice(Some(voice));
         }
         utterance.set_rate(RATE);
-        utterance.set_pitch(PITCH);
+        utterance.set_pitch(pitch_for(voice.map(|voice| voice.name()).as_deref()));
         utterance.set_onend(Some(self._on_end.as_ref().unchecked_ref()));
         *self.on_end.borrow_mut() = Some(Box::new(on_end));
         self.synthesis.speak(&utterance);
@@ -207,7 +242,7 @@ pub fn cancel() {
 
 #[cfg(test)]
 mod tests {
-    use super::{SoundPreset, audible, bubble_ms, pick_voice};
+    use super::{PITCH, PITCH_YOUNG, SoundPreset, audible, bubble_ms, pick_voice, pitch_for};
 
     #[test]
     fn either_switch_stops_him_and_they_are_alone_enough() {
@@ -234,6 +269,57 @@ mod tests {
         assert_eq!(bubble_ms(true), 800);
         // With no voice the bubble is the only channel, so it holds longer.
         assert!(bubble_ms(false) > bubble_ms(true));
+    }
+
+    #[test]
+    fn a_childs_english_voice_beats_every_grown_up_one() {
+        let offered = [
+            ("Samantha", "en-US"),
+            (
+                "Microsoft Ana Online (Natural) - English (United States)",
+                "en-US",
+            ),
+            ("Junior", "en-US"),
+        ];
+        assert_eq!(pick_voice(&offered), Some(&("Junior", "en-US")));
+        let edge = [
+            (
+                "Microsoft Aria Online (Natural) - English (United States)",
+                "en-US",
+            ),
+            (
+                "Microsoft Maisie Online (Natural) - English (United Kingdom)",
+                "en-GB",
+            ),
+        ];
+        assert_eq!(pick_voice(&edge), Some(&edge[1]));
+    }
+
+    #[test]
+    fn a_childs_name_counts_only_as_a_whole_word() {
+        // "Canada" and "Diana" hold "ana"; neither is Edge's child voice Ana.
+        let offered = [
+            ("Microsoft Clara - English (Canada)", "en-CA"),
+            ("Diana", "en-US"),
+            ("Samantha", "en-US"),
+        ];
+        assert_eq!(pick_voice(&offered), Some(&("Samantha", "en-US")));
+        assert_eq!(pitch_for(Some("Microsoft Clara - English (Canada)")), PITCH);
+    }
+
+    #[test]
+    fn he_sounds_like_a_boy_whichever_voice_speaks() {
+        // A child's voice is near its own pitch; a grown-up's, or the browser's own
+        // choice, is raised.
+        assert_eq!(pitch_for(Some("Junior")), PITCH_YOUNG);
+        assert_eq!(
+            pitch_for(Some(
+                "Microsoft Ana Online (Natural) - English (United States)"
+            )),
+            PITCH_YOUNG
+        );
+        assert_eq!(pitch_for(Some("Samantha")), PITCH);
+        assert_eq!(pitch_for(None), PITCH);
     }
 
     #[test]
