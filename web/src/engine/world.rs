@@ -239,6 +239,8 @@ pub(crate) struct World {
     now: f64,
     /// Ink laid since the page last took it.
     ink: Vec<Splash>,
+    /// Knocks of his dry nib on the rim since the page last took them, to be heard.
+    knocks: u32,
     /// His nest, which sags and rocks as he lands in it and leaves it.
     nest: Nest,
     /// How loud the music is that he hears now, if any plays.
@@ -271,6 +273,7 @@ impl World {
             },
             now: 0.0,
             ink: Vec::new(),
+            knocks: 0,
             nest: Nest::default(),
             heard: None,
             dance: Dance::default(),
@@ -324,6 +327,12 @@ impl World {
     /// The ink laid since the last call, for the page to put down.
     pub(crate) fn take_ink(&mut self) -> Vec<Splash> {
         std::mem::take(&mut self.ink)
+    }
+
+    /// How many times his dry nib has knocked on the rim since the last call, for the
+    /// page to sound.
+    pub(crate) fn take_knocks(&mut self) -> u32 {
+        std::mem::take(&mut self.knocks)
     }
 
     /// An event for his brain from outside the world (a gesture, the capture box).
@@ -635,6 +644,7 @@ impl World {
             .clamp(-1.0, f64::from(tuning::DRY_NIB_TAPS) - 1.0);
         let due = (due + 1.0) as u32;
         (done..due).for_each(|_| self.nest.tap());
+        self.knocks += due - done;
         self.rambo.tapping = (ms < tapping_ms()).then_some((began, due));
     }
 
@@ -866,6 +876,29 @@ mod tests {
             }
         }
         (world, taps, tipped)
+    }
+
+    #[test]
+    fn every_tap_of_the_dry_nib_is_one_knock_to_hear_and_heard_once() {
+        let mut world = World::new(NEST);
+        world.tell(Event::WriteCaret);
+        world.advance(
+            steps(tuning::DRY_NIB_AFTER_MS + 500.0),
+            &anchors((60.0, 700.0)),
+        );
+        assert_eq!(world.take_knocks(), 0, "writing knocks nothing");
+        world.tell(Event::FlyHome);
+        world.tell(Event::FlyHome);
+        let mut heard = 0;
+        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + SETTLES_MS) {
+            world.advance(1, &anchors(NEST));
+            // A tap at a time: never two in one frame.
+            let knocks = world.take_knocks();
+            assert!(knocks <= 1);
+            heard += knocks;
+        }
+        assert_eq!(heard, tuning::DRY_NIB_TAPS);
+        assert_eq!(world.take_knocks(), 0, "each knock is taken once");
     }
 
     #[test]

@@ -6,6 +6,7 @@ Short mono MP3 cues. The gear menu's **Sound** preset decides which play
 | Cue | File | Plays when | Off | A quiet desk | Every touch | Everything + music |
 |---|---|---|---|---|---|---|
 | Write | `write.mp3` | the pen writes a title (looped while the nib moves) | no | yes | yes | yes |
+| Knock | `tick.mp3` | his dry nib knocks on the nest's rim, once a tap (shares the button tick until it has a file of its own) | no | yes | yes | yes |
 | Scribble | `scribble.mp3` | a task is crossed out | no | yes | yes | yes |
 | Page | `page.mp3` | a page turns (dropped under reduced motion) | no | yes | yes | yes |
 | Crumple | `crumple.mp3` | a strip is crumpled into the bin | no | yes | yes | yes |
