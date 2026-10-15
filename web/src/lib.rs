@@ -3,7 +3,7 @@ use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
 
 // The core (crates/web-core), under the paths the page has always used.
-pub use rambl_web_core::{clock, gesture, hop, ink, pen, tuning};
+pub use rambl_web_core::{clock, flip, gesture, hop, ink, pen, tuning};
 pub mod account;
 pub mod api;
 pub mod brain;
@@ -25,7 +25,6 @@ mod capture;
 mod edits;
 mod engine;
 mod events;
-mod flip;
 mod flip_turner;
 mod placing;
 mod rambo;

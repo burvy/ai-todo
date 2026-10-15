@@ -284,7 +284,7 @@ const _: () = assert!(SCRIBBLE_BAND.0 < SCRIBBLE_BAND.1 && SCRAP_MAX >= 1);
 /// from it, so there is one nest and nothing to drift apart.
 pub const NEST_HOME: (f64, f64) = (0.5, 0.40);
 
-// ---- the page turn (web/src/flip.rs)
+// ---- the page turn (flip.rs)
 
 /// The phone layout's media query, the one `web/theme.css` switches the two panes into
 /// stacked pages on: the page turns only where the panes are pages. Keep it equal to the CSS.

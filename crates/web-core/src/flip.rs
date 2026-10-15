@@ -14,9 +14,8 @@
 //! The leaf moves like a real one: `Spring` carries `open` with a speed of its own, so a
 //! page let go of mid-flick carries on at that speed, and one dropped short falls, meets the
 //! table and rebounds. This file keeps the geometry, the spring and the decisions pure, so
-//! they are tested without a browser; `flip_turner` (browser only) reads the pointer, draws
-//! the leaf and steps the spring each frame.
-#![cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
+//! they are tested natively; `web/src/flip_turner.rs` (browser only) reads the pointer,
+//! draws the leaf and steps the spring each frame.
 
 use crate::tuning::{
     BEND_COMMIT_SHARE, BEND_FLICK_MIN_PX, BEND_FLICK_PX_PER_MS, BEND_SLOP_PX, FLIP_WALL_BOUNCE,
@@ -24,7 +23,7 @@ use crate::tuning::{
 
 /// Which way the page is turning.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Turn {
+pub enum Turn {
     /// The list swings away over the spine to show the planner: the finger travels left.
     Forward,
     /// The list swings back in from the spine onto the planner: the finger travels right.
@@ -33,26 +32,26 @@ pub(crate) enum Turn {
 
 impl Turn {
     /// The leaf is always the list, pane 0; the planner is the page under it.
-    pub(crate) fn turning_pane(self) -> u8 {
+    pub fn turning_pane(self) -> u8 {
         0
     }
-    pub(crate) fn revealed_pane(self) -> u8 {
+    pub fn revealed_pane(self) -> u8 {
         1
     }
     /// +1 when a finger moving right helps the turn, -1 when moving left does.
-    pub(crate) fn inward(self) -> f64 {
+    pub fn inward(self) -> f64 {
         match self {
             Turn::Forward => -1.0,
             Turn::Back => 1.0,
         }
     }
     /// +1 when `open` grows as the turn goes on, -1 when it shrinks.
-    pub(crate) fn open_dir(self) -> f64 {
+    pub fn open_dir(self) -> f64 {
         -self.inward()
     }
     /// `open` when a drag has carried the finger `share` (0 to 1) of the page's width the
     /// way the turn goes.
-    pub(crate) fn open_at(self, share: f64) -> f64 {
+    pub fn open_at(self, share: f64) -> f64 {
         let share = share.clamp(0.0, 1.0);
         match self {
             Turn::Forward => share,
@@ -60,14 +59,14 @@ impl Turn {
         }
     }
     /// The `open` a finished turn ends on, and the one a turn that fell back ends on.
-    pub(crate) fn open_after(self, outcome: Settle) -> f64 {
+    pub fn open_after(self, outcome: Settle) -> f64 {
         match (self, outcome) {
             (Turn::Forward, Settle::Complete) | (Turn::Back, Settle::SpringBack) => 1.0,
             (Turn::Forward, Settle::SpringBack) | (Turn::Back, Settle::Complete) => 0.0,
         }
     }
     /// The pane showing once the turn has ended.
-    pub(crate) fn lands_on(self, outcome: Settle) -> u8 {
+    pub fn lands_on(self, outcome: Settle) -> u8 {
         if self.open_after(outcome) > 0.5 { 1 } else { 0 }
     }
 }
@@ -75,7 +74,7 @@ impl Turn {
 /// Which turn a press that has travelled `dx`, `dy` is asking for, once it has left
 /// the slop and is more sideways than up or down: a left swipe on the list, a right
 /// swipe on the planner. Any other swipe is not a page turn.
-pub(crate) fn turn_for(pane: u8, dx: f64, dy: f64) -> Option<Turn> {
+pub fn turn_for(pane: u8, dx: f64, dy: f64) -> Option<Turn> {
     if dx.hypot(dy) < BEND_SLOP_PX || dx.abs() <= dy.abs() {
         return None;
     }
@@ -89,12 +88,12 @@ pub(crate) fn turn_for(pane: u8, dx: f64, dy: f64) -> Option<Turn> {
 /// What letting go does: `reach` is how far the finger went the way the turn goes
 /// (negative if it came back), `velocity` the same way in px per ms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Settle {
+pub enum Settle {
     Complete,
     SpringBack,
 }
 
-pub(crate) fn settle(reach: f64, velocity: f64, page_width: f64) -> Settle {
+pub fn settle(reach: f64, velocity: f64, page_width: f64) -> Settle {
     let far_enough = reach >= page_width * BEND_COMMIT_SHARE;
     let flicked = reach >= BEND_FLICK_MIN_PX && velocity >= BEND_FLICK_PX_PER_MS;
     if far_enough || flicked {
@@ -108,14 +107,14 @@ pub(crate) fn settle(reach: f64, velocity: f64, page_width: f64) -> Settle {
 /// (`engine::Spring1`), with a speed of its own, pulled toward where the turn ends. The
 /// table (`open` 0) and the spine (`open` 1) are walls: the leaf meets them and rebounds
 /// a little, never passes through.
-pub(crate) use crate::engine::{Pull, Spring1};
+pub use crate::spring::{Pull, Spring1};
 
 /// A push on the leaf from underneath: `accel` in `open` per second squared, and how far
 /// `reach` (0 to 1) it can lift the leaf, short of the turn completing.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Push {
-    pub(crate) accel: f64,
-    pub(crate) reach: f64,
+pub struct Push {
+    pub accel: f64,
+    pub reach: f64,
 }
 
 /// The longest slice of time stepped in one go, in seconds: a slow frame is split so the
@@ -126,14 +125,14 @@ const REST_DISTANCE: f64 = 0.002;
 const REST_SPEED: f64 = 0.02;
 
 /// The leaf at `x` (0 to 1) moving at `v`.
-pub(crate) fn leaf(x: f64, v: f64) -> Spring1 {
+pub fn leaf(x: f64, v: f64) -> Spring1 {
     Spring1::new(x.clamp(0.0, 1.0), v)
 }
 
 /// Moves `leaf` on by `dt` seconds toward `target` while something may push its free
 /// corner from underneath. The push is an extra acceleration on `open`, and it never
 /// lifts the leaf past its `reach`, so a push cannot complete a turn.
-pub(crate) fn fall(leaf: &mut Spring1, target: f64, pull: Pull, push: Option<Push>, dt: f64) {
+pub fn fall(leaf: &mut Spring1, target: f64, pull: Pull, push: Option<Push>, dt: f64) {
     let mut left = dt.clamp(0.0, 0.1);
     while left > 0.0 {
         let h = left.min(SUBSTEP);
@@ -155,7 +154,7 @@ pub(crate) fn fall(leaf: &mut Spring1, target: f64, pull: Pull, push: Option<Pus
 }
 
 /// Whether `leaf` has come to rest at `target`.
-pub(crate) fn at_rest(leaf: &Spring1, target: f64) -> bool {
+pub fn at_rest(leaf: &Spring1, target: f64) -> bool {
     leaf.settled(target, REST_DISTANCE, REST_SPEED)
 }
 
@@ -163,7 +162,7 @@ pub(crate) fn at_rest(leaf: &Spring1, target: f64) -> bool {
 /// it is lifted and laid down on a fixed time, slow, quick, slow. It is symmetric
 /// (`glide(1 - t) = 1 - glide(t)`), so the turn back is the turn forward played in reverse:
 /// the same leaf through the same poses.
-pub(crate) fn glide(t: f64) -> f64 {
+pub fn glide(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
@@ -171,7 +170,7 @@ pub(crate) fn glide(t: f64) -> f64 {
 /// Where the leaf's free edge is on the screen, in px from the spine, for a page `width`
 /// px wide swung to `angle`, with the viewer `distance` px in front of the spine: the
 /// edge comes toward the viewer as it swings, so it is carried a little outward.
-pub(crate) fn edge_px(width: f64, angle: f64, distance: f64) -> f64 {
+pub fn edge_px(width: f64, angle: f64, distance: f64) -> f64 {
     let toward_viewer = width * angle.sin();
     width * angle.cos() * distance / (distance - toward_viewer)
 }
@@ -180,11 +179,7 @@ pub(crate) fn edge_px(width: f64, angle: f64, distance: f64) -> f64 {
 /// its left edge) when it is `open`, for a page `width` by `height` px seen from `distance`
 /// px away: the leaf's footprint is the page's own, cut off at its free edge.
 /// `x` is measured from the spine, which is the page's left edge forward and back alike.
-#[allow(
-    dead_code,
-    reason = "asked for by Rambo being caught under the leaf, engine step 11"
-)]
-pub(crate) fn leaf_covers(
+pub fn leaf_covers(
     open: f64,
     (width, height): (f64, f64),
     distance: f64,
@@ -198,14 +193,14 @@ pub(crate) fn leaf_covers(
 /// finger holding that edge keeps pace with it. (The viewer's perspective carries the edge
 /// a little outward, `edge_px`; solving for that exactly would swing the leaf by a third of
 /// a turn at the first pixel of travel, so the drag is mapped flat on.)
-pub(crate) fn angle(open: f64) -> f64 {
+pub fn angle(open: f64) -> f64 {
     (1.0 - open.clamp(0.0, 1.0)).acos()
 }
 
 /// The light on the leaf and the shadow it throws on the page under it, 0 to 1 each.
 /// The leaf darkens as it turns away from the light; the shadow on the page below is
 /// strongest half way over and is gone when the leaf lies flat or stands edge-on.
-pub(crate) fn lighting(angle: f64) -> (f64, f64) {
+pub fn lighting(angle: f64) -> (f64, f64) {
     (1.0 - angle.cos(), (2.0 * angle).sin())
 }
 

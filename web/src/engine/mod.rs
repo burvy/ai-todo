@@ -12,7 +12,7 @@ mod run;
 mod world;
 
 // The pure halves live in `web-core`; these keep the engine's old paths.
-pub(crate) use body::{Pull, Spring1};
+pub(crate) use body::Pull;
 pub(crate) use fling::Walls;
 pub(crate) use glide::{glide, glide_keyed};
 pub(crate) use link::{leaf, on_leaf, set_push};
