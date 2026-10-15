@@ -16,12 +16,14 @@ use wasm_bindgen::JsCast;
 
 use crate::api;
 use crate::edits::series_note;
+use crate::events::Queue;
 use crate::tasks::occurrence_parts;
 use crate::tuning::{
     BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGE_PX, PIN_EDGES, PIN_ROOM_PX, ROW_CLOSE_MS,
     SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX, STRIP_GAP_PX,
     STRIP_H_PX,
 };
+use rambl_web_core::events::{Event, row_left};
 
 /// What taping a scrap back does.
 #[derive(Clone, Debug, PartialEq)]
@@ -33,19 +35,7 @@ pub enum Undo {
 }
 
 /// A box on the page, in viewport pixels: where a deleted row stood, or where a scrap hangs.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Spot {
-    pub x: f64,
-    pub y: f64,
-    pub w: f64,
-    pub h: f64,
-}
-
-impl Spot {
-    fn centre(self) -> (f64, f64) {
-        (self.x + self.w / 2.0, self.y + self.h / 2.0)
-    }
-}
+pub use rambl_web_core::events::Spot;
 
 /// How far, in px across and down, a scrap hung at `hung` starts from the middle of the
 /// row that stood at `row`: the flight runs from this offset back to nothing.
@@ -54,28 +44,21 @@ pub fn fly_offset(row: Spot, hung: Spot) -> (f64, f64) {
     (row_x - hung_x, row_y - hung_y)
 }
 
-thread_local! {
-    /// Where the row of a task just marked done stood, noted before the list loses it, so
-    /// its strip at the pin can fly from there. Taken once, when the strip is drawn.
-    static DEPARTURES: std::cell::RefCell<std::collections::HashMap<String, Spot>> =
-        std::cell::RefCell::new(std::collections::HashMap::new());
-}
-
 /// Note where the row `id` stands now, for the strip that is about to hang at the pin.
-pub fn note_departure(id: &str) {
-    if let Some(spot) = row_spot(id) {
-        DEPARTURES.with(|noted| noted.borrow_mut().insert(id.to_owned(), spot));
+pub fn note_departure(events: Queue, id: &str) {
+    if let Some(from) = row_spot(id) {
+        forget_departure(events, id);
+        events.push(Event::RowLeft {
+            id: id.to_owned(),
+            from,
+        });
     }
-}
-
-fn take_departure(id: &str) -> Option<Spot> {
-    DEPARTURES.with(|noted| noted.borrow_mut().remove(id))
 }
 
 /// Drop a noted departure once its request is answered: a refused one, or a strip that
 /// landed past what fits, never mounts a strip to take it.
-pub fn forget_departure(id: &str) {
-    take_departure(id);
+pub fn forget_departure(events: Queue, id: &str) {
+    events.take_all(row_left(id));
 }
 
 thread_local! {
@@ -534,6 +517,7 @@ pub fn ScrapCorner(
 ) -> impl IntoView {
     // Edits go through the store, which shows the reply and explains a refusal.
     let store = expect_context::<crate::store::Store>();
+    let events = expect_context::<Queue>();
     view! {
         <div
             class="scrap-pile"
@@ -553,7 +537,7 @@ pub fn ScrapCorner(
                     Effect::new(move |flown: Option<bool>| {
                         let ready = hung_ref.get().inspect(|button| {
                             if flown != Some(true)
-                                && let Some(from) = take_departure(&id)
+                                && let Some(from) = events.take(row_left(&id))
                             {
                                 fly(button, from);
                             }

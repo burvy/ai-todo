@@ -54,6 +54,7 @@ pub(crate) fn Rambo(
 ) -> impl IntoView {
     // Edits go through the store, which shows the reply and explains a refusal.
     let store = expect_context::<crate::store::Store>();
+    let events = expect_context::<crate::events::Queue>();
     // Where he is drawn, and how squashed by a hop: see the hop mover below.
     let shown = RwSignal::new(pen_pos.get_untracked());
     let squash = RwSignal::new(0.0_f64);
@@ -542,7 +543,7 @@ pub(crate) fn Rambo(
             mascot::Choice::Done => {
                 // The list's tick, so a repeat's day is marked on its own date.
                 let action = snapshot.with_untracked(|s| tick_action(s, &task_id));
-                crate::scrap::note_departure(&task_id);
+                crate::scrap::note_departure(events, &task_id);
                 let sink = store;
                 // He has his answer before the tick is saved, so a second tap on
                 // Done finds him no longer asking and cannot tick it back.
@@ -551,7 +552,7 @@ pub(crate) fn Rambo(
                     if let Some(action) = action {
                         apply_tick(&TaskId(task_id.clone()), action, sink).await;
                     }
-                    crate::scrap::forget_departure(&task_id);
+                    crate::scrap::forget_departure(events, &task_id);
                 });
             }
             mascot::Choice::Longer | mascot::Choice::Shorter => {

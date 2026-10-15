@@ -60,7 +60,9 @@ impl Mark {
 
 impl Command {
     /// Change `snapshot` as the server will, where the result is certain, so the list
-    /// shows it before the reply comes.
+    /// shows it before the reply comes. Applying it to a list the server made after taking
+    /// it must change nothing, because a newer list may already hold it when it is laid on
+    /// top.
     fn apply(&self, snapshot: &mut Snapshot) {
         match self {
             Command::Reorder(ids) => reorder(snapshot, ids),
@@ -156,8 +158,10 @@ pub enum Outcome {
 /// The list the page shows, and how fresh the newest confirmed one is.
 #[derive(Clone, Debug)]
 pub struct Store {
-    /// What is shown: the newest confirmed list with any certain changes on top.
+    /// What is shown: the newest confirmed list with the pending commands on top.
     shown: Snapshot,
+    /// Commands sent and not yet answered, in the order they were sent.
+    pending: Vec<(Ticket, Command)>,
     /// The newest list the server confirmed, and the request it answered.
     confirmed: Snapshot,
     confirmed_by: Ticket,
@@ -169,6 +173,7 @@ impl Store {
     pub fn new(snapshot: Snapshot) -> Self {
         Store {
             shown: snapshot.clone(),
+            pending: Vec::new(),
             confirmed: snapshot,
             confirmed_by: Ticket(0),
             issued: Ticket(0),
@@ -183,7 +188,9 @@ impl Store {
     /// A command is being sent: what is certain shows at once.
     pub fn send(&mut self, command: &Command) -> Ticket {
         command.apply(&mut self.shown);
-        self.next_ticket()
+        let ticket = self.next_ticket();
+        self.pending.push((ticket, command.clone()));
+        ticket
     }
 
     /// A reload is being sent: nothing changes until it answers.
@@ -196,14 +203,24 @@ impl Store {
         self.issued
     }
 
+    /// Show the confirmed list with every command still pending laid on top, in the order
+    /// they were sent, so a newer list or a refusal never hides a change still on its way.
+    fn redraw(&mut self) {
+        let mut shown = self.confirmed.clone();
+        for (_, command) in &self.pending {
+            command.apply(&mut shown);
+        }
+        self.shown = shown;
+    }
+
     /// A list the page already put on screen some other way (the first load, or a call
     /// site not yet sent through the store). It is taken as confirmed only if it was made
     /// later than the one confirmed; otherwise the store's list goes back on screen, and
     /// this returns it. The store's own lists come back here too, and return nothing.
     pub fn offer(&mut self, written: Snapshot) -> Option<Snapshot> {
         if written.generated > self.confirmed.generated {
-            self.shown = written.clone();
             self.confirmed = written;
+            self.redraw();
             None
         } else {
             (written != self.shown).then(|| self.shown.clone())
@@ -211,25 +228,28 @@ impl Store {
     }
 
     /// The server answered `ticket`. A list is kept only if it is newer than the one
-    /// confirmed: made later, or as late and asked for later.
+    /// confirmed: made later, or as late and asked for later. Either way the command is no
+    /// longer pending, and what is shown is the confirmed list with the others on top: a
+    /// refusal takes back only its own change.
     pub fn answer(&mut self, ticket: Ticket, reply: Result<Snapshot, Refusal>) -> Outcome {
-        match reply {
+        self.pending.retain(|(sent, _)| *sent != ticket);
+        let outcome = match reply {
             Ok(snapshot) => {
                 let newer =
                     (snapshot.generated, ticket) > (self.confirmed.generated, self.confirmed_by);
-                if !newer {
-                    return Outcome::Stale;
+                if newer {
+                    self.confirmed = snapshot;
+                    self.confirmed_by = ticket;
+                    Outcome::Shown
+                } else {
+                    // The server took it before making the newer list, which holds it.
+                    Outcome::Stale
                 }
-                self.shown = snapshot.clone();
-                self.confirmed = snapshot;
-                self.confirmed_by = ticket;
-                Outcome::Shown
             }
-            Err(refusal) => {
-                self.shown = self.confirmed.clone();
-                Outcome::Refused(refusal)
-            }
-        }
+            Err(refusal) => Outcome::Refused(refusal),
+        };
+        self.redraw();
+        outcome
     }
 }
 
@@ -342,6 +362,67 @@ mod tests {
             Outcome::Refused(Refusal::Refused)
         );
         assert_eq!(store.snapshot(), &start, "and taken back when refused");
+    }
+
+    #[test]
+    fn a_newer_list_keeps_the_changes_still_on_their_way() {
+        // A reload answers while a reorder is in flight: the list must not flicker back to
+        // the old order and then forward again.
+        let start = fixture();
+        let mut order = ids(&start);
+        order.reverse();
+        let mut store = Store::new(start.clone());
+        let reload = store.reload();
+        let ticket = store.send(&Command::Reorder(order.clone()));
+        assert_eq!(store.answer(reload, Ok(later(&start, 1))), Outcome::Shown);
+        assert_eq!(ids(store.snapshot()), order, "the reorder stays on top");
+        assert_eq!(store.offer(later(&start, 2)), None);
+        assert_eq!(ids(store.snapshot()), order, "and on a list from elsewhere");
+        let mut reordered = later(&start, 3);
+        reorder(&mut reordered, &order);
+        assert_eq!(store.answer(ticket, Ok(reordered.clone())), Outcome::Shown);
+        assert_eq!(store.snapshot(), &reordered);
+    }
+
+    #[test]
+    fn a_change_laid_on_a_list_that_already_holds_it_changes_nothing() {
+        let start = fixture();
+        let mut order = ids(&start);
+        order.reverse();
+        let mut store = Store::new(start.clone());
+        let ticket = store.send(&Command::Reorder(order.clone()));
+        // The server took it, and a list it made afterwards arrives first from elsewhere.
+        let mut reordered = later(&start, 2);
+        reorder(&mut reordered, &order);
+        assert_eq!(store.offer(reordered.clone()), None);
+        assert_eq!(store.snapshot(), &reordered);
+        assert_eq!(
+            store.answer(ticket, Ok(later(&reordered, -1))),
+            Outcome::Stale
+        );
+        assert_eq!(store.snapshot(), &reordered);
+    }
+
+    #[test]
+    fn a_refusal_takes_back_only_its_own_change() {
+        let start = fixture();
+        let mut order = ids(&start);
+        order.reverse();
+        let mut store = Store::new(start.clone());
+        store.send(&Command::Reorder(order.clone()));
+        let refused = store.send(&Command::Patch(
+            order[0].clone(),
+            PatchTaskBody::new().done(true),
+        ));
+        assert_eq!(
+            store.answer(refused, Err(Refusal::Stale)),
+            Outcome::Refused(Refusal::Stale)
+        );
+        assert_eq!(
+            ids(store.snapshot()),
+            order,
+            "the reorder still on its way still shows"
+        );
     }
 
     #[test]
