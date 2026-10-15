@@ -30,6 +30,17 @@ pub(crate) fn next_frame(body: impl FnOnce() + 'static) {
     });
 }
 
+/// Runs `body` once, `ms` from now, on the engine's clock.
+pub(crate) fn after(ms: f64, body: impl FnOnce() + 'static) -> Handle {
+    let mut body = Some(body);
+    every(ms, move || {
+        if let Some(body) = body.take() {
+            body();
+        }
+        Flow::Stop
+    })
+}
+
 /// Runs `body` every `ms` from now while it returns [`Flow::Go`].
 pub(crate) fn every(ms: f64, mut body: impl FnMut() -> Flow + 'static) -> Handle {
     let handle = LOOP.with(|lp| lp.borrow_mut().at(now() + ms, Some(ms), move |_| body()));
@@ -134,4 +145,41 @@ mod pump {
     /// Natively nothing asks the browser for frames: the loop's rules are tested on
     /// [`super::Loop`] directly.
     pub(super) fn poke() {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    /// One frame of the page's loop at `at`, run the way the browser's pump runs it.
+    fn frame_at(at: f64) {
+        let (tick, jobs) = LOOP.with(|lp| lp.borrow_mut().begin(at));
+        super::super::sched::run(tick, &jobs);
+        drop(jobs);
+        LOOP.with(|lp| lp.borrow_mut().end());
+    }
+
+    #[test]
+    fn after_runs_its_body_once_when_its_time_comes() {
+        let runs = Rc::new(Cell::new(0));
+        let counted = runs.clone();
+        after(500.0, move || counted.set(counted.get() + 1));
+        frame_at(499.0);
+        assert_eq!(runs.get(), 0, "not before its time");
+        frame_at(500.0);
+        frame_at(1500.0);
+        assert_eq!(runs.get(), 1, "and never again");
+    }
+
+    #[test]
+    fn a_stopped_after_never_runs() {
+        let runs = Rc::new(Cell::new(0));
+        let counted = runs.clone();
+        let handle = after(10.0, move || counted.set(counted.get() + 1));
+        handle.stop();
+        frame_at(100.0);
+        assert_eq!(runs.get(), 0);
+    }
 }
