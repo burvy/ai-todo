@@ -17,6 +17,10 @@ pub const BUBBLE_EDGE_PX: f64 = 8.0;
 /// ms; the page reads it as `--ask-fold-ms`. Safe range 120 to 300: shorter and it
 /// pops, longer and the page waits on it.
 pub const ASK_FOLD_MS: u32 = 180;
+/// How long a slip taken off the planner takes to slide out of its day, in ms; the
+/// week is drawn without it no sooner. Safe range 180 to 400: shorter and it pops,
+/// longer and the planner waits on it.
+pub const SLIP_OFF_MS: u32 = 260;
 
 /// How loud the background music plays, 0 to 1. Safe range 0.05 to 0.25: the music is
 /// a bed under the cues (whose own volumes are 0.2 to 0.42), not a track to listen to.

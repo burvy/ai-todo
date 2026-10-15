@@ -282,6 +282,8 @@ pub enum Choice {
     Longer,
     /// A quarter hour less (a slip in the planner).
     Shorter,
+    /// Off the planner: it stays in the list (a slip in the planner).
+    Off,
 }
 
 impl Choice {
@@ -292,6 +294,7 @@ impl Choice {
             Choice::Done => "Done",
             Choice::Longer => "Longer",
             Choice::Shorter => "Shorter",
+            Choice::Off => "Take off",
         }
     }
 }
@@ -302,7 +305,7 @@ pub enum Asked {
     /// A row of the list: the task itself.
     Row,
     /// A slip in the planner: its time. One day of a repeating series has its length
-    /// from the series, so it can only be moved.
+    /// from the series and is planned with it, so it can only be moved.
     Slip { repeats: bool },
 }
 
@@ -310,7 +313,9 @@ pub enum Asked {
 pub fn offered(on: Asked) -> &'static [Choice] {
     match on {
         Asked::Row => &[Choice::Edit, Choice::Move, Choice::Done],
-        Asked::Slip { repeats: false } => &[Choice::Move, Choice::Longer, Choice::Shorter],
+        Asked::Slip { repeats: false } => {
+            &[Choice::Move, Choice::Longer, Choice::Shorter, Choice::Off]
+        }
         Asked::Slip { repeats: true } => &[Choice::Move],
     }
 }
@@ -1615,7 +1620,10 @@ mod tests {
     #[test]
     fn on_a_slip_he_offers_its_time_and_a_repeat_only_moves() {
         let slip = offered(Asked::Slip { repeats: false });
-        assert_eq!(slip, [Choice::Move, Choice::Longer, Choice::Shorter]);
+        assert_eq!(
+            slip,
+            [Choice::Move, Choice::Longer, Choice::Shorter, Choice::Off]
+        );
         assert_eq!(offered(Asked::Slip { repeats: true }), [Choice::Move]);
         // Editing or ticking the task is the list's business, never a slip's.
         for on in [

@@ -1784,6 +1784,32 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   transition: height var(--dur) var(--arrive-ease);
 }
 
+/* Taken off the planner (week.rs:take_off), a slip slides sideways out of its day,
+   under the column's edge, and the week is then drawn without it: paper slides, it
+   never fades. */
+.placement.slip-off {
+  pointer-events: none;
+  animation: slip-off var(--slip-off-ms, 260ms) var(--arrive-ease) forwards;
+}
+
+/* From an explicit inset: a clip from none would jump to its end. */
+@keyframes slip-off {
+  from {
+    transform: none;
+    clip-path: inset(0 0 0 0);
+  }
+  to {
+    transform: translateX(60%);
+    clip-path: inset(0 0 0 100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .placement.slip-off {
+    animation: none;
+  }
+}
+
 /* A placed task: a wash of ink across the hour lines, marked by its edge.
    The hour rows are positioned too and come later in the document, so without
    a raised layer the slip paints under them and its grip never gets hit by
