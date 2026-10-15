@@ -7,9 +7,9 @@ use todo_core::{LocalContext, Snapshot, TaskId, When};
 
 use crate::body::PatchTaskBody;
 use crate::placing::{Stretch, stretched};
-use crate::planner::{Slot, day_index, drop_start, occurrence_of};
+use crate::planner::{Slot, day_index, drop_start, occurrence_of, placement_style, snapped_minute};
 use crate::store::Command;
-use crate::tuning::PRESS_SLOP_PX;
+use crate::tuning::{HOUR_PX, PRESS_SLOP_PX};
 
 /// A slip lifted onto a finger: which task, its title, where the finger is, and where
 /// on the slip it took hold. Where it may land is drawn from the planner under the
@@ -30,6 +30,30 @@ impl SlipDrag {
     pub fn ghost_corner(&self) -> (f64, f64) {
         (self.x - self.grab.0, self.y - self.grab.1)
     }
+
+    /// The point whose time the slip lands on: the ghost's top edge, in the day column
+    /// under the finger, so a slip let go where it was taken lands where it sat however
+    /// low on it the finger took hold.
+    pub fn landing_point(&self) -> (f64, f64) {
+        (self.x, self.y - self.grab.1)
+    }
+}
+
+/// A slip's ghost let go: the slip it was, the slot it goes to (`None`: back to the
+/// slip's own place), and where it is drawn on its way. Paper, not a picture: it springs
+/// to where it goes and stays there until the slip is drawn under it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LetGoGhost {
+    pub drag: SlipDrag,
+    pub to: Option<Slot>,
+    pub at: (f64, f64),
+}
+
+/// Where a slip placed at `minutes` starts on the screen, in a day whose hours box has
+/// its top-left corner at `hours`, in a working day from `start_hour` to `end_hour`.
+pub fn slot_corner(hours: (f64, f64), minutes: u16, start_hour: u8, end_hour: u8) -> (f64, f64) {
+    let (top, _) = placement_style(minutes, minutes, start_hour, HOUR_PX, end_hour);
+    (hours.0, hours.1 + f64::from(top))
 }
 
 /// Whether a finger that has not lifted its slip yet, having slid `slide` px in all, is
@@ -40,7 +64,8 @@ pub fn press_scrolls(slide: f64) -> bool {
 }
 
 /// Where a slip that starts at `start` goes when let go over `landing`: nowhere off
-/// the planner, nor where it already sits.
+/// the planner, nor where it already sits. A drop lands on a quarter hour, so a slip
+/// off the quarter (one planned at 9:04) sits on the quarter it rounds to.
 pub fn slip_moves_to(
     start: DateTime<Utc>,
     ctx: &LocalContext,
@@ -49,7 +74,7 @@ pub fn slip_moves_to(
     let local = ctx.local(start);
     let current = Slot {
         day: day_index(start, ctx),
-        minutes: local.hour() as u16 * 60 + local.minute() as u16,
+        minutes: snapped_minute(f32::from(local.hour() as u16 * 60 + local.minute() as u16)) as u16,
     };
     landing.filter(|slot| *slot != current)
 }
@@ -170,6 +195,25 @@ mod tests {
     }
 
     #[test]
+    fn a_slot_starts_where_a_slip_placed_there_would() {
+        let hours = (300.0, 120.0);
+        assert_eq!(
+            slot_corner(hours, 8 * 60, 8, 20),
+            hours,
+            "the day's first hour"
+        );
+        assert_eq!(
+            slot_corner(hours, 9 * 60 + 30, 8, 20),
+            (300.0, 120.0 + 1.5 * f64::from(HOUR_PX))
+        );
+        assert_eq!(
+            slot_corner(hours, 7 * 60, 8, 20),
+            hours,
+            "before the day starts it is held at its top, as the slip is"
+        );
+    }
+
+    #[test]
     fn a_tremble_keeps_the_hold_and_a_slide_is_a_scroll() {
         assert!(!press_scrolls(0.0));
         assert!(
@@ -205,6 +249,26 @@ mod tests {
             ..here
         };
         assert_eq!(slip_moves_to(start, &ctx, Some(later)), Some(later));
+        let off_quarter = start + chrono::Duration::minutes(4);
+        assert_eq!(
+            slip_moves_to(off_quarter, &ctx, Some(here)),
+            None,
+            "a slip at 10:04 dropped on 10:00 is where it sits"
+        );
+        assert_eq!(slip_moves_to(off_quarter, &ctx, Some(later)), Some(later));
+    }
+
+    #[test]
+    fn a_slip_lands_where_its_top_is_not_where_the_finger_is() {
+        let held = SlipDrag {
+            id: TaskId("t".into()),
+            title: String::new(),
+            x: 310.0,
+            y: 250.0,
+            grab: (10.0, 50.0),
+        };
+        assert_eq!(held.landing_point(), (310.0, 200.0));
+        assert_eq!(held.landing_point().1, held.ghost_corner().1);
     }
 
     #[test]

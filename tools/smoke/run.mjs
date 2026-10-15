@@ -264,6 +264,41 @@ const scenarios = {
     await waitFor(async () => (await p.evaluate(TURN_NOW)).pane === "0" && !(await p.evaluate(TURN_NOW)).flipping, 5000, "the turn to land on the list");
   },
 
+  async "a slip dragged on the planner springs to its new time, and back where it sat"(p) {
+    const stacked = await p.evaluate('matchMedia("(max-width: 700px)").matches');
+    if (stacked) {
+      // Where the pages stack, the planner is behind the list; the wide desk checks it.
+      return;
+    }
+    // A slip in sight with room below it, from the tasks the checks above made.
+    const slip = await waitFor(() => p.evaluate(SLIP_IN_SIGHT), 15000, "a slip on the planner");
+    const top = () => p.evaluate(`document.querySelector(".week-scroll .placement[data-id='${slip.id}']")?.getBoundingClientRect().top ?? null`);
+    const from = { x: slip.x, y: slip.y };
+    // Picked up, carried off and brought back: dropped where it sat, the ghost springs back
+    // to it and the slip stays.
+    await p.pointer("down", from.x, from.y);
+    for (const dy of [5, 10, 15, 20, 15, 10, 5, 1]) {
+      await p.pointer("move", from.x, from.y + dy);
+      await sleep(16);
+    }
+    if (!(await p.has(".drag-ghost"))) throw new Error("no ghost while the slip is carried");
+    await p.pointer("up", from.x, from.y + 1);
+    await waitFor(async () => !(await p.has(".drag-ghost")), 5000, "the ghost back on its slip");
+    const back = await top();
+    if (Math.abs(back - slip.top) > 3) throw new Error(`a slip dropped where it sat moved (${slip.top} to ${back})`);
+    // Dragged two hours down: the ghost rides the pointer, is still drawn the moment it is
+    // let go (it springs to the slot, it does not vanish), and the slip lands there.
+    await p.pointer("down", from.x, from.y);
+    for (let i = 1; i <= 15; i++) {
+      await p.pointer("move", from.x, from.y + (slip.down * i) / 15);
+      await sleep(16);
+    }
+    if (!(await p.has(".drag-ghost"))) throw new Error("no ghost while the slip is held");
+    await p.pointer("up", from.x, from.y + slip.down);
+    if (!(await p.has(".drag-ghost"))) throw new Error("the ghost vanished on letting go");
+    await waitFor(async () => !(await p.has(".drag-ghost")) && (await top()) > slip.top + slip.down / 2, 8000, "the slip at its new time");
+  },
+
   async "Rambo dragged to the page goes home"(p) {
     await waitFor(() => p.has(".rambo"), 10000, "Rambo");
     const rambo = await p.rect(".rambo");
@@ -273,6 +308,23 @@ const scenarios = {
     await waitFor(() => p.has(".rambo.is-home"), 8000, "Rambo to go home");
   },
 };
+
+// A slip on the planner in sight with room below it: its id, a point on it to hold, its
+// top, and how far down two hours are.
+const SLIP_IN_SIGHT = `(() => {
+  const scroll = document.querySelector(".week-scroll");
+  const hour = document.querySelector(".week-scroll .hour");
+  if (!scroll || !hour) return null;
+  const s = scroll.getBoundingClientRect();
+  const down = 2 * hour.getBoundingClientRect().height;
+  for (const e of document.querySelectorAll(".week-scroll .placement[data-id]")) {
+    const r = e.getBoundingClientRect();
+    if (r.top > s.top + 40 && r.bottom + down < s.bottom - 20 && r.left > s.left && r.right < s.right) {
+      return { id: e.dataset.id, x: r.left + r.width / 2, y: r.top + 6, top: r.top, down };
+    }
+  }
+  return null;
+})()`;
 
 // What the page turn shows right now: whether the book flip is under way, and whether what it
 // draws is there (the leaf with the list on it, the page beneath it, the leaf's light).

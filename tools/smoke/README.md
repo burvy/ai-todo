@@ -27,8 +27,9 @@ Each check runs at desk size (1280x800, mouse), at a narrow desk window (640x800
 2. **a typed capture writes a row**: type a sentence into the capture box and press Enter; a new row appears.
 3. **a swipe finishes a row and the tape brings it back**: drag a row to the right; it goes, and the tape (undo) brings it back.
 4. **a swipe turns the page and the book flip is drawn, not blank, mid-turn**: where the pages stack (narrow desk, phone) swipe the list over to the planner, hold, and check the leaf is swung with the list on it, the planner shows beneath and the leaf's light is drawn; release, then turn back with the note at the foot and check the same. On the wide desk the two pages sit side by side, so it only checks both show.
-5. **Rambo dragged to the page goes home**: drag Rambo to the middle of the page and release; he goes home.
-6. **no page errors**: no uncaught exception or console error during the run.
+5. **a slip dragged on the planner springs to its new time, and back where it sat** (wide desk only, where the planner is in sight beside the list): drop a slip where it sits and its ghost goes back onto it and it stays; drag it two hours down and the ghost is still drawn the moment it is let go (it springs to the slot rather than vanishing), then the slip is there.
+6. **Rambo dragged to the page goes home**: drag Rambo to the middle of the page and release; he goes home.
+7. **no page errors**: no uncaught exception or console error during the run.
 
 ## How it runs
 
