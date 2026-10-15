@@ -827,8 +827,7 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                                 if binned.get_untracked() {
                                     crate::sound::play(crate::sound::Cue::Crumple);
                                     let id = task_id.get_value();
-                                    let Some(strip) = hung_ref.get_untracked() else { return };
-                                    crumple(&strip, move || {
+                                    let delete = move || {
                                         wasm_bindgen_futures::spawn_local(async move {
                                             // Refused: the scrap comes back off the bin.
                                             if store.send(Command::DeleteTask(id)).await.is_none() {
@@ -841,7 +840,11 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                                                 swing_home(&task_id.get_value().0, offset, homing);
                                             }
                                         });
-                                    });
+                                    };
+                                    match hung_ref.get_untracked() {
+                                        Some(strip) => crumple(&strip, delete),
+                                        None => delete(),
+                                    }
                                 } else {
                                     swing_home(&task_id.get_value().0, offset, homing);
                                 }
@@ -954,8 +957,6 @@ mod tests {
     use super::*;
     use crate::api;
 
-    /// A tick that went through leaves the row's departure for its strip, which mounts
-    /// after the tick returns; one no strip will take is dropped.
     #[test]
     fn a_crumple_runs_its_time_and_the_fall_speeds_up() {
         assert_eq!(crumple_at(0.0, 360.0), (0.0, 0.0));
@@ -968,6 +969,8 @@ mod tests {
         );
     }
 
+    /// A tick that went through leaves the row's departure for its strip, which mounts
+    /// after the tick returns; one no strip will take is dropped.
     #[test]
     fn a_done_rows_departure_waits_for_its_strip_unless_the_tick_was_refused() {
         let mut snapshot = api::fixture_snapshot();
