@@ -30,7 +30,7 @@ The look is **one page of parchment, written on in ink** (owner brief, `docs/DES
 
 Every text ink (`--ink`, `--ink-soft`, `--ink-faint`, `--accent`, `--danger`) is at least 4.5:1 (WCAG AA) on `--paper` and `--paper-raised` in both themes, `--ink` (the only ink written on it) is on `--paper-sunken`, and `--now` is on the page and raised paper: `web/src/contrast.rs` reads `web/theme.css` and fails on any pair below it (ATD-144).
 
-**Dark** (the same desk at night: deep paper, parchment-coloured ink), under `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }` and `:root[data-theme="dark"]`:
+**Dark** (the same desk by lamplight: an older, darker parchment with the same dark ink, not a dark UI; only paper, inks and rules differ, the pen and nest keep the light colours), under `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }` and `:root[data-theme="dark"]`:
 
 | Token | Hex |
 |---|---|
@@ -75,12 +75,11 @@ Scale (rem): `--text-xs` 0.85, `--text-sm` 0.95, `--text-base` 1.05, `--text-lg`
 
 ## Paper texture
 
-Two graphics live in `web/assets/theme/` and are copied into `web/dist` by `index.html`'s `copy-dir` link:
+One graphic lives in `web/assets/theme/` and is copied into `web/dist` by `index.html`'s `copy-dir` link:
 
 | File | Size | Where it is used |
 |---|---|---|
-| `paper.svg` | 512x512, tileable | page background, light mode (`--texture-paper`): full-bleed `#f2e8cf` with stitched grain at 5% alpha |
-| `paper-dark.svg` | 512x512, tileable | page background, dark mode: `#241c11` with the same grain |
+| `paper-grain.webp` | 320x320, tileable, 69 KB | the grain over the page colour in both themes (`--texture-paper`): coffee-brown speckle at up to 18% alpha, cut from ambientCG *Paper006* (CC0), see `web/assets/CREDITS.md` |
 
 The torn edge strip and the corner stain from earlier drafts were dropped: they read as a glitch and dirt, not paper (owner brief). If a texture ever comes back it must be subtler than the grain and must not sit in the masthead.
 

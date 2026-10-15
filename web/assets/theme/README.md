@@ -1,19 +1,21 @@
-# Theme Assets (Placeholder)
+# Theme assets
 
 Rambo's poses live in `web/assets/rambo/` (see `art/GUIDE.md`), not here.
 
-All files in this directory are AI-generated placeholder graphics. Replace them with real art before shipping.
-
 | File | Purpose | Size | Format | Used in |
 |---|---|---|---|---|
-| paper.svg | Tileable light parchment grain | 512x512 | SVG (tileable) | Page background |
-| paper-dark.svg | Tileable dark-mode parchment grain | 512x512 | SVG (tileable) | Dark page background |
+| `paper-grain.webp` | Real paper grain, tileable, laid over the page colour in light and dark | 320x320, 69 KB | WebP with alpha | `--texture-paper` in `web/theme.css`, every paper surface |
 
-## Replacement steps
+## Source and licence
 
-1. Draw or source the replacement graphic. Keep the same dimensions and transparent background where specified.
-2. Keep the exact filename (Dwight's theme.css references these names).
-3. Keep the same viewBox if it is an SVG.
-4. Replace the file directly; no other changes needed.
-5. Rebuild: `.\build.ps1 -Deploy -Modules @() -Servers rambl` in burvy-dev.
-6. Confirm the file appears in `web/dist/assets/theme/` after `trunk build --release`.
+Cut from *Paper006* (beige paper) by ambientCG, **CC0 1.0** (public domain dedication):
+<https://ambientcg.com/a/Paper006>, `Paper006_1K-JPG.zip`, colour map. Processing: greyscale, the
+low-frequency shading removed with a wrap-around blur (so the tile stays seamless), the darker
+fibres kept as coffee-brown (`#5d4732`) speckle with alpha up to 18%, resized to 320x320,
+WebP quality 70. Details are also in `web/assets/CREDITS.md`.
+
+## Replacing it
+
+Keep the filename and a seamless tile; a transparent-background grain, so it works on both
+parchment colours. Rebuild with `trunk build --release` and check the file lands in
+`web/dist/assets/theme/`.

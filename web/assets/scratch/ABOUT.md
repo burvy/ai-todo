@@ -8,7 +8,7 @@ On a phone the capture bar is the screen's bottom edge and this art is not used.
 | File | Used for |
 |---|---|
 | `paper.svg` | the light theme |
-| `paper-dark.svg` | the dark theme (`data-theme="dark"`) |
+| `paper-dark.svg` | the dark theme (`data-theme="dark"`): the same scrap tinted for its older, darker parchment page |
 
 The art is the `.capture input`'s `border-image` (`--scratch-art` in `web/theme.css`): the
 outer `--scrap-cap` units (40 of 800) at each end are the torn ends, drawn at the box's side

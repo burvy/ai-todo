@@ -395,7 +395,9 @@ c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
 ### 5. Light and dark paper
 a. The paper is Light or Dark by the reader's own choice in the gear menu, not by
 the operating system's setting. `data-theme="light"` is baked into `web/index.html`
-so the first paint is light and never flashes; there is no "System" row.
+so the first paint is light and never flashes; there is no "System" row. Dark is not a dark
+UI: it is an older, darker parchment (a warm tan page, the same dark ink on it, a darker
+red pencil), so the desk by lamplight still looks like paper.
 b. Open the gear menu and choose Dark, then Light, and reload the page.
 c. Code: `web/theme.css` (`:root` and `:root[data-theme="dark"]`);
 `web/src/settings.rs:GearMenu, apply_theme`.
@@ -418,9 +420,11 @@ c. Code: `web/src/lamp.rs:DeskLamp, switch_to`; `web/theme.css` (`.desk-lamp`,
 `.lamp-sheet`); `web/src/tuning.rs:LAMP_SLIDE_MS`. The art: `web/assets/lamp/ABOUT.md`.
 
 ### 6. Parchment theme
-a. The page is aged paper: warm palette, serif headings, a tiled paper texture that switches to a dark variant in dark mode.
-b. Look at the page background in light and dark mode; with `web/assets/theme/*.svg` deleted it still reads as parchment.
-c. Code: `web/theme.css`; spec: `docs/THEME.md`; graphics: `web/assets/theme/paper.svg`, `paper-dark.svg` (placeholders).
+a. The page is aged paper: warm palette, serif headings, a real paper grain tiled over the page colour in both themes (a
+320 px tile cut from a CC0 photographed paper, `web/assets/theme/paper-grain.webp`; source and licence in
+`web/assets/CREDITS.md` and `web/assets/theme/README.md`).
+b. Look at the page background in light and dark mode; with the grain file deleted it still reads as parchment.
+c. Code: `web/theme.css` (`--texture-paper`); spec: `docs/THEME.md`; graphic: `web/assets/theme/paper-grain.webp`.
 
 ### 7. Move from the ask bubble
 a. Choosing **Move** in Rambo's ask bubble turns the page to the planner, where the

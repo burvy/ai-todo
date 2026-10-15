@@ -82,8 +82,7 @@ three weights (ballpoint / fountain / marker tool writing). Paste-ready
 
 | File | What | Notes |
 |---|---|---|
-| `paper.svg` | light parchment grain tile, 512×512, seamless (`stitchTiles`) | use as repeating `background-image`; faint on purpose |
-| `paper-dark.svg` | dark parchment grain tile | same, for night mode |
+| `paper-grain.webp` | real paper grain tile, 320×320, seamless, 69 KB (ambientCG Paper006, CC0: see `CREDITS.md`) | repeating `background-image` over the page colour, both themes; faint on purpose |
 | `stain.svg`, `edge.svg` | cup stain / torn edge | currently unused (the brief calls them dirt — keep them out) |
 
 ## Sounds — `sounds/`

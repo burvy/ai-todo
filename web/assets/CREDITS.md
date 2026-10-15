@@ -5,6 +5,14 @@ drawn as SVG by AI agents, sounds synthesized by code) and carries no external
 claim. All of it is placeholder, to be replaced by hand-made work (see
 `README.md` and `art/GUIDE.md`).
 
+## Paper texture (`web/assets/theme/paper-grain.webp`)
+
+The grain over the page is cut from the colour map of *Paper006* (a beige paper), ambientCG,
+CC0 1.0 (no attribution required, given here anyway): <https://ambientcg.com/a/Paper006>, file
+`Paper006_1K-JPG.zip`. Made by us from it: greyscale, the slow shading removed (wrap-around, so
+it still tiles), the darker fibres kept as coffee-brown speckle at up to 18% alpha, 320x320 WebP
+(69 KB). The source download is not kept in the repository.
+
 ## Music (`web/assets/music/`)
 
 Chopin, Nocturne Op. 15 no. 1, performed by Luke Faulkner (Musopen, CC0), and Satie,

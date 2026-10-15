@@ -199,7 +199,7 @@
   --write-lean: 34deg;
 
   /* Paper grain (web/assets/theme/); the flat colours carry the page if missing. */
-  --texture-paper: url("assets/theme/paper.svg");
+  --texture-paper: url("assets/theme/paper-grain.webp");
   /* The ripped scrap the desktop capture line is written on (web/assets/scratch/ABOUT.md). */
   --scratch-art: url("assets/scratch/paper.svg");
   /* A planner slip's paper (.placement::before): the body up to its torn right edge, and
@@ -209,55 +209,33 @@
   --slip-tear: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='5' height='42'%3E%3Cpath d='M0 0H4L3 4.5L5 9L0 17L4.5 27L2 35L4 42H0Z'/%3E%3C/svg%3E") right / var(--slip-tear-w) 42px repeat-y;
 }
 
-/* Dark is the same desk at night: deep paper, parchment-coloured ink.
-   Only the gear menu's Dark choice sets data-theme="dark" — the page is
-   light by default and never follows the OS (owner QA, 2026-10-13). */
+/* Dark is the same desk by lamplight: an older, darker parchment with the same dark ink on
+   it, not a dark UI (human, 2026-10-15). Only the paper, the inks written on it and the rules
+   are overridden here; the pen, the nest and Rambo keep the light theme's colours, which
+   read on this paper too. Only the gear menu's Dark choice (or the desk lamp) sets
+   data-theme="dark" - the page is light by default and never follows the OS (owner QA,
+   2026-10-13). */
 :root[data-theme="dark"],
 .lamp-sheet[data-theme="dark"] {
-  color-scheme: dark;
-  --lamp-pool: rgb(255 205 120 / 0.26);
-  --listening-dim: rgb(0 0 0 / 0.32);
+  color-scheme: light;
+  --lamp-pool: rgb(255 205 120 / 0.22);
+  --listening-dim: rgb(30 20 8 / 0.28);
 
-  --parchment: #241c11;
-  --wheat: #2d2315;
-  --ecru: #1a140b;
-  --pressed: inset 0 2px 3px rgba(0, 0, 0, 0.45);
-  --ink: #efe3c8;
-  --accent: #d9a45c;
-  --brass: #d9a45c;
-  --danger: #e0705f;
-  --now: #da6e53;
+  --parchment: #cbb78e;    /* the page: aged parchment */
+  --wheat: #d6c5a0;        /* a sheet laid on the page */
+  --ecru: #b8a37a;         /* pressed-in paper */
+  --ink: #2e2115;
+  --accent: #5c3a12;
+  --brass: #7a4d1c;
+  --danger: #7d2218;
+  --now: #7d2a1c;
+  --ink-soft: #45351f;
+  --ink-faint: #4a3a26;
 
-  --ink-soft: #c9b693;
-  --ink-faint: #b3a17e;
-
-  --rambo: #64bbc4;       /* body */
-  --rambo-deep: #358e9b;  /* outline, shaded side, pupils */
-  --rambo-tint: #a3dde0;  /* highlight stripe, ink tail, bubble rim */
-
-  /* The dish lightens with the page; Rambo's own inks follow from the three
-     above, so they need nothing here. */
-  --nest-paper: #e8d9b0;
-  --nest-deep: #c89b62;
-  --nest-line: #c9ae85;
-  --nest-strip: #b5976d;
-
-  --ink-pencil: #d8cbb4;
-  --ink-ballpoint: #9fc0e8;
-  --ink-quill: #d9a45c;
-  --ink-marker: #f6ecd8;
-
-  --rule: rgba(167, 134, 93, 0.3);
-  --rule-strong: rgba(167, 134, 93, 0.46);
-  --margin-line: rgba(224, 112, 95, 0.26);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-drop: 0 1px 1.5px rgba(0, 0, 0, 0.55);
-  --sheet-shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.8);
-  --fold-shadow: -8px 0 14px -10px rgba(0, 0, 0, 0.6);
-  --backdrop: rgba(10, 8, 5, 0.55);
-
-  --texture-paper: url("assets/theme/paper-dark.svg");
-  --scratch-art: url("assets/scratch/paper-dark.svg");
+  --rule: rgba(93, 71, 50, 0.34);
+  --rule-strong: rgba(93, 71, 50, 0.5);
+  --backdrop: rgba(30, 20, 8, 0.45);
+  --scratch-art: url("assets/scratch/paper-dark.svg"); /* the same scrap, tinted for the older page */
 }
 
 * {
