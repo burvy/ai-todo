@@ -415,22 +415,22 @@ pub const FLING_SPLAT_REACH_PX: f64 = 26.0;
 // The nest (`engine/nest.rs`, SPEC-ANSWERS items 15-17): a soft dish on two damped
 // springs, its sag in px and its rock in degrees.
 
-/// How stiff the dish is, in rad/s. Safe range 10 to 25: softer and it wallows,
-/// stiffer and it only twitches.
-pub const NEST_OMEGA: f64 = 16.0;
+/// How stiff the dish is, in rad/s. Safe range 7 to 16: softer and it wallows,
+/// stiffer and it only twitches (16 read as no give at all: QA round 3).
+pub const NEST_OMEGA: f64 = 10.0;
 /// How quickly its swing dies, as a share of critical damping. Safe range 0.2 to 0.6:
 /// lower and it wobbles on, higher and it never bounces.
-pub const NEST_DAMPING: f64 = 0.3;
+pub const NEST_DAMPING: f64 = 0.25;
 /// The deepest it sags, in px, and the most it rocks, in degrees, however hard he
 /// lands. Safe ranges 3 to 10 and 2 to 6.
-pub const NEST_SAG_MAX_PX: f64 = 6.0;
+pub const NEST_SAG_MAX_PX: f64 = 10.0;
 pub const NEST_ROCK_MAX_DEG: f64 = 4.0;
-/// How hard he comes down in it at the end of a hop home, in px/s of sag. Safe range
-/// 30 to 90.
-pub const NEST_LAND_KICK: f64 = 60.0;
-/// The extra sag a caught throw adds per px/ms of its speed, in px/s. Safe range 10 to
-/// 40.
-pub const NEST_CATCH_KICK_PER_PX_MS: f64 = 20.0;
+/// How much the dish gives under him: px/s of sag for each px/s he is still falling (a
+/// hop's last drop, a throw's speed) as he comes down in it, so a hard landing sags it
+/// deep and a soft one a little. Safe range 0.06 to 0.2.
+pub const NEST_IMPACT_SAG: f64 = 0.12;
+/// The least a landing sags it, in px/s, however softly he settles. Safe range 20 to 60.
+pub const NEST_LAND_KICK: f64 = 40.0;
 /// How far a landing off its middle tips it, in degrees per px off. Safe range 0.02 to
 /// 0.1.
 pub const NEST_ROCK_PER_PX: f64 = 0.05;
