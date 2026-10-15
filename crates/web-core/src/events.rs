@@ -26,6 +26,9 @@ pub enum Event {
     /// The row of task `id`, being marked done, stood at `from`: its strip at the pin
     /// flies from there.
     RowLeft { id: String, from: Spot },
+    /// The strip of task `id`, being taped back, hung at `from`: its row flies back from
+    /// there once the list shows it again.
+    RowBack { id: String, from: Spot },
 }
 
 /// The facts not yet taken, oldest first.
@@ -72,6 +75,22 @@ impl Events {
 pub fn row_left(id: &str) -> impl FnMut(&Event) -> Option<Spot> + '_ {
     move |event| match event {
         Event::RowLeft { id: left, from } if left == id => Some(*from),
+        _ => None,
+    }
+}
+
+/// A claim on the row `id` coming back: where its strip hung.
+pub fn row_back(id: &str) -> impl FnMut(&Event) -> Option<Spot> + '_ {
+    move |event| match event {
+        Event::RowBack { id: back, from } if back == id => Some(*from),
+        _ => None,
+    }
+}
+
+/// A claim on any row coming back: which, and where its strip hung.
+pub fn any_row_back(event: &Event) -> Option<(String, Spot)> {
+    match event {
+        Event::RowBack { id, from } => Some((id.clone(), *from)),
         _ => None,
     }
 }
@@ -127,6 +146,26 @@ mod tests {
         assert_eq!(events.take(|_| Some(())), Some(()));
         assert_eq!(events.take(row_left("c")), Some(spot(4.0)));
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn each_row_coming_back_is_taken_and_a_leaving_one_stays() {
+        let mut events = Events::default();
+        events.push(left("a", 1.0));
+        events.push(Event::RowBack {
+            id: "b".into(),
+            from: spot(2.0),
+        });
+        events.push(Event::RowBack {
+            id: "c".into(),
+            from: spot(3.0),
+        });
+        assert_eq!(
+            events.take_all(any_row_back),
+            vec![("b".to_owned(), spot(2.0)), ("c".to_owned(), spot(3.0))]
+        );
+        assert_eq!(events.take(row_back("b")), None);
+        assert_eq!(events.take(row_left("a")), Some(spot(1.0)));
     }
 
     #[test]

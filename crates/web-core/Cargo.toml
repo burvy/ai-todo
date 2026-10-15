@@ -10,6 +10,8 @@ chrono = { version = "0.4", default-features = false, features = ["alloc", "serd
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 todo-core = { path = "../core" }
+# A title is written one grapheme at a time: an accent, a skin tone, a flag or a
+# ZWJ family is one glyph on the page.
 unicode-segmentation = "1.13"
 
 [dev-dependencies]

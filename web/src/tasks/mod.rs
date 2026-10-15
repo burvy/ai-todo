@@ -337,7 +337,8 @@ pub async fn delete_scribbled(
         },
         None => Command::DeleteTask(task_id.clone()),
     };
-    scrap::delete_and_lay(task_id, snapshot, scraps, store.send(command)).await
+    let deleted = async { store.send(command).await.is_some() };
+    scrap::delete_and_lay(task_id, snapshot, scraps, deleted).await
 }
 
 /// Whether row `id` is wet: Rambo wrote it less than `INK_WET_MS` ago.
@@ -557,7 +558,7 @@ pub(crate) fn TaskList(
             let slide = rested.with_value(|before| scrap::rows_to_slide(before, &now));
             rested.set_value(now);
             scrap::slide_rows(&slide);
-            scrap::fly_rows_back();
+            snapshot.with_untracked(|s| scrap::fly_rows_back(events, s));
         });
     });
 
@@ -798,9 +799,9 @@ pub(crate) fn TaskList(
                                             if let Some(action) = snapshot.with_untracked(|s| tick_action(s, &task_id.0)) {
                                                 apply_tick(&task_id, action, store).await;
                                             }
-                                            scrap::forget_departure(events, &task_id.0);
+                                            snapshot.with_untracked(|s| scrap::settle_departure(events, s, &task_id.0));
                                             // Refused: the ink comes off and the row stays.
-                                            if snapshot.with_untracked(|s| held(s, &task_id.0).is_some_and(|task| !task.done)) {
+                                            if snapshot.with_untracked(|s| scrap::tick_refused(s, &task_id.0)) {
                                                 row::dom::clear_ink(&task_id.0);
                                             }
                                         });
@@ -1071,7 +1072,7 @@ pub(crate) fn TaskList(
                                                         } else {
                                                             Command::MarkOccurrence { series, date, mark: Mark::Done }
                                                         };
-                                                        if store.send(command).await {
+                                                        if store.send(command).await.is_some() {
                                                             set_editing_task.set(None);
                                                         }
                                                     });
@@ -1092,7 +1093,7 @@ pub(crate) fn TaskList(
                                                             date: date.to_string(),
                                                             mark: Mark::Skipped,
                                                         };
-                                                        if store.send(command).await {
+                                                        if store.send(command).await.is_some() {
                                                             set_editing_task.set(None);
                                                         }
                                                     });
@@ -1111,7 +1112,7 @@ pub(crate) fn TaskList(
                                                         return;
                                                     }
                                                     wasm_bindgen_futures::spawn_local(async move {
-                                                        if store.send(Command::DeleteSeries(series)).await {
+                                                        if store.send(Command::DeleteSeries(series)).await.is_some() {
                                                             set_editing_task.set(None);
                                                         }
                                                     });
@@ -1138,7 +1139,7 @@ pub(crate) fn TaskList(
                                                     };
                                                     wasm_bindgen_futures::spawn_local(async move {
                                                         let command = Command::PatchSeries { series: series_id, patch };
-                                                        if store.send(command).await {
+                                                        if store.send(command).await.is_some() {
                                                             set_editing_task.set(None);
                                                         }
                                                     });
@@ -1214,14 +1215,14 @@ pub(crate) fn TaskList(
                                                     return;
                                                 };
                                                 wasm_bindgen_futures::spawn_local(async move {
-                                                    if !store.send(Command::CreateSeries(body)).await {
+                                                    if store.send(Command::CreateSeries(body)).await.is_none() {
                                                         return;
                                                     }
                                                     // The series takes over: drop the one-off row it
                                                     // grew out of. Not crossed out - the user never
                                                     // deleted it, it was absorbed.
                                                     if !is_draft(&task_id)
-                                                        && !store.send(Command::DeleteTask(task_id)).await
+                                                        && store.send(Command::DeleteTask(task_id)).await.is_none()
                                                     {
                                                         set_error.set(Some(
                                                             "The weekly series was made, but the old row stayed — delete it if you don't want it twice."
@@ -1248,7 +1249,7 @@ pub(crate) fn TaskList(
                                                     return;
                                                 };
                                                 wasm_bindgen_futures::spawn_local(async move {
-                                                    if store.send(Command::CreateTask(made)).await {
+                                                    if store.send(Command::CreateTask(made)).await.is_some() {
                                                         set_editing_task.set(None);
                                                     }
                                                 });

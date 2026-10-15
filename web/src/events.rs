@@ -49,7 +49,6 @@ mod tests {
             ("engine/link.rs", 1),
             ("engine/run.rs", 2),
             ("music.rs", 1),
-            ("scrap.rs", 1),
             ("voice.rs", 1),
         ];
         let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -62,8 +61,9 @@ mod tests {
                     dirs.push(path);
                 } else if path.extension().is_some_and(|ext| ext == "rs") {
                     let text = std::fs::read_to_string(&path).expect("a source file");
-                    // Split so this test does not count itself.
-                    let count = text.matches(concat!("thread_local", "! {")).count();
+                    // Split so this test does not count itself; no brace, so the macro with no
+                    // space before its brace counts too.
+                    let count = text.matches(concat!("thread_local", "!")).count();
                     if count > 0 {
                         let name = path.strip_prefix(&src).expect("under src");
                         let name: Vec<_> = name.iter().map(|part| part.to_string_lossy()).collect();

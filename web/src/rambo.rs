@@ -26,7 +26,6 @@ pub(crate) fn Rambo(
     talking: ReadSignal<bool>,
     set_talking: WriteSignal<bool>,
     snapshot: ReadSignal<Snapshot>,
-    set_snapshot: WriteSignal<Snapshot>,
     set_error: WriteSignal<Option<String>>,
     view_settings: ReadSignal<settings::Settings>,
     brain_speech: ReadSignal<Option<String>>,
@@ -552,7 +551,8 @@ pub(crate) fn Rambo(
                     if let Some(action) = action {
                         apply_tick(&TaskId(task_id.clone()), action, sink).await;
                     }
-                    crate::scrap::forget_departure(events, &task_id);
+                    snapshot
+                        .with_untracked(|s| crate::scrap::settle_departure(events, s, &task_id));
                 });
             }
             mascot::Choice::Longer | mascot::Choice::Shorter => {
@@ -561,11 +561,11 @@ pub(crate) fn Rambo(
                 } else {
                     crate::placing::Stretch::Shorter
                 };
-                crate::week::stretch(&TaskId(task_id), stretch, snapshot, set_snapshot, set_error);
+                crate::week::stretch(&TaskId(task_id), stretch, snapshot, store);
                 chosen();
             }
             mascot::Choice::Off => {
-                crate::week::take_off(&TaskId(task_id), snapshot, set_snapshot, set_error);
+                crate::week::take_off(&TaskId(task_id), snapshot, store);
                 chosen();
             }
         }
