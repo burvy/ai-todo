@@ -468,7 +468,7 @@ c. Code: `web/src/rambo.rs:Rambo`; `web/src/engine/world.rs:World, behaviour`;
 `web/src/engine/fling.rs:step, splat_strokes`; `web/src/engine/world.rs:swept`; `web/src/engine/nest.rs:Nest`;
 `web/src/mascot.rs:transition, listens_on_grab,
 put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `crates/web-core/src/hop.rs:Hop`;
-`web/src/gesture.rs:Recognizer, release_velocity, flung`;
+`crates/web-core/src/gesture.rs:Recognizer, release_velocity, flung`;
 `web/src/inklayer.rs:InkLayer`; `web/src/ink.rs`;
 `crates/rambl-brain/src/lib.rs:Event::PutBack`.
 
