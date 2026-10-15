@@ -341,6 +341,22 @@ pub async fn delete_scribbled(
     scrap::delete_and_lay(task_id, snapshot, scraps, deleted).await
 }
 
+/// Unclips the titles of queued rows the pen will not write, so none is left clipped.
+#[cfg(target_arch = "wasm32")]
+fn unclip_rows<'a>(ids: impl IntoIterator<Item = &'a TaskId>) {
+    let document = web_sys::window().and_then(|window| window.document());
+    for id in ids {
+        let row = document.as_ref().and_then(|doc| {
+            doc.query_selector(&format!("li[data-id=\"{}\"]", id.0))
+                .ok()
+                .flatten()
+        });
+        if let Some(row) = row {
+            row.class_list().remove_1("pen-pending").ok();
+        }
+    }
+}
+
 /// Whether row `id` is wet: Rambo wrote it less than `INK_WET_MS` ago.
 fn is_wet(written: StoredValue<Vec<(TaskId, f64)>>, id: &TaskId) -> bool {
     let now = crate::engine::now();
@@ -574,6 +590,7 @@ pub(crate) fn TaskList(
             if mascot::prefers_reduced_motion() || mode == settings::RamblMode::Lobotomized {
                 // Nothing is written: drop the queue, so his lines are not held for it.
                 if pen_queue.with(|queue| !queue.is_empty()) {
+                    pen_queue.with(|queue| unclip_rows(queue));
                     pen_queue.set(Vec::new());
                 }
                 return;
@@ -606,6 +623,8 @@ pub(crate) fn TaskList(
                             matches!(state, mascot::State::Home | mascot::State::WritingCaret);
                         if !is_ready {
                             // Taken elsewhere between rows: the rest stay as they are.
+                            unclip_rows(std::iter::once(&task_id));
+                            pen_queue.with(|queue| unclip_rows(queue));
                             pen_queue.set(Vec::new());
                             break;
                         }
@@ -619,6 +638,7 @@ pub(crate) fn TaskList(
                         // A row off the screen (the other pane on a phone, or
                         // scrolled away) is left as it is; he stays home.
                         if !row.as_ref().is_some_and(write::in_view) {
+                            unclip_rows(std::iter::once(&task_id));
                             set_state.set(mascot::transition(&state, mascot::Event::SkipRow));
                             continue;
                         }
