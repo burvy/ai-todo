@@ -30,6 +30,10 @@ const SIZES = [
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
+// A freshly written row's ink is wet for this long, and a tap on it smudges instead of
+// opening it (crates/web-core/src/tuning.rs, INK_WET_MS). Keep in step with that value.
+const INK_WET_MS = 4000;
+
 // Everything this run writes to the temp folder lives in one run folder: the data and
 // profile folders, and any failure screenshots. It is removed when every check passes.
 const runDir = mkdtempSync(join(tmpdir(), "rambl-smoke-run-"));
@@ -203,10 +207,10 @@ function page(cdp, size, errors) {
   };
   // A sheet an earlier check failed to close would sit over what the next check taps.
   const closeSheet = async () => {
-    if (!(await has(".task-dialog"))) return;
+    if (!(await has(".task-dialog[open]"))) return;
     const cancel = await rectByText(".task-dialog button", "Cancel");
     if (cancel) await tap(cancel.x + cancel.w / 2, cancel.y + cancel.h / 2);
-    await waitFor(async () => !(await has(".task-dialog")), 5000, "the sheet to close");
+    await waitFor(async () => !(await has(".task-dialog[open]")), 5000, "the sheet to close");
   };
 
   const pointer = async (phase, x, y) => {
@@ -327,18 +331,20 @@ const scenarios = {
 
   async "a row's edit sheet saves a title change"(p) {
     await p.backToList();
+    // The row written by the capture check is still wet; wait it out before tapping it.
+    await sleep(INK_WET_MS + 500);
     await waitFor(() => p.has("li.task-row .task-open"), 10000, "a row to edit");
     const open = await p.rect("li.task-row .task-open");
     await p.tap(open.x + open.w / 2, open.y + open.h / 2);
-    await waitFor(() => p.has(".task-dialog"), 8000, "the edit sheet");
-    await p.settled(".task-dialog");
+    await waitFor(() => p.has(".task-dialog[open]"), 8000, "the edit sheet");
+    await p.settled(".task-dialog[open]");
     const title = `smoke title ${Date.now() % 100000}`;
     await p.evaluate(`(() => { const i = document.querySelector(".task-dialog label input");
       i.focus(); i.select(); return true; })()`);
     await p.type(title);
     const save = await waitFor(() => p.rectByText(".task-dialog button", "Save"), 5000, "the Save button");
     await p.tap(save.x + save.w / 2, save.y + save.h / 2);
-    await waitFor(async () => !(await p.has(".task-dialog")), 8000, "the sheet to close");
+    await waitFor(async () => !(await p.has(".task-dialog[open]")), 8000, "the sheet to close");
     await waitFor(
       () => p.evaluate(`[...document.querySelectorAll("li.task-row")].some((r) => r.dataset.title === ${JSON.stringify(title)})`),
       8000,
