@@ -263,25 +263,29 @@ pub(crate) fn CaptureBox(
             // in the box's own font, past its padding.
             let style =
                 web_sys::window().and_then(|window| window.get_computed_style(&el).ok().flatten());
-            let px = |name: &str| {
+            let px_of = |name: &str| {
                 style
                     .as_ref()
                     .and_then(|style| style.get_property_value(name).ok())
                     .and_then(|value| value.trim_end_matches("px").parse::<f64>().ok())
                     .unwrap_or(0.0)
             };
+            // The torn ends are the box's borders (theme.css): the words start inside them.
+            let inset_left = px_of("padding-left") + px_of("border-left-width");
+            let inset_right = px_of("padding-right") + px_of("border-right-width");
             let before: String = input_el.value().chars().take(sel).collect();
-            let advance = crate::tasks::write::text_advance(&el, &before);
-            let content = rect.width() - px("padding-left") - px("padding-right");
+            let (advance, baseline) =
+                crate::tasks::write::text_on_line(&el, &before, rect.top(), rect.height());
+            let content = rect.width() - inset_left - inset_right;
             let caret_x = crate::pen::caret_x(
                 rect.left(),
-                px("padding-left"),
+                inset_left,
                 advance,
                 f64::from(input_el.scroll_left()),
                 content,
             );
-            let caret_y = rect.top() + rect.height() / 2.0;
-            let center = crate::pen::writing_pen_center(caret_x, caret_y);
+            // His nib rests on the writing line: the baseline of the words.
+            let center = crate::pen::writing_pen_center(caret_x, baseline);
             // Rambo is now a fixed layer — pen_pos is absolute page coords
             pen_pos.set(center);
         }
@@ -290,6 +294,18 @@ pub(crate) fn CaptureBox(
             let _ = (input_ref, pen_pos);
         }
     };
+
+    // The page scrolls under the pinned scrap as it sticks: while he writes, the nib
+    // follows the words, not where they were.
+    #[cfg(target_arch = "wasm32")]
+    {
+        // The capture box lives as long as the page, and so does this listener.
+        let _ = window_event_listener(leptos::ev::scroll, move |_| {
+            if mascot::pen_busy(&state.get_untracked()) {
+                measure_caret();
+            }
+        });
+    }
 
     let handle_input = move |ev: leptos::ev::Event| {
         // Keep the typed text first; the pen choreography below may bail out early.
@@ -308,7 +324,11 @@ pub(crate) fn CaptureBox(
                 set_typing.set(false);
             }));
         let st = state.get_untracked();
+        // Already on his way or writing: the nib goes where the words are now, and the
+        // wait before he goes home starts again. No new flight.
         if mascot::pen_busy(&st) {
+            measure_caret();
+            restart_linger();
             return;
         }
         // Held, or waiting on an hour for the task you type, he stays where he is.
@@ -397,6 +417,7 @@ pub(crate) fn CaptureBox(
                 on:input=handle_input
                 placeholder=WHISPER_PROMPTS[0]
                 aria-label="Ramble"
+                spellcheck="false"
             />
             // The nest: clicking it submits the form (replaces the Add button)
             <button

@@ -239,11 +239,16 @@ e. Try it: open the app on a phone and see no heading; add enough tasks to overf
 the box stay put; swipe a row right and watch it travel to the pin.
 f. On a desk the capture line is **pinned** (it stays at the top of the screen while the page
 scrolls, as the phone's bar stays at the bottom) and is drawn as **a piece of ripped scratch
-paper** laid on the desk: torn on every side with a shadow, and a faint writing line
-(`web/assets/scratch/`, one file per theme, see its `ABOUT.md`). Rambo writes on it: as you type
-his nib stands at the end of the words you have typed, on the paper (the caret is measured in the
-line's own font, past its padding, and follows the text as a long line scrolls:
-`pen::caret_x`, `tasks::write::text_advance`). A phone keeps the bar at its bottom edge. The
+paper** laid on the desk: torn on every side with a shadow, its torn ends kept at their own
+shape however wide the line is, and a faint writing line (`web/assets/scratch/`, one file per
+theme, see its `ABOUT.md`). The pinned slot is the page's own paper, so the list's rows pass
+under it and never show above the scrap. Rambo writes on it: as you type his nib stands on the
+writing line at the end of the words you have typed, on every keystroke (a flight already under
+way, or him already writing, re-aims at the new end and the wait before he goes home starts
+again), and on a scroll while he writes. The caret is measured in the line's own font, inside
+the torn ends, and follows the text as a long line scrolls (`pen::caret_x`,
+`tasks::write::text_on_line`). The box has no browser spellcheck. A phone keeps the bar at its
+bottom edge. A second writing line so a long ramble wraps, and a slight tilt, are *(planned)*; the
 paper cut-out x that scribbles the text out and lays down a fresh scrap is *(planned)*.
 g. Code: `web/src/lib.rs:App, PageFoot`; `web/src/week.rs:WeekGrid` (the planner page, the
 gear); `web/src/scrap.rs` (the pin); `web/theme.css` (`.capture`, `.nest`, `.nest-rim`, the

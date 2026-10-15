@@ -319,6 +319,7 @@ pub fn scribble_ms(title: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tuning::INK_TICK_MS;
 
     #[test]
     fn the_nib_stands_at_the_end_of_the_words_on_the_paper() {
@@ -337,7 +338,6 @@ mod tests {
             "a box with no room"
         );
     }
-    use crate::tuning::INK_TICK_MS;
 
     /// Every letter the same width: the easy case to reason about.
     fn even(text: &str) -> Vec<Glyph> {
