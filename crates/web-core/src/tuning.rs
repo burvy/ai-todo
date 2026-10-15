@@ -13,6 +13,10 @@ pub const TIME_PAGE_START: u16 = 9 * 60;
 /// screen: near an edge the bubble slides in rather than run off it. Safe range 4 to
 /// 24; it matches the page's `--space-2` gutter.
 pub const BUBBLE_EDGE_PX: f64 = 8.0;
+/// How long Rambo keeps saying why a change was not saved, in ms, unless another
+/// refusal takes its place. Safe range 4000 to 12000: shorter and a two-clause note is
+/// gone before it is read, longer and it hides what he says next.
+pub const REFUSAL_SAY_MS: f64 = 7000.0;
 /// How long his ask bubble takes to fold back into him once he has his answer, in
 /// ms; the page reads it as `--ask-fold-ms`. Safe range 120 to 300: shorter and it
 /// pops, longer and the page waits on it.

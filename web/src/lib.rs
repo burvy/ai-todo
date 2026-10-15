@@ -61,8 +61,8 @@ pub fn App() -> impl IntoView {
     let (snapshot, set_snapshot) = signal(empty_snapshot());
     let (view_settings, set_view_settings) = signal(settings::load());
     let (error, set_error) = signal::<Option<String>>(None);
-    store::Store::provide(snapshot, set_snapshot, set_error);
-    events::Queue::provide();
+    let events = events::Queue::provide();
+    store::Store::provide(snapshot, set_snapshot, set_error, events);
     let (brain_speech, set_brain_speech) = signal::<Option<String>>(None);
     let (brain_pose, set_brain_pose) = signal("home".to_owned());
     let (brain_event, set_brain_event) = signal::<Option<rambl_brain::Event>>(None);
