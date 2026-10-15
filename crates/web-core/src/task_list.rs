@@ -5,7 +5,9 @@
 use chrono::{DateTime, NaiveDate, Utc, Weekday};
 use todo_core::{Label, Priority, Series, Snapshot, Source, Task, TaskDraft, TaskId, When};
 
+use crate::mascot::State;
 use crate::row::Slot;
+use crate::settings::RamblMode;
 use crate::tuning;
 
 /// The order the server wants after moving `dragged` to `slot` beside `target`,
@@ -91,10 +93,7 @@ pub fn tapped(wet: bool, on_title: bool) -> Tapped {
     }
 }
 
-// The edit sheet (opened on a row, or the + on a blank task): what it shows and what a
-// Save on it makes.
-
-/// Which kind of time the sheet's time field holds.
+/// Which kind of time the edit sheet's time field holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditWhen {
     Anytime,
@@ -200,6 +199,47 @@ pub fn series_of<'a>(snapshot: &'a Snapshot, id: &str) -> Option<&'a Series> {
         .series
         .iter()
         .find(|series| series.id.0 == series_id)
+}
+
+/// Whether Rambo writes the rows queued for his pen (rows the page has just made,
+/// written in one at a time) at all: not with reduced motion and not lobotomized.
+/// Then the queue is dropped, so his lines are not held for it.
+pub fn pen_writes(mode: RamblMode, reduced_motion: bool) -> bool {
+    !reduced_motion && mode != RamblMode::Lobotomized
+}
+
+/// Whether he is free to take the next queued row: at home, or still at the caret
+/// after Add.
+pub fn takes_next_row(state: &State) -> bool {
+    matches!(state, State::Home | State::WritingCaret)
+}
+
+/// What he does with the next queued row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PenStep {
+    /// He flies to it and writes its title in.
+    Write,
+    /// It is off the screen (the other pane on a phone, or scrolled away): it is left
+    /// as it is, and he stays home.
+    Skip,
+    /// He was taken elsewhere between rows: this row and every row still queued are
+    /// let go unwritten.
+    Stop,
+}
+
+/// The next queued row's step, with him as `state` and the row `in_view` or not.
+pub fn pen_step(state: &State, in_view: bool) -> PenStep {
+    match (takes_next_row(state), in_view) {
+        (false, _) => PenStep::Stop,
+        (true, false) => PenStep::Skip,
+        (true, true) => PenStep::Write,
+    }
+}
+
+/// Whether he flies home after a row: only while he is still writing it. A row
+/// finished without him (he was taken elsewhere) leaves him where he is.
+pub fn flies_home_after_row(state: &State) -> bool {
+    *state == State::WritingRow
 }
 
 #[cfg(test)]
@@ -408,5 +448,49 @@ mod tests {
             "untouched: the server's"
         );
         assert_eq!(refilled.duration, shown.duration);
+    }
+
+    #[test]
+    fn he_writes_queued_rows_unless_motion_is_reduced_or_he_is_lobotomized() {
+        assert!(pen_writes(RamblMode::Interactive, false));
+        assert!(pen_writes(RamblMode::Instant, false));
+        assert!(!pen_writes(RamblMode::Lobotomized, false));
+        assert!(!pen_writes(RamblMode::Interactive, true));
+    }
+
+    #[test]
+    fn he_takes_a_row_from_home_or_the_caret_and_stops_when_taken_elsewhere() {
+        assert_eq!(pen_step(&State::Home, true), PenStep::Write);
+        assert_eq!(
+            pen_step(&State::WritingCaret, true),
+            PenStep::Write,
+            "after Add"
+        );
+        assert_eq!(
+            pen_step(&State::Home, false),
+            PenStep::Skip,
+            "off the screen"
+        );
+        for busy in [
+            State::Dragging,
+            State::Dazed,
+            State::Flying,
+            State::WritingRow,
+        ] {
+            assert!(!takes_next_row(&busy), "{busy:?}");
+            assert_eq!(pen_step(&busy, true), PenStep::Stop, "{busy:?}");
+        }
+        // Taken elsewhere wins over off the screen: the rest are let go, not skipped.
+        assert_eq!(pen_step(&State::Dragging, false), PenStep::Stop);
+    }
+
+    #[test]
+    fn he_flies_home_only_from_the_row_he_is_still_writing() {
+        assert!(flies_home_after_row(&State::WritingRow));
+        assert!(
+            !flies_home_after_row(&State::Dragging),
+            "taken elsewhere: he stays"
+        );
+        assert!(!flies_home_after_row(&State::Home));
     }
 }

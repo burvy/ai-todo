@@ -20,12 +20,14 @@ use fields::{
     series_patch_from_dialog, toggled_day, typed_when,
 };
 use rambl_web_core::store::{Command, Mark};
-#[cfg(target_arch = "wasm32")]
-use rambl_web_core::task_list::let_go;
 pub(crate) use rambl_web_core::task_list::occurrence_parts;
 use rambl_web_core::task_list::{
     EditForm, MISSING_TITLE_NOTE, Tapped, blank_form, blank_task, is_draft, is_overdue_at,
     keep_typed, new_task_draft, reorder_ids, series_of, tapped,
+};
+#[cfg(target_arch = "wasm32")]
+use rambl_web_core::task_list::{
+    PenStep, flies_home_after_row, let_go, pen_step, pen_writes, takes_next_row,
 };
 
 /// What the task list keys a row on: the whole task as the row draws it.
@@ -410,8 +412,7 @@ pub(crate) fn TaskList(
         // second writer start on the queue each time his state changes.
         let writing = StoredValue::new(false);
         Effect::new(move |_| {
-            let mode = view_settings.get().mode;
-            if mascot::prefers_reduced_motion() || mode == settings::RamblMode::Lobotomized {
+            if !pen_writes(view_settings.get().mode, mascot::prefers_reduced_motion()) {
                 // Nothing is written: drop the queue, so his lines are not held for it.
                 if pen_queue.with(|queue| !queue.is_empty()) {
                     pen_queue.with(|queue| unclip_rows(&let_go(None, queue, true)));
@@ -422,12 +423,7 @@ pub(crate) fn TaskList(
             if pen_queue.with(Vec::is_empty) || writing.get_value() {
                 return;
             }
-            let current_state = mascot_state.get();
-            // Start writing if Rambo is at Home or stuck at WritingCaret (after Add).
-            if matches!(
-                current_state,
-                mascot::State::Home | mascot::State::WritingCaret
-            ) {
+            if takes_next_row(&mascot_state.get()) {
                 let rambo_world = expect_context::<crate::rambo_world::RamboWorld>();
                 let pen_pos = pen_pos;
                 writing.set_value(true);
@@ -440,26 +436,22 @@ pub(crate) fn TaskList(
                             .flatten()
                     };
                     while let Some(task_id) = next() {
-                        // On the first row, Rambo may be at WritingCaret (after Add) or Home.
-                        // On later rows, he is back at Home from the fly-home below.
-                        let state = mascot_state.get_untracked();
-                        let is_ready =
-                            matches!(state, mascot::State::Home | mascot::State::WritingCaret);
-                        if !is_ready {
-                            // Taken elsewhere between rows: the rest stay as they are.
-                            pen_queue.with_untracked(|queue| {
-                                unclip_rows(&let_go(Some(&task_id), queue, true));
-                            });
-                            pen_queue.set(Vec::new());
-                            break;
-                        }
                         let row = row_element(&task_id);
-                        // A row off the screen (the other pane on a phone, or
-                        // scrolled away) is left as it is; he stays home.
-                        if !row.as_ref().is_some_and(write::in_view) {
-                            unclip_rows(&let_go(Some(&task_id), &[], false));
-                            rambo_world.tell(mascot::Event::SkipRow);
-                            continue;
+                        let in_view = row.as_ref().is_some_and(write::in_view);
+                        match pen_step(&mascot_state.get_untracked(), in_view) {
+                            PenStep::Stop => {
+                                pen_queue.with_untracked(|queue| {
+                                    unclip_rows(&let_go(Some(&task_id), queue, true));
+                                });
+                                pen_queue.set(Vec::new());
+                                break;
+                            }
+                            PenStep::Skip => {
+                                unclip_rows(&let_go(Some(&task_id), &[], false));
+                                rambo_world.tell(mascot::Event::SkipRow);
+                                continue;
+                            }
+                            PenStep::Write => {}
                         }
                         rambo_world.tell(mascot::Event::WriteRow);
                         // Clip the title and park the nib at the line's start.
@@ -495,9 +487,7 @@ pub(crate) fn TaskList(
                             }
                             row.class_list().add_1("ink-wet").ok();
                         }
-                        // Fly home after this row. A row finished without him (he
-                        // was taken elsewhere) leaves him where he is.
-                        if mascot_state.get_untracked() == mascot::State::WritingRow {
+                        if flies_home_after_row(&mascot_state.get_untracked()) {
                             rambo_world.tell(mascot::Event::FlyHome);
                             crate::engine::wait(f64::from(crate::tuning::FLY_MS)).await;
                             rambo_world.tell(mascot::Event::FlyHome);
