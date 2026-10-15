@@ -1016,7 +1016,7 @@ fn let_ghost_go(
         &key,
         [from.0, from.1],
         [at.0, at.1],
-        SLIDE_NEAR_PX,
+        crate::tuning::SLIDE_NEAR_PX,
         move |[x, y]| {
             let_go.update(|ghost| {
                 if let Some(ghost) = ghost.as_mut().filter(|ghost| ghost.drag == drawn) {
