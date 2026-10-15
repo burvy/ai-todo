@@ -88,6 +88,10 @@ pub const MAX_WINDOW_DAYS: u32 = 366;
 /// five years of a daily event. A larger count is clamped to this. Safe range 366
 /// to 3650; each occurrence is expanded in memory on import.
 pub const IMPORT_MAX_RULE_COUNT: u32 = 1820;
+/// The largest `INTERVAL` an imported rule may have (weeks for a weekly rule, days for a
+/// daily one); a rule with a larger one is imported as one task and reported. Safe range
+/// 52 to 10000.
+pub const IMPORT_MAX_INTERVAL: u32 = 1000;
 /// The longest `DURATION` an imported event may have; anything longer is treated as
 /// unreadable. Ten years. Safe range 1 to 10 years.
 pub const IMPORT_MAX_EVENT_LENGTH: chrono::Duration = chrono::Duration::days(3650);

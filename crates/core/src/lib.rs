@@ -340,13 +340,51 @@ impl Recurrence {
             if self.interval == 1 {
                 return true;
             }
-            // Count full weeks from start_day to the week that contains `date`.
-            // The week number determines whether this week fires.
-            let days_since = (date - start_day).num_days();
-            let weeks_since = days_since / 7;
+            // Weeks are calendar weeks, Monday first (RFC 5545's default `WKST`), counted
+            // from the week that holds `start_day`: a Monday before a Wednesday start is
+            // in the start's own week, not the one before it.
+            let weeks_since = (monday_of(date) - monday_of(start_day)).num_days() / 7;
             weeks_since >= 0 && weeks_since % (self.interval as i64) == 0
         }
     }
+
+    /// The date of the `n`-th occurrence (1 is the first) on or after `start_day`, or
+    /// `None` when `n` is 0 or the date is out of range. It agrees with
+    /// [`Recurrence::covers`] and takes the rule's own steps, not one day at a time.
+    /// `until` is not applied: it is how a counted rule finds its `until`.
+    pub fn nth_occurrence(&self, start_day: NaiveDate, n: u32) -> Option<NaiveDate> {
+        if n == 0 {
+            return None;
+        }
+        if self.is_daily() {
+            let days = u64::from(n - 1) * u64::from(self.interval);
+            return start_day.checked_add_days(chrono::Days::new(days));
+        }
+        let first_monday = monday_of(start_day);
+        let mut found = 0;
+        // Each interval-th week holds every weekday of the rule once, so the n-th
+        // occurrence lies within n + 1 such weeks (the first may start after some days).
+        for step in 0..=u64::from(n) {
+            let monday = first_monday
+                .checked_add_days(chrono::Days::new(step * u64::from(self.interval) * 7))?;
+            for day in &self.weekdays {
+                let date = monday
+                    .checked_add_days(chrono::Days::new(u64::from(day.num_days_from_monday())))?;
+                if date >= start_day {
+                    found += 1;
+                    if found == n {
+                        return Some(date);
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+/// The Monday of the week `date` falls in.
+fn monday_of(date: NaiveDate) -> NaiveDate {
+    date - chrono::Days::new(u64::from(date.weekday().num_days_from_monday()))
 }
 
 /// A series id. One namespace with [`TaskId`], so an id is unique across the
@@ -630,6 +668,48 @@ mod tests {
         assert!(
             rule.covers(start, NaiveDate::from_ymd_opt(2026, 11, 9).unwrap()),
             "week 4 fires"
+        );
+    }
+
+    #[test]
+    fn interval_weeks_are_calendar_weeks_from_the_start_s_own_week() {
+        // Wed Oct 14, every 2 weeks on Mon and Wed: the week of Oct 12 is week 0, so
+        // Mon Oct 19 (week 1) is skipped and Mon Oct 26 (week 2) fires.
+        let start = NaiveDate::from_ymd_opt(2026, 10, 14).unwrap();
+        let rule = Recurrence::with_interval([Weekday::Mon, Weekday::Wed], 2, None).unwrap();
+        let on = |d: u32| rule.covers(start, NaiveDate::from_ymd_opt(2026, 10, d).unwrap());
+        assert!(on(14), "the start itself");
+        assert!(!on(19), "Monday of week 1");
+        assert!(!on(21), "Wednesday of week 1");
+        assert!(on(26), "Monday of week 2");
+        assert!(on(28), "Wednesday of week 2");
+        // The Monday of the start's own week is before the start, so not an occurrence.
+        assert!(!on(12));
+    }
+
+    #[test]
+    fn the_nth_occurrence_agrees_with_covers() {
+        let start = NaiveDate::from_ymd_opt(2026, 10, 15).unwrap(); // Thursday
+        let rules = [
+            Recurrence::with_interval([Weekday::Tue, Weekday::Thu], 2, None).unwrap(),
+            Recurrence::with_interval([Weekday::Mon, Weekday::Fri, Weekday::Sun], 3, None).unwrap(),
+            Recurrence::new([Weekday::Sat], None).unwrap(),
+            Recurrence::daily(4, None).unwrap(),
+        ];
+        for rule in rules {
+            // The first 12 days the rule covers, found the slow way.
+            let slow: Vec<NaiveDate> = (0..2000)
+                .map(|i| start + chrono::Days::new(i))
+                .filter(|date| rule.covers(start, *date))
+                .take(12)
+                .collect();
+            for (i, date) in slow.iter().enumerate() {
+                assert_eq!(rule.nth_occurrence(start, i as u32 + 1), Some(*date));
+            }
+        }
+        assert_eq!(
+            Recurrence::daily(1, None).unwrap().nth_occurrence(start, 0),
+            None
         );
     }
 
