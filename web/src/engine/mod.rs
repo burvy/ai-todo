@@ -20,7 +20,7 @@ pub(crate) use link::{push, show};
 pub(crate) use run::{after, every, next_frame, now, on_tick};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use sched::{ENGINE_DT_S, Tick};
-pub(crate) use sched::{Flow, Handle};
+pub(crate) use sched::{Flow, Guard, Handle};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use world::Leaf;
 pub(crate) use world::{Anchors, Splash, Swept, World, swept};

@@ -150,6 +150,7 @@ mod pump {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::Guard;
     use std::cell::Cell;
     use std::rc::Rc;
 
@@ -181,5 +182,27 @@ mod tests {
         handle.stop();
         frame_at(100.0);
         assert_eq!(runs.get(), 0);
+    }
+
+    #[test]
+    fn a_guard_stops_its_jobs_when_it_goes_and_only_then() {
+        let runs = Rc::new(Cell::new(0));
+        let mut kept = Guard::default();
+        for ms in [10.0, 20.0] {
+            let counted = runs.clone();
+            kept.keep(after(ms, move || counted.set(counted.get() + 1)));
+        }
+        let counted = runs.clone();
+        let loose = after(10.0, move || counted.set(counted.get() + 10));
+        frame_at(10.0);
+        assert_eq!(
+            runs.get(),
+            11,
+            "held and loose jobs run while the guard lives"
+        );
+        drop(kept);
+        frame_at(20.0);
+        assert_eq!(runs.get(), 11, "the guard's second job never ran");
+        drop(loose);
     }
 }

@@ -66,6 +66,38 @@ impl Handle {
     pub(crate) fn stop(&self) {
         self.0.set(false);
     }
+
+    /// Whether the job has yet to run its last time.
+    fn is_live(&self) -> bool {
+        self.0.get()
+    }
+}
+
+/// The jobs a view started, stopped when the view goes: keep it in a
+/// `StoredValue::new_local`, which drops it with its owner. (A bare [`Handle`] does not stop
+/// its job when dropped, so a job that no view owns just runs.)
+#[derive(Default)]
+pub(crate) struct Guard(Vec<Handle>);
+
+impl Guard {
+    /// Take on `handle`'s job; jobs that have finished are let go.
+    pub(crate) fn keep(&mut self, handle: Handle) {
+        self.0.retain(Handle::is_live);
+        self.0.push(handle);
+    }
+
+    /// Stop every job it holds.
+    pub(crate) fn stop(&mut self) {
+        for handle in self.0.drain(..) {
+            handle.stop();
+        }
+    }
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        self.stop();
+    }
 }
 
 #[derive(Default)]
