@@ -301,6 +301,81 @@ The pen character (`web/assets/rambo/`) is named **Rambo**. He rests in his nest
 - **Lobotomized mode:** listens but no personality animation.
 - **Touch:** `touch-action: none` on `.mascot-home` only; page swipe is unaffected.
 
+## 8A. Target: one core, thin views (planned)
+
+The web front end is about 31,000 lines in 50 files (`web/src`, plus about 3,100 lines of `theme.css`). It works, but state, motion and timing are spread across the views: 22 write sites with four error policies, Rambo's state kept twice, `thread_local` channels between the list, the tear and the strips, two springs, about 20 timers off the engine clock, and CSS and Rust lengths kept in step by hand. The sources are `hive/research/motion-inventory.md` (Mario), `state-map.md` (Claudio), `module-map.md` (Dario), `css-hygiene.md` and `codebase-brief.md`. They add four more findings: `App` hand-wires about 20 signals (Rambo takes 22 props); DOM logic hides behind 158 wasm `cfg` gates and about 40 host stubs, untested; three mega-components (`Rambo` about 1,280 lines, `TaskList` about 950, `WeekGrid` about 640); and module cycles (`scrap` with `rip_ui` and `tasks`, and the engine depending on `flip`). This section is the shape to converge on. The one-body physics design (§8.0.1, added by #405) is one part of it.
+
+### 8A.1 Shape
+
+```
+            commands ─────────────►┌──────────────── core (no DOM, native tests) ────────────────┐
+  views                            │ store   Snapshot + generation; Command → send, apply, reconcile│
+  (Leptos,                         │ clock   the one engine clock: frames and `after(ms, Event)`    │
+   thin)   ◄──── signals (read) ───│ events  one queue: what happened (row left, strip pinned, …)   │
+                                   │ world   Rambo (brain + body), the bodies (strips, ghost, leaf), │
+                                   │         the nest, ink; stepped on the clock, reads the store    │
+                                   │ body    Pull, Spring1, Body, Forces; Motion (reduced or full)   │
+                                   └────────────────────────────────────────────────────────────────┘
+```
+
+- **store** (`web/src/core/store.rs`, planned): the one owner of the `Snapshot`. Views never call `api::*` or `set_snapshot`. They send a `Command` (`Capture`, `Patch`, `Tick`, `Delete`, `Restore`, `Reorder`, `Place`, `Stretch`, `TakeOff`, the series ops, `DayTimes`). The store sends it, applies it optimistically where the result is certain (tick, reorder, take off), and on the reply keeps a snapshot only if its `generated` is newer than the one it holds. Every refusal follows one policy: reload, then an event the world turns into Rambo's bubble (his words come from him, never loose text in a corner). That fixes problems 1, 2 and 3 of the state map.
+- **clock** (today's `engine/run.rs` and `engine/sched.rs`): frames, and timers as `after(ms, Event)`. Nothing else in `web/` may call `Timeout`, `TimeoutFuture` or `set_timeout`, and the existing test that forbids a private loop grows to cover them.
+- **events** (planned): one queue of facts that views and the world push and the world drains each step. It replaces `scrap::DEPARTURES`/`RETURNS` (the rip's `ROW_OUT`/`HOLE_OPEN` go with the rip cut, #413).
+- **world** (today's `engine/world.rs`): the only owner of Rambo's state. `mascot::transition` stays the one rule. `mascot_state` becomes a read-only mirror the world writes once per step, so the two-way sync at `rambo.rs:232` and the three bypass writes go away. Bodies for paper strips, the drag ghost and the page leaf live here too.
+- **body** (the one-body design, §8.0.1, added by #405): all motion as forces on bodies and springs, stepped by one integrator, with one reduced-motion switch.
+
+**Crates.** The core is a native crate, `web-core` (planned), holding the pure halves: `body`, `sched`, `world`, `mascot`'s state machine, `ink`, `gesture`'s recogniser, `pen`, the planner's model (`week`'s geometry and drag rules), the list's model (row order, hold, release) and the page leaf (`flip`'s geometry). `rambl-web` keeps only views and the browser seam (`engine/run.rs`, `api.rs`, audio). The `cfg(target_arch = "wasm32")` gates and host stubs go: what is in `web-core` is tested natively, and what is in `rambl-web` is a view by construction. The engine sits at the bottom; nothing in it imports a view or a page-turn style.
+
+**Wiring.** The core is provided once through Leptos context (`provide_context(Core)`). Views take it with `use_context` instead of 20-odd props, so adding state never means threading a new prop through `App`.
+
+The views are list (`tasks/`, `row.rs`), planner (`week.rs`, `placing.rs`, the bookmark), capture, strips (`scrap.rs` without its timers and physics), the page flip, Rambo's drawing (`rambo.rs`, `look.rs`), the ink layer, the gear, sheets and pickers, and account. Sound, voice and music are outputs: they play cues the world hands out, as knocks do today.
+
+### 8A.2 Rules every feature follows
+
+1. A view reads signals and sends commands or events. It owns no task data, no timer and no motion.
+2. Every write goes through the store. No `spawn_local(api::…)` in a view.
+3. Every timer is the engine clock's. Every movement is a body or a `Spring1` stepped by the world.
+4. CSS may animate only the inside of a drawing (mood pictures, a scribble's strokes) and the two allowed fades, ink and the patch. Rambo's breathing and grumbling move to the world (a `Spring1` sway), so they pause when he is held and obey the one reduced-motion switch. Position, size and rotation come from the core and are never a CSS `transition` or keyframe. A test lists the allowed keyframes.
+5. A length or duration shared by CSS and Rust (for example `--slip-off-ms` and `SLIP_OFF_MS`, or the 700 px phone breakpoint repeated in 7 `@media` blocks) lives in `tuning.rs` and is written to a CSS variable by the core. It is never typed twice.
+6. No `thread_local` or `static` for state shared between parts. Use the store or the events queue.
+7. Randomness is seeded: the existing hash (`row::hash_unit`, as the splat uses) keyed on a seed the world holds, which is fixed in tests. No new dependency is needed, and the world stays deterministic under test.
+8. One reduced-motion switch (`body::Motion`), read by the world only.
+9. A view component stays small: its logic lives in a model in `web-core` with tests, as `rambl-brain`/`brain.rs` and `mascot`'s pure state machine already do.
+10. The core never measures. Views report geometry as events (row rects, the column pitch, the viewport, the keyboard inset), and the core reads only those. This keeps `web-core` testable natively and closes the bug class of #381 (measuring through a live transform) and #383 (the bar rises with the keyboard and Rambo stays behind).
+
+### 8A.3 Cut list (the human: favour a small core)
+
+| Cut or simplify | Code it removes (on main e83cf0c) | What replaces it |
+|---|---|---|
+| **Page rip**: tear, hole, queue, tape, band, the planner sliding under the tear, Rambo's `Mending` | about 2,150 lines (#413): `rip.rs` 987, `rip_ui.rs` 695, the hole hand-off and the row hold and release in `scrap.rs` (about 80; its departure notes and row slide stay), tear CSS (about 150), 17 `RIP_*`/`TAPE_*`/`TEAR_*` tunables, Rambo's `Mending`, `ROW_OUT`/`HOLE_OPEN`, the `transitionend` workaround. #401 is superseded. | Nothing. A deleted row's scrap still flies to the pin; the rows below close up by the plain slide (`scrap::slide_rows`). On a phone the planner is reached by the page turn. This also breaks the `scrap`/`rip_ui`/`tasks` cycle. |
+| **One page-turn style** (the gear's `Page turn` choice) | about 1,100 to 1,300 lines: the other style's pure and DOM halves, `turner.rs`, `turn_util.rs`, the `PageTurn` setting and the unused half of `engine/link` | One turn, rebuilt as a `Spring1` leaf in the world. **The human picks which**: the book flip (`flip*`, the default, simpler to explain) or the corner bend (`fold*`, lighter). Page turning is a reported bug (spec item 11), so one clean implementation is the goal. |
+| **Hop scripts** | `hop.rs` 278, `Run` and `Drive::HopTo` in `world.rs` (about 200) | Impulses on Rambo's body (the one-body design, PR 3) |
+| **Wet-ink smudge** | `smudge.rs` 133 and its CSS | Nothing (ink still dries and fades) |
+| **Ribbon pull and stretch** | the pull, stretch and spring-back half of `ribbon.rs` (about 100) and its CSS transition | A static bookmark at today; a tap glides back (a `Spring1`) |
+| **Sheet timers and transitions** (the edit sheet, the gear, the pickers' page, the lamp's sheet) | the three `set_timeout`s in `lamp.rs` and the sheets' CSS transitions | Not a cut of the feature: every "sheet laid on the page" is one `Spring1` to its y in the world, like the page leaf, so the theme still swaps physically under a sheet of the other paper |
+| **Two capture texts** | `capture_text` and the copying Effect (state map 8) | One text signal in the store |
+| **Working hours in two places** | `Settings.start_hour`/`end_hour` in localStorage, beside the server's constants | One server-side day setting the planner reads (server change, own step) |
+
+Candidates for a human call, not cut here: the dance (`engine/dance.rs` 189, music analyser), the voice (`voice.rs`, `speech.rs`) and the custom pickers (`pickers.rs` 686, versus native inputs styled as paper).
+
+The cuts above remove about 4,000 lines, about a seventh of the front end, before any refactor. The server tidy-up from the module map (the `http.rs` and `store.rs` tests and the test-only `MemoryStore` out of the prod files) is done (#408) and is not part of this core.
+
+### 8A.4 Migration (each step is one or a few small PRs; main stays green; behaviour unchanged unless the step is a cut)
+
+0. **Free now:** delete the dead code the module map lists (about 120 lines).
+1. **Cuts first** (each its own PR): the whole page rip (#401 closed; a simple tear may be rebuilt on the core later, only if the human asks), then the smudge and the ribbon pull. Once the human picks, the other page-turn style is only deleted here; the kept leaf is rebuilt in step 6. Less code to move in every later step.
+1b. **Layers:** create `web-core` and move the already-pure modules into it (`body`, `sched`, `mascot`'s machine, `ink`, `pen`, `gesture`'s recogniser, `flip` or `fold`). Take the engine off the page-turn module and provide the core through context. These are pure moves with no behaviour change.
+2. **Store and commands.** Add `core::store` with the generation check and the one error policy. Then move the write sites over one file at a time (`edits.rs`, `tasks/mod.rs`, `week.rs`, `capture.rs`, `scrap.rs`, `settings.rs`). This fixes the out-of-order and silent-reorder bugs.
+3. **Events queue.** Replace `DEPARTURES`/`RETURNS` (and anything the rip left) with core events.
+4. **Rambo, one owner, and the three mega-components split.** The world owns his state; `mascot_state` is its mirror; the bypass writes go through `transition`. Then `Rambo`, `TaskList` and `WeekGrid` each become a `web-core` model with tests plus a thin view, one PR per component.
+5. **Clock only.** Move every `Timeout`/`TimeoutFuture`/`set_timeout` (capture, write pacing, row hold, scrap lay and fly, `take_off`, scribble) onto `after(ms, Event)`, and extend the test to forbid them.
+6. **Physics** (the one-body design, §8.0.1, which #405 adds): PR 1 is #405 (`Spring1`; it fits this design unchanged). Then Rambo's body; the hop home stays hop by hop (a wait, then one impulse per landing event, a dot where each lands, never one flight); `Motion`; then the kept page leaf rebuilt as a `Spring1` in the world, which is where the page-turn bug (spec item 11) is fixed; then the sheets as `Spring1`s.
+7. **Paper as bodies.** Pinned strips, a lifted row's release and the drag ghost become world bodies, keyed by task id. Delete their inline transitions.
+8. **CSS motion audit.** Add the allowed-keyframes test (rule 4) and move every shared length into `tuning.rs` (rule 5).
+9. **After the freeze**, on this core: Rambo's seeded variation in hops, wandering and doodling on empty space, and turning sad when the page is full.
+
+Each step ends with the full gate and a note in this section moving it from planned to done.
+
 ## 9. Testing (the definition of done for every change)
 
 - `dates`: a table of phrases at fixed instants, including Sunday 21:00 New York (Monday in UTC), both DST change days, month and year rollover, "next Tuesday" on a Tuesday, and every weekday from every weekday.
