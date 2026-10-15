@@ -338,6 +338,19 @@ b. Open the gear menu and choose Dark, then Light, and reload the page.
 c. Code: `web/theme.css` (`:root` and `:root[data-theme="dark"]`);
 `web/src/settings.rs:GearMenu, apply_theme`.
 
+### 5a. The desk lamp
+a. A small desk lamp is the dark-mode switch. Tapping it pulls its cord: the light is
+turned down over the page, the paper is swapped under the dim, and the light comes back up
+on the other paper. The lamp is dark by day and lit by night. The choice is the same stored
+Theme setting the gear menu sets (the gear's Light and Dark still work, swapping at once),
+and the page still never follows the OS. With reduced motion the paper swaps at once. On a
+desk the lamp stands top left, clear of the capture box and the gear; on a phone it stands
+at the foot, just above the capture bar.
+b. Tap the lamp, watch the page dim and the paper change, tap again to go back, reload and
+see the choice kept.
+c. Code: `web/src/lamp.rs:DeskLamp`; `web/theme.css` (`.desk-lamp`, `.lamp-veil`);
+`web/src/tuning.rs:LAMP_DIM_MS`. The art: `web/assets/lamp/ABOUT.md`.
+
 ### 6. Parchment theme
 a. The page is aged paper: warm palette, serif headings, a tiled paper texture that switches to a dark variant in dark mode.
 b. Look at the page background in light and dark mode; with `web/assets/theme/*.svg` deleted it still reads as parchment.

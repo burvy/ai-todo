@@ -117,6 +117,7 @@
   /* While he listens the light is turned down a little (Interview 1 item 12). */
   --listening-dim: rgb(28 18 6 / 0.2);
   --listening-dim-ms: 260ms;
+  --lamp-dim-ms: 340ms; /* the desk lamp turning the light down; web/src/tuning.rs LAMP_DIM_MS */
   --nest-sink: 4px; /* how far below his rest point he sits: down in the bowl */
   /* What a phone's fixed capture bar covers at the bottom: the nest, the bar's padding and rule, and the home-indicator inset. */
   --capture-clear: calc(var(--nest-size) + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
@@ -128,6 +129,12 @@
      1.5). Rambo and his bubbles sit under the gear menu and the edit sheet (which is a
      modal in the browser's top layer, so --layer-sheet only orders it should that
      change); only a drag in progress rides above him. */
+  --lamp-veil-night: #1a130a; /* the light turned down to dark paper */
+  --lamp-veil-day: #fff1cf; /* and the warm light that comes back for light paper */
+  --lamp-w: 44px; /* the desk lamp */
+  --lamp-h: 62px;
+  --lamp-top: var(--space-2);
+  --lamp-left: var(--space-2);
   --layer-behind: -1;
   --layer-page: 2; /* ink, curl, placements, a lifted row, the desktop pin column */
   --layer-sticky: 4; /* day names */
@@ -1327,6 +1334,99 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 
 @media (prefers-reduced-motion: reduce) {
   .listening-dim {
+    transition: none;
+  }
+}
+
+/* The desk lamp (web/src/lamp.rs, web/assets/lamp/ABOUT.md): the dark-mode switch. It
+   stands in the planner's top left corner, clear of the gear (top right) and the capture
+   bar (bottom). Lit by night, dark by day. */
+.desk-lamp {
+  position: fixed;
+  top: var(--lamp-top);
+  left: var(--lamp-left);
+  z-index: var(--layer-sticky);
+  width: var(--lamp-w);
+  height: var(--lamp-h);
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+/* On a phone the corners are the pages' own (rows start at the top left, the pin hangs at
+   the top right), so the lamp stands at the foot, just above the capture bar and clear of
+   the page note on the left. */
+@media (max-width: 700px) {
+  .desk-lamp {
+    top: auto;
+    left: auto;
+    right: var(--space-2);
+    bottom: calc(var(--capture-clear) + var(--space-1));
+  }
+}
+
+.desk-lamp-art {
+  position: absolute;
+  inset: 0;
+  background: url("assets/lamp/lamp-off.svg") center / contain no-repeat;
+}
+
+:root[data-theme="dark"] .desk-lamp-art {
+  background-image: url("assets/lamp/lamp-on.svg");
+}
+
+/* The pull cord hangs from the shade and drops a little when pulled, then swings back. */
+.desk-lamp-cord {
+  position: absolute;
+  top: 36%;
+  right: 4%;
+  width: 2px;
+  height: 34%;
+  background: var(--ink-soft);
+  border-radius: 1px;
+  transform-origin: top center;
+  transition: transform 160ms ease-out;
+}
+
+.desk-lamp-cord::after {
+  content: "";
+  position: absolute;
+  bottom: -4px;
+  left: -2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.desk-lamp.pulled .desk-lamp-cord {
+  transform: translateY(6px);
+}
+
+/* The light turned down: over the page, under him, and it never takes a touch. A light
+   dims and glows, so this is a fade, and the only thing the lamp fades. */
+.lamp-veil {
+  position: fixed;
+  inset: 0;
+  z-index: var(--layer-dim);
+  background: var(--lamp-veil-night);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--lamp-dim-ms) ease;
+}
+
+.lamp-veil.to-light {
+  background: var(--lamp-veil-day);
+}
+
+.lamp-veil.on {
+  opacity: 0.92;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lamp-veil,
+  .desk-lamp-cord {
     transition: none;
   }
 }

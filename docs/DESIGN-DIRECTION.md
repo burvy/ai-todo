@@ -201,7 +201,7 @@ The owner's answers to the questions in `docs/FRONTEND-PLAN.md` (interview 1, re
 ### The physical principle (interview 2)
 - **You should know why something happens because it would make sense in real life.** Things come and go like real objects: they slide, lift, fold, are laid down or taken away. Nothing fades or cuts in and out.
 - **The one exception is ink.** Ink fades in as it is written.
-- **The dark-mode switch is physical too.** For example, the page is swapped for a night page, never a colour cross-fade.
+- **The dark-mode switch is physical too.** For example, the page is swapped for a night page, never a colour cross-fade. The desk lamp is that switch (FEATURES III.5a): the light is turned down over the page and the paper is swapped under the dim; only the lighting fades.
 - **A page turn is a real page turn:** the paper bends and curls as it turns. Not a sideways swipe, and no gradient that pops in and out.
 
 ### From the owner's phone test (interview 2, on b005174)

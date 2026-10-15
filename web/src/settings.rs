@@ -694,7 +694,7 @@ pub fn load() -> Settings {
     }
 }
 
-fn save(settings: Settings) {
+pub(crate) fn save(settings: Settings) {
     #[cfg(target_arch = "wasm32")]
     if let Ok(Some(storage)) = leptos::prelude::window().local_storage()
         && let Ok(value) = serde_json::to_string(&settings)
