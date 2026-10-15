@@ -10,12 +10,61 @@
 //! ends. `Ripper` (browser only) reads the pointer and draws it.
 
 use crate::tuning::{
-    RIP_EDGE_PX, RIP_GAP_PX, RIP_JAG_PX, RIP_JAG_STEP_PX, RIP_MIN_PX, RIP_SCROLL_SLOPE, TAPE_AT_MS,
-    TAPE_EVERY_PX, TAPE_LAY_MS, TAPE_LEN_PX, TAPE_SKEW_DEG, TEAR_EDGE_IN_PX, TEAR_FADE_MS,
-    TEAR_HOLD_MS,
+    RIP_EDGE_PX, RIP_GAP_PX, RIP_JAG_PX, RIP_JAG_STEP_PX, RIP_MAX_WAITING_HOLES, RIP_MIN_PX,
+    RIP_SCROLL_SLOPE, TAPE_AT_MS, TAPE_EVERY_PX, TAPE_LAY_MS, TAPE_LEN_PX, TAPE_SKEW_DEG,
+    TEAR_EDGE_IN_PX, TEAR_FADE_MS, TEAR_HOLD_MS,
 };
 
 pub type Pt = (f64, f64);
+
+/// A finished row waiting for its hole: which row, and its box in the page's own
+/// coordinates, so it keeps its place when the list scrolls.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Waiting {
+    pub id: String,
+    pub place: Rect,
+}
+
+/// The rows that finished while a tear lasted, in the order they did. Each opens its hole
+/// when the one before has healed, as long as it is still due.
+#[derive(Default)]
+pub struct HoleQueue(std::collections::VecDeque<Waiting>);
+
+impl HoleQueue {
+    /// Join the queue. `false` when it is full (`RIP_MAX_WAITING_HOLES`): the row just leaves.
+    pub fn push(&mut self, waiting: Waiting) -> bool {
+        if self.0.len() >= RIP_MAX_WAITING_HOLES {
+            return false;
+        }
+        self.0.push_back(waiting);
+        true
+    }
+
+    /// The next row whose hole is still due, the ones before it that `back` says are on the
+    /// page again (undone, refused) dropped.
+    pub fn next_due(&mut self, back: impl Fn(&str) -> bool) -> Option<Waiting> {
+        while let Some(waiting) = self.0.pop_front() {
+            if !back(&waiting.id) {
+                return Some(waiting);
+            }
+        }
+        None
+    }
+
+    /// Forget every waiting row.
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// How many rows are waiting.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
 
 /// A box on the page: `(left, top, right, bottom)`.
 pub type Rect = (f64, f64, f64, f64);
@@ -394,6 +443,56 @@ pub const fn total_ms() -> u32 {
 
 #[cfg(test)]
 mod tests {
+    fn waiting(id: &str, top: f64) -> Waiting {
+        Waiting {
+            id: id.to_owned(),
+            place: (10.0, top, 300.0, top + 48.0),
+        }
+    }
+
+    #[test]
+    fn rows_wait_their_turn_in_order_up_to_the_cap() {
+        let mut queue = HoleQueue::default();
+        for n in 0..RIP_MAX_WAITING_HOLES {
+            assert!(queue.push(waiting(&format!("t{n}"), 100.0 * n as f64)));
+        }
+        assert!(
+            !queue.push(waiting("late", 900.0)),
+            "beyond the cap the row just leaves"
+        );
+        assert_eq!(queue.len(), RIP_MAX_WAITING_HOLES);
+        let first = queue.next_due(|_| false).expect("one waits");
+        assert_eq!(first.id, "t0");
+        assert_eq!(first.place.1, 0.0, "it keeps the place it stood");
+        // A place freed lets the next one in.
+        assert!(queue.push(waiting("again", 500.0)));
+    }
+
+    #[test]
+    fn a_row_that_is_back_on_the_page_is_skipped() {
+        let mut queue = HoleQueue::default();
+        queue.push(waiting("undone", 0.0));
+        queue.push(waiting("done", 100.0));
+        let due = queue
+            .next_due(|id| id == "undone")
+            .expect("the second is due");
+        assert_eq!(due.id, "done");
+        assert!(queue.is_empty());
+        // Nobody due: nothing comes out.
+        queue.push(waiting("gone", 0.0));
+        assert_eq!(queue.next_due(|_| true), None);
+    }
+
+    #[test]
+    fn clearing_forgets_every_waiting_row() {
+        let mut queue = HoleQueue::default();
+        queue.push(waiting("a", 0.0));
+        queue.push(waiting("b", 100.0));
+        queue.clear();
+        assert!(queue.is_empty());
+        assert_eq!(queue.next_due(|_| false), None);
+    }
+
     use super::*;
 
     /// Whether `p` is inside the closed polygon `outline` (even-odd rule).

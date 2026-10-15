@@ -66,7 +66,7 @@ pub fn note_departure(id: &str) {
     if let Some(spot) = row_spot(id) {
         DEPARTURES.with(|noted| noted.borrow_mut().insert(id.to_owned(), spot));
         // The row tears out of the page: a hole shows the planner, and Rambo tapes it.
-        crate::rip_ui::row_out(spot);
+        crate::rip_ui::row_out(id, spot);
     }
 }
 
@@ -300,6 +300,12 @@ pub fn lay(scraps: RwSignal<Vec<Scrap>>, title: String, undo: Undo, from: Option
 }
 
 /// Where the list shows row `id`, if it does.
+/// Whether the row `id` is on the page now. Called by the `Ripper`, which only the browser has.
+#[cfg(target_arch = "wasm32")]
+pub fn row_on_page(id: &str) -> bool {
+    row_spot(id).is_some()
+}
+
 fn row_spot(id: &str) -> Option<Spot> {
     let row = web_sys::window()?
         .document()?

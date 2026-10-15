@@ -16,7 +16,7 @@ use crate::tuning::{TAPE_AT_MS, TAPE_LAY_MS, TEAR_FADE_MS, TEAR_HOLD_MS};
 thread_local! {
     /// A row that has just torn out of the page, finished: where it stood. The `Ripper` takes
     /// it and opens the hole.
-    static ROW_OUT: RwSignal<Option<Spot>> = RwSignal::new(None);
+    static ROW_OUT: RwSignal<Option<(String, Spot)>> = RwSignal::new(None);
     /// Whether a row's hole is open now: the rows below it wait where they were until it
     /// heals (`scrap::hold_rows`), so none slides into the hole.
     static HOLE_OPEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -24,8 +24,8 @@ thread_local! {
 
 /// A row, finished, tears out of the page where it stood (`spot`, in viewport px): the hole
 /// shows the planner, Rambo tapes it, and the hole heals like any tear.
-pub(crate) fn row_out(spot: Spot) {
-    ROW_OUT.with(|row| row.set(Some(spot)));
+pub(crate) fn row_out(id: &str, spot: Spot) {
+    ROW_OUT.with(|row| row.set(Some((id.to_owned(), spot))));
 }
 
 /// Whether a row's hole is open: the rows below it hold their places until it heals.
@@ -169,6 +169,9 @@ mod imp {
         phase: RefCell<Phase>,
         /// Counts tears, so each one's ragged edge is its own.
         made: Cell<u32>,
+        /// Rows that finished while a tear lasted: each opens its hole, where it stood, when
+        /// the one before has healed.
+        waiting: RefCell<rip::HoleQueue>,
     }
 
     impl Ripper {
@@ -193,6 +196,7 @@ mod imp {
                     pen_pos,
                     phase: RefCell::new(Phase::Idle),
                     made: Cell::new(0),
+                    waiting: RefCell::new(rip::HoleQueue::default()),
                 }),
             };
             // The page is torn while a tear lasts: the planner shows beneath, and the list,
@@ -227,9 +231,9 @@ mod imp {
             Effect::new({
                 let ripper = ripper.clone();
                 move |_| {
-                    if let Some(spot) = row_out.get() {
+                    if let Some((id, spot)) = row_out.get() {
                         row_out.set(None);
-                        ripper.tear_out(spot);
+                        ripper.tear_out(id, spot);
                     }
                 }
             });
@@ -430,24 +434,54 @@ mod imp {
             self.mend(&tear, true);
         }
 
-        /// A row that has finished tears out of the page where it stood (`spot`, in viewport
-        /// px): the hole is as tall as the row, and Rambo tapes it without a sulk. One tear
-        /// at a time: while one lasts, a second row just leaves.
-        fn tear_out(&self, spot: crate::scrap::Spot) {
+        /// The page has no list to tear: forget the rows waiting and let the held rows go.
+        fn give_up(&self) {
+            self.dom.waiting.borrow_mut().clear();
+            if super::HOLE_OPEN.with(|open| open.replace(false)) {
+                crate::scrap::release_rows();
+            }
+        }
+
+        /// A row that has finished (`id`, standing at `spot`, in viewport px) tears out of
+        /// the page where it stood: the hole is as tall as the row, and Rambo tapes it
+        /// without a sulk. One tear at a time: a row that finishes while one lasts waits its
+        /// turn (the first few; one beyond that just leaves), and the rows below stay where
+        /// they were until the last hole has healed, so each hole opens where its row stood.
+        fn tear_out(&self, id: String, spot: crate::scrap::Spot) {
             let dom = &self.dom;
-            let Some(pane) = dom.pane.get() else { return };
+            let Some(pane) = dom.pane.get() else {
+                return self.give_up();
+            };
+            let (left, top) = Self::origin(&pane);
+            let waiting = rip::Waiting {
+                id,
+                place: (
+                    spot.x - left,
+                    spot.y - top,
+                    spot.x + spot.w - left,
+                    spot.y + spot.h - top,
+                ),
+            };
             if self.tear.with_untracked(Option::is_some) {
+                super::HOLE_OPEN.with(|open| open.set(true));
+                dom.waiting.borrow_mut().push(waiting);
                 return;
             }
-            let (left, top) = Self::origin(&pane);
+            self.open_hole(&waiting);
+        }
+
+        /// Open the hole a row leaves, from its place in the page's coordinates.
+        fn open_hole(&self, waiting: &rip::Waiting) {
+            let dom = &self.dom;
+            let (left, top, right, bottom) = waiting.place;
             let seed = dom.made.get().wrapping_add(1);
             dom.made.set(seed);
             let tear = Tear::out_of_row(
-                spot.x - left,
-                spot.x + spot.w - left,
-                spot.y + spot.h / 2.0 - top,
-                spot.h,
-                seed.wrapping_mul(2_654_435_761) ^ (spot.y as u32),
+                left,
+                right,
+                (top + bottom) / 2.0,
+                bottom - top,
+                seed.wrapping_mul(2_654_435_761) ^ (top as u32),
             );
             super::HOLE_OPEN.with(|open| open.set(true));
             self.tear.set(Some(tear.clone()));
@@ -468,12 +502,25 @@ mod imp {
                     .set(mascot::transition(&State::Home, Event::Mend { annoyed }));
             }
             let (tear_signal, released) = (self.tear, self.released);
+            let ripper = self.clone();
             // On the engine's clock, with everything else that moves.
             crate::engine::every(f64::from(rip::total_ms()), move || {
                 tear_signal.set(None);
                 released.set(false);
-                if super::HOLE_OPEN.with(|open| open.replace(false)) {
-                    crate::scrap::release_rows();
+                // A row waiting for its turn opens its hole now (unless it is back on the
+                // page, undone); the rows below close up only when nothing is waiting.
+                if ripper.dom.pane.get_untracked().is_none() {
+                    ripper.give_up();
+                } else {
+                    let next = ripper
+                        .dom
+                        .waiting
+                        .borrow_mut()
+                        .next_due(crate::scrap::row_on_page);
+                    match next {
+                        Some(waiting) => ripper.open_hole(&waiting),
+                        None => ripper.give_up(),
+                    }
                 }
                 crate::engine::Flow::Stop
             });
