@@ -54,8 +54,9 @@ impl<const N: usize> Glide<N> {
 }
 
 /// Carries `from` to `to`, calling `draw` with the places on every frame and `done` once
-/// they rest (after the last `draw`, which has the exact ends). Stopping the handle
-/// ends it without `done`.
+/// they rest (after the last `draw`, which has the exact ends). The start is drawn at
+/// once, so the first frame never shows the thing at its end before it leaves. Stopping
+/// the handle ends it without `done`.
 pub(crate) fn glide<const N: usize>(
     from: [f64; N],
     to: [f64; N],
@@ -64,6 +65,7 @@ pub(crate) fn glide<const N: usize>(
     mut draw: impl FnMut([f64; N]) + 'static,
     done: impl FnOnce() + 'static,
 ) -> Handle {
+    draw(from);
     let mut glide = Glide::new(from, to, pull, near);
     let mut done = Some(done);
     super::on_tick(move |tick| {
