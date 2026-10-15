@@ -689,7 +689,7 @@ c. Code: `server/src/v2/http/account.rs:me, sign_out, delete_me`;
 a. Without `GOOGLE_CLIENT_ID`, the server runs as one local user without sign-in.
 b. Run the local server and open the page; no login screen is shown.
 c. Code: `server/src/v2/auth.rs:LOCAL_USER`;
-`server/src/v2/http.rs:router, build_router`.
+`server/src/v2/http.rs:router, build_router_with`.
 
 ### 4. Anonymous use
 a. Use without an account. A request with no bearer token gets an `X-Rambl-Anon` id the server issued; sending that id back keeps the same tasks. Signing in adopts the anonymous tasks (a calendar event or weekly series the account already has keeps the signed-in copy) and ends the anonymous id. Forged, unknown or malformed ids get a fresh id, and each client address may be issued `RAMBL_ANON_IDS_PER_IP` (default 20) new ids a day.
@@ -799,7 +799,7 @@ c. Code: `crates/core/src/lib.rs:Snapshot`;
 a. The API supports capture, task creation and changes, reorder, revise, calendar
 import and iCalendar export.
 b. Not visible; see the route table in `docs/ARCHITECTURE.md`.
-c. Code: `server/src/v2/http.rs:build_router`; `http/ramble.rs:capture, revise_task`; `http/tasks.rs:import`; `http/feed.rs:calendar_ics`.
+c. Code: `server/src/v2/http.rs:router`; `http/ramble.rs:capture, revise_task`; `http/tasks.rs:import`; `http/feed.rs:calendar_ics`.
 
 ### 3. User scoping and errors
 a. Requests are scoped to the authenticated user and return structured API errors.

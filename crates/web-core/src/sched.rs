@@ -1,8 +1,6 @@
 //! The engine's pure core: which jobs run on a frame, what time they see, and when the
 //! loop must wake next. Nothing here touches the browser, so it is tested natively;
-//! [`super::run`] is the glue that asks the browser for the frames and timers.
-// Natively nothing pumps the loop but these tests.
-#![cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+//! `web/src/engine/run.rs` is the glue that asks the browser for the frames and timers.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -14,7 +12,7 @@ const MAX_FRAME_S: f64 = 0.1;
 
 /// The engine's fixed step, in seconds: physics steps by exactly this, however fast the
 /// screen draws, so a throw goes the same on a 60 Hz phone and a 144 Hz monitor.
-pub(crate) const ENGINE_DT_S: f64 = 1.0 / 120.0;
+pub const ENGINE_DT_S: f64 = 1.0 / 120.0;
 
 /// The most fixed steps one frame takes. A frame later than that drops the rest of the
 /// backlog instead of stepping in a burst.
@@ -24,21 +22,21 @@ const MAX_STEPS: u32 = 8;
 /// never the wall clock), and how many fixed [`ENGINE_DT_S`] steps the time since the
 /// last frame makes, with what was left over from earlier frames counted in.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Tick {
-    pub(crate) now: f64,
-    pub(crate) steps: u32,
+pub struct Tick {
+    pub now: f64,
+    pub steps: u32,
 }
 
 /// Whether a job wants to run again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Flow {
+pub enum Flow {
     Go,
     Stop,
 }
 
 /// What the loop needs next: a frame, a wake at a time in ms, or nothing at all.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Wake {
+pub enum Wake {
     Frame,
     At(f64),
     Sleep,
@@ -52,7 +50,7 @@ enum When {
     At { due: Cell<f64>, every: Option<f64> },
 }
 
-pub(crate) struct Job {
+pub struct Job {
     live: Rc<Cell<bool>>,
     when: When,
     body: RefCell<Box<dyn FnMut(Tick) -> Flow>>,
@@ -61,10 +59,10 @@ pub(crate) struct Job {
 /// A job's handle. `stop` ends it from anywhere, from inside the job itself too, and it
 /// never keeps the job's closure alive.
 #[derive(Clone, Debug)]
-pub(crate) struct Handle(Rc<Cell<bool>>);
+pub struct Handle(Rc<Cell<bool>>);
 
 impl Handle {
-    pub(crate) fn stop(&self) {
+    pub fn stop(&self) {
         self.0.set(false);
     }
 
@@ -78,17 +76,17 @@ impl Handle {
 /// `StoredValue::new_local`, which drops it with its owner. (A bare [`Handle`] does not stop
 /// its job when dropped, so a job that no view owns just runs.)
 #[derive(Default)]
-pub(crate) struct Guard(Vec<Handle>);
+pub struct Guard(Vec<Handle>);
 
 impl Guard {
     /// Take on `handle`'s job; jobs that have finished are let go.
-    pub(crate) fn keep(&mut self, handle: Handle) {
+    pub fn keep(&mut self, handle: Handle) {
         self.0.retain(Handle::is_live);
         self.0.push(handle);
     }
 
     /// Stop every job it holds.
-    pub(crate) fn stop(&mut self) {
+    pub fn stop(&mut self) {
         for handle in self.0.drain(..) {
             handle.stop();
         }
@@ -102,7 +100,7 @@ impl Drop for Guard {
 }
 
 #[derive(Default)]
-pub(crate) struct Loop {
+pub struct Loop {
     jobs: Vec<Rc<Job>>,
     /// The last frame's time, while frames follow one another; none once the loop has
     /// slept, so the first frame after it is a frame of no time.
@@ -117,21 +115,21 @@ pub(crate) struct Loop {
 
 impl Loop {
     /// A number for a new start of a keyed job, never given twice.
-    pub(crate) fn next_start(&mut self) -> u64 {
+    pub fn next_start(&mut self) -> u64 {
         self.starts += 1;
         self.starts
     }
 
     /// Keeps `handle` as the job of `key`, made by start `start`, and stops the one it
     /// takes over from.
-    pub(crate) fn hold(&mut self, key: &str, start: u64, handle: Handle) {
+    pub fn hold(&mut self, key: &str, start: u64, handle: Handle) {
         if let Some((_, old)) = self.bodies.insert(key.to_owned(), (start, handle)) {
             old.stop();
         }
     }
 
     /// Stops the job of `key`, if there is one.
-    pub(crate) fn cancel(&mut self, key: &str) {
+    pub fn cancel(&mut self, key: &str) {
         if let Some((_, old)) = self.bodies.remove(key) {
             old.stop();
         }
@@ -139,19 +137,19 @@ impl Loop {
 
     /// Lets go of the job of `key` once it has finished, unless a newer start has taken
     /// the key since.
-    pub(crate) fn release(&mut self, key: &str, start: u64) {
+    pub fn release(&mut self, key: &str, start: u64) {
         if self.bodies.get(key).is_some_and(|(made, _)| *made == start) {
             self.bodies.remove(key);
         }
     }
 
     /// A job run on every frame until it returns [`Flow::Stop`].
-    pub(crate) fn every_frame(&mut self, body: impl FnMut(Tick) -> Flow + 'static) -> Handle {
+    pub fn every_frame(&mut self, body: impl FnMut(Tick) -> Flow + 'static) -> Handle {
         self.add(When::EveryFrame, Box::new(body))
     }
 
     /// A job run once at `due` ms, and then every `every` ms while it returns [`Flow::Go`].
-    pub(crate) fn at(
+    pub fn at(
         &mut self,
         due: f64,
         every: Option<f64>,
@@ -177,7 +175,7 @@ impl Loop {
     /// Opens a frame at `now`: the tick its jobs see and the jobs that are due. They are
     /// [`run`] with the loop let go, since a job may add or stop jobs; one added meanwhile
     /// first runs on the next frame.
-    pub(crate) fn begin(&mut self, now: f64) -> (Tick, Vec<Rc<Job>>) {
+    pub fn begin(&mut self, now: f64) -> (Tick, Vec<Rc<Job>>) {
         let dt = self
             .last
             .map_or(0.0, |last| ((now - last) / 1000.0).clamp(0.0, MAX_FRAME_S));
@@ -201,7 +199,7 @@ impl Loop {
     }
 
     /// Closes a frame: stopped jobs go, and the loop says what it needs next.
-    pub(crate) fn end(&mut self) -> Wake {
+    pub fn end(&mut self) -> Wake {
         self.jobs.retain(|job| job.live.get());
         let wake = self.wake();
         if wake != Wake::Frame {
@@ -212,7 +210,7 @@ impl Loop {
     }
 
     /// A frame while any job runs every frame, else a wake at the earliest timer.
-    pub(crate) fn wake(&self) -> Wake {
+    pub fn wake(&self) -> Wake {
         let live = || self.jobs.iter().filter(|job| job.live.get());
         if live().any(|job| matches!(job.when, When::EveryFrame)) {
             return Wake::Frame;
@@ -238,7 +236,7 @@ impl Job {
 
 /// Runs a frame's jobs, in the order they were added. A job stopped by one before it in
 /// the same frame does not run.
-pub(crate) fn run(tick: Tick, jobs: &[Rc<Job>]) {
+pub fn run(tick: Tick, jobs: &[Rc<Job>]) {
     for job in jobs {
         if !job.live.get() {
             continue;
