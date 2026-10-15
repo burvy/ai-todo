@@ -1594,6 +1594,27 @@ mod tests {
                 .find(|task| task.id == placement.task)
                 .expect("placement names a task in the snapshot");
             assert!(!task.done, "placement for a done task");
+            assert!(
+                !task.off_planner,
+                "placement for a task taken off the planner"
+            );
+        }
+        // A task off the planner is named in the plan so the UI can say why it is in
+        // the list but not on the week, and is in neither other bucket.
+        for task in snapshot.tasks.iter().filter(|task| task.off_planner) {
+            assert!(
+                snapshot.plan.off_planner.contains(&task.id),
+                "{} is off the planner but the plan does not say so",
+                task.title
+            );
+            assert!(!snapshot.plan.unplaced.contains(&task.id));
+            assert!(
+                !snapshot
+                    .plan
+                    .placements
+                    .iter()
+                    .any(|placement| placement.task == task.id)
+            );
         }
         for task in snapshot.tasks.iter().filter(|task| !task.done) {
             if let When::At(start) = task.when {
@@ -1603,6 +1624,9 @@ mod tests {
                     .iter()
                     .filter(|placement| placement.task == task.id)
                     .collect();
+                if task.off_planner {
+                    continue;
+                }
                 assert_eq!(
                     shown.len(),
                     1,
@@ -1834,6 +1858,105 @@ mod tests {
         assert!(snapshot.plan.placements.is_empty());
         assert!(snapshot.tasks[0].done);
         assert_invariant(&snapshot);
+    }
+
+    #[tokio::test]
+    async fn taking_a_task_off_the_planner_keeps_it_in_the_list_and_off_the_week() {
+        let router = router_at(sunday_night());
+        let (_, body) = send(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(r#"{"title":"Pay rent","duration_min":30,"when":{"kind":"anytime"},"label":"Other","priority":"low","source":"text"}"#),
+        )
+        .await;
+        let id = serde_json::from_value::<Snapshot>(body).unwrap().tasks[0]
+            .id
+            .0
+            .clone();
+        let path = format!("/api/v1/tasks/{id}");
+
+        let (status, body) = send(&router, "PATCH", &path, Some(r#"{"off_planner":true}"#)).await;
+        assert_eq!(status, StatusCode::OK);
+        let off: Snapshot = serde_json::from_value(body).unwrap();
+        assert!(off.tasks[0].off_planner, "the flag rode back on the task");
+        assert_eq!(
+            off.plan.off_planner,
+            vec![TaskId(id.clone())],
+            "the plan says why the task is not on the week"
+        );
+        assert!(
+            off.plan.placements.is_empty() && off.plan.unplaced.is_empty(),
+            "asked for, not a lack of room: {:?} / {:?}",
+            off.plan.placements,
+            off.plan.unplaced
+        );
+        assert_invariant(&off);
+
+        // Putting it back plans it again, which is the whole of "until it is placed again".
+        let (status, body) = send(&router, "PATCH", &path, Some(r#"{"off_planner":false}"#)).await;
+        assert_eq!(status, StatusCode::OK);
+        let on: Snapshot = serde_json::from_value(body).unwrap();
+        assert!(!on.tasks[0].off_planner);
+        assert!(on.plan.off_planner.is_empty());
+        assert_eq!(on.plan.placements.len(), 1, "it is on the week again");
+        assert_invariant(&on);
+    }
+
+    #[tokio::test]
+    async fn a_patch_that_leaves_the_flag_out_does_not_move_the_task() {
+        let router = router_at(sunday_night());
+        let (_, body) = send(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(r#"{"title":"Pay rent","duration_min":30,"when":{"kind":"anytime"},"label":"Other","priority":"low","source":"text"}"#),
+        )
+        .await;
+        let id = serde_json::from_value::<Snapshot>(body).unwrap().tasks[0]
+            .id
+            .0
+            .clone();
+        send(
+            &router,
+            "PATCH",
+            &format!("/api/v1/tasks/{id}"),
+            Some(r#"{"off_planner":true}"#),
+        )
+        .await;
+
+        let (status, body) = send(
+            &router,
+            "PATCH",
+            &format!("/api/v1/tasks/{id}"),
+            Some(r#"{"title":"Pay rent, sooner"}"#),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let after: Snapshot = serde_json::from_value(body).unwrap();
+        assert_eq!(after.tasks[0].title, "Pay rent, sooner");
+        assert!(
+            after.tasks[0].off_planner,
+            "an absent field leaves the flag alone"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_snapshot_from_before_the_flag_plans_everything_as_it_did() {
+        // A client that has never heard of off_planner sends no field, so nothing
+        // changes: the flag defaults to false and the week fills as before.
+        let router = router_at(sunday_night());
+        let (_, body) = send(
+            &router,
+            "POST",
+            "/api/v1/tasks",
+            Some(r#"{"title":"Pay rent","duration_min":30,"when":{"kind":"anytime"},"label":"Other","priority":"low","source":"text"}"#),
+        )
+        .await;
+        let snapshot: Snapshot = serde_json::from_value(body).unwrap();
+        assert!(!snapshot.tasks[0].off_planner);
+        assert!(snapshot.plan.off_planner.is_empty());
+        assert_eq!(snapshot.plan.placements.len(), 1);
     }
 
     #[tokio::test]
@@ -4510,6 +4633,7 @@ mod tests {
                 "external_uid",
                 "id",
                 "label",
+                "off_planner",
                 "order",
                 "priority",
                 "source",
@@ -4605,6 +4729,7 @@ mod tests {
                     updated_at: Utc::now(),
                     due_tz: None,
                     external_uid: None,
+                    off_planner: false,
                 },
             )
             .unwrap();

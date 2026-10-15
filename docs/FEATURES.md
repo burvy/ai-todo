@@ -314,6 +314,19 @@ b. Not visible; covered by scheduler and server tests.
 c. Code: `crates/core/src/lib.rs:Placement, Plan`;
 `server/src/v2/app.rs:plan`.
 
+### 4a. Taking a task off the planner
+a. A task can be taken off the planner on purpose: it stays in the list with its
+deadline, and the scheduler leaves it alone until it is placed again, because it is
+reported in `Plan::off_planner` rather than as unplaced. This outranks a pin, so an
+`At` task taken off the planner leaves the week too. Set it with
+`PATCH /api/v1/tasks/{id}` and `{"off_planner": true}`.
+b. Not visible yet: the bubble button that calls it is (planned), and the UI that
+shows why a task is in the list but not on the week is (planned). Covered by
+scheduler, store and server tests.
+c. Code: `crates/core/src/lib.rs:Task::off_planner, Plan::off_planner`;
+`crates/scheduler/src/lib.rs:plan`; `server/src/v2/app.rs:patch`;
+`server/src/v2/store.rs:MIGRATION_12`; `docs/ARCHITECTURE.md` 4.2.
+
 ### 5. Light and dark paper
 a. The paper is Light or Dark by the reader's own choice in the gear menu, not by
 the operating system's setting. `data-theme="light"` is baked into `web/index.html`
@@ -405,10 +418,19 @@ up, typing a new capture, turning the page or scrolling the row away): the ink
 waits at the letter he reached, and once he is home and can see the row he flies
 back and carries on. A row left waiting `WRITE_HOLD_MAX_MS` simply shows its title,
 and a reload always shows titles whole.
-b. Type a long task and press Enter; pick him up halfway through, then let go.
+The ink he has just written is wet for `INK_WET_MS` (4 s): a little darker, with a
+sheen along the top of its strokes, drying to the page's ink. A tap on the row while
+it is wet smudges it: the fingertip drags a small smear of the row's ink a little way
+to the right of where it touched, and the row does not open. The smear is ink and
+stays (until the row is redrawn or the page reloads); drying is the only change ink
+makes on its own. Once dry, a tap does what it always did.
+b. Type a long task and press Enter; pick him up halfway through, then let go. Add
+another and tap it as soon as he flies off it.
 c. Code: `web/src/tasks/write.rs:write_row_title`; `web/src/pen.rs:schedule,
 glyphs_of, stroke_at, inked_count, hand, touch_down, flick, beat`; pace and hand in
-`web/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`).
+`web/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`); wet ink in `web/src/smudge.rs:is_wet,
+smear, Smudges` and `web/src/tasks/mod.rs:smudge_if_wet` (`INK_WET_MS`, `SMUDGE_*`),
+the sheen in `web/theme.css` (`.ink-wet`, `ink-dry`).
 
 ### 4. Drop actions
 a. Dropping Rambo on a task opens a small bubble with Edit, Move and Done, drawn as

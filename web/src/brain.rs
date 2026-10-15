@@ -337,6 +337,7 @@ mod overdue_tests {
             updated_at: at,
             due_tz: None,
             external_uid: None,
+            off_planner: false,
         }
     }
 
@@ -411,6 +412,7 @@ mod added_tests {
             updated_at: now,
             due_tz: None,
             external_uid: None,
+            off_planner: false,
         }
     }
 
@@ -478,6 +480,7 @@ mod load_tests {
             updated_at: now,
             due_tz: None,
             external_uid: None,
+            off_planner: false,
         }
     }
 
