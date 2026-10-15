@@ -6,6 +6,7 @@
 //! belongs to, which is what "the pen scratch is synced to writing" means
 //! here: the nib moves for as long as the scratch lasts and not a frame more.
 
+use crate::mascot::State;
 use crate::settings::SoundPreset;
 
 /// One of the sounds this crate owns. `assets/sounds/<asset()>.mp3` exists for
@@ -26,11 +27,21 @@ pub enum Cue {
     Crumple,
     /// His dry nib knocks on the nest's rim, once a tap.
     Knock,
+    /// A task is deleted: its row tears into a scrap.
+    Delete,
+    /// A scrap or a done strip is pinned to the list's page.
+    Pin,
+    /// He is thrown: by a flick, or swept off by the page.
+    Toss,
+    /// He is put down, anywhere but in a throw.
+    Drop,
+    /// He starts listening: a pen cap's click.
+    Listen,
 }
 
 impl Cue {
     /// Every cue, for the tests that check the table and the files.
-    pub const ALL: [Cue; 7] = [
+    pub const ALL: [Cue; 12] = [
         Cue::Write,
         Cue::Scribble,
         Cue::Tap,
@@ -38,6 +49,11 @@ impl Cue {
         Cue::Send,
         Cue::Crumple,
         Cue::Knock,
+        Cue::Delete,
+        Cue::Pin,
+        Cue::Toss,
+        Cue::Drop,
+        Cue::Listen,
     ];
 
     /// Sounds that answer a touch with no job of their own: what a person who asked the
@@ -49,7 +65,7 @@ impl Cue {
 
 /// The event-to-sound table: does `preset` play `cue`? Off plays nothing. A quiet desk keeps to the noises
 /// paper and ink really make (the nib, its knock on the rim, the scribble, the page, the
-/// crumple); the other
+/// crumple, the pin); the other
 /// two answer every touch (the music of `Music` is a separate track, not a cue).
 /// Reduced motion drops the cues that only decorate a movement.
 pub fn plays(preset: SoundPreset, cue: Cue, reduced_motion: bool) -> bool {
@@ -57,11 +73,22 @@ pub fn plays(preset: SoundPreset, cue: Cue, reduced_motion: bool) -> bool {
         SoundPreset::Off => false,
         SoundPreset::Quiet => matches!(
             cue,
-            Cue::Write | Cue::Knock | Cue::Scribble | Cue::Page | Cue::Crumple
+            Cue::Write | Cue::Knock | Cue::Scribble | Cue::Page | Cue::Crumple | Cue::Pin
         ),
         SoundPreset::Touch | SoundPreset::Music => true,
     };
     wanted && !(reduced_motion && cue.is_ambient())
+}
+
+/// The cue Rambo makes going from `was` to `now`, if any: thrown (by a flick, or swept
+/// off by the page) he whooshes; let go anywhere else, he lands.
+pub fn for_change(was: &State, now: &State) -> Option<Cue> {
+    match (was, now) {
+        (State::Thrown, State::Thrown) => None,
+        (_, State::Thrown) => Some(Cue::Toss),
+        (State::Dragging, State::Home | State::Asking { .. } | State::Noting) => Some(Cue::Drop),
+        _ => None,
+    }
 }
 
 impl Cue {
@@ -76,6 +103,11 @@ impl Cue {
             Cue::Crumple => "crumple",
             // A small hard knock, as a button's tick is: no file of its own yet.
             Cue::Knock => "tick",
+            Cue::Delete => "delete",
+            Cue::Pin => "pin",
+            Cue::Toss => "toss",
+            Cue::Drop => "drop",
+            Cue::Listen => "listen",
         }
     }
 
@@ -89,6 +121,11 @@ impl Cue {
             Cue::Send => 0.35,
             Cue::Crumple => 0.4,
             Cue::Knock => 0.25,
+            Cue::Delete => 0.35,
+            Cue::Pin => 0.3,
+            Cue::Toss => 0.3,
+            Cue::Drop => 0.3,
+            Cue::Listen => 0.3,
         }
     }
 }
@@ -188,7 +225,14 @@ mod tests {
 
     #[test]
     fn a_quiet_desk_keeps_to_paper_and_ink_and_the_others_answer_every_touch() {
-        for cue in [Cue::Tap, Cue::Send] {
+        for cue in [
+            Cue::Tap,
+            Cue::Send,
+            Cue::Delete,
+            Cue::Toss,
+            Cue::Drop,
+            Cue::Listen,
+        ] {
             assert!(
                 !plays(SoundPreset::Quiet, cue, false),
                 "{cue:?} on a quiet desk"
@@ -200,6 +244,7 @@ mod tests {
             Cue::Scribble,
             Cue::Page,
             Cue::Crumple,
+            Cue::Pin,
         ] {
             assert!(
                 plays(SoundPreset::Quiet, cue, false),
@@ -225,12 +270,50 @@ mod tests {
             .filter(|p| *p != SoundPreset::Off)
         {
             assert!(!plays(preset, Cue::Tap, true) && !plays(preset, Cue::Page, true));
-            for cue in [Cue::Write, Cue::Knock, Cue::Scribble, Cue::Crumple] {
+            for cue in [
+                Cue::Write,
+                Cue::Knock,
+                Cue::Scribble,
+                Cue::Crumple,
+                Cue::Pin,
+            ] {
                 assert!(
                     plays(preset, cue, true),
                     "{cue:?} is feedback, not decoration"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn thrown_he_whooshes_put_down_he_lands_and_nothing_else_sounds() {
+        let asking = State::Asking {
+            task_id: "t1".into(),
+            title: "Lab report".into(),
+        };
+        // Into a throw, from a flick or from the page sweeping him off; once only.
+        for was in [State::Dragging, State::Dazed, asking.clone()] {
+            assert_eq!(for_change(&was, &State::Thrown), Some(Cue::Toss), "{was:?}");
+        }
+        assert_eq!(for_change(&State::Thrown, &State::Thrown), None);
+        // Let go: in the nest or on the page, on a task, on an hour.
+        for now in [State::Home, asking.clone(), State::Noting] {
+            assert_eq!(
+                for_change(&State::Dragging, &now),
+                Some(Cue::Drop),
+                "{now:?}"
+            );
+        }
+        // The rest of his life is quiet here: a throw that ends, a hop home, a pick-up.
+        for (was, now) in [
+            (State::Thrown, State::Home),
+            (State::Thrown, State::Splatting),
+            (State::Skittering, State::Home),
+            (State::Home, State::Dragging),
+            (State::Dazed, State::Inking),
+            (State::Inking, State::Dazed),
+        ] {
+            assert_eq!(for_change(&was, &now), None, "{was:?} -> {now:?}");
         }
     }
 }

@@ -539,8 +539,11 @@ c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:Choice, asking_dismissed_b
 ### 4a. Sound presets
 a. The gear menu's **Sound** picks one of four: **Off** (silence; Rambo does not speak
 aloud), **A quiet desk** (only the noises paper and ink really make: the nib, its
-knock on the nest's rim, the scribble, the page turn, the crumple; no voice), **Every touch answers** (the default:
-also a tick on every button and a swish when a ramble is sent) and **Everything + music**
+knock on the nest's rim, the scribble, the page turn, the crumple, the tack when a scrap
+is pinned; no voice), **Every touch answers** (the default: also a tick on every button, a
+swish when a ramble is sent, a torn page when a task is deleted, a whoosh when Rambo is
+thrown, a soft landing when he is put down and a cap's click when he starts listening) and
+**Everything + music**
 (the same cues, plus calm piano under them: two public-domain recordings, looped softly,
 started by the first press after the choice). While it plays, Rambo dances to it in his
 nest: he listens to how loud the music is, and every note's attack pushes his slow
@@ -549,7 +552,7 @@ never while held, flying or writing, and not with reduced motion. It replaces th
 flag: a stored "off" stays Off, a stored "on" becomes every touch. With reduced motion
 on, the tick and the page sound are dropped.
 b. Open the gear menu, pick each preset, then tap a button, turn the page and add a task.
-c. Code: `web/src/sound.rs:Cue, plays`; `web/src/settings.rs:SoundPreset, with_migrated_sound`;
+c. Code: `web/src/sound.rs:Cue, plays, for_change`; `web/src/settings.rs:SoundPreset, with_migrated_sound`;
 `web/src/voice.rs:audible`; `web/src/music.rs:sync, level, loudness`; `web/src/engine/dance.rs:Dance`. Music files: `web/assets/music/ABOUT.md`. Sound files and how to swap one: `web/assets/sounds/ABOUT.md`.
 
 ### 5. Reduced motion

@@ -145,6 +145,22 @@ pub fn App() -> impl IntoView {
         }
         now
     });
+    // Rambo's own moments: thrown he whooshes, put down he lands (sound::for_change).
+    Effect::new(move |was: Option<mascot::State>| {
+        let now = mascot_state.get();
+        if let Some(cue) = was.and_then(|was| sound::for_change(&was, &now)) {
+            sound::play(cue);
+        }
+        now
+    });
+    // Starting to listen, his cap clicks: however the listening began.
+    Effect::new(move |was: Option<bool>| {
+        let now = talking.get();
+        if now && was == Some(false) {
+            sound::play(sound::Cue::Listen);
+        }
+        now
+    });
 
     window_event_listener(leptos::ev::keydown, move |event| {
         if event.key() == " "
