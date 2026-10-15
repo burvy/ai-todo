@@ -3,7 +3,7 @@
 Calm solo piano that plays softly under the **Everything + music** Sound preset, and
 only then. It starts after the first press once that preset is chosen (a browser will
 not play sound before a gesture), plays the files in order and starts over after the
-last (`web/src/music.rs:TRACKS`). Volume: `web/src/tuning.rs:MUSIC_VOLUME`.
+last (`web/src/music.rs:TRACKS`). Volume: `crates/web-core/src/tuning.rs:MUSIC_VOLUME`.
 
 | File | Piece | Performer | Source | Licence |
 |---|---|---|---|---|

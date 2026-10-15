@@ -21,6 +21,7 @@ Rambl is a speed-focused to-do list: you ramble, Jev (TypeSafe's model) helps tu
 | `crates/capture` | Ramble to tasks: split clauses, find candidates, ask the judge |
 | `crates/scheduler` | Plans tasks into working hours |
 | `crates/rambl-brain` | The mascot's behaviour; no web code |
+| `crates/web-core` | The web page's core: rules and numbers with no DOM (`tuning.rs` is here) |
 | `server/src/v2` | HTTP API, storage, accounts |
 | `web/` | Leptos page built with trunk |
 | `static/`, old `server/src` routes | v1, being deleted; do not extend |

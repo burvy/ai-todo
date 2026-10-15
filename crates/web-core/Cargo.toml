@@ -1,0 +1,9 @@
+[package]
+name = "rambl-web-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The web page's core (ARCHITECTURE 8A): its rules and numbers, with no DOM, tested natively. The page (rambl-web) is the views over it."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }

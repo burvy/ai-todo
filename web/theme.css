@@ -163,7 +163,7 @@
   --layer-lifted: 99; /* a strip being carried, above its neighbours */
 
   /* The page turn (docs/FRONTEND-PLAN.md; web/src/bend.rs). Looks only: the numbers
-     that decide a turn are in web/src/tuning.rs. */
+     that decide a turn are in crates/web-core/src/tuning.rs. */
   /* Shadows are black in both modes: dark paper has light ink, so mixing from the ink
      would glow. Only the ridge's highlight comes from the paper. */
   --bend-shade: color-mix(in srgb, black 22%, transparent);

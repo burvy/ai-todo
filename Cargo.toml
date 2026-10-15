@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/capture", "crates/core", "crates/dates", "crates/judge", "crates/rambl-brain", "crates/scheduler", "server", "web"]
+members = ["crates/capture", "crates/core", "crates/dates", "crates/judge", "crates/rambl-brain", "crates/web-core", "crates/scheduler", "server", "web"]
 resolver = "2"

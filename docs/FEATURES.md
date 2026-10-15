@@ -142,7 +142,7 @@ of time the page is in view; up to `SCRAP_MAX` (two quick deletes leave two, eac
 back its own task; a third sends the oldest away). Tap one and the task is taped back as
 it was (`POST /api/v1/tasks/restore`; a repeat's day has its skip cleared), otherwise it
 slides away. Paper slides and never fades. The rows below a row that left slide up to close the
-gap (`ROW_CLOSE_MS`), never jump. A deleted scrap lands below the stack, never on it. Times and counts are in `web/src/tuning.rs`;
+gap (`ROW_CLOSE_MS`), never jump. A deleted scrap lands below the stack, never on it. Times and counts are in `crates/web-core/src/tuning.rs`;
 the pin is `web/src/scrap.rs`.
 e. A finger that slides before the hold is a **scroll**, and the row keeps its
 hands off it. That is also what keeps the gestures apart from the page flip: a
@@ -160,7 +160,7 @@ finger, the leaf darkens as it turns away, and it throws a shadow on the page un
 (black in light and dark). Letting go past a share of the width or in a flick finishes
 the turn; short of that the leaf falls back and rebounds a little. The note's turn runs on a fixed time, slow, quick, slow, the same both ways. With reduced motion it
 slides. Geometry, the leaf's spring and decisions: `web/src/flip.rs` (tested); browser
-side: `web/src/flip_turner.rs`; numbers in `web/src/tuning.rs` (`FLIP_*`), looks in
+side: `web/src/flip_turner.rs`; numbers in `crates/web-core/src/tuning.rs` (`FLIP_*`), looks in
 `web/theme.css` `--flip-*` and `.flip-*`. The leaf moves on a spring with a speed of its own,
 so a flick carries on at the speed of the finger. The two pages lie stacked in one cell
 (the list over the planner, `main[data-pane]` names the one showing), so there is no scroll
@@ -197,7 +197,7 @@ c. Code: `web/src/rambo.rs:Rambo`, which sets `edit_request` for
 release (`tasks/mod.rs:tapped, on_title`), since the row holds the pointer from the press; `web/src/mascot.rs:Choice, asking_dismissed_by`; `web/src/api.rs:patch_task`.
 d. The sheet's days and times are picked on the paper's own pickers (handwritten
 numbers, keyboard reachable, the paper's 12- or 24-hour clock), never the browser's:
-`web/src/pickers.rs:PaperDate, PaperTime, PaperDateTime`; numbers in `web/src/tuning.rs`.
+`web/src/pickers.rs:PaperDate, PaperTime, PaperDateTime`; numbers in `crates/web-core/src/tuning.rs`.
 
 ### 5. Labels and priorities
 a. Tasks carry one of six labels and one of four priorities.
@@ -259,7 +259,7 @@ bottom edge. A second writing line so a long ramble wraps, and a slight tilt, ar
 paper cut-out x that scribbles the text out and lays down a fresh scrap is *(planned)*.
 g. Code: `web/src/lib.rs:App, PageFoot`; `web/src/week.rs:WeekGrid` (the planner page, the
 gear); `web/src/scrap.rs` (the pin); `web/theme.css` (`.capture`, `.nest`, `.nest-rim`, the
-phone block with `100dvh`); numbers in `web/src/tuning.rs`.
+phone block with `100dvh`); numbers in `crates/web-core/src/tuning.rs`.
 h. **The page rip was cut** (2026-10-15, ARCHITECTURE §8A.3): a drag on bare paper does nothing, and a
 finished row flies to the pin while the rows below slide up into its place (`scrap::slide_rows`).
 
@@ -362,7 +362,7 @@ it rides up with the bar over the keyboard), so no page is under it.
 b. Tap the lamp (or pick Light or Dark in the gear menu) and watch the new paper slide
 down; reload and see the choice kept.
 c. Code: `web/src/lamp.rs:DeskLamp, switch_to`; `web/theme.css` (`.desk-lamp`,
-`.lamp-sheet`); `web/src/tuning.rs:LAMP_SLIDE_MS`. The art: `web/assets/lamp/ABOUT.md`.
+`.lamp-sheet`); `crates/web-core/src/tuning.rs:LAMP_SLIDE_MS`. The art: `web/assets/lamp/ABOUT.md`.
 
 ### 6. Parchment theme
 a. The page is aged paper: warm palette, serif headings, a tiled paper texture that switches to a dark variant in dark mode.
@@ -418,7 +418,7 @@ once. The ribbon is drawn in CSS; it has no image asset.
 b. Scroll the planner away from today, then tap the ribbon.
 c. Code: `web/src/ribbon.rs:Ribbon, RibbonTail, hang_left, glide`;
 `web/src/week.rs:WeekGrid, ribbon_spot, slide_to`; tuning `RIBBON_GLIDE_MS` in
-`web/src/tuning.rs`.
+`crates/web-core/src/tuning.rs`.
 
 ## IV. RAMBL, THE MASCOT
 
@@ -462,7 +462,7 @@ c. Code: `web/src/rambo.rs:Rambo`; `web/src/engine/world.rs:World, behaviour`;
 `web/src/engine/nest.rs:Nest::tap`;
 `web/src/engine/fling.rs:step, splat_strokes`; `web/src/engine/world.rs:swept`; `web/src/engine/nest.rs:Nest`;
 `web/src/mascot.rs:transition, listens_on_grab,
-put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `web/src/hop.rs:Hop`;
+put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `crates/web-core/src/hop.rs:Hop`;
 `web/src/gesture.rs:Recognizer, release_velocity, flung`;
 `web/src/inklayer.rs:InkLayer`; `web/src/ink.rs`;
 `crates/rambl-brain/src/lib.rs:Event::PutBack`.
@@ -485,7 +485,7 @@ b. Type a long task and press Enter; pick him up halfway through, then let go. A
 another and tap it as soon as he flies off it.
 c. Code: `web/src/tasks/write.rs:write_row_title`; `web/src/pen.rs:schedule,
 glyphs_of, stroke_at, inked_count, hand, touch_down, flick, beat`; pace and hand in
-`web/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`); wet ink in `web/src/smudge.rs:is_wet,
+`crates/web-core/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`); wet ink in `web/src/smudge.rs:is_wet,
 smear, Smudges` and `web/src/tasks/mod.rs:smudge_if_wet` (`INK_WET_MS`, `SMUDGE_*`),
 the sheen in `web/theme.css` (`.ink-wet`, `ink-dry`).
 

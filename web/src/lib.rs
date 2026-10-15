@@ -2,12 +2,12 @@ use leptos::prelude::*;
 use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
 
+// The core (crates/web-core), under the paths the page has always used.
+pub use rambl_web_core::{clock, hop, tuning};
 pub mod account;
 pub mod api;
 pub mod brain;
-pub mod clock;
 pub mod gesture;
-pub mod hop;
 pub mod ink;
 pub mod inklayer;
 pub mod lamp;
@@ -19,7 +19,6 @@ pub mod row;
 pub mod settings;
 pub mod sound;
 pub mod speech;
-pub mod tuning;
 pub mod voice;
 pub mod week;
 
