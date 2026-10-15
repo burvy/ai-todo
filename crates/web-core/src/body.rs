@@ -1,7 +1,8 @@
-//! What a task edit sends: the bodies the store's `Command::Patch` and `Command::Revise`
-//! carry to the server (`web/src/api.rs` sends them).
+//! What a store command sends: the bodies its `Command`s carry to the server
+//! (`web/src/api.rs` sends them), which the page only serialises. They live here, not in
+//! the page's `api`, so a command can hold one and be compared and tested natively.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, Weekday};
 use serde::Serialize;
 use todo_core::{Label, Priority, Source, When};
 
@@ -78,5 +79,73 @@ impl PatchTaskBody {
     pub fn priority(mut self, priority: Priority) -> Self {
         self.priority = Some(priority);
         self
+    }
+}
+
+/// Body for `POST /api/v1/series` - make a thing repeat weekly
+/// (docs/ARCHITECTURE.md 7.1). Dates and times travel as `YYYY-MM-DD` / `HH:MM`
+/// strings, the spelling chrono's serde uses on the server.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct SeriesBody {
+    pub title: String,
+    pub duration_min: u16,
+    /// chrono weekday names, Monday-first: `["Mon", "Thu"]`.
+    pub weekdays: Vec<Weekday>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_of_day: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub until: Option<String>,
+}
+
+/// Body for `PATCH /api/v1/series/{id}`: absent fields stay as they are. The
+/// time and end date are always sent, because the dialog holds the whole rule:
+/// `null` clears them (docs/ARCHITECTURE.md 7.1), so an emptied field ends the
+/// series' fixed time or end date.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct SeriesPatchBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_min: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub weekdays: Option<Vec<Weekday>>,
+    pub time_of_day: Option<String>,
+    pub until: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_series_body_is_the_json_the_server_reads() {
+        let body = SeriesBody {
+            title: "Gym".into(),
+            duration_min: 45,
+            weekdays: vec![Weekday::Mon, Weekday::Thu],
+            time_of_day: None,
+            until: Some("2026-12-01".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&body).expect("serialises"),
+            serde_json::json!({
+                "title": "Gym",
+                "duration_min": 45,
+                "weekdays": ["Mon", "Thu"],
+                "until": "2026-12-01",
+            })
+        );
+    }
+
+    #[test]
+    fn a_series_patch_sends_null_to_clear_the_time_and_the_end() {
+        let patch = SeriesPatchBody {
+            title: Some("Gym".into()),
+            ..SeriesPatchBody::default()
+        };
+        assert_eq!(
+            serde_json::to_value(&patch).expect("serialises"),
+            serde_json::json!({ "title": "Gym", "time_of_day": null, "until": null })
+        );
     }
 }
