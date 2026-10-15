@@ -84,13 +84,13 @@ pub fn DeskLamp(
         set_sheet.set(theme);
         set_pulled.set(true);
         // One frame for the sheet to be drawn above the page, then it slides down.
-        request_animation_frame(move || set_laying.set(true));
+        crate::engine::next_frame(move || set_laying.set(true));
         set_timeout(
             move || {
                 // It covers the page: swap the paper under it, then take it away.
                 swap(set_settings, settings, theme);
-                request_animation_frame(move || {
-                    request_animation_frame(move || {
+                crate::engine::next_frame(move || {
+                    crate::engine::next_frame(move || {
                         set_laying.set(false);
                         set_going_to.set(None);
                     })
