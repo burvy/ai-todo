@@ -7,6 +7,7 @@
 
 use crate::api;
 use leptos::prelude::*;
+use rambl_web_core::events::Event;
 use rambl_web_core::store::{Command, Outcome, Refusal, Reply, Store as Core};
 use todo_core::{ErrorCode, Snapshot};
 
@@ -80,6 +81,8 @@ pub struct Store {
     /// themselves; the list they write is offered to the store (`provide`).
     pub(crate) set_snapshot: WriteSignal<Snapshot>,
     pub(crate) set_error: WriteSignal<Option<String>>,
+    /// Where a refusal goes, for Rambo to say.
+    events: crate::events::Queue,
 }
 
 impl Store {
@@ -91,11 +94,13 @@ impl Store {
         snapshot: ReadSignal<Snapshot>,
         set_snapshot: WriteSignal<Snapshot>,
         set_error: WriteSignal<Option<String>>,
+        events: crate::events::Queue,
     ) -> Self {
         let store = Store {
             core: StoredValue::new(Core::new(snapshot.get_untracked())),
             set_snapshot,
             set_error,
+            events,
         };
         Effect::new(move |_| {
             let written = snapshot.get();
@@ -148,7 +153,7 @@ impl Store {
         }
         match outcome {
             Outcome::Shown => {
-                // A note about an earlier refusal must not outlive the change that worked.
+                // A note about an earlier failure must not outlive the change that worked.
                 self.set_error.set(None);
                 self.show();
             }
@@ -157,7 +162,9 @@ impl Store {
             Outcome::Refused(why) => {
                 self.show();
                 let reloaded = self.reload().await;
-                self.set_error.set(Some(why.note(reloaded)));
+                self.events.push(Event::Refused {
+                    note: why.note(reloaded),
+                });
             }
         }
         reply

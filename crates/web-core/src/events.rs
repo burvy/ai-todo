@@ -35,6 +35,8 @@ pub enum Event {
     /// Task `id` was asked to move (Rambo's Move): the planner turns to its page and waits
     /// for a tap on an hour.
     MoveAsked { id: String },
+    /// The server did not take a change: Rambo says `note` (`store::Refusal::note`).
+    Refused { note: String },
 }
 
 /// The facts not yet taken, oldest first.
@@ -113,6 +115,14 @@ pub fn edit_asked(event: &Event) -> Option<String> {
 pub fn move_asked(event: &Event) -> Option<String> {
     match event {
         Event::MoveAsked { id } => Some(id.clone()),
+        _ => None,
+    }
+}
+
+/// A claim on any refusal to say: its words.
+pub fn refused(event: &Event) -> Option<String> {
+    match event {
+        Event::Refused { note } => Some(note.clone()),
         _ => None,
     }
 }
@@ -222,5 +232,23 @@ mod tests {
     #[test]
     fn the_middle_of_a_box_is_half_across_and_half_down() {
         assert_eq!(spot(2.0).centre(), (7.0, 2.0));
+    }
+
+    #[test]
+    fn every_refusal_is_taken_and_the_newest_is_said() {
+        let mut events = Events::default();
+        events.push(Event::Refused {
+            note: "first".into(),
+        });
+        events.push(left("a", 1.0));
+        events.push(Event::Refused {
+            note: "second".into(),
+        });
+        assert_eq!(
+            events.take_all(refused),
+            vec!["first".to_owned(), "second".to_owned()]
+        );
+        assert_eq!(events.take(refused), None, "taken once");
+        assert_eq!(events.take(row_left("a")), Some(spot(1.0)));
     }
 }

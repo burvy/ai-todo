@@ -178,7 +178,7 @@ ARCHITECTURE.md 7.1 lists reordering them as out of scope). A slip dropped where
 no row is goes to the end.
 h. The new order shows the moment the row is dropped, before the server answers. If
 the server refuses it, the list goes back to the last order the server confirmed, is
-reloaded, and the page says why (the same note an edit gives). A slower answer to an
+reloaded, and Rambo says why in his bubble (the same note an edit gives). A slower answer to an
 earlier change never puts an older list back.
 i. Code: `crates/web-core/src/row.rs` (the gesture rules, unit-tested) and `web/src/row.rs`'s `dom` module
 (pointer events); `web/src/tasks/mod.rs:reorder_ids`, the row's handlers;
@@ -487,6 +487,7 @@ c. Code: `web/src/rambo.rs:Rambo`; `web/src/engine/world.rs:World, behaviour`;
 `crates/web-core/src/mascot.rs:transition, listens_on_grab,
 put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `crates/web-core/src/hop.rs:Hop`;
 `crates/web-core/src/gesture.rs:Recognizer, release_velocity, flung`;
+`crates/web-core/src/rambo.rs:released, Under`;
 `web/src/inklayer.rs:InkLayer`; `crates/web-core/src/ink.rs`;
 `crates/rambl-brain/src/lib.rs:Event::PutBack`.
 
