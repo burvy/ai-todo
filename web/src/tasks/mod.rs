@@ -22,8 +22,8 @@ use fields::{
 use rambl_web_core::store::{Command, Mark};
 pub(crate) use rambl_web_core::task_list::occurrence_parts;
 use rambl_web_core::task_list::{
-    EditForm, MISSING_TITLE_NOTE, Tapped, blank_form, blank_task, is_draft, is_overdue_at,
-    keep_typed, new_task_draft, reorder_ids, series_of, tapped,
+    EditForm, MISSING_TITLE_NOTE, RowLetGo, blank_form, blank_task, is_draft, is_overdue_at,
+    keep_typed, new_task_draft, row_holds_finger, row_lifts, row_released, series_of,
 };
 #[cfg(target_arch = "wasm32")]
 use rambl_web_core::task_list::{
@@ -557,13 +557,7 @@ pub(crate) fn TaskList(
                         let handle_pointer_down = {
                             let presses = presses.clone();
                             move |ev: leptos::ev::PointerEvent| {
-                                // Dazed, Rambo takes every hold on the page, so the
-                                // row does not lift for one.
-                                let lifts = mascot::drawn_over(
-                                    &mascot_state.get_untracked(),
-                                    &crate::gesture::Gesture::Hold,
-                                )
-                                .is_none();
+                                let lifts = row_lifts(&mascot_state.get_untracked());
                                 row::dom::down(&presses, &ev, lifts);
                             }
                         };
@@ -571,15 +565,7 @@ pub(crate) fn TaskList(
                         let handle_pointer_move = {
                             let presses = presses.clone();
                             move |ev: leptos::ev::PointerEvent| {
-                                // Only once the row is lifted: a press that is
-                                // still a tap must not stop the click, and one
-                                // that has become a scroll must not stop the
-                                // scroll.
-                                let lifted = matches!(
-                                    row::dom::gesture(&presses),
-                                    Some(row::Gesture::Lifted)
-                                );
-                                if lifted {
+                                if row_holds_finger(row::dom::gesture(&presses)) {
                                     ev.prevent_default();
                                 }
                                 row::dom::drag(&presses, &ev);
@@ -595,22 +581,29 @@ pub(crate) fn TaskList(
                                     return;
                                 };
                                 let dragged = TaskId(row_id);
-                                match outcome {
-                                    // A tap on a control never reaches here (the
-                                    // row does not take that press); a scroll and a
-                                    // backed-out swipe leave the list as it was.
-                                    row::Release::Tap => {
-                                        let wet = is_wet(written, &dragged);
-                                        match tapped(wet, on_title(x, y)) {
-                                            Tapped::Smudge => {
-                                                smudge_if_wet(written, smudges, &dragged, (x, y))
-                                            }
-                                            Tapped::Open => open_editor(&dragged),
-                                            Tapped::Nothing => {}
-                                        }
+                                // A tap on a control never reaches here (the row does not
+                                // take that press).
+                                let dropped = || {
+                                    row::dom::drop_target(x, y)
+                                        .map(|(target, slot)| (TaskId(target), slot))
+                                };
+                                let let_go = snapshot.with_untracked(|listed| {
+                                    row_released(
+                                        outcome,
+                                        &dragged,
+                                        listed,
+                                        || is_wet(written, &dragged),
+                                        || on_title(x, y),
+                                        dropped,
+                                    )
+                                });
+                                match let_go {
+                                    RowLetGo::Nothing => {}
+                                    RowLetGo::Smudge => {
+                                        smudge_if_wet(written, smudges, &dragged, (x, y))
                                     }
-                                    row::Release::Scroll | row::Release::SnapBack => {}
-                                    row::Release::Done => {
+                                    RowLetGo::Open => open_editor(&dragged),
+                                    RowLetGo::Done => {
                                         let task_id = TaskId(drop_task_id_clone.clone());
                                         #[cfg(target_arch = "wasm32")]
                                         crate::sound::play(crate::sound::Cue::Scribble);
@@ -629,25 +622,7 @@ pub(crate) fn TaskList(
                                             }
                                         });
                                     }
-                                    row::Release::Reorder => {
-                                        // A drop that lands on a series occurrence
-                                        // is not a reorder at all, and the server
-                                        // would refuse it: reorder_ids says no
-                                        // instead, so nothing is sent.
-                                        let new_order = row::dom::drop_target(x, y)
-                                            .and_then(|(target, slot)| {
-                                                reorder_ids(
-                                                    &snapshot.get_untracked(),
-                                                    &dragged,
-                                                    &TaskId(target),
-                                                    slot,
-                                                )
-                                            });
-                                        let Some(new_order) = new_order else {
-                                            return;
-                                        };
-                                        store.dispatch(Command::Reorder(new_order));
-                                    }
+                                    RowLetGo::Reorder(new_order) => store.dispatch(Command::Reorder(new_order)),
                                 }
                             }
                         };
@@ -680,10 +655,7 @@ pub(crate) fn TaskList(
                         // Once the row is lifted the finger belongs to the row, not the
                         // page: without this the list scrolls out from under the drag.
                         on:touchmove=move |ev: leptos::ev::TouchEvent| {
-                            if matches!(
-                                row::dom::gesture(&presses),
-                                Some(row::Gesture::Lifted)
-                            ) {
+                            if row_holds_finger(row::dom::gesture(&presses)) {
                                 ev.prevent_default();
                             }
                         }
