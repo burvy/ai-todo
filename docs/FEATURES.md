@@ -249,7 +249,9 @@ planner already lies under the list; on a desk, where the two pages are a spread
 it slides under the list for as long as the tear lasts (`TEAR_SLIDE_MS`) and slides back: a day
 column (the first with a slip) is brought under where the tear starts (`rip::slide_px`). On
 both, an hour line of that column is brought to the tear's level (`rip::lift_px`), so the hole
-shows hour lines and column rules and not just the planner's hour labels or bare paper.
+shows hour lines and column rules and not just the planner's hour labels or bare paper. While
+a tear lasts the planner's hour lines and day edges are drawn firmer (`main.torn` in theme.css),
+so a slit a few lines tall still reads as the live planner.
 The tear follows the finger, never goes back, stops short of the pin's column, and never
 touches a task's words: a press too near a row tears nothing (`rip::lane`). One tear at a
 time. When the finger lets go Rambo notices, hops to the tear and tapes it: a strip of tape

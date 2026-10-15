@@ -1154,6 +1154,17 @@ main.torn > .planner-page {
   pointer-events: none;
 }
 
+/* The hole is a slit a few lines tall, and the planner's own rules are meant to sit quietly on
+   a whole page: for the length of a tear they are drawn firmer, so what shows through the hole
+   reads as the live planner (an hour line, a day's edge) and not as bare paper. */
+main.torn > .planner-page .hour {
+  border-top-color: color-mix(in srgb, var(--ink) 55%, transparent);
+}
+
+main.torn > .planner-page .day {
+  border-left-color: color-mix(in srgb, var(--ink) 55%, transparent);
+}
+
 /* On a desk the two pages are a spread, side by side. For the length of a tear the planner
    slides left under the list (rip_ui.rs sets its transform), so the hole shows it there too.
    The list is always the upper of the two, so the planner sliding back never crosses over it. */
