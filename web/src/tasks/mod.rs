@@ -13,7 +13,7 @@ use todo_core::{Snapshot, Source, TaskDraft, TaskId, When};
 use crate::clock::Clock;
 use crate::edits::{EditSink, confirmed, held, patch_and_show, series_note, toggle_done_body};
 use crate::pickers::{PaperDate, PaperDateTime, PaperRadios, PaperTime};
-use crate::{api, mascot, row, scrap, settings, tuning, week};
+use crate::{api, mascot, row, scrap, settings, smudge, tuning, week};
 use fields::{
     EditWhen, WEEKDAY_CHOICES, due_display, local_input_value, series_from_dialog,
     series_patch_from_dialog, toggled_day, typed_when,
@@ -335,6 +335,41 @@ pub async fn delete_scribbled(
     scrap::delete_and_lay(task_id, snapshot, scraps, delete).await
 }
 
+/// Whether row `id` is wet: Rambo wrote it less than `INK_WET_MS` ago.
+fn is_wet(written: StoredValue<Vec<(TaskId, f64)>>, id: &TaskId) -> bool {
+    let now = crate::engine::now();
+    written.with_value(|rows| {
+        rows.iter()
+            .any(|(row, at)| row == id && smudge::is_wet(now - at))
+    })
+}
+
+/// A tap at `tap` (on the screen) on row `id` while its ink is wet smears it there.
+fn smudge_if_wet(
+    written: StoredValue<Vec<(TaskId, f64)>>,
+    smudges: RwSignal<Vec<smudge::Smudge>>,
+    id: &TaskId,
+    tap: (f64, f64),
+) {
+    if !is_wet(written, id) {
+        return;
+    }
+    let row = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|doc| {
+            doc.query_selector(&format!("li[data-id=\"{}\"]", id.0))
+                .ok()
+                .flatten()
+        });
+    let Some(row) = row else {
+        return;
+    };
+    let rect = row.get_bounding_client_rect();
+    let at = (tap.0 - rect.left(), tap.1 - rect.top());
+    let seed = crate::engine::now().to_bits() as u32 ^ smudges.with_untracked(Vec::len) as u32;
+    smudges.update(|all| all.push(smudge::smear(id.clone(), at, seed)));
+}
+
 #[component]
 pub(crate) fn TaskList(
     snapshot: ReadSignal<Snapshot>,
@@ -357,6 +392,10 @@ pub(crate) fn TaskList(
     #[cfg(not(target_arch = "wasm32"))]
     let _ = pen_pos;
     let (editing_task, set_editing_task) = (open_sheet.read_only(), open_sheet.write_only());
+    // Rows Rambo has written and when (`engine::now`): wet for a while, and a tap then
+    // smudges the ink instead of opening the row (`smudge.rs`).
+    let written = StoredValue::new(Vec::<(TaskId, f64)>::new());
+    let smudges = RwSignal::new(Vec::<smudge::Smudge>::new());
     let (edit_title, set_edit_title) = signal(String::new());
     let (edit_duration, set_edit_duration) = signal(String::new());
     let (edit_when, set_edit_when) = signal(EditWhen::Anytime);
@@ -568,6 +607,21 @@ pub(crate) fn TaskList(
                         ));
                         if let Some(row) = row.as_ref() {
                             write::write_row_title(row, pen_pos, mascot_state, set_state).await;
+                            // The ink he has just laid is wet, and shines until it dries.
+                            let now = crate::engine::now();
+                            written.update_value(|rows| {
+                                rows.retain(|(_, at)| smudge::is_wet(now - at));
+                                rows.push((task_id.clone(), now));
+                            });
+                            if let Some(style) = write::inline_style(row) {
+                                style
+                                    .set_property(
+                                        "--ink-wet-ms",
+                                        &format!("{}ms", tuning::INK_WET_MS),
+                                    )
+                                    .ok();
+                            }
+                            row.class_list().add_1("ink-wet").ok();
                         }
                         // Fly home after this row. A row finished without him (he
                         // was taken elsewhere) leaves him where he is.
@@ -690,7 +744,8 @@ pub(crate) fn TaskList(
                                     // A tap belongs to the controls, which answer
                                     // it themselves; a scroll and a backed-out
                                     // swipe leave the list exactly as it was.
-                                    row::Release::Tap | row::Release::Scroll | row::Release::SnapBack => {}
+                                    row::Release::Tap => smudge_if_wet(written, smudges, &dragged, (x, y)),
+                                    row::Release::Scroll | row::Release::SnapBack => {}
                                     row::Release::Done => {
                                         let task_id = TaskId(drop_task_id_clone.clone());
                                         let set_snapshot = set_snapshot_clone;
@@ -778,7 +833,13 @@ pub(crate) fn TaskList(
                             class="task-open"
                             on:click={
                                 let id = task.id.clone();
-                                move |_| open_editor(&id)
+                                // Wet, a tap smudges the ink (the row's release does
+                                // that) instead of opening the row.
+                                move |_| {
+                                    if !is_wet(written, &id) {
+                                        open_editor(&id);
+                                    }
+                                }
                             }
                         >
                             <span class="pen-title-wrap">
@@ -802,6 +863,7 @@ pub(crate) fn TaskList(
                                 aria-label=format!("Delete {}", task_title)
                             >"×"</button>
                         })}
+                        <smudge::Smudges task=task.id.clone() smudges />
                     </li>
                         }
 

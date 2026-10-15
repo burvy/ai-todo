@@ -405,10 +405,19 @@ up, typing a new capture, turning the page or scrolling the row away): the ink
 waits at the letter he reached, and once he is home and can see the row he flies
 back and carries on. A row left waiting `WRITE_HOLD_MAX_MS` simply shows its title,
 and a reload always shows titles whole.
-b. Type a long task and press Enter; pick him up halfway through, then let go.
+The ink he has just written is wet for `INK_WET_MS` (4 s): a little darker, with a
+sheen along the top of its strokes, drying to the page's ink. A tap on the row while
+it is wet smudges it: the fingertip drags a small smear of the row's ink a little way
+to the right of where it touched, and the row does not open. The smear is ink and
+stays (until the row is redrawn or the page reloads); drying is the only change ink
+makes on its own. Once dry, a tap does what it always did.
+b. Type a long task and press Enter; pick him up halfway through, then let go. Add
+another and tap it as soon as he flies off it.
 c. Code: `web/src/tasks/write.rs:write_row_title`; `web/src/pen.rs:schedule,
 glyphs_of, stroke_at, inked_count, hand, touch_down, flick, beat`; pace and hand in
-`web/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`).
+`web/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`); wet ink in `web/src/smudge.rs:is_wet,
+smear, Smudges` and `web/src/tasks/mod.rs:smudge_if_wet` (`INK_WET_MS`, `SMUDGE_*`),
+the sheen in `web/theme.css` (`.ink-wet`, `ink-dry`).
 
 ### 4. Drop actions
 a. Dropping Rambo on a task opens a small bubble with Edit, Move and Done, drawn as
