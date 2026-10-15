@@ -493,6 +493,10 @@ pub const RIP_GAP_PX: f64 = 22.0;
 /// are. Safe ranges 0 to 6 and 6 to 16.
 pub const RIP_JAG_PX: f64 = 3.5;
 pub const RIP_JAG_STEP_PX: f64 = 9.0;
+/// On a phone, how far inside the tear's start a day's left edge is brought, in px, so the
+/// day edge (and a slip's edge and first word) cross the slit. Safe range 8 to 20: less than
+/// `RIP_MIN_PX`, so even the shortest tear has it inside.
+pub const TEAR_EDGE_IN_PX: f64 = 16.0;
 /// How near the screen's edge the tear may reach, in px. Safe range 8 to 32.
 pub const RIP_EDGE_PX: f64 = 12.0;
 /// The tape: its length across the tear and how often one is laid along it, in px,

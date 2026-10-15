@@ -244,14 +244,15 @@ g. **The page rips.** A swipe to the right on bare paper of the list page (a fin
 mouse drag on a desk; not on a task, and mostly level: `RIP_MIN_PX`, `RIP_MAX_SLOPE`) tears the
 page along the swipe. The tear is a real hole, a ragged slit up to `RIP_GAP_PX` wide: the
 planner page shows through it live (its own slips and lines, not a picture), in shade, so the
-hole reads as a hole even where the planner is empty paper. On a phone the
-planner already lies under the list; on a desk, where the two pages are a spread side by side,
-it slides under the list for as long as the tear lasts (`TEAR_SLIDE_MS`) and slides back: a day
-column (the first with a slip) is brought under where the tear starts (`rip::slide_px`). On
-both, an hour line of that column is brought to the tear's level (`rip::lift_px`), so the hole
-shows hour lines and column rules and not just the planner's hour labels or bare paper. While
-a tear lasts the planner's hour lines and day edges are drawn firmer (`main.torn` in theme.css),
-so a slit a few lines tall still reads as the live planner.
+hole reads as a hole even where the planner is empty paper. The planner is brought to the
+tear while it lasts (`rip::slide_px`, `lift_px`, `TEAR_SLIDE_MS`): the first day column with a
+slip (else today's) is put under the tear, and an hour line (a slip, on a phone) across it. On a
+desk, where the two pages are a spread side by side, it slides under the list and back, its
+column's middle under where the tear starts, an hour line to the tear's level (never more than
+half a gap). On a phone the planner lies under the list already; the column's left edge is
+brought `TEAR_EDGE_IN_PX` inside the tear's start and its nearest slip across the tear, so a
+day edge and a slip's edge and first word show in the slit. While a tear lasts the planner's hour
+lines and day edges are drawn firmer (`main.torn` in theme.css).
 The tear follows the finger, never goes back, stops short of the pin's column, and never
 touches a task's words: a press too near a row tears nothing (`rip::lane`). One tear at a
 time. When the finger lets go Rambo notices, hops to the tear and tapes it: a strip of tape
