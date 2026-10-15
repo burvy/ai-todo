@@ -486,7 +486,8 @@ c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/theme.c
 a. A drag carries him without listening (a still hold listens), riding just above
 your finger or cursor so it never covers him. Every move he makes from one spot to
 another is a few brisk hops, never a glide, and never instant: first he notices, his face reacts, then he goes. Dropped gently on the page (not on a task or his nest), he
-hops home. Let go of him mid-flick and he is thrown: he slides on with the flick's
+waits a moment where you put him, then hops home hop by hop along a gently curving
+path, never a beeline, each hop leaving a small dot of ink that fades like any ink. Let go of him mid-flick and he is thrown: he slides on with the flick's
 speed and bounces off the screen's edges. Only a smack into an edge hard enough
 dazes him: his ink splats off the edge and he lies tipped over where he hit, not
 listening. Dragging a dazed Rambo writes on the page in his tool's ink, and so does

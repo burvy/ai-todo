@@ -358,6 +358,21 @@ pub const HOP_HEIGHT_MAX_PX: f64 = 48.0;
 /// share of his size. Safe range 0 to 0.25.
 pub const HOP_SQUASH: f64 = 0.14;
 
+/// Let go away from home, he waits this long, in ms, before he sets off back: a
+/// moment where he was put, not a snap home. Safe range 150 to 800.
+pub const HOME_WAIT_MS: u32 = 350;
+/// How far one hop home carries him, in px: shorter than a flight's, so the way
+/// home is hop by hop. Safe range 60 to 180.
+pub const HOME_HOP_SPAN_PX: f64 = 90.0;
+/// The most hops the way home takes, however far. Safe range 2 to 10.
+pub const HOME_HOP_MAX: u32 = 6;
+/// How far the way home bows to one side of the straight line, as a share of its
+/// length at the middle: a path of arcs, never a beeline. Safe range 0 to 0.3.
+pub const HOME_BEND: f64 = 0.15;
+/// The longest the run home takes from being let go, in ms: the wait, the notice
+/// beat and the most hops.
+pub const HOME_RUN_MS: u32 = HOME_WAIT_MS + NOTICE_BEAT_MS + HOME_HOP_MAX * HOP_MS;
+
 /// The beat before he sets off anywhere (DESIGN-DIRECTION §9, "Rambo reacts before
 /// he moves"): he notices, his face changes and he perks up, then he hops
 /// (`mascot::notice`), in ms. Safe range 120 to 250: shorter and the face never

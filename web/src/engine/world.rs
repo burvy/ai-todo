@@ -82,7 +82,7 @@ pub(crate) struct Anchors {
 }
 
 /// Ink his own movement lays, for the page to put on the paper: a splat thrown off
-/// the edge he smacked into, and a dot where each hop home after a daze lands.
+/// the edge he smacked into, and a dot where each hop home lands.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Splash {
     /// Strokes fanned out from where he hit, each a few points.
@@ -133,19 +133,22 @@ pub(crate) fn behaviour(state: &State, settled_home: bool, here: Vec2, anchors: 
 
 /// A run of hops under way: planned from where he set off, timed in world ms from
 /// `began`. A run that sets off on a change of state starts with his notice beat: he
-/// stands, makes `beat`'s face and perks up for [`NOTICE_BEAT_MS`], then hops.
+/// stands, makes `beat`'s face and perks up for [`NOTICE_BEAT_MS`], then hops. Sent
+/// home, he first stands still for `wait` ms where he was put.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Run {
     hop: Hop,
     began: f64,
+    wait: u32,
     beat: Option<Pose>,
     /// The hops of the run that have landed so far.
     landed: u32,
 }
 
 impl Run {
-    fn beat_ms(&self) -> u32 {
-        self.beat.map_or(0, |_| NOTICE_BEAT_MS)
+    /// How long he stands before the first hop: the wait, then the beat.
+    fn lead_ms(&self) -> u32 {
+        self.wait + self.beat.map_or(0, |_| NOTICE_BEAT_MS)
     }
 }
 
@@ -535,38 +538,60 @@ impl World {
     fn hop_towards(&mut self, to: Vec2) {
         let now = self.now;
         let rambo = &mut self.rambo;
+        // Home is hop by hop along a bowed way, after a wait where he was put; a nest
+        // that caught him (no beat owed) takes him straight in.
+        let homeward = matches!(rambo.brain, State::Home | State::Skittering);
         let run = match rambo.run {
             Some(run) => run,
-            None => match Hop::plan(rambo.pos, to) {
-                Some(hop) => *rambo.run.insert(Run {
-                    hop,
-                    began: now,
-                    beat: rambo.owed.take(),
-                    landed: 0,
-                }),
+            None => match if homeward {
+                Hop::plan_home(rambo.pos, to)
+            } else {
+                Hop::plan(rambo.pos, to)
+            } {
+                Some(hop) => {
+                    let beat = rambo.owed.take();
+                    *rambo.run.insert(Run {
+                        hop,
+                        began: now,
+                        wait: if rambo.brain == State::Home && beat.is_some() {
+                            crate::tuning::HOME_WAIT_MS
+                        } else {
+                            0
+                        },
+                        beat,
+                        landed: 0,
+                    })
+                }
                 // Close enough that he simply steps there.
                 None => return self.land(to),
             },
         };
         let since = (now - run.began).max(0.0) as u32;
-        if let Some(face) = run.beat.filter(|_| since < run.beat_ms()) {
+        if since < run.wait {
+            // A moment where he was put before he sets off home.
+            rambo.vel = (0.0, 0.0);
+            rambo.draw = Draw::at(rambo.pos);
+            return;
+        }
+        if let Some(face) = run.beat.filter(|_| since < run.lead_ms()) {
             // He notices where he stands before he goes.
             rambo.vel = (0.0, 0.0);
             rambo.draw = Draw {
                 pos: rambo.pos,
-                squash: mascot::notice_squash(since),
+                squash: mascot::notice_squash(since - run.wait),
                 notice: Some(face),
             };
             return;
         }
-        let elapsed = since - run.beat_ms();
+        let elapsed = since - run.lead_ms();
         if elapsed >= run.hop.ms() {
             return self.land_falling(to, run.hop.impact(to));
         }
-        // Running home from a daze, each hop that comes down on the page leaves a dot.
+        // Running home from where he was put or fell, each hop that comes down on the
+        // page leaves a dot of ink; a nest that caught him takes him in clean.
         let landed = elapsed / crate::tuning::HOP_MS;
         if landed > run.landed {
-            if rambo.brain == State::Skittering {
+            if homeward && (run.wait > 0 || rambo.brain == State::Skittering) {
                 let dots = (run.landed + 1..=landed)
                     .map(|hop| Splash::Dot(run.hop.at(to, hop * crate::tuning::HOP_MS).pos));
                 self.ink.extend(dots);
@@ -855,7 +880,7 @@ mod tests {
         let (seen, ink) = fling((0.0, -0.9));
         assert!(!seen.contains(&State::Splatting), "{seen:?}");
         assert_eq!(seen.last(), Some(&State::Home));
-        assert_eq!(ink, Vec::new());
+        assert!(ink.iter().all(|splash| matches!(splash, Splash::Dot(_))), "no splat: {ink:?}");
     }
 
     /// Written at the caret for `ms`, then sent home and settled there: how many times he
@@ -868,7 +893,7 @@ mod tests {
         world.tell(Event::FlyHome);
         assert_eq!(world.rambo.brain, State::Home);
         let (mut taps, mut tipped) = (0, false);
-        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + SETTLES_MS) {
+        for _ in 0..steps(f64::from(crate::tuning::HOME_RUN_MS) + SETTLES_MS) {
             world.advance(1, &anchors(NEST));
             if let Some((_, done)) = world.rambo.tapping {
                 taps = taps.max(done);
@@ -890,7 +915,7 @@ mod tests {
         world.tell(Event::FlyHome);
         world.tell(Event::FlyHome);
         let mut heard = 0;
-        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + SETTLES_MS) {
+        for _ in 0..steps(f64::from(crate::tuning::HOME_RUN_MS) + SETTLES_MS) {
             world.advance(1, &anchors(NEST));
             // A tap at a time: never two in one frame.
             let knocks = world.take_knocks();
@@ -946,7 +971,7 @@ mod tests {
         );
         world.tell(Event::FlyHome);
         world.tell(Event::FlyHome);
-        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + 1000.0) {
+        for _ in 0..steps(f64::from(crate::tuning::HOME_RUN_MS) + 1000.0) {
             world.advance(1, &anchors(NEST));
             if world.rambo.tapping.is_some() {
                 break;
@@ -959,7 +984,7 @@ mod tests {
         assert_eq!(world.tap_lean(), 0.0, "no tap lean left");
         world.tell(Event::DropEmpty);
         world.advance(
-            steps(f64::from(crate::tuning::FLY_MS) + SETTLES_MS),
+            steps(f64::from(crate::tuning::HOME_RUN_MS) + SETTLES_MS),
             &anchors((200.0, 400.0)),
         );
         assert_eq!(
@@ -990,20 +1015,38 @@ mod tests {
     }
 
     #[test]
-    fn a_gentle_drop_on_the_page_sends_him_hopping_home_with_no_ink() {
+    fn let_go_he_waits_a_moment_where_he_was_put_before_hopping_home() {
+        let put = (120.0, 300.0);
+        let mut world = World::new(NEST);
+        world.tell(Event::Grab);
+        world.advance(steps(500.0), &anchors(put));
+        world.tell(Event::DropEmpty);
+        let at = world.rambo.pos;
+        let wait = f64::from(crate::tuning::HOME_WAIT_MS);
+        world.advance(steps(wait - 20.0), &anchors(put));
+        assert_eq!(world.rambo.pos, at, "still where he was put");
+        let beat_and_a_hop = f64::from(crate::tuning::NOTICE_BEAT_MS + crate::tuning::HOP_MS);
+        world.advance(steps(20.0 + beat_and_a_hop), &anchors(put));
+        assert!(distance(world.rambo.pos, at) > 1.0, "then he sets off");
+    }
+
+    #[test]
+    fn a_gentle_drop_on_the_page_sends_him_hopping_home_dotting_with_no_splat() {
         let mut world = World::new(NEST);
         world.tell(Event::Grab);
         world.advance(steps(500.0), &anchors((120.0, 300.0)));
         world.tell(Event::DropEmpty);
         assert_eq!(world.rambo.brain, State::Home);
         world.advance(
-            steps(f64::from(crate::tuning::FLY_MS) + 200.0),
+            steps(f64::from(crate::tuning::HOME_RUN_MS) + 200.0),
             &anchors((120.0, 300.0)),
         );
         assert_eq!(world.draw().pos, in_nest(&world, NEST));
         world.advance(steps(SETTLES_MS), &anchors((120.0, 300.0)));
         assert!(world.at_rest());
-        assert_eq!(world.take_ink(), Vec::new());
+        let ink = world.take_ink();
+        assert!(ink.len() > 1, "a dot where each hop home lands: {ink:?}");
+        assert!(ink.iter().all(|splash| matches!(splash, Splash::Dot(_))));
     }
 
     #[test]
@@ -1056,7 +1099,7 @@ mod tests {
         world.advance(2, &anchors(from));
         assert_eq!(world.rambo.brain, State::Skittering);
         world.advance(
-            steps(f64::from(crate::tuning::FLY_MS) + 200.0),
+            steps(f64::from(crate::tuning::HOME_RUN_MS) + 200.0),
             &anchors(from),
         );
         assert_eq!(world.rambo.brain, State::Home);
@@ -1079,7 +1122,7 @@ mod tests {
     }
 
     #[test]
-    fn a_torn_page_sends_him_to_tape_it_and_home_again_with_no_ink() {
+    fn a_torn_page_sends_him_to_tape_it_and_home_again_with_no_splat() {
         let tear = (120.0, 300.0);
         let mut world = World::new(NEST);
         world.tell(Event::Mend { annoyed: true });
@@ -1099,11 +1142,15 @@ mod tests {
         assert_eq!(world.draw().pos, in_nest(&world, NEST), "and he hops home");
         world.advance(steps(SETTLES_MS), &anchors(tear));
         assert!(world.at_rest());
-        assert_eq!(world.take_ink(), Vec::new(), "he is not dazed: no dots");
+        let ink = world.take_ink();
+        assert!(
+            ink.iter().all(|splash| matches!(splash, Splash::Dot(_))),
+            "he is not dazed: only the dots of his hops home, no splat: {ink:?}"
+        );
     }
 
     #[test]
-    fn any_throw_into_the_corner_is_caught_by_the_nest_without_a_daze_or_ink() {
+    fn any_throw_into_the_corner_is_caught_by_the_nest_without_a_daze_or_a_splat() {
         // From all over the screen, hard and soft, aimed at the corner the nest fills.
         for &from in &[
             (60.0, 100.0),
@@ -1116,7 +1163,7 @@ mod tests {
                 let len = dx.hypot(dy);
                 let mut world = thrown_from(from, (dx / len * speed, dy / len * speed));
                 let mut deepest: f64 = 0.0;
-                for _ in 0..steps(4000.0) {
+                for _ in 0..steps(4000.0 + f64::from(crate::tuning::HOME_RUN_MS)) {
                     world.advance(1, &anchors(from));
                     assert!(
                         !matches!(world.rambo.brain, State::Splatting | State::Dazed),
@@ -1126,7 +1173,12 @@ mod tests {
                 }
                 assert_eq!(world.rambo.brain, State::Home, "{from:?} at {speed}");
                 assert!(deepest > 1.0, "the nest sagged under the catch: {deepest}");
-                assert_eq!(world.take_ink(), Vec::new(), "{from:?} at {speed}: no ink");
+                // A soft throw that stops short hops the rest of the way in, dotting.
+                let ink = world.take_ink();
+                assert!(
+                    ink.iter().all(|splash| matches!(splash, Splash::Dot(_))),
+                    "{from:?} at {speed}: no splat: {ink:?}"
+                );
                 assert!(world.at_rest());
                 assert_eq!(world.draw().pos, in_nest(&world, NEST));
             }
@@ -1161,7 +1213,7 @@ mod tests {
         assert!(world.nest_offset().1.abs() < 0.05, "and settled");
         world.tell(Event::DropEmpty);
         let mut deepest: f64 = 0.0;
-        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + 500.0) {
+        for _ in 0..steps(f64::from(crate::tuning::HOME_RUN_MS) + 500.0) {
             world.advance(1, &anchors((200.0, 400.0)));
             deepest = deepest.max(world.nest_offset().0);
         }
@@ -1249,7 +1301,7 @@ mod tests {
             world.advance(steps(500.0), &anchors(from));
             world.tell(Event::DropEmpty);
             let (mut deepest, mut landed_at, mut still_at) = (0.0_f64, None, None);
-            for step in 0..steps(f64::from(crate::tuning::FLY_MS) + 4000.0) {
+            for step in 0..steps(f64::from(crate::tuning::HOME_RUN_MS) + 4000.0) {
                 world.advance(1, &anchors(from));
                 let sag = world.nest_offset().0;
                 if sag > 0.5 && landed_at.is_none() {
@@ -1344,7 +1396,7 @@ mod tests {
             assert!(!world.at_rest(), "his daze timer must keep the loop awake");
             world.advance(1, &anchors(fell));
         }
-        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + SETTLES_MS) {
+        for _ in 0..steps(f64::from(crate::tuning::HOME_RUN_MS) + SETTLES_MS) {
             if world.at_rest() {
                 break;
             }
@@ -1479,7 +1531,7 @@ mod tests {
         assert_eq!(world.rambo.brain, State::Skittering);
         let mut was = world.look().lean_deg;
         let mut most: f64 = 0.0;
-        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + SETTLES_MS) {
+        for _ in 0..steps(f64::from(crate::tuning::HOME_RUN_MS) + SETTLES_MS) {
             world.advance(1, &anchors(fell));
             let lean = world.look().lean_deg;
             assert!(
@@ -1513,7 +1565,7 @@ mod tests {
         world.advance(2, &anchors(fell));
         assert_eq!(world.rambo.brain, State::Skittering);
         let mut lifted = false;
-        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + 200.0) {
+        for _ in 0..steps(f64::from(crate::tuning::HOME_RUN_MS) + 200.0) {
             world.advance(1, &anchors(fell));
             lifted |= world.draw().pos.1 < world.rambo.pos.1;
         }
@@ -1557,7 +1609,7 @@ mod tests {
             nest: (NEST.0, NEST.1 - 80.0),
             ..anchors(fell)
         };
-        world.advance(steps(f64::from(crate::tuning::FLY_MS) + 200.0), &moved);
+        world.advance(steps(f64::from(crate::tuning::HOME_RUN_MS) + 200.0), &moved);
         assert_eq!(world.rambo.brain, State::Home);
         assert_eq!(world.draw().pos, in_nest(&world, moved.nest));
     }
@@ -1598,7 +1650,7 @@ mod tests {
         world.tell(Event::WriteRow);
         let row = (40.0, 120.0);
         world.advance(
-            steps(f64::from(crate::tuning::FLY_MS) + 50.0),
+            steps(f64::from(crate::tuning::HOME_RUN_MS) + 50.0),
             &anchors(row),
         );
         assert_eq!(world.rambo.pos, row, "landed");
@@ -1777,7 +1829,7 @@ mod tests {
         world.advance(1, &under(FELL, Some(leaf(0.1, true))));
         assert_eq!(world.rambo.brain, State::Home);
         let falling = under(FELL, Some(leaf(0.0, false)));
-        world.advance(steps(f64::from(crate::tuning::FLY_MS) + 400.0), &falling);
+        world.advance(steps(f64::from(crate::tuning::HOME_RUN_MS) + 400.0), &falling);
         assert_eq!(world.draw().pos, in_nest(&world, NEST));
         world.advance(steps(SETTLES_MS), &falling);
         assert!(world.at_rest());

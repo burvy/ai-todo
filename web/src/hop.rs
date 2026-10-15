@@ -3,11 +3,12 @@
 //! Each hop crouches (he squashes), springs along an arc (he stretches) and lands
 //! with a small settle; a longer way is more hops, never slower ones. Pure: the
 //! page reads frames off it for anything that moves him (a flight to the caret,
-//! the run home, and later the engine's throws that land).
+//! the run home, and later the engine's throws that land). The run home is its own
+//! way: shorter hops along a bowed path ([`Hop::plan_home`]).
 
 use crate::tuning::{
-    HOP_HEIGHT_MAX_PX, HOP_HEIGHT_PX, HOP_LONG_RISE, HOP_MAX, HOP_MIN_PX, HOP_MS, HOP_RISE,
-    HOP_SPAN_PX, HOP_SQUASH,
+    HOME_BEND, HOME_HOP_MAX, HOME_HOP_SPAN_PX, HOP_HEIGHT_MAX_PX, HOP_HEIGHT_PX, HOP_LONG_RISE,
+    HOP_MAX, HOP_MIN_PX, HOP_MS, HOP_RISE, HOP_SPAN_PX, HOP_SQUASH,
 };
 
 /// A run of hops from `from`, planned for the distance it had to cover. The far
@@ -17,6 +18,8 @@ use crate::tuning::{
 pub struct Hop {
     from: (f64, f64),
     hops: u32,
+    /// How far the way bows to its left, as a share of its length at the middle.
+    bend: f64,
 }
 
 /// One frame of a hop. `pos` is the ground point under him, moving along the way;
@@ -52,10 +55,22 @@ impl Hop {
     /// The hops from `from` to `to`, or none when the two are close enough that he
     /// simply steps there.
     pub fn plan(from: (f64, f64), to: (f64, f64)) -> Option<Hop> {
+        Hop::planned(from, to, HOP_SPAN_PX, HOP_MAX, 0.0)
+    }
+
+    /// The way home from `from` to the nest at `to`: hop by hop, more and shorter
+    /// hops than a flight, along a path that bows to one side, so it reads as a pen
+    /// finding its way back, not a beeline.
+    pub fn plan_home(from: (f64, f64), to: (f64, f64)) -> Option<Hop> {
+        Hop::planned(from, to, HOME_HOP_SPAN_PX, HOME_HOP_MAX, HOME_BEND)
+    }
+
+    fn planned(from: (f64, f64), to: (f64, f64), span: f64, most: u32, bend: f64) -> Option<Hop> {
         let distance = (to.0 - from.0).hypot(to.1 - from.1);
         (distance >= HOP_MIN_PX).then(|| Hop {
             from,
-            hops: ((distance / HOP_SPAN_PX).ceil() as u32).clamp(1, HOP_MAX),
+            hops: ((distance / span).ceil() as u32).clamp(1, most),
+            bend,
         })
     }
 
@@ -95,10 +110,13 @@ impl Hop {
         let along = (f64::from(hop) + flight) / f64::from(self.hops);
         let span = (to.0 - self.from.0).hypot(to.1 - self.from.1) / f64::from(self.hops);
         let height = arc_height(span);
+        // Bowed to the left of the way: nothing at either end, most at the middle.
+        let bow = self.bend * (std::f64::consts::PI * along).sin();
+        let (dx, dy) = (to.0 - self.from.0, to.1 - self.from.1);
         Frame {
             pos: (
-                self.from.0 + (to.0 - self.from.0) * along,
-                self.from.1 + (to.1 - self.from.1) * along,
+                self.from.0 + dx * along + dy * bow,
+                self.from.1 + dy * along - dx * bow,
             ),
             lift: height * (std::f64::consts::PI * flight).sin(),
             squash: HOP_SQUASH * squash_at(share),
@@ -146,6 +164,27 @@ mod tests {
             Some(HOP_MAX),
             "never more than HOP_MAX"
         );
+    }
+
+    #[test]
+    fn the_way_home_is_more_shorter_hops_along_a_bow_never_a_beeline() {
+        let far = (NEST.0 + 600.0, NEST.1 + 300.0);
+        let flight = Hop::plan(far, NEST).expect("a long way");
+        let home = Hop::plan_home(far, NEST).expect("a long way");
+        assert!(home.hops() > flight.hops(), "hop by hop");
+        assert!(home.hops() <= HOME_HOP_MAX);
+        assert!(crate::tuning::HOME_RUN_MS >= NOTICE_BEAT_MS + home.ms());
+        // Every hop lands off the straight line between where he was and the nest,
+        // all to the same side, and the last lands in the nest.
+        let (dx, dy) = (NEST.0 - far.0, NEST.1 - far.1);
+        let off = |at: (f64, f64)| ((at.0 - far.0) * dy - (at.1 - far.1) * dx) / dx.hypot(dy);
+        let landings: Vec<f64> = (1..home.hops())
+            .map(|hop| off(home.at(NEST, hop * HOP_MS).pos))
+            .collect();
+        assert!(landings.iter().all(|&o| o > 10.0), "{landings:?}");
+        assert_eq!(home.at(NEST, home.ms()).pos, NEST);
+        // A flight still goes straight.
+        assert!(off(flight.at(NEST, HOP_MS).pos).abs() < 1e-9);
     }
 
     #[test]
