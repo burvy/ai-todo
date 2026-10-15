@@ -10,17 +10,20 @@
 //! ends. `Ripper` (browser only) reads the pointer and draws it.
 
 use crate::tuning::{
-    RIP_EDGE_PX, RIP_GAP_PX, RIP_JAG_PX, RIP_JAG_STEP_PX, RIP_MAX_SLOPE, RIP_MIN_PX, TAPE_AT_MS,
+    RIP_EDGE_PX, RIP_GAP_PX, RIP_JAG_PX, RIP_JAG_STEP_PX, RIP_MIN_PX, RIP_SCROLL_SLOPE, TAPE_AT_MS,
     TAPE_EVERY_PX, TAPE_LAY_MS, TAPE_LEN_PX, TAPE_SKEW_DEG, TEAR_EDGE_IN_PX, TEAR_FADE_MS,
     TEAR_HOLD_MS,
 };
 
 pub type Pt = (f64, f64);
 
+/// A box on the page: `(left, top, right, bottom)`.
+pub type Rect = (f64, f64, f64, f64);
+
 /// A tear in the list page, in the page's own coordinates: x from the page's left edge
-/// and y from the top of its content, so it scrolls with the rows. It runs from where
-/// the finger went down to where the finger is, level, since the paper tears along the
-/// swipe.
+/// and y from the top of its content, so it scrolls with the rows. It runs straight from
+/// where the finger went down to where the finger has been furthest, in whatever direction
+/// it went: the paper tears along the swipe.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Tear {
     pub from: Pt,
@@ -43,11 +46,21 @@ pub enum Profile {
     Strip,
 }
 
-/// Whether a press that has travelled `dx`, `dy` is a rip: far enough to the right and
-/// flat enough that it is not a scroll (the list scrolls up and down). A swipe to the
-/// left turns the page, and the planner's own swipes are not the list's to claim.
+/// Whether a press that has travelled `dx`, `dy` has gone far enough to be a rip, in
+/// whatever direction.
 pub fn is_rip(dx: f64, dy: f64) -> bool {
-    dx >= RIP_MIN_PX && dy.abs() <= dx * RIP_MAX_SLOPE
+    dx.hypot(dy) >= RIP_MIN_PX
+}
+
+/// Whether a drag of `dx`, `dy` is the page's own gesture and not a rip: a swipe back, to
+/// the left and no steeper than it is long, turns the page; and a finger (`touch`) going
+/// mostly up or down on a list that `scrolls` is scrolling it (steeper than
+/// `RIP_SCROLL_SLOPE` times its sideways travel). A mouse drag never scrolls. Every other
+/// direction tears: right, up-right, diagonal, down, and a steep drag to the left.
+pub fn is_page_gesture(dx: f64, dy: f64, touch: bool, scrolls: bool) -> bool {
+    let turns = dx < 0.0 && dy.abs() <= -dx;
+    let scroll = touch && scrolls && dy.abs() > dx.abs() * RIP_SCROLL_SLOPE;
+    turns || scroll
 }
 
 /// How far from a tear's line the paper may be torn, either way: the hole's widest
@@ -56,22 +69,57 @@ pub fn reach_px() -> f64 {
     RIP_GAP_PX / 2.0 + RIP_JAG_PX
 }
 
-/// The level a tear starting at `y` may run along, or `None` when it would touch the
-/// words of a row: `rows` are the rows' `(top, bottom)` in the page's coordinates. A
-/// tear never covers a row's words, so a press in the narrow space between two rows,
-/// or beside one, tears nothing.
-pub fn lane(y: f64, rows: &[(f64, f64)]) -> Option<f64> {
-    let reach = reach_px();
-    rows.iter()
-        .all(|&(top, bottom)| y + reach < top || y - reach > bottom)
-        .then_some(y)
+/// How far a point is from a box, 0 inside it.
+fn distance_to(p: Pt, (left, top, right, bottom): Rect) -> f64 {
+    (left - p.0)
+        .max(p.0 - right)
+        .max(0.0)
+        .hypot((top - p.1).max(p.1 - bottom).max(0.0))
 }
 
-/// How far to the right the tear may reach on a page `width` wide whose pin's column
-/// takes `pin` px of its right edge: it stops short of the pin and of the screen.
+/// Whether a press at `p` is on bare paper: far enough from every row (`rows` are their
+/// boxes in the page's coordinates) that a tear starting there touches no row's words. A
+/// press in the narrow space between two rows, or beside one, tears nothing.
+pub fn starts_on_paper(p: Pt, rows: &[Rect]) -> bool {
+    let reach = reach_px();
+    rows.iter().all(|&row| distance_to(p, row) > reach)
+}
+
+/// How far the tear that started at `from` may reach towards `to`: the furthest point on
+/// the way that stays inside `bounds` (`(left, top, right, bottom)`, the paper short of
+/// its edges and of the pin's column) and never brings the slit near a row's words. It
+/// stops where the paper runs out.
+pub fn reach_towards(from: Pt, to: Pt, rows: &[Rect], bounds: Rect) -> Pt {
+    let (left, top, right, bottom) = bounds;
+    let to = (
+        to.0.clamp(left, right.max(left)),
+        to.1.clamp(top, bottom.max(top)),
+    );
+    let (dx, dy) = (to.0 - from.0, to.1 - from.1);
+    let length = dx.hypot(dy);
+    let steps = (length / REACH_STEP_PX).ceil().max(1.0) as u32;
+    let reach = reach_px();
+    let mut best = from;
+    for i in 1..=steps {
+        let t = f64::from(i) / f64::from(steps);
+        let p = (from.0 + dx * t, from.1 + dy * t);
+        if rows.iter().any(|&row| distance_to(p, row) <= reach) {
+            break;
+        }
+        best = p;
+    }
+    best
+}
+
+/// How far the paper's edge is from where the tear may reach on a page `width` wide whose
+/// pin's column takes `pin` px of its right edge: it stops short of the pin and of the
+/// screen.
 pub fn right_limit(width: f64, pin: f64) -> f64 {
     width - pin - RIP_EDGE_PX
 }
+
+/// The tear is checked every this many px along its way to the finger.
+const REACH_STEP_PX: f64 = 3.0;
 
 /// A small repeatable number in `-1.0..=1.0`, so a tear's edge is ragged but the same
 /// on every frame.
@@ -128,7 +176,23 @@ impl Tear {
 
     /// How far the tear runs, in px.
     pub fn span(&self) -> f64 {
-        (self.to.0 - self.from.0).max(0.0)
+        (self.to.0 - self.from.0).hypot(self.to.1 - self.from.1)
+    }
+
+    /// The way it runs, in degrees (0 to the right, 90 down).
+    pub fn direction_deg(&self) -> f64 {
+        (self.to.1 - self.from.1)
+            .atan2(self.to.0 - self.from.0)
+            .to_degrees()
+    }
+
+    /// The tear's far end follows the finger to `reached` only if that is further from the
+    /// start: a tear lengthens and never closes up again.
+    pub fn follow(&mut self, reached: Pt) {
+        let far = |p: Pt| (p.0 - self.from.0).hypot(p.1 - self.from.1);
+        if far(reached) > far(self.to) {
+            self.to = reached;
+        }
     }
 
     /// The tear's outline, a closed ragged slit: the upper lip left to right, then the
@@ -140,13 +204,23 @@ impl Tear {
             return Vec::new();
         }
         let steps = ((span / RIP_JAG_STEP_PX).ceil() as u32).max(2);
+        // Along the tear, and across it.
+        let along = (
+            (self.to.0 - self.from.0) / span,
+            (self.to.1 - self.from.1) / span,
+        );
+        let across = (-along.1, along.0);
         let lips = |side: f64, salt: u32| {
             (0..=steps).map(move |i| {
                 let t = f64::from(i) / f64::from(steps);
                 let open = self.gap / 2.0 * self.opening(t, span);
                 // The ends stay closed however the edge wanders.
                 let wander = RIP_JAG_PX * unit(self.seed, i + salt) * self.ends(t, span);
-                (self.from.0 + span * t, self.from.1 + side * open + wander)
+                let off = side * open + wander;
+                (
+                    self.from.0 + along.0 * span * t + across.0 * off,
+                    self.from.1 + along.1 * span * t + across.1 * off,
+                )
             })
         };
         let upper: Vec<Pt> = lips(-1.0, 0).collect();
@@ -159,13 +233,16 @@ impl Tear {
     pub fn tapes(&self) -> Vec<Tape> {
         let span = self.span();
         let count = ((span / TAPE_EVERY_PX).round() as u32).max(1);
+        let (dx, dy) = (self.to.0 - self.from.0, self.to.1 - self.from.1);
         (0..count)
             .map(|i| {
                 let share = (f64::from(i) + 0.5) / f64::from(count);
                 Tape {
-                    at: (self.from.0 + span * share, self.from.1),
+                    at: (self.from.0 + dx * share, self.from.1 + dy * share),
                     len: TAPE_LEN_PX,
-                    angle_deg: 90.0 + TAPE_SKEW_DEG * unit(self.seed, 2_000 + i),
+                    angle_deg: self.direction_deg()
+                        + 90.0
+                        + TAPE_SKEW_DEG * unit(self.seed, 2_000 + i),
                 }
             })
             .collect()
@@ -173,7 +250,10 @@ impl Tear {
 
     /// The middle of the tear: where Rambo stands to mend it.
     pub fn middle(&self) -> Pt {
-        (self.from.0 + self.span() / 2.0, self.from.1)
+        (
+            (self.from.0 + self.to.0) / 2.0,
+            (self.from.1 + self.to.1) / 2.0,
+        )
     }
 }
 
@@ -335,44 +415,121 @@ mod tests {
     }
 
     #[test]
-    fn a_rip_is_a_flat_swipe_to_the_right() {
-        assert!(is_rip(RIP_MIN_PX, 0.0));
+    fn a_rip_goes_in_any_direction_once_it_has_gone_far_enough() {
+        for (dx, dy) in [
+            (RIP_MIN_PX, 0.0),
+            (0.0, RIP_MIN_PX),
+            (-RIP_MIN_PX, 0.0),
+            (0.0, -RIP_MIN_PX),
+            (17.0, 17.0),
+            (-17.0, -17.0),
+        ] {
+            assert!(is_rip(dx, dy), "{dx},{dy}");
+        }
         assert!(!is_rip(RIP_MIN_PX - 1.0, 0.0), "too short");
-        assert!(!is_rip(-80.0, 0.0), "left turns the page");
-        assert!(!is_rip(60.0, 60.0), "a diagonal is a scroll");
-        assert!(is_rip(100.0, 100.0 * RIP_MAX_SLOPE));
+        assert!(!is_rip(10.0, 10.0));
     }
 
     #[test]
-    fn a_tear_never_covers_a_row() {
-        let rows = [(100.0, 140.0), (156.0, 196.0)];
-        // Between two rows there is no room for the whole hole.
-        assert_eq!(lane(148.0, &rows), None);
-        // On a row, beside it, or too near its words.
-        assert_eq!(lane(120.0, &rows), None);
-        assert_eq!(lane(100.0 - reach_px() + 1.0, &rows), None);
-        assert_eq!(lane(196.0 + reach_px() - 1.0, &rows), None);
-        // Clear paper below the last.
-        assert_eq!(
-            lane(196.0 + reach_px() + 1.0, &rows),
-            Some(196.0 + reach_px() + 1.0)
+    fn the_page_keeps_the_turn_and_the_scroll() {
+        // A swipe back, level or a little off, turns the page, whoever swipes it.
+        for touch in [true, false] {
+            for scrolls in [true, false] {
+                assert!(is_page_gesture(-80.0, 0.0, touch, scrolls));
+                assert!(is_page_gesture(-80.0, 70.0, touch, scrolls));
+                assert!(!is_page_gesture(-10.0, -80.0, false, scrolls) || touch);
+            }
+        }
+        // A finger going mostly up or down on a list that scrolls is scrolling it.
+        assert!(is_page_gesture(5.0, 80.0, true, true));
+        assert!(is_page_gesture(-5.0, -80.0, true, true));
+        // A list that cannot scroll, or a mouse, has nothing to scroll: it tears.
+        assert!(!is_page_gesture(5.0, 80.0, true, false));
+        assert!(!is_page_gesture(5.0, 80.0, false, true));
+        // Right, diagonal and a flat swipe tear, with a finger too.
+        assert!(!is_page_gesture(80.0, 0.0, true, true));
+        assert!(!is_page_gesture(60.0, 60.0, true, true));
+        assert!(!is_page_gesture(60.0, -80.0, true, true));
+    }
+
+    #[test]
+    fn a_tear_starts_only_on_bare_paper() {
+        // Two rows, each the page's width.
+        let rows = [(10.0, 100.0, 300.0, 140.0), (10.0, 156.0, 300.0, 196.0)];
+        // Between two rows there is no room for the hole, and on one there is none.
+        assert!(!starts_on_paper((150.0, 148.0), &rows));
+        assert!(!starts_on_paper((150.0, 120.0), &rows));
+        assert!(!starts_on_paper((150.0, 100.0 - reach_px() + 1.0), &rows));
+        assert!(!starts_on_paper((150.0, 196.0 + reach_px() - 1.0), &rows));
+        // Clear paper below the last, or far beside a short row.
+        assert!(starts_on_paper((150.0, 196.0 + reach_px() + 1.0), &rows));
+        assert!(starts_on_paper((300.0 + reach_px() + 1.0, 120.0), &rows));
+        assert!(starts_on_paper((150.0, 300.0), &[]));
+    }
+
+    #[test]
+    fn a_tear_stops_short_of_a_row_the_page_edge_and_the_pin() {
+        let rows = [(10.0, 100.0, 300.0, 140.0)];
+        let bounds = (12.0, 12.0, 340.0, 780.0);
+        let from = (150.0, 400.0);
+        // Free paper: it reaches the finger, in every direction.
+        for to in [
+            (300.0, 400.0),
+            (150.0, 600.0),
+            (250.0, 500.0),
+            (20.0, 450.0),
+        ] {
+            assert_eq!(reach_towards(from, to, &rows, bounds), to);
+        }
+        // Up towards the row: it stops short of it, by the reach, however far the finger.
+        let stopped = reach_towards(from, (150.0, 50.0), &rows, bounds);
+        assert_eq!(stopped.0, 150.0);
+        assert!(
+            stopped.1 > 140.0 + reach_px() && stopped.1 < 140.0 + reach_px() + 3.5,
+            "{stopped:?}"
         );
-        assert_eq!(lane(300.0, &[]), Some(300.0));
-    }
-
-    #[test]
-    fn however_it_is_torn_the_hole_stays_off_every_row() {
-        let rows = [(100.0, 140.0)];
-        for seed in 0..40 {
-            for span in [30.0, 90.0, 220.0] {
-                let y = 140.0 + reach_px() + 0.5;
-                assert!(lane(y, &rows).is_some());
-                let torn = Tear::slit((20.0, y), (20.0 + span, y), seed);
-                for (_, py) in torn.outline() {
-                    assert!(py > 140.0, "seed {seed}, span {span}: edge at {py}");
+        // Past the page's edge and the pin's column it stops at them.
+        assert_eq!(
+            reach_towards(from, (900.0, 400.0), &rows, bounds),
+            (340.0, 400.0)
+        );
+        assert_eq!(
+            reach_towards(from, (150.0, 2000.0), &rows, bounds),
+            (150.0, 780.0)
+        );
+        assert_eq!(
+            reach_towards(from, (-50.0, 400.0), &rows, bounds),
+            (12.0, 400.0)
+        );
+        // The slit never touches a row's words, whichever way it was torn.
+        for seed in 0..20 {
+            for deg in (0..360).step_by(30) {
+                let rad = f64::from(deg).to_radians();
+                let to = reach_towards(
+                    from,
+                    (from.0 + 400.0 * rad.cos(), from.1 + 400.0 * rad.sin()),
+                    &rows,
+                    bounds,
+                );
+                for p in Tear::slit(from, to, seed).outline() {
+                    assert!(
+                        distance_to(p, rows[0]) > 0.0,
+                        "seed {seed}, {deg} deg: {p:?} on the row"
+                    );
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_tear_only_lengthens() {
+        let mut torn = Tear::slit((100.0, 100.0), (100.0, 100.0), 1);
+        torn.follow((130.0, 100.0));
+        assert_eq!(torn.to, (130.0, 100.0));
+        torn.follow((110.0, 100.0));
+        assert_eq!(torn.to, (130.0, 100.0), "it does not close up");
+        torn.follow((100.0, 180.0));
+        assert_eq!(torn.to, (100.0, 180.0), "it can turn to reach further");
     }
 
     #[test]
@@ -479,16 +636,46 @@ mod tests {
     }
 
     #[test]
-    fn the_slit_stays_within_the_reach_of_its_line() {
+    fn the_slit_stays_within_the_reach_of_its_line_in_any_direction() {
+        let from = (200.0, 300.0);
         for seed in 0..40 {
-            let torn = Tear {
-                seed,
-                ..tear(200.0)
-            };
-            for (x, y) in torn.outline() {
-                assert!((y - 300.0).abs() <= reach_px() + 1e-9);
-                assert!((torn.from.0..=torn.to.0).contains(&x));
+            for deg in (-180..180).step_by(15) {
+                let rad = f64::from(deg).to_radians();
+                let (ux, uy) = (rad.cos(), rad.sin());
+                let length = 200.0;
+                let torn = Tear::slit(from, (from.0 + ux * length, from.1 + uy * length), seed);
+                let turned = (torn.direction_deg() - f64::from(deg)).rem_euclid(360.0);
+                assert!(turned < 1e-6 || turned > 360.0 - 1e-6, "{deg} deg");
+                assert!((torn.span() - length).abs() < 1e-6);
+                for (x, y) in torn.outline() {
+                    let (rx, ry) = (x - from.0, y - from.1);
+                    let along = rx * ux + ry * uy;
+                    let across = -rx * uy + ry * ux;
+                    assert!(across.abs() <= reach_px() + 1e-9, "{deg} deg: {across}");
+                    assert!(
+                        (-1e-9..=length + 1e-9).contains(&along),
+                        "{deg} deg: {along}"
+                    );
+                }
+                // A real hole through the middle, whichever way it runs.
+                assert!(contains(&torn.outline(), torn.middle()), "{deg} deg");
             }
+        }
+    }
+
+    #[test]
+    fn tapes_lie_across_the_tear_whichever_way_it_runs() {
+        let down = Tear::slit((100.0, 100.0), (100.0, 400.0), 3);
+        assert_eq!(down.tapes().len(), 3);
+        for tape in down.tapes() {
+            // A tear running down (90 degrees) takes tape lying level: 180.
+            assert!((tape.angle_deg - 180.0).abs() <= TAPE_SKEW_DEG, "{tape:?}");
+            assert_eq!(tape.at.0, 100.0);
+            assert!((100.0..=400.0).contains(&tape.at.1));
+        }
+        let across = Tear::slit((100.0, 100.0), (400.0, 100.0), 3);
+        for tape in across.tapes() {
+            assert!((tape.angle_deg - 90.0).abs() <= TAPE_SKEW_DEG);
         }
     }
 

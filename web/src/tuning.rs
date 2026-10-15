@@ -557,9 +557,10 @@ const _: () = assert!(WRITE_MAX_MS < WRITE_HOLD_MAX_MS);
 /// How far a swipe to the right must travel before it is a rip, in px. Safe range 16
 /// to 48: less and a sloppy tap tears the page, more and a rip feels ignored.
 pub const RIP_MIN_PX: f64 = 24.0;
-/// How far off level a rip may wander, as a share of its travel (rise over run). Safe
-/// range 0.2 to 0.8: it is what tells a rip from a scroll.
-pub const RIP_MAX_SLOPE: f64 = 0.5;
+/// How steep a finger's drag may be, as a share of its sideways travel (rise over run), before
+/// a touch on a list that scrolls is left to the scroll and not torn. Safe range 1 to 3: the
+/// browser takes a mostly vertical drag for a scroll before the page sees a rip.
+pub const RIP_SCROLL_SLOPE: f64 = 1.5;
 /// How wide the hole opens in the middle of the tear, in px. Safe range 8 to 28: it
 /// has to be wide enough to see the planner through.
 pub const RIP_GAP_PX: f64 = 22.0;
