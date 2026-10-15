@@ -47,7 +47,7 @@ pub fn data_path_from_env() -> std::path::PathBuf {
 /// Bumped whenever [`MIGRATIONS`] grows an entry. The count on disk is
 /// `PRAGMA user_version`; anything below this has the remaining migrations
 /// applied on open.
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 /// Ordered by `user_version`. Entry n applies to a database sitting at
 /// version n - 1, so the list is append-only and never reordered.
@@ -64,6 +64,7 @@ const MIGRATIONS: &[&str] = &[
     MIGRATION_10,
     MIGRATION_11,
     MIGRATION_12,
+    MIGRATION_13,
 ];
 
 const MIGRATION_1: &str = "
@@ -231,6 +232,11 @@ const MIGRATION_12: &str =
 
 /// How a day-setting time is written in the database and on the wire.
 const DAY_TIME_FORMAT: &str = "%H:%M";
+
+/// Interval column for series: every N weeks (weekly) or every N days (daily).
+const MIGRATION_13: &str = "
+ALTER TABLE v2_series ADD COLUMN interval INTEGER NOT NULL DEFAULT 1;
+";
 
 /// A stored day-setting time, or `fallback` when the column is NULL or unreadable
 /// (a hand-edited row should not take a user's planner down).
@@ -1468,7 +1474,7 @@ impl Store for SqliteStore {
         let conn = self.conn.lock_recover();
         let mut stmt = conn
             .prepare(
-                "SELECT id, title, duration_min, weekdays, until, start_day, time_of_day, zone, \
+                "SELECT id, title, duration_min, weekdays, interval, until, start_day, time_of_day, zone, \
                  external_uid, created, \"order\" FROM v2_series WHERE user_id = ?1 \
                  ORDER BY \"order\" ASC, created ASC, id ASC",
             )
@@ -1489,13 +1495,14 @@ impl Store for SqliteStore {
         // never taken over.
         let written = conn
             .execute(
-                "INSERT INTO v2_series (id, user_id, title, duration_min, weekdays, until, \
+                "INSERT INTO v2_series (id, user_id, title, duration_min, weekdays, interval, until, \
                  start_day, time_of_day, zone, external_uid, created, \"order\") \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
                  ON CONFLICT(id) DO UPDATE SET \
                      title = excluded.title, \
                      duration_min = excluded.duration_min, \
                      weekdays = excluded.weekdays, \
+                     interval = excluded.interval, \
                      until = excluded.until, \
                      start_day = excluded.start_day, \
                      time_of_day = excluded.time_of_day, \
@@ -1510,6 +1517,7 @@ impl Store for SqliteStore {
                     series.title,
                     i64::from(series.duration_min),
                     weekdays_to_stored(&series.rule.weekdays),
+                    i64::from(series.rule.interval),
                     series.rule.until.map(|day| day.to_string()),
                     series.start_day.to_string(),
                     series.time_of_day.map(format_time_of_day),
@@ -2245,16 +2253,18 @@ fn backend(error: rusqlite::Error, at: &'static str) -> StoreError {
 
 fn read_series(row: &rusqlite::Row<'_>) -> Result<Series, rusqlite::Error> {
     let weekdays: String = row.get(3)?;
-    let until: Option<String> = row.get(4)?;
-    let start_day: String = row.get(5)?;
-    let time_of_day: Option<String> = row.get(6)?;
-    let created = parse_ts(&row.get::<_, String>(9)?).unwrap_or(DateTime::UNIX_EPOCH);
+    let interval: i64 = row.get(4)?;
+    let until: Option<String> = row.get(5)?;
+    let start_day: String = row.get(6)?;
+    let time_of_day: Option<String> = row.get(7)?;
+    let created = parse_ts(&row.get::<_, String>(10)?).unwrap_or(DateTime::UNIX_EPOCH);
     Ok(Series {
         id: SeriesId(row.get(0)?),
         title: row.get(1)?,
         duration_min: row.get::<_, i64>(2)? as u16,
         rule: todo_core::Recurrence {
             weekdays: weekdays_from_stored(&weekdays),
+            interval: u32::try_from(interval).unwrap_or(1),
             until: until.and_then(|day| NaiveDate::parse_from_str(&day, "%Y-%m-%d").ok()),
         },
         // An unreadable start day falls back to when the series was made, not today:
@@ -2262,10 +2272,10 @@ fn read_series(row: &rusqlite::Row<'_>) -> Result<Series, rusqlite::Error> {
         start_day: NaiveDate::parse_from_str(&start_day, "%Y-%m-%d")
             .unwrap_or_else(|_| created.date_naive()),
         time_of_day: time_of_day.and_then(|text| parse_time_of_day(&text)),
-        zone: row.get(7)?,
-        external_uid: row.get(8)?,
+        zone: row.get(8)?,
+        external_uid: row.get(9)?,
         created,
-        order: row.get(10)?,
+        order: row.get(11)?,
     })
 }
 

@@ -591,7 +591,8 @@ c. Code: `web/src/voice.rs:say, cancel, audible, pick_voice, pitch_for`, called 
 ## V. IMPORT AND EXPORT
 
 ### 1. Import an iCalendar file
-a. An `.ics` calendar becomes ordinary editable tasks with their original times.
+a. An `.ics` calendar becomes editable tasks with their original times. Recurring events
+become repeating series (§7).
 b. Choose a file in **Import .ics**.
 c. Code: `web/src/settings.rs:GearMenu`; `web/src/api.rs:import_ics`;
 `server/src/v2/http.rs:import`; `server/src/v2/ics_import.rs`.
@@ -626,6 +627,27 @@ not read.
 b. Not visible; covered by the capture and HTTP tests.
 c. Code: `server/src/v2/http.rs:file_text`;
 `crates/capture/src/pdf.rs:pdf_to_text`; `crates/capture/src/email.rs:parse_email`.
+
+### 7. Recurring events become series
+a. When an `.ics` file contains a recurring event, it becomes one repeating series,
+not one task or many copies. Weekly events (`FREQ=WEEKLY`), including every N weeks
+(`INTERVAL=n`), repeat on the days named by `BYDAY` (or the event's own weekday).
+Daily events (`FREQ=DAILY`), including every N days (`INTERVAL=n`), repeat from the
+first occurrence. The series respects `UNTIL` and `COUNT` for its end, and keeps
+`EXDATE` dates as skipped occurrences. A re-import by UID updates the same series
+without duplicating it. Rules the import cannot follow (monthly, yearly, `BYSETPOS`,
+…) fall back to a single task and are listed in the import result under `unmapped`
+so the client can tell the user. So are a daily rule with both `BYDAY` and `INTERVAL`,
+an `INTERVAL` outside 1 to 1000, and a `WKST` other than Monday with an `INTERVAL`.
+`FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR` is a weekly series on those days. Every N weeks counts
+calendar weeks, Monday first, from the week that holds the first event.
+b. Import a `.ics` with `RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO` and check that the
+snapshot contains one series that fires every other Monday.
+c. Code: `server/src/v2/ics_import.rs:parse_calendar, rrule_series`;
+`server/src/v2/app.rs:import_series`; `crates/core/src/lib.rs:Recurrence, Series`.
+Tests: `server/src/v2/ics_import.rs` (hand-written `.ics` strings for weekly,
+weekly with interval, daily, daily with interval);
+`crates/core/src/lib.rs` (covers math for interval and daily).
 
 ## VI. SETTINGS
 
