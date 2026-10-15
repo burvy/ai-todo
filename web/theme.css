@@ -70,6 +70,8 @@
   /* The same shadow for a torn shape (filter: drop-shadow), which box-shadow cannot follow. */
   --shadow-drop: 0 1px 1.5px rgba(93, 71, 50, 0.28);
   --sheet-shadow: 0 10px 24px -14px rgba(60, 44, 26, 0.5);
+  /* The lift of a torn shape held off the page (filter: drop-shadow), as --sheet-shadow is for a box. */
+  --lift-drop: 0 6px 8px rgba(60, 44, 26, 0.3);
   /* The page under the spread, peeking out at the fold. */
   --fold-shadow: -8px 0 14px -10px rgba(60, 44, 26, 0.35);
   --backdrop: rgba(46, 35, 21, 0.35);
@@ -253,6 +255,7 @@
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-drop: 0 1px 1.5px rgba(0, 0, 0, 0.55);
   --sheet-shadow: 0 10px 24px -14px rgba(0, 0, 0, 0.8);
+  --lift-drop: 0 6px 8px rgba(0, 0, 0, 0.6);
   --fold-shadow: -8px 0 14px -10px rgba(0, 0, 0, 0.6);
   --backdrop: rgba(10, 8, 5, 0.55);
 
@@ -1866,8 +1869,10 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 
 /* The paper itself, behind the words (the slip is its own stacking layer): wheat
    with the page's grain, a brass mark down the cut edge, and a torn right edge
-   whose teeth tile down it, so a tall slip tears as finely as a short one. */
-.placement::before {
+   whose teeth tile down it, so a tall slip tears as finely as a short one. The drag
+   ghost is the same slip in hand, so it is drawn on the same paper. */
+.placement::before,
+.drag-ghost::before {
   content: "";
   position: absolute;
   /* Back-to-back slips are separate sheets: a hairline of the page shows between them. */
@@ -1940,10 +1945,10 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   z-index: var(--layer-drag);
   pointer-events: none;
   padding: var(--space-1) var(--space-2);
-  background-color: var(--paper);
-  background-image: var(--texture-paper);
-  border: 1px solid var(--rule-strong);
-  box-shadow: var(--sheet-shadow);
+  /* Its paper is the slip's (::before, above), lifted: both shadows follow the tear. */
+  background: none;
+  border: none;
+  filter: drop-shadow(var(--shadow-drop)) drop-shadow(var(--lift-drop));
   font-size: var(--text-sm);
   font-family: var(--font-hand);
   transform: rotate(-1.5deg);
