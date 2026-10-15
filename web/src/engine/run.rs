@@ -41,6 +41,30 @@ pub(crate) fn after(ms: f64, body: impl FnOnce() + 'static) -> Handle {
     })
 }
 
+/// Waits `ms` on the engine's clock, for code that reads best as a sequence of awaits.
+pub(crate) async fn wait(ms: f64) {
+    use std::task::{Poll, Waker};
+    let state = std::rc::Rc::new(RefCell::new((false, None::<Waker>)));
+    let due = state.clone();
+    after(ms, move || {
+        let mut due = due.borrow_mut();
+        due.0 = true;
+        if let Some(waker) = due.1.take() {
+            waker.wake();
+        }
+    });
+    std::future::poll_fn(move |cx| {
+        let mut state = state.borrow_mut();
+        if state.0 {
+            Poll::Ready(())
+        } else {
+            state.1 = Some(cx.waker().clone());
+            Poll::Pending
+        }
+    })
+    .await;
+}
+
 /// Runs `body` every `ms` from now while it returns [`Flow::Go`].
 pub(crate) fn every(ms: f64, mut body: impl FnMut() -> Flow + 'static) -> Handle {
     let handle = LOOP.with(|lp| lp.borrow_mut().at(now() + ms, Some(ms), move |_| body()));
@@ -172,6 +196,19 @@ mod tests {
         frame_at(500.0);
         frame_at(1500.0);
         assert_eq!(runs.get(), 1, "and never again");
+    }
+
+    #[test]
+    fn wait_is_ready_only_once_its_time_has_come() {
+        use std::future::Future;
+        use std::task::{Context, Waker};
+        let mut waiting = Box::pin(wait(300.0));
+        let mut cx = Context::from_waker(Waker::noop());
+        assert!(waiting.as_mut().poll(&mut cx).is_pending());
+        frame_at(299.0);
+        assert!(waiting.as_mut().poll(&mut cx).is_pending());
+        frame_at(300.0);
+        assert!(waiting.as_mut().poll(&mut cx).is_ready());
     }
 
     #[test]

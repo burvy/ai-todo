@@ -29,7 +29,7 @@ pub async fn scribble_out(row_id: &str) {
         style.set_property("--scribble-ms", &format!("{ms}ms")).ok();
     }
     row.class_list().add_1("scribbling").ok();
-    gloo_timers::future::TimeoutFuture::new(ms).await;
+    crate::engine::wait(f64::from(ms)).await;
     row.class_list().remove_1("scribbling").ok();
     if let Some(style) = inline_style(&row) {
         style.remove_property("--scribble-ms").ok();
