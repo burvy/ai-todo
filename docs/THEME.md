@@ -28,7 +28,7 @@ The look is **one page of parchment, written on in ink** (owner brief, `docs/DES
 
 `--paper`, `--paper-raised`, `--paper-sunken` are kept as aliases so existing rules read naturally.
 
-Every text ink (`--ink`, `--ink-soft`, `--ink-faint`, `--accent`, `--danger`) is at least 4.5:1 (WCAG AA) on `--paper` and `--paper-raised` in both themes, `--ink` (the only ink written on it) is on `--paper-sunken`, and `--now` is on the page and raised paper: `web/src/contrast.rs` reads `web/theme.css` and fails on any pair below it (ATD-144).
+Every text ink (`--ink`, `--ink-soft`, `--ink-faint`, `--accent`, `--danger`) is at least 4.5:1 (WCAG AA) on `--paper` and `--paper-raised` in both themes, `--ink` (the only ink written on it) is on `--paper-sunken`, and `--now` is on the page and raised paper: `crates/web-core/src/contrast.rs` reads `web/theme.css` and fails on any pair below it (ATD-144).
 
 **Dark** (the same desk at night: deep paper, parchment-coloured ink), under `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) }` and `:root[data-theme="dark"]`:
 
