@@ -506,7 +506,7 @@ stays (until the row is redrawn or the page reloads); drying is the only change 
 makes on its own. Once dry, a tap does what it always did.
 b. Type a long task and press Enter; pick him up halfway through, then let go. Add
 another and tap it as soon as he flies off it.
-c. Code: `web/src/tasks/write.rs:write_row_title`; `web/src/pen.rs:schedule,
+c. Code: `web/src/tasks/write.rs:write_row_title`; `crates/web-core/src/pen.rs:schedule,
 glyphs_of, stroke_at, inked_count, hand, touch_down, flick, beat`; pace and hand in
 `crates/web-core/src/tuning.rs` (`WRITE_*`, `INK_FADE_MS`); wet ink in `web/src/smudge.rs:is_wet,
 smear, Smudges` and `web/src/tasks/mod.rs:smudge_if_wet` (`INK_WET_MS`, `SMUDGE_*`),
