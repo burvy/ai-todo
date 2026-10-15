@@ -1396,12 +1396,10 @@ mod tests {
     /// browser takes it as its history "back" and leaves the app for a blank page.
     #[test]
     fn a_stray_swipe_never_becomes_the_browsers_back() {
-        let css = include_str!("../../theme.css");
+        // The file is CRLF in a Windows checkout and LF in Git.
+        let css = include_str!("../../theme.css").replace("\r\n", "\n");
         let rule = css
-            .split(
-                "html,
-body {",
-            )
+            .split("html,\nbody {")
             .nth(1)
             .and_then(|rest| rest.split('}').next())
             .expect("theme.css has an html, body rule");
