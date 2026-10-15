@@ -14,12 +14,15 @@
   --ecru: #e1c38c;         /* pressed-in paper: Rambo's nest, sunken bits */
   --chamoisee: #a7865d;    /* rules and lines */
   --ink: #5d4732;          /* coffee: everything written */
-  --accent: #9f682e;       /* golden brown: one emphasis, bold text only */
+  --accent: #815525;      /* golden brown: the one emphasis, AA as text */
+  /* Rambo's brass: a shape, not text (3:1 is its floor), so it keeps the gold the
+     text accent had to give up for AA (ATD-144). */
+  --brass: #9f682e;
   --danger: #a5342a;       /* red pencil */
-  --now: #b03a2a;
+  --now: #a83728;
 
   /* Muted inks: 4.9:1 and 4.7:1 on parchment/wheat, so small text passes WCAG AA. */
-  --ink-soft: #75604a;
+  --ink-soft: #6f5b46;
   --ink-faint: #6e5a43;
 
   /* Rambo's body: petrol blue-green, the only cool colour on the desk.
@@ -33,8 +36,8 @@
      theme from the three above plus --accent (FE-2). The art files carry no
      colours of their own: shown through <use> they inherit these. */
   --rambo-barrel: var(--rambo);     /* the body of the pen */
-  --rambo-cap: var(--accent);       /* cap, clip and brass band */
-  --rambo-nib: var(--accent);
+  --rambo-cap: var(--brass);        /* cap, clip and brass band */
+  --rambo-nib: var(--brass);
   --rambo-lead: var(--rambo-deep);  /* the lead, mouth and any line he draws with */
   --rambo-ink: var(--rambo-deep);   /* the ink he has spilled */
   --rambo-pupil: var(--rambo-deep);
@@ -74,7 +77,9 @@
 
   --paper: var(--parchment);
   --paper-raised: var(--wheat);
+  /* Only --ink is written on it (src/contrast.rs). Pressed is depth: --pressed. */
   --paper-sunken: var(--ecru);
+  --pressed: inset 0 2px 3px rgba(93, 71, 50, 0.25);
 
   /* Type: every word is handwritten (docs/DESIGN-DIRECTION.md). The three
      self-hosted OFL faces live in web/assets/fonts/ (Ping's set, woff2):
@@ -212,10 +217,12 @@
   --parchment: #241c11;
   --wheat: #2d2315;
   --ecru: #1a140b;
+  --pressed: inset 0 2px 3px rgba(0, 0, 0, 0.45);
   --ink: #efe3c8;
   --accent: #d9a45c;
+  --brass: #d9a45c;
   --danger: #e0705f;
-  --now: #d96a4f;
+  --now: #da6e53;
 
   --ink-soft: #c9b693;
   --ink-faint: #b3a17e;
@@ -957,6 +964,7 @@ li.task-row:focus-within .delete-mark {
 .add-by-hand:focus-visible {
   outline: none;
   background-color: var(--paper-sunken);
+  box-shadow: var(--pressed);
 }
 
 @media (min-width: 701px) {
@@ -1655,6 +1663,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 .ask-choice:focus-visible {
   outline: none;
   background-color: var(--paper-sunken);
+  box-shadow: var(--pressed);
   text-decoration: underline wavy var(--ink-soft) 1px;
   text-underline-offset: 0.2em;
 }
@@ -2835,7 +2844,8 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   gap: var(--space-2);
   margin-top: var(--space-1);
   padding: var(--space-3);
-  background: var(--paper-sunken);
+  /* A sheet laid on the page (it drops in, with a shadow), so raised paper. */
+  background: var(--paper-raised);
   border: 1px solid var(--rule);
   box-shadow: var(--shadow);
   transform-origin: top left;
