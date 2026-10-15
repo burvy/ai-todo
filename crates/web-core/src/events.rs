@@ -32,6 +32,9 @@ pub enum Event {
     /// The edit sheet was asked for on task `id`: Rambo's Edit, or a spoken change that
     /// went through, so the open sheet fills again from the result.
     EditAsked { id: String },
+    /// Task `id` was asked to move (Rambo's Move): the planner turns to its page and waits
+    /// for a tap on an hour.
+    MoveAsked { id: String },
 }
 
 /// The facts not yet taken, oldest first.
@@ -102,6 +105,14 @@ pub fn any_row_back(event: &Event) -> Option<(String, Spot)> {
 pub fn edit_asked(event: &Event) -> Option<String> {
     match event {
         Event::EditAsked { id } => Some(id.clone()),
+        _ => None,
+    }
+}
+
+/// A claim on any ask to move a task: which.
+pub fn move_asked(event: &Event) -> Option<String> {
+    match event {
+        Event::MoveAsked { id } => Some(id.clone()),
         _ => None,
     }
 }
@@ -192,6 +203,20 @@ mod tests {
             "every ask is answered at once"
         );
         assert_eq!(events.take(row_left("x")), Some(spot(1.0)));
+    }
+
+    #[test]
+    fn the_planner_waits_for_the_last_task_asked_to_move() {
+        let mut events = Events::default();
+        events.push(Event::MoveAsked { id: "a".into() });
+        events.push(Event::EditAsked { id: "e".into() });
+        events.push(Event::MoveAsked { id: "b".into() });
+        assert_eq!(events.take_all(move_asked).pop(), Some("b".to_owned()));
+        assert_eq!(
+            events.take(edit_asked),
+            Some("e".to_owned()),
+            "an edit ask stays"
+        );
     }
 
     #[test]

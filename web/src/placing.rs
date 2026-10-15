@@ -18,7 +18,8 @@ pub(crate) use rambl_web_core::planner::Slot;
 pub(crate) fn PlacingNote(
     snapshot: ReadSignal<Snapshot>,
     settings: ReadSignal<Settings>,
-    move_request: RwSignal<Option<TaskId>>,
+    /// The task waiting to be placed, held by the planner; Esc or "leave it" clears it.
+    to_place: RwSignal<Option<TaskId>>,
     /// Puts the waiting task at a slot.
     place: Callback<Slot>,
 ) -> impl IntoView {
@@ -30,10 +31,10 @@ pub(crate) fn PlacingNote(
     };
     Effect::new(move |_| {
         drop_keys();
-        if move_request.with(Option::is_some) {
+        if to_place.with(Option::is_some) {
             let key = window_event_listener(leptos::ev::keydown, move |ev| {
                 if ev.key() == "Escape" {
-                    move_request.set(None);
+                    to_place.set(None);
                 }
             });
             keys.set_value(Some(key));
@@ -41,7 +42,7 @@ pub(crate) fn PlacingNote(
     });
     on_cleanup(drop_keys);
     let waiting = move || {
-        let id = move_request.get()?;
+        let id = to_place.get()?;
         let snapshot = snapshot.get();
         let task = snapshot.tasks.iter().find(|task| task.id == id)?;
         let s = settings.get();
@@ -73,7 +74,7 @@ pub(crate) fn PlacingNote(
             shown.set(Some(words));
         }
     });
-    let open = move || move_request.with(Option::is_some);
+    let open = move || to_place.with(Option::is_some);
     view! {
         <div class="placing-note" class:open=open inert=move || !open() role="status">
             {move || shown.get().map(|(title, offer)| view! {
@@ -84,7 +85,7 @@ pub(crate) fn PlacingNote(
                             {format!("Next free: {when}")}
                         </button>
                     })}
-                    <button type="button" class="ask-choice" on:click=move |_| move_request.set(None)>
+                    <button type="button" class="ask-choice" on:click=move |_| to_place.set(None)>
                         "Leave it"
                     </button>
                 </span>
