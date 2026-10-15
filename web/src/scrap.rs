@@ -47,7 +47,8 @@ pub fn fly_offset(row: Spot, hung: Spot) -> (f64, f64) {
 /// Note where the row `id` stands now, for the strip that is about to hang at the pin.
 pub fn note_departure(events: Queue, id: &str) {
     if let Some(from) = row_spot(id) {
-        forget_departure(events, id);
+        // A newer note of the same row replaces the older one.
+        events.take_all(row_left(id));
         events.push(Event::RowLeft {
             id: id.to_owned(),
             from,
@@ -55,10 +56,18 @@ pub fn note_departure(events: Queue, id: &str) {
     }
 }
 
-/// Drop a noted departure once its request is answered: a refused one, or a strip that
-/// landed past what fits, never mounts a strip to take it.
-pub fn forget_departure(events: Queue, id: &str) {
-    events.take_all(row_left(id));
+/// The tick on row `id` is answered: if it was refused, drop the noted departure, for no
+/// strip will take it. One that went through is left for its strip, which mounts after
+/// this runs; dropping it here sent every strip to the pin without its flight.
+pub fn settle_departure(events: Queue, snapshot: &Snapshot, id: &str) {
+    if tick_refused(snapshot, id) {
+        events.take_all(row_left(id));
+    }
+}
+
+/// Whether a tick on `id` was refused: the row is still listed, not done.
+pub fn tick_refused(snapshot: &Snapshot, id: &str) -> bool {
+    crate::edits::held(snapshot, id).is_some_and(|task| !task.done)
 }
 
 thread_local! {
@@ -731,6 +740,49 @@ pub fn ScrapCorner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A tick that went through leaves the row's departure for its strip, which mounts
+    /// after the tick returns; only a refused one drops it.
+    #[test]
+    fn a_done_rows_departure_waits_for_its_strip_unless_the_tick_was_refused() {
+        let mut snapshot = api::fixture_snapshot();
+        let id = snapshot.tasks[0].id.0.clone();
+        let from = Spot {
+            x: 1.0,
+            y: 2.0,
+            w: 3.0,
+            h: 4.0,
+        };
+        let left = || Event::RowLeft {
+            id: id.clone(),
+            from,
+        };
+        Owner::new().with(|| {
+            let events = Queue::provide();
+            snapshot.tasks[0].done = false;
+            events.push(left());
+            settle_departure(events, &snapshot, &id);
+            assert_eq!(events.take(row_left(&id)), None, "refused: dropped");
+
+            snapshot.tasks[0].done = true;
+            events.push(left());
+            settle_departure(events, &snapshot, &id);
+            assert_eq!(
+                events.take(row_left(&id)),
+                Some(from),
+                "done: kept for the strip"
+            );
+
+            snapshot.tasks.remove(0);
+            events.push(left());
+            settle_departure(events, &snapshot, &id);
+            assert_eq!(
+                events.take(row_left(&id)),
+                Some(from),
+                "gone from the list: kept"
+            );
+        });
+    }
 
     #[test]
     fn a_deleted_task_is_taped_back_unchanged() {
