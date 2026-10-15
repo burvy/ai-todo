@@ -149,17 +149,6 @@ mod tests {
         "clip-path",
     ];
 
-    /// The transitions that still move or size something, as `selector: property`: each
-    /// goes when its mover joins the world. Delete a line as its transition is deleted.
-    const OWED_TRANSITIONS: [&str; 5] = [
-        // Rambo's ask bubble (rambo.rs, his owner is moving it).
-        ".ask-choice: scale",
-        ".ask.folding: scale",
-        ".ask.folding: translate",
-        ".ask: scale",
-        ".ask: translate",
-    ];
-
     /// Every `selector: property` the style sheet's transitions animate that is a motion
     /// property, sorted, without comments.
     fn motion_transitions(css: &str) -> Vec<String> {
@@ -232,16 +221,11 @@ mod tests {
     }
 
     #[test]
-    fn css_transitions_never_move_or_size_a_thing_unless_owed_to_the_world() {
-        let found = motion_transitions(include_str!("../../theme.css"));
-        let mut owed: Vec<String> = OWED_TRANSITIONS
-            .iter()
-            .map(|line| (*line).to_owned())
-            .collect();
-        owed.sort_unstable();
+    fn css_transitions_never_move_or_size_a_thing() {
         assert_eq!(
-            found, owed,
-            "theme.css transitions that move or size something differ from OWED_TRANSITIONS: a new one must be a body in the world (rule 4), a removed one must leave the list"
+            motion_transitions(include_str!("../../theme.css")),
+            Vec::<String>::new(),
+            "a theme.css transition moves or sizes something: it must be a body in the world (rule 4)"
         );
     }
 }

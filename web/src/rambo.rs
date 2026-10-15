@@ -1,7 +1,7 @@
 //! Rambo the pen: dragging, flying, landing on a row, and listening.
 
 use leptos::prelude::*;
-use rambl_web_core::rambo::{self as model, bubble_offset, opens_below};
+use rambl_web_core::rambo::{self as model, bubble_offset, bubble_tucked, opens_below};
 use todo_core::{Snapshot, TaskId};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
@@ -98,40 +98,39 @@ pub(crate) fn Rambo(
     let bubble_ref = NodeRef::<leptos::html::Span>::new();
     let bubble_shift = RwSignal::new(0.0_f64);
     let bubble_below = RwSignal::new(false);
-    // What the bubble asks about. It outlives the ask by `ASK_FOLD_MS`, the time
-    // it takes to fold back into him (`folding`), so it never vanishes in a frame.
+    // What the bubble asks about. It outlives the ask until it has folded back into
+    // him (`folding`), so it never vanishes in a frame.
     let asked = RwSignal::new(None::<String>);
     // What he was dropped on, a row or a slip, which decides the bubble's choices.
     let asked_on = RwSignal::new(mascot::Asked::Row);
     let folding = RwSignal::new(false);
-    // Opening, it starts tucked into him until it is measured and placed (above or
-    // below him), then grows out to that place.
-    let tucked = RwSignal::new(false);
-    let fold_ticket = std::rc::Rc::new(std::cell::Cell::new(0_u32));
+    // How far it is out of him (0 tucked, 1 at its place), glided by the engine
+    // (`slide::show`); the style sheet draws its size and place from it. Opening, it
+    // starts tucked into him until it is measured and placed (above or below him), then
+    // grows out to that place, behind him until it is nearly there (`ASK_OUT_AT`).
+    let opened = RwSignal::new(0.0_f64);
     Effect::new(move |_| match state.get() {
         mascot::State::Asking { title, .. } => {
-            fold_ticket.set(fold_ticket.get().wrapping_add(1));
             folding.set(false);
             if asked.with_untracked(Option::is_none) {
-                tucked.set(true);
+                opened.set(0.0);
                 // One frame to lay it out and place it, one to draw it tucked there.
                 crate::engine::next_frame(move || {
-                    crate::engine::next_frame(move || tucked.set(false));
+                    crate::engine::next_frame(move || {
+                        crate::slide::show("ask-bubble", opened, 1.0, || {});
+                    });
                 });
+            } else {
+                // Asked again while it folds: it grows back out from where it got to.
+                crate::slide::show("ask-bubble", opened, 1.0, || {});
             }
             asked.set(Some(title));
         }
         _ if asked.with_untracked(Option::is_some) && !folding.get_untracked() => {
             folding.set(true);
-            let ticket = fold_ticket.get().wrapping_add(1);
-            fold_ticket.set(ticket);
-            let fold_ticket = fold_ticket.clone();
-            crate::engine::every(f64::from(tuning::ASK_FOLD_MS), move || {
-                if fold_ticket.get() == ticket {
-                    asked.set(None);
-                    folding.set(false);
-                }
-                crate::engine::Flow::Stop
+            crate::slide::show("ask-bubble", opened, 0.0, move || {
+                asked.set(None);
+                folding.set(false);
             });
         }
         _ => {}
@@ -1259,9 +1258,8 @@ pub(crate) fn Rambo(
                         <span
                             class="ask"
                             class:below=move || bubble_below.get()
-                            class:folding=move || folding.get()
-                            class:tucked=move || tucked.get()
-                            style:--ask-fold-ms=format!("{}ms", tuning::ASK_FOLD_MS)
+                            class:tucked=move || bubble_tucked(folding.get(), opened.get())
+                            style:--open=move || format!("{:.4}", opened.get())
                             style:--ask-below-by=move || format!("{:.1}px", rambo_height())
                             node_ref=bubble_ref
                             style:margin-left=move || format!("{:.1}px", bubble_shift.get())

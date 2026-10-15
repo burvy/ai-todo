@@ -244,7 +244,7 @@ fades (the page rip and its tape were cut, item h). Everything else moves: a don
 deleted row flies to the pin, a taped-back task flies back from it, the rows below slide up
 to close a gap (`ROW_SLIDE_OMEGA`), the edit sheet slides up from below the screen (centred by auto margins, so a tall one never starts above it) and
 back down before it closes, Escape too (`PAPER_SLIDE_OMEGA`), a crumpled strip drops away, and Rambo's ask bubble grows
-out of him and folds back into him over `ASK_FOLD_MS` before it leaves the page, at full
+out of him and folds back into him (`PAPER_SLIDE_OMEGA`) before it leaves the page, at full
 opacity throughout.
 e. Try it: open the app on a phone and see no heading; add enough tasks to overflow and see
 the box stay put; swipe a row right and watch it travel to the pin.

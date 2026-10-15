@@ -21,10 +21,10 @@ pub const BUBBLE_EDGE_PX: f64 = 8.0;
 /// refusal takes its place. Safe range 4000 to 12000: shorter and a two-clause note is
 /// gone before it is read, longer and it hides what he says next.
 pub const REFUSAL_SAY_MS: f64 = 7000.0;
-/// How long his ask bubble takes to fold back into him once he has his answer, in
-/// ms; the page reads it as `--ask-fold-ms`. Safe range 120 to 300: shorter and it
-/// pops, longer and the page waits on it.
-pub const ASK_FOLD_MS: u32 = 180;
+/// How far out of Rambo his growing ask bubble must be (0 tucked, 1 at its place) before
+/// it comes in front of him and takes a tap. Safe range 0.8 to 1.0: lower and it jumps
+/// in front while still small, 1.0 and the choices wait for the spring's last pixel.
+pub const ASK_OUT_AT: f64 = 0.9;
 /// How long a slip taken off the planner takes to slide out of its day, in ms; the
 /// week is drawn without it no sooner. Safe range 180 to 400: shorter and it pops,
 /// longer and the planner waits on it.
@@ -236,17 +236,17 @@ pub const SCRAP_LEAVE_OMEGA: f64 = 25.0;
 /// gone, in radians per second (critically damped). 20 is about a third of a second. Safe
 /// range 12 to 35.
 pub const STRIP_STACK_OMEGA: f64 = 20.0;
-/// How quickly paper in the planner and the edit sheet slides, in radians per second
-/// (critically damped): the ribbon's head hopping to another day, a stretched slip
-/// growing or shrinking, the placing note and the edit sheet coming and going. 24 is
-/// about a quarter of a second. Safe range 14 to 40.
+/// How quickly paper slides, in radians per second (critically damped): the ribbon's
+/// head hopping to another day, a stretched slip growing or shrinking, the placing note,
+/// the edit sheet and Rambo's ask bubble coming and going. 24 is about a quarter of a
+/// second. Safe range 14 to 40.
 pub const PAPER_SLIDE_OMEGA: f64 = 24.0;
 /// How near its end, in px, sliding paper (the ribbon's head, a stretched slip) must come
 /// to count as there. Safe range 0.05 to 0.5: under a pixel, so the last step never shows.
 pub const SLIDE_NEAR_PX: f64 = 0.1;
-/// How near its end how far paper is in sight (0 out of sight, 1 in it: the placing note,
-/// the edit sheet) must come to count as there. Safe range 0.0005 to 0.005: a sheet the
-/// height of the screen is then under a few px from its end.
+/// How near its end an amount in sight (0 out of sight, 1 in it: the placing note, the
+/// edit sheet, Rambo's ask bubble) must come to count as there. Safe range 0.0005 to
+/// 0.005: a sheet the height of the screen is then under a few px from its end.
 pub const SHOWN_NEAR: f64 = 0.001;
 /// The done tasks hang at the pin as a stack: the newest on top, the rest under it. This many
 /// edges of the older ones show below the top strip, a few px each, to say how deep the stack
