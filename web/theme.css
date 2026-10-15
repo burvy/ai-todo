@@ -117,7 +117,6 @@
   /* While he listens the light is turned down a little (Interview 1 item 12). */
   --listening-dim: rgb(28 18 6 / 0.2);
   --listening-dim-ms: 260ms;
-  --lamp-dim-ms: 340ms; /* the desk lamp turning the light down; web/src/tuning.rs LAMP_DIM_MS */
   --nest-sink: 4px; /* how far below his rest point he sits: down in the bowl */
   /* What a phone's fixed capture bar covers at the bottom: the nest, the bar's padding and rule, and the home-indicator inset. */
   --capture-clear: calc(var(--nest-size) + 3 * var(--space-2) + 1px + env(safe-area-inset-bottom, 0px));
@@ -133,8 +132,8 @@
   --lamp-veil-day: #fff1cf; /* and the warm light that comes back for light paper */
   --lamp-w: 44px; /* the desk lamp */
   --lamp-h: 62px;
-  --lamp-top: var(--space-2);
-  --lamp-left: var(--space-2);
+  --lamp-right: var(--space-2);
+  --lamp-bottom: var(--space-2);
   --layer-behind: -1;
   --layer-page: 2; /* ink, curl, placements, a lifted row, the desktop pin column */
   --layer-sticky: 4; /* day names */
@@ -1339,12 +1338,12 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 }
 
 /* The desk lamp (web/src/lamp.rs, web/assets/lamp/ABOUT.md): the dark-mode switch. It
-   stands in the planner's top left corner, clear of the gear (top right) and the capture
-   bar (bottom). Lit by night, dark by day. */
+   stands in the bottom right corner, clear of the capture box and the nest (top on a
+   desk) and of the gear (top right). Lit by night, dark by day. */
 .desk-lamp {
   position: fixed;
-  top: var(--lamp-top);
-  left: var(--lamp-left);
+  right: var(--lamp-right);
+  bottom: var(--lamp-bottom);
   z-index: var(--layer-sticky);
   width: var(--lamp-w);
   height: var(--lamp-h);
@@ -1354,15 +1353,10 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   cursor: pointer;
 }
 
-/* On a phone the corners are the pages' own (rows start at the top left, the pin hangs at
-   the top right), so the lamp stands at the foot, just above the capture bar and clear of
-   the page note on the left. */
+/* On a phone the capture bar is at the foot, so the lamp stands just above it. */
 @media (max-width: 700px) {
   .desk-lamp {
-    top: auto;
-    left: auto;
-    right: var(--space-2);
-    bottom: calc(var(--capture-clear) + var(--space-1));
+    --lamp-bottom: calc(var(--capture-clear) + var(--space-1));
   }
 }
 
@@ -1413,7 +1407,7 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   background: var(--lamp-veil-night);
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--lamp-dim-ms) ease;
+  transition: opacity var(--lamp-dim-ms) ease; /* set from tuning.rs LAMP_DIM_MS by the lamp */
 }
 
 .lamp-veil.to-light {

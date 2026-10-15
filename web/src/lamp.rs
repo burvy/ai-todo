@@ -81,6 +81,7 @@ pub fn DeskLamp(
         // The light turned down: dark under the lamp going on, warm when it goes off.
         <div
             class="lamp-veil"
+            style:--lamp-dim-ms=format!("{}ms", crate::tuning::LAMP_DIM_MS)
             class:on=move || dimmed.get()
             class:to-light=move || to_light.get()
             aria-hidden="true"

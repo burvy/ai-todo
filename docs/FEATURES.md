@@ -344,8 +344,8 @@ turned down over the page, the paper is swapped under the dim, and the light com
 on the other paper. The lamp is dark by day and lit by night. The choice is the same stored
 Theme setting the gear menu sets (the gear's Light and Dark still work, swapping at once),
 and the page still never follows the OS. With reduced motion the paper swaps at once. On a
-desk the lamp stands top left, clear of the capture box and the gear; on a phone it stands
-at the foot, just above the capture bar.
+desk the lamp stands in the bottom right corner, clear of the capture box and the gear;
+on a phone it stands at the foot, just above the capture bar.
 b. Tap the lamp, watch the page dim and the paper change, tap again to go back, reload and
 see the choice kept.
 c. Code: `web/src/lamp.rs:DeskLamp`; `web/theme.css` (`.desk-lamp`, `.lamp-veil`);
