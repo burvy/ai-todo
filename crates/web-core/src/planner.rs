@@ -187,6 +187,19 @@ mod tests {
     use crate::tuning::SHORT_SLIP_PX;
     use chrono::TimeZone;
 
+    #[test]
+    fn an_hour_is_as_tall_in_the_style_sheet_as_in_the_code() {
+        // The slips and the now-line are placed from `HOUR_PX`; the hour rows are drawn from
+        // `--hour-h`. One without the other puts a slip on the wrong hour.
+        let css = include_str!("../../../web/theme.css");
+        let declared = css
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("--hour-h:"))
+            .and_then(|rest| rest.trim().strip_suffix("px;"))
+            .expect("theme.css declares --hour-h in px");
+        assert_eq!(declared.parse::<f32>().unwrap(), HOUR_PX);
+    }
+
     fn zone(name: &str, now: DateTime<Utc>) -> LocalContext {
         LocalContext {
             now,
