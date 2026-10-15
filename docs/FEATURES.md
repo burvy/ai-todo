@@ -199,7 +199,7 @@ b. Drag Rambo onto a task, then choose **Edit**, **Move** or **Done**, or tap of
 Or tap a task's title.
 c. Code: `web/src/rambo.rs:Rambo`, which sets `edit_request` for
 `web/src/tasks/mod.rs:TaskList` to open its sheet; a tap on the row is decided on its
-release (`tasks/mod.rs:tapped, on_title`), since the row holds the pointer from the press; `web/src/mascot.rs:Choice, asking_dismissed_by`; `web/src/api.rs:patch_task`.
+release (`tasks/mod.rs:tapped, on_title`), since the row holds the pointer from the press; `crates/web-core/src/mascot.rs:Choice, asking_dismissed_by`; `web/src/api.rs:patch_task`.
 d. The sheet's days and times are picked on the paper's own pickers (handwritten
 numbers, keyboard reachable, the paper's 12- or 24-hour clock), never the browser's:
 `web/src/pickers.rs:PaperDate, PaperTime, PaperDateTime`; numbers in `crates/web-core/src/tuning.rs`.
@@ -413,7 +413,7 @@ him on a slip in the planner and choose Longer, or Take off.
 c. Code: `web/src/rambo.rs:Rambo` sets `move_request`; `web/src/lib.rs:App` turns
 the page; `web/src/placing.rs:PlacingNote, next_free`;
 `web/src/week.rs:WeekGrid, place_at, slip_at, stretch, take_off`;
-`web/src/mascot.rs:Asked, offered`; `web/src/placing.rs:stretched`.
+`crates/web-core/src/mascot.rs:Asked, offered`; `web/src/placing.rs:stretched`.
 
 ### 8. A new task on an empty hour
 a. Drop Rambo on an hour of the planner with nothing placed there and he stays on it,
@@ -427,7 +427,7 @@ at a time the clock skips that day, he does not start one.
 b. Turn to the planner, drag Rambo onto an empty hour, then speak or type a title.
 c. Code: `web/src/rambo.rs:Rambo, free_hour_under`; `web/src/week.rs:hour_at, free_at,
 hour_prefill_text`; `web/src/capture.rs:CaptureBox, noted`;
-`web/src/mascot.rs:State::Noting, Event::DropHour, asking_dismissed_by`.
+`crates/web-core/src/mascot.rs:State::Noting, Event::DropHour, asking_dismissed_by`.
 
 ### 9. The bookmark ribbon marks today
 a. A satin ribbon marks today's column, in two parts. Its head sticks out of the band
@@ -451,7 +451,7 @@ b. Tap the nest to send, or press and hold Rambo still to talk. Only a Rambo res
 his nest listens: picked up while dazed (below), he writes instead. While he listens the
 light is turned down a little over everything but him, his nest's rim and his bubble, and
 comes back up when he stops; the dim never takes a touch.
-c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/theme.css:.listening-dim`; `web/src/mascot.rs:State, Event, transition`.
+c. Code: `web/src/capture.rs:CaptureBox`; `web/src/rambo.rs:Rambo`; `web/theme.css:.listening-dim`; `crates/web-core/src/mascot.rs:State, Event, transition`.
 
 ### 2. Drag, daze, write and return
 a. A drag carries him without listening (a still hold listens), riding just above
@@ -481,10 +481,10 @@ again, he listens again.
 b. Flick the pen hard at a side of the screen, or into the nest's corner; drag it again to write, or hold
 anywhere and drag; drop it on the nest, or leave it 3 seconds.
 c. Code: `web/src/rambo.rs:Rambo`; `web/src/engine/world.rs:World, behaviour`;
-`web/src/engine/look.rs:pose, blended, Look`; `web/src/mascot.rs:nib_dry`;
+`web/src/engine/look.rs:pose, blended, Look`; `crates/web-core/src/mascot.rs:nib_dry`;
 `web/src/engine/nest.rs:Nest::tap`;
 `web/src/engine/fling.rs:step, splat_strokes`; `web/src/engine/world.rs:swept`; `web/src/engine/nest.rs:Nest`;
-`web/src/mascot.rs:transition, listens_on_grab,
+`crates/web-core/src/mascot.rs:transition, listens_on_grab,
 put_back, over_nest, DAZED_MS, hops_there, held_at, wants, drawn_over`; `crates/web-core/src/hop.rs:Hop`;
 `crates/web-core/src/gesture.rs:Recognizer, release_velocity, flung`;
 `web/src/inklayer.rs:InkLayer`; `crates/web-core/src/ink.rs`;
@@ -516,7 +516,7 @@ the sheen in `web/theme.css` (`.ink-wet`, `ink-dry`).
 a. Dropping Rambo on a task opens a small bubble with Edit, Move and Done, drawn as
 paper scraps. Tapping anywhere off the bubble (him too) or pressing Esc is never mind. Edit opens the task dialog (`<dialog class="task-dialog">` in `web/src/tasks/mod.rs`).
 b. Drag the pen onto a task row and choose an action.
-c. Code: `web/src/rambo.rs:Rambo`; `web/src/mascot.rs:Choice, asking_dismissed_by`;
+c. Code: `web/src/rambo.rs:Rambo`; `crates/web-core/src/mascot.rs:Choice, asking_dismissed_by`;
 `web/src/api.rs:patch_task`. Move sets `move_request`; the planner places the task
 (III.7).
 

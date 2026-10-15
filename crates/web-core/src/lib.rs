@@ -7,6 +7,7 @@ pub mod gesture;
 pub mod hop;
 pub mod ink;
 pub mod row;
+pub mod mascot;
 pub mod settings;
 pub mod store;
 pub mod tuning;
