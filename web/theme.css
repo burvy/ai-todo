@@ -14,10 +14,10 @@
   --ecru: #e1c38c;         /* pressed-in paper: Rambo's nest, sunken bits */
   --chamoisee: #a7865d;    /* rules and lines */
   --ink: #5d4732;          /* coffee: everything written */
-  --accent: #815525;
+  --accent: #815525;      /* golden brown: the one emphasis, AA as text */
   /* Rambo's brass: a shape, not text (3:1 is its floor), so it keeps the gold the
      text accent had to give up for AA (ATD-144). */
-  --brass: #9f682e;       /* golden brown: one emphasis, bold text only */
+  --brass: #9f682e;
   --danger: #a5342a;       /* red pencil */
   --now: #a83728;
 
