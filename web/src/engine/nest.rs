@@ -7,46 +7,36 @@
 //! behind him, the rim over his tip) moved by [`Nest::offset`], and sits him on the
 //! sag.
 
+use super::body::{Pull, Spring1};
 use super::world::Vec2;
 use crate::tuning::{
     DRY_NIB_TAP_KICK, DRY_NIB_TAP_ROCK, NEST_DAMPING, NEST_IMPACT_SAG, NEST_LAND_KICK,
     NEST_LEAVE_KICK, NEST_OMEGA, NEST_ROCK_MAX_DEG, NEST_ROCK_PER_PX, NEST_SAG_MAX_PX,
 };
 
-/// A damped spring about 0, stepped semi-implicitly so it stays stable at the fixed
-/// step: `x` its offset, `v` its speed per second.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct Spring {
-    x: f64,
-    v: f64,
-}
-
-impl Spring {
-    fn step(&mut self, dt_s: f64) {
-        let accel = -NEST_OMEGA * NEST_OMEGA * self.x - 2.0 * NEST_DAMPING * NEST_OMEGA * self.v;
-        self.v += accel * dt_s;
-        self.x += self.v * dt_s;
-    }
-
-    /// A kick of `dv`, kept so the swing it starts never passes `most` (a swing from
-    /// rest reaches about `v / omega`).
-    fn kick(&mut self, dv: f64, most: f64) {
-        let cap = most * NEST_OMEGA;
-        self.v = (self.v + dv).clamp(-cap, cap);
-    }
-
-    fn still(&self) -> bool {
-        self.x.abs() < STILL && self.v.abs() < STILL * NEST_OMEGA
-    }
-}
+/// How both of the dish's springs pull it back level.
+const PULL: Pull = Pull {
+    omega: NEST_OMEGA,
+    zeta: NEST_DAMPING,
+};
 
 /// Below this (px or degrees) the nest no longer moves visibly.
 const STILL: f64 = 0.02;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Nest {
-    sag: Spring,
-    rock: Spring,
+    sag: Spring1,
+    rock: Spring1,
+}
+
+/// A kick of `dv` to `spring`, kept so the swing it starts never passes `most` (a swing
+/// from rest reaches about `v / omega`).
+fn kick(spring: &mut Spring1, dv: f64, most: f64) {
+    spring.kick(dv, most * NEST_OMEGA);
+}
+
+fn still(spring: &Spring1) -> bool {
+    spring.settled(0.0, STILL, STILL * NEST_OMEGA)
 }
 
 impl Nest {
@@ -57,13 +47,13 @@ impl Nest {
 
     /// Whether it has settled and nothing moves it until he does.
     pub(crate) fn at_rest(&self) -> bool {
-        self.sag.still() && self.rock.still()
+        still(&self.sag) && still(&self.rock)
     }
 
     /// `dt_s` seconds of springing back.
     pub(crate) fn step(&mut self, dt_s: f64) {
-        self.sag.step(dt_s);
-        self.rock.step(dt_s);
+        self.sag.step(0.0, PULL, 0.0, dt_s);
+        self.rock.step(0.0, PULL, 0.0, dt_s);
         self.sag.x = self.sag.x.clamp(-NEST_SAG_MAX_PX, NEST_SAG_MAX_PX);
         self.rock.x = self.rock.x.clamp(-NEST_ROCK_MAX_DEG, NEST_ROCK_MAX_DEG);
     }
@@ -72,37 +62,33 @@ impl Nest {
     /// it sags under him, deeper the harder he lands, and tips toward the side he
     /// landed on.
     pub(crate) fn land(&mut self, off: f64, impact: f64) {
-        self.sag.kick(give(impact), NEST_SAG_MAX_PX);
-        self.rock
-            .kick(off * NEST_ROCK_PER_PX * NEST_OMEGA, NEST_ROCK_MAX_DEG);
+        kick(&mut self.sag, give(impact), NEST_SAG_MAX_PX);
+        kick(&mut self.rock, off * NEST_ROCK_PER_PX * NEST_OMEGA, NEST_ROCK_MAX_DEG);
     }
 
     /// A throw comes down in it at `speed` px per ms, heading `dx` across: a bigger sag
     /// the faster he comes, tipped the way he was going.
     pub(crate) fn catch(&mut self, speed: f64, dx: f64) {
-        self.sag.kick(give(speed * 1000.0), NEST_SAG_MAX_PX);
-        self.rock
-            .kick(dx.signum() * NEST_LEAVE_KICK, NEST_ROCK_MAX_DEG);
+        kick(&mut self.sag, give(speed * 1000.0), NEST_SAG_MAX_PX);
+        kick(&mut self.rock, dx.signum() * NEST_LEAVE_KICK, NEST_ROCK_MAX_DEG);
     }
 
     /// He taps his nib on its rim: a small knock down, tipping it toward the page.
     pub(crate) fn tap(&mut self) {
-        self.sag.kick(DRY_NIB_TAP_KICK, NEST_SAG_MAX_PX);
-        self.rock.kick(-DRY_NIB_TAP_ROCK, NEST_ROCK_MAX_DEG);
+        kick(&mut self.sag, DRY_NIB_TAP_KICK, NEST_SAG_MAX_PX);
+        kick(&mut self.rock, -DRY_NIB_TAP_ROCK, NEST_ROCK_MAX_DEG);
     }
 
     /// He bounces in it to a beat of `strength` (0 to 1).
     pub(crate) fn bounce(&mut self, strength: f64) {
-        self.sag
-            .kick(strength * crate::tuning::DANCE_BOUNCE_KICK, NEST_SAG_MAX_PX);
+        kick(&mut self.sag, strength * crate::tuning::DANCE_BOUNCE_KICK, NEST_SAG_MAX_PX);
     }
 
     /// He leaves it heading `dx` across: it springs up as his weight goes and rocks
     /// the other way.
     pub(crate) fn leave(&mut self, dx: f64) {
-        self.sag.kick(-NEST_LAND_KICK * 0.5, NEST_SAG_MAX_PX);
-        self.rock
-            .kick(-dx.signum() * NEST_LEAVE_KICK, NEST_ROCK_MAX_DEG);
+        kick(&mut self.sag, -NEST_LAND_KICK * 0.5, NEST_SAG_MAX_PX);
+        kick(&mut self.rock, -dx.signum() * NEST_LEAVE_KICK, NEST_ROCK_MAX_DEG);
     }
 }
 

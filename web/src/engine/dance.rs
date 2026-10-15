@@ -7,6 +7,7 @@
 //! Pure, so its rules are tested here; the world steps it and `music.rs` measures the
 //! loudness it hears.
 
+use super::body::{Pull, Spring1};
 use crate::tuning::{
     DANCE_DAMPING, DANCE_FAST_MS, DANCE_FLOOR, DANCE_LEAN_KICK, DANCE_LEAN_MAX_DEG,
     DANCE_MIN_GAP_MS, DANCE_OMEGA, DANCE_ONSET_RATIO, DANCE_SLOW_MS,
@@ -27,8 +28,7 @@ pub(crate) struct Dance {
     /// The side the next beat sends him to: 1 right, -1 left.
     side: f64,
     /// His sway in degrees, and its speed in degrees/s: a damped spring.
-    lean: f64,
-    lean_v: f64,
+    lean: Spring1,
 }
 
 /// Below this (degrees, degrees/s over omega) his sway no longer shows.
@@ -51,15 +51,15 @@ impl Dance {
             self.since_ms = 0.0;
             // A beat pushes the swing he is in, as a hand on a swing does; the spring
             // brings him back. Only from still does a beat start him, to the other side.
-            self.side = if self.lean_v.abs() >= STILL * DANCE_OMEGA {
-                self.lean_v.signum()
+            self.side = if self.lean.v.abs() >= STILL * DANCE_OMEGA {
+                self.lean.v.signum()
             } else if self.side > 0.0 {
                 -1.0
             } else {
                 1.0
             };
             let cap = DANCE_LEAN_MAX_DEG * DANCE_OMEGA;
-            self.lean_v = (self.lean_v + self.side * strength * DANCE_LEAN_KICK).clamp(-cap, cap);
+            self.lean.kick(self.side * strength * DANCE_LEAN_KICK, cap);
         }
         // With no music to hear he comes to rest at once, as a dancer stops: critically
         // damped, not swinging on for seconds.
@@ -69,21 +69,22 @@ impl Dance {
     }
 
     fn step_lean(&mut self, dt_s: f64, damping: f64) {
-        let accel =
-            -DANCE_OMEGA * DANCE_OMEGA * self.lean - 2.0 * damping * DANCE_OMEGA * self.lean_v;
-        self.lean_v += accel * dt_s;
-        self.lean = (self.lean + self.lean_v * dt_s).clamp(-DANCE_LEAN_MAX_DEG, DANCE_LEAN_MAX_DEG);
+        let pull = Pull {
+            omega: DANCE_OMEGA,
+            zeta: damping,
+        };
+        self.lean.step(0.0, pull, 0.0, dt_s);
+        self.lean.x = self.lean.x.clamp(-DANCE_LEAN_MAX_DEG, DANCE_LEAN_MAX_DEG);
     }
 
     /// How far he sways now, in degrees.
     pub(crate) fn lean_deg(&self) -> f64 {
-        self.lean
+        self.lean.x
     }
 
     /// Whether he has stopped swaying and hears nothing: the loop may sleep.
     pub(crate) fn still(&self) -> bool {
-        self.lean.abs() < STILL
-            && self.lean_v.abs() < STILL * DANCE_OMEGA
+        self.lean.settled(0.0, STILL, STILL * DANCE_OMEGA)
             && self.fast < DANCE_FLOOR
     }
 }
@@ -149,10 +150,10 @@ mod tests {
         let mut dance = Dance::default();
         let mut pushed = 0;
         for level in notes(120.0, 6000.0, 0.3).chain(notes(700.0, 6000.0, 0.3)) {
-            let before = dance.lean_v;
+            let before = dance.lean.v;
             if dance.hear(level, DT).is_some() && before.abs() > 1.0 {
-                assert_eq!(dance.lean_v.signum(), before.signum(), "{dance:?}");
-                assert!(dance.lean_v.abs() >= before.abs() - 1.0, "{dance:?}");
+                assert_eq!(dance.lean.v.signum(), before.signum(), "{dance:?}");
+                assert!(dance.lean.v.abs() >= before.abs() - 1.0, "{dance:?}");
                 pushed += 1;
             }
         }
