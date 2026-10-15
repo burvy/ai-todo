@@ -341,17 +341,6 @@ pub async fn delete_scribbled(
     scrap::delete_and_lay(task_id, snapshot, scraps, deleted).await
 }
 
-/// The `li` of row `id` on the page, if it is shown.
-fn row_element(id: &TaskId) -> Option<web_sys::Element> {
-    web_sys::window()
-        .and_then(|window| window.document())
-        .and_then(|doc| {
-            doc.query_selector(&format!("li[data-id=\"{}\"]", id.0))
-                .ok()
-                .flatten()
-        })
-}
-
 /// Whether row `id` is wet: Rambo wrote it less than `INK_WET_MS` ago.
 fn is_wet(written: StoredValue<Vec<(TaskId, f64)>>, id: &TaskId) -> bool {
     let now = crate::engine::now();
@@ -400,7 +389,14 @@ fn smudge_if_wet(
     if !is_wet(written, id) {
         return;
     }
-    let Some(row) = row_element(id) else {
+    let row = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|doc| {
+            doc.query_selector(&format!("li[data-id=\"{}\"]", id.0))
+                .ok()
+                .flatten()
+        });
+    let Some(row) = row else {
         return;
     };
     let rect = row.get_bounding_client_rect();
@@ -582,15 +578,6 @@ pub(crate) fn TaskList(
                 }
                 return;
             }
-            // Clipped from the first render, not when he gets to them: a queued
-            // row shown whole while he is busy would flash its text first.
-            pen_queue.with(|queue| {
-                for id in queue {
-                    if let Some(row) = row_element(id) {
-                        row.class_list().add_1("pen-pending").ok();
-                    }
-                }
-            });
             if pen_queue.with(Vec::is_empty) || writing.get_value() {
                 return;
             }
@@ -622,7 +609,13 @@ pub(crate) fn TaskList(
                             pen_queue.set(Vec::new());
                             break;
                         }
-                        let row = row_element(&task_id);
+                        let row = web_sys::window()
+                            .and_then(|w| w.document())
+                            .and_then(|doc| {
+                                doc.query_selector(&format!("li[data-id=\"{}\"]", task_id.0))
+                                    .ok()
+                                    .flatten()
+                            });
                         // A row off the screen (the other pane on a phone, or
                         // scrolled away) is left as it is; he stays home.
                         if !row.as_ref().is_some_and(write::in_view) {
@@ -694,6 +687,9 @@ pub(crate) fn TaskList(
                 <For each=visible_tasks key=|task| RowKey(task.clone()) let:task>
                     {
                         let task_id = task.id.clone();
+                        // Queued before the list shows (see `Store::send_with`): the row
+                        // is clipped from its first frame, so its title never shows whole.
+                        let queued = pen_queue.with_untracked(|queue| queue.contains(&task_id));
                         let task_title = task.title.clone();
                         // An occurrence row carries the small hand-drawn repeat mark, and
                         // loses the one-row delete: its × would refuse the id, and a whole
@@ -843,6 +839,7 @@ pub(crate) fn TaskList(
                         view! {
                     <li
                         class="task-row"
+                        class:pen-pending=queued
                         data-id={render_task_id_attr}
                         data-title={render_task_title.clone()}
                         on:pointerdown=handle_pointer_down
