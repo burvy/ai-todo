@@ -19,7 +19,7 @@ pub(crate) use glide::{glide, glide_keyed};
 pub(crate) use link::{leaf, on_leaf, set_push};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use link::{push, show};
-pub(crate) use run::{after, every, next_frame, now, on_tick, wait};
+pub(crate) use run::{after, cancel, every, next_frame, now, on_tick, wait};
 #[cfg(target_arch = "wasm32")]
 pub(crate) use sched::{ENGINE_DT_S, Tick};
 pub(crate) use sched::{Flow, Guard, Handle};

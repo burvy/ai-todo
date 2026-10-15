@@ -130,6 +130,13 @@ impl Loop {
         }
     }
 
+    /// Stops the job of `key`, if there is one.
+    pub(crate) fn cancel(&mut self, key: &str) {
+        if let Some((_, old)) = self.bodies.remove(key) {
+            old.stop();
+        }
+    }
+
     /// Lets go of the job of `key` once it has finished, unless a newer start has taken
     /// the key since.
     pub(crate) fn release(&mut self, key: &str, start: u64) {
@@ -284,6 +291,9 @@ mod tests {
         assert!(lp.bodies.contains_key("task"));
         lp.release("task", second);
         assert!(lp.bodies.is_empty());
+        lp.hold("task", first, new.clone());
+        lp.cancel("task");
+        assert!(!new.is_live() && lp.bodies.is_empty());
     }
 
     #[test]
