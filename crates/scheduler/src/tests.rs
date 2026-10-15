@@ -1274,16 +1274,21 @@ mod queues {
     }
 
     #[test]
-    fn an_anytime_task_with_no_room_is_unplaced() {
+    fn an_anytime_task_takes_a_free_slot_on_an_open_day() {
         let hours = WorkingHours::default();
         let mut board = Board::new(&hours, utc(12, 6, 0), None);
-        let mut closed = hours.clone();
-        closed.days.clear();
-        let mut shut = Board::new(&closed, utc(12, 6, 0), None);
         board.anytime(&task("free", 30, When::Anytime, 0));
-        shut.anytime(&task("none", 30, When::Anytime, 0));
         assert_eq!(board.placements.len(), 1);
-        assert_eq!(shut.unplaced.len(), 1);
-        assert!(shut.placements.is_empty());
+        assert!(board.unplaced.is_empty());
+    }
+
+    #[test]
+    fn an_anytime_task_with_no_room_is_unplaced() {
+        let mut closed = WorkingHours::default();
+        closed.days.clear();
+        let mut board = Board::new(&closed, utc(12, 6, 0), None);
+        board.anytime(&task("none", 30, When::Anytime, 0));
+        assert_eq!(board.unplaced.len(), 1);
+        assert!(board.placements.is_empty());
     }
 }

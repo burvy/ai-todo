@@ -21,13 +21,14 @@ Optional environment variables:
 
 ## What it checks
 
-Each check runs at desk size (1280x800, mouse) and at phone size (390x844, touch):
+Each check runs at desk size (1280x800, mouse), at a narrow desk window (640x800, mouse: the two pages stack and turn) and at phone size (390x844, touch):
 
 1. **load shows Rambo**: the page loads and Rambo is on the page.
 2. **a typed capture writes a row**: type a sentence into the capture box and press Enter; a new row appears.
 3. **a swipe finishes a row and the tape brings it back**: drag a row to the right; it goes, and the tape (undo) brings it back.
-4. **Rambo dragged to the page goes home**: drag Rambo to the middle of the page and release; he goes home.
-5. **no page errors**: no uncaught exception or console error during the run.
+4. **a swipe turns the page and the book flip is drawn, not blank, mid-turn**: where the pages stack (narrow desk, phone) swipe the list over to the planner, hold, and check the leaf is swung with the list on it, the planner shows beneath and the leaf's light is drawn; release, then turn back with the note at the foot and check the same. On the wide desk the two pages sit side by side, so it only checks both show.
+5. **Rambo dragged to the page goes home**: drag Rambo to the middle of the page and release; he goes home.
+6. **no page errors**: no uncaught exception or console error during the run.
 
 ## How it runs
 

@@ -24,6 +24,7 @@ const edgeBin =
 
 const SIZES = [
   { name: "desk", width: 1280, height: 800, phone: false },
+  { name: "narrow desk", width: 640, height: 800, phone: false },
   { name: "phone", width: 390, height: 844, phone: true },
 ];
 
@@ -194,7 +195,7 @@ function page(cdp, size, errors) {
     await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
   };
 
-  return { evaluate, rect, count, has, drag, tap, type, enter, errors };
+  return { evaluate, rect, count, has, pointer, drag, tap, type, enter, errors };
 }
 
 const scenarios = {
@@ -227,6 +228,42 @@ const scenarios = {
     await waitFor(async () => (await p.count("li.task-row")) === before, 8000, "the row to come back");
   },
 
+  async "a swipe turns the page and the book flip is drawn, not blank, mid-turn"(p) {
+    await waitFor(() => p.has("li.task-row"), 10000, "a row");
+    const stacked = await p.evaluate('matchMedia("(max-width: 700px)").matches');
+    if (!stacked) {
+      // Wide desk: the two pages lie side by side, so there is no page to turn.
+      const list = await p.rect(".tasks-pane");
+      const planner = await p.rect(".planner-page");
+      if (!(list?.w > 0 && planner?.w > 0)) throw new Error("both pages should show side by side");
+      return;
+    }
+    const main = await p.rect("main");
+    const y = main.y + main.h / 2;
+    const from = { x: main.x + main.w - 40, y };
+    await p.pointer("down", from.x, from.y);
+    for (let i = 1; i <= 10; i++) {
+      await p.pointer("move", from.x - (main.w * 0.5 * i) / 10, y);
+      await sleep(16);
+    }
+    const held = await p.evaluate(TURN_NOW);
+    await p.pointer("up", from.x - main.w * 0.5, y);
+    if (!held.flipping) throw new Error("the flip did not start: " + JSON.stringify(held));
+    if (!(held.front.w > 0 && held.front.w < held.viewport)) throw new Error("the leaf is not swung: " + JSON.stringify(held.front));
+    if (!held.frontSeen) throw new Error("the leaf is hidden: " + JSON.stringify(held));
+    if (!held.underSeen) throw new Error("the page beneath is blank: " + JSON.stringify(held));
+    if (!held.fxShown || !(held.fx.w > 0)) throw new Error("the leaf's light and shadow are not drawn");
+    if (!held.leafHasContent) throw new Error("the leaf has no list on it");
+    await waitFor(async () => (await p.evaluate(TURN_NOW)).pane === "1" && !(await p.evaluate(TURN_NOW)).flipping, 5000, "the turn to land on the planner");
+    // Back, by the note at the page's foot: the same flip, with nobody holding the page.
+    const note = await waitFor(() => p.evaluate(`(() => { const b = [...document.querySelectorAll("button")].find((e) => e.textContent.includes("task list on the previous page")); if (!b) return null; const r = b.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`), 8000, "the note back");
+    await p.tap(note.x, note.y);
+    await sleep(150);
+    const back = await p.evaluate(TURN_NOW);
+    if (!back.flipping || !back.fxShown || !back.frontSeen || !back.underSeen) throw new Error("the turn back is not drawn: " + JSON.stringify(back));
+    await waitFor(async () => (await p.evaluate(TURN_NOW)).pane === "0" && !(await p.evaluate(TURN_NOW)).flipping, 5000, "the turn to land on the list");
+  },
+
   async "Rambo dragged to the page goes home"(p) {
     await waitFor(() => p.has(".rambo"), 10000, "Rambo");
     const rambo = await p.rect(".rambo");
@@ -236,6 +273,31 @@ const scenarios = {
     await waitFor(() => p.has(".rambo.is-home"), 8000, "Rambo to go home");
   },
 };
+
+// What the page turn shows right now: whether the book flip is under way, and whether what it
+// draws is there (the leaf with the list on it, the page beneath it, the leaf's light).
+const TURN_NOW = `(() => {
+  const main = document.querySelector("main");
+  const box = (e) => { const r = e ? e.getBoundingClientRect() : { width: 0, height: 0 }; return { w: r.width, h: r.height }; };
+  // Drawn at all: has a size, is not hidden and is not see-through.
+  const seen = (e) => { if (!e) return false; const c = getComputedStyle(e); const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && c.display !== "none" && c.visibility === "visible" && Number(c.opacity) > 0; };
+  const front = main.querySelector(".bend-front");
+  const under = main.querySelector(".bend-under");
+  const fx = main.querySelector(".bend-fx");
+  return {
+    flipping: main.classList.contains("flipping"),
+    pane: main.dataset.pane,
+    front: box(front),
+    under: box(under),
+    fx: box(fx),
+    fxShown: seen(fx),
+    frontSeen: seen(front),
+    underSeen: seen(under),
+    leafHasContent: !!front && [...front.querySelectorAll("li.task-row")].some(seen),
+    viewport: window.innerWidth,
+  };
+})()`;
 
 async function runSize(size) {
   const results = [];
