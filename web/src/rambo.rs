@@ -1132,13 +1132,17 @@ pub(crate) fn Rambo(
                 }
             }
         >
-            <img
-                src=move || match noticing.get() {
+            // His drawing comes in through <use>, not <img>: an <img> would load the file
+            // as a document of its own, and he would follow the operating system
+            // instead of the page. Every drawing is laid out on the same 64x112
+            // page, fitted into his box (centred, never stretched) exactly as the <img>
+            // was. FE-2.
+            <svg class="rambo-drawing" viewBox="0 0 64 112" aria-hidden="true">
+                <use href=move || match noticing.get() {
                     Some(face) => face.art(pen.get()),
                     None => mascot::art_for(pen.get(), &state.get(), &brain_pose.get(), typing.get()),
-                }
-                alt="Rambo"
-            />
+                } />
+            </svg>
             // The mood's little picture, when the mood has one and he is home.
             {move || mascot::fx_for(&state.get(), &brain_pose.get(), typing.get()).map(|fx| view! {
                 <img class="rambo-fx" src=fx.art() alt="" aria-hidden="true" />
@@ -1188,7 +1192,13 @@ pub(crate) fn Rambo(
             style:top=move || format!("{:.1}px", nest_at.get().unwrap_or_default().1)
             style:width=move || format!("{:.1}px", nest_at.get().unwrap_or_default().2)
             style:height=move || format!("{:.1}px", nest_at.get().unwrap_or_default().3)
-        ></span>
+        >
+            // The front rim, shown the same way as his drawing so the dish is
+            // themed too. Fitted into the box (centred, not stretched), as the background was. FE-2.
+            <svg viewBox="0 0 170 100">
+                <use href="assets/nest/rim.svg#art" />
+            </svg>
+        </span>
     }
 }
 

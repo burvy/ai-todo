@@ -501,8 +501,20 @@ impl Pose {
         }
     }
 
-    /// The drawing of Rambo in this pose, holding this tool.
+    /// The drawing of Rambo in this pose, holding this tool, as the page shows it:
+    /// `<svg><use href=this></use></svg>`.
+    ///
+    /// An `<img>` loads the SVG as a document of its own, so it never sees the
+    /// page's tokens and Rambo follows the operating system instead of the
+    /// theme. Content pulled in through `<use>` inherits them, and `#art` is the
+    /// drawing's root group. Spec: docs/FRONTEND-PLAN.md FE-2.
     pub fn art(self, pen: Pen) -> String {
+        format!("{}#art", self.art_file(pen))
+    }
+
+    /// The file the drawing lives in, for a caller that wants the path and not
+    /// the reference (`<use>` takes the reference, everything else the path).
+    pub fn art_file(self, pen: Pen) -> String {
         format!("assets/rambo/{}/{}.svg", art_folder(pen), self.id())
     }
 }
@@ -655,6 +667,15 @@ mod tests {
     fn art_file(path: &str) -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)
     }
+
+    /// Every tool the gear menu offers.
+    const PENS: [Pen; 5] = [
+        Pen::FountainPen,
+        Pen::Pencil,
+        Pen::Ballpoint,
+        Pen::Quill,
+        Pen::Marker,
+    ];
 
     #[test]
     fn grab_listens_and_release_goes_home() {
@@ -1081,37 +1102,24 @@ mod tests {
     }
 
     #[test]
-    fn every_drawing_defines_every_colour_it_uses() {
-        // The art is shown through <img>, which never sees the page's CSS: a
-        // colour the file uses but does not define itself paints Rambo black.
-        let pens = [
-            Pen::FountainPen,
-            Pen::Pencil,
-            Pen::Ballpoint,
-            Pen::Quill,
-            Pen::Marker,
-        ];
-        for pen in pens {
+    fn every_drawing_is_shown_through_its_art_group() {
+        // The page's tokens reach the art only through <use>. An <img> loads
+        // the file as a document of its own, and Rambo then follows the
+        // operating system instead of the theme. So the drawing every pose and
+        // every tool can reach must name a .svg#art reference, and it must be
+        // the very file that pose and tool draw in. Spec: FE-2.
+        for pen in PENS {
             for pose in REACHABLE_POSES {
-                let path = pose.art(pen);
-                let svg = std::fs::read_to_string(art_file(&path)).expect("art exists");
-                // A `<` inside the style block (even in a CSS comment) is a tag
-                // to the XML parser, and the browser then shows no Rambo at all.
-                let style = svg
-                    .split_once("<style>")
-                    .and_then(|(_, rest)| rest.split_once("</style>"))
-                    .map_or("", |(css, _)| css);
+                let reference = pose.art(pen);
                 assert!(
-                    !style.contains('<'),
-                    "{path}: '<' inside <style> breaks the SVG"
+                    reference.ends_with(".svg#art"),
+                    "{reference} is not a drawing shown through its art group"
                 );
-                for used in svg.split("var(--").skip(1) {
-                    let name = &used[..used.find([')', ',']).expect("var() closes")];
-                    assert!(
-                        svg.contains(&format!("--{name}:")),
-                        "{path} uses --{name} but never defines it"
-                    );
-                }
+                assert_eq!(
+                    reference,
+                    format!("{}#art", pose.art_file(pen)),
+                    "{reference} points at another file than the art on disk"
+                );
             }
         }
     }
@@ -1119,11 +1127,11 @@ mod tests {
     #[test]
     fn every_tool_draws_from_its_own_folder() {
         assert_eq!(
-            Pose::Idle.art(Pen::FountainPen),
+            Pose::Idle.art_file(Pen::FountainPen),
             "assets/rambo/fountain/idle.svg"
         );
         assert_eq!(
-            Pose::Writing.art(Pen::Quill),
+            Pose::Writing.art_file(Pen::Quill),
             "assets/rambo/quill/writing.svg"
         );
         // The fountain pen is the one tool whose slug and folder differ.
@@ -1146,15 +1154,9 @@ mod tests {
         // The paths are built from strings, so nothing stops them drifting from
         // the art on disk. Every pose a mood or a state can reach must exist as
         // a file, for every tool the gear menu offers.
-        for pen in [
-            Pen::FountainPen,
-            Pen::Pencil,
-            Pen::Ballpoint,
-            Pen::Quill,
-            Pen::Marker,
-        ] {
+        for pen in PENS {
             for pose in REACHABLE_POSES {
-                let file = art_file(&pose.art(pen));
+                let file = art_file(&pose.art_file(pen));
                 assert!(file.is_file(), "missing art: {file:?}");
             }
         }
@@ -1167,11 +1169,11 @@ mod tests {
         let state = State::Home;
         assert_eq!(
             art_for(Pen::Marker, &state, "", false),
-            "assets/rambo/marker/idle.svg"
+            "assets/rambo/marker/idle.svg#art"
         );
         assert_eq!(
             art_for(Pen::Ballpoint, &state, "cheer", false),
-            "assets/rambo/ballpoint/happy.svg"
+            "assets/rambo/ballpoint/happy.svg#art"
         );
     }
 

@@ -27,6 +27,28 @@
   --rambo-deep: #004552;  /* outline, shaded side, pupils */
   --rambo-tint: #4a939f;  /* highlight stripe, ink tail, bubble rim */
 
+  /* What the drawings in web/assets/rambo paint themselves with. Each is a
+     name the art uses, not a new colour, so every one of them follows the
+     theme from the three above plus --accent (FE-2). The art files carry no
+     colours of their own: shown through <use> they inherit these. */
+  --rambo-barrel: var(--rambo);     /* the body of the pen */
+  --rambo-cap: var(--accent);       /* cap, clip and brass band */
+  --rambo-nib: var(--accent);
+  --rambo-lead: var(--rambo-deep);  /* the lead, mouth and any line he draws with */
+  --rambo-ink: var(--rambo-deep);   /* the ink he has spilled */
+  --rambo-pupil: var(--rambo-deep);
+  --rambo-brow: var(--rambo-deep);
+  --rambo-fx: var(--rambo-tint);
+  --rambo-eye: #fcfaf4;             /* paper white, the same in both themes */
+  --rambo-blush: #d08770;
+
+  /* The dish, web/assets/nest. These two layers are drawn in one palette
+     whatever the theme, so they get real light and dark values. */
+  --nest-paper: #e1c38c;
+  --nest-deep: #9f682e;
+  --nest-line: #5d4732;
+  --nest-strip: #a7865d;
+
   /* Rambo's inks, one per tool in the gear menu: a row he writes with a
      quill is brown, with a ballpoint blue, with a marker heavy black. */
   --ink-pencil: #4a4034;
@@ -183,6 +205,13 @@
   --rambo: #64bbc4;       /* body */
   --rambo-deep: #358e9b;  /* outline, shaded side, pupils */
   --rambo-tint: #a3dde0;  /* highlight stripe, ink tail, bubble rim */
+
+  /* The dish lightens with the page; Rambo's own inks follow from the three
+     above, so they need nothing here. */
+  --nest-paper: #e8d9b0;
+  --nest-deep: #c89b62;
+  --nest-line: #c9ae85;
+  --nest-strip: #b5976d;
 
   --ink-pencil: #d8cbb4;
   --ink-ballpoint: #9fc0e8;
@@ -905,7 +934,7 @@ li.task-row:focus-within .delete-mark {
 
 /* The nest: the tap target is --nest-size (phone 56px, desktop 64px); clicking it
    submits the form. Its drawing is bigger and in two layers, so Rambo sits in it:
-   the back (.nest::before) behind him, the front rim (.nest-rim) in front of his
+   the back (.nest-back) behind him, the front rim (.nest-rim) in front of his
    tip. Spec: docs/DESIGN-DIRECTION.md §2, web/assets/nest/ABOUT.md */
 .nest {
   display: inline-flex;
@@ -928,22 +957,27 @@ li.task-row:focus-within .delete-mark {
 /* Both layers fill the nest's box and sag and rock together about their base, by what
    the engine's nest says (rambo.rs sets --nest-sag and --nest-rock from engine/nest.rs). They are
    drawn on the furniture, so they stay put when Rambo is carried off: he is only the
-   pen. */
-.nest::before,
+   pen. Both are <svg><use> now, so they take the page's --nest-* tokens; a
+   CSS background would be a document of its own and follow the OS. FE-2. */
+.nest-back,
 .nest-rim {
   transform-origin: 50% 100%;
   transform: translateY(var(--nest-sag, 0px)) rotate(var(--nest-rock, 0deg));
-  background: center / 100% 100% no-repeat;
   pointer-events: none;
 }
 
+.nest-back,
+.nest-rim > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 /* Behind the capture line's text, so what you type is never hidden. */
-.nest::before {
-  content: "";
+.nest-back {
   position: absolute;
   inset: 0;
   z-index: var(--layer-behind);
-  background-image: url("assets/nest/back.svg");
 }
 
 /* A fixed layer like Rambo, set on the nest's box as he measures it (left, top, width,
@@ -951,7 +985,6 @@ li.task-row:focus-within .delete-mark {
 .nest-rim {
   position: fixed;
   z-index: var(--layer-nest-rim);
-  background-image: url("assets/nest/rim.svg");
 }
 
 /* The single Rambo button: independent fixed layer above everything.
@@ -981,7 +1014,11 @@ li.task-row:focus-within .delete-mark {
   cursor: grabbing;
 }
 
-.rambo img {
+/* His drawing is an <svg><use>, so it inherits the page's rambo tokens; the
+   mood picture is still an <img>, drawn with currentColor. Neither takes the
+   click: the button is what you pull. */
+.rambo img,
+.rambo .rambo-drawing {
   width: 100%;
   height: 100%;
   pointer-events: none;
@@ -1003,7 +1040,7 @@ li.task-row:focus-within .delete-mark {
   }
 }
 
-.rambo.pose-worried img {
+.rambo.pose-worried .rambo-drawing {
   animation: rambo-grumble 1.1s ease-in-out infinite;
 }
 
@@ -1020,7 +1057,7 @@ li.task-row:focus-within .delete-mark {
 /* His hops squash and stretch him about his feet (hop.rs sets --hop-squash each
    frame). The `scale` property, not `transform`, so it rides on top of whatever
    his mood is doing to the drawing. */
-.rambo > img:not(.rambo-fx) {
+.rambo > .rambo-drawing {
   scale: calc(1 + var(--hop-squash, 0)) calc(1 - var(--hop-squash, 0));
 }
 
