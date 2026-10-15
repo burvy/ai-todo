@@ -34,7 +34,6 @@ pub enum Undo {
     Day { series: String, date: NaiveDate },
 }
 
-/// A box on the page, in viewport pixels: where a deleted row stood, or where a scrap hangs.
 pub use rambl_web_core::events::Spot;
 
 /// How far, in px across and down, a scrap hung at `hung` starts from the middle of the
