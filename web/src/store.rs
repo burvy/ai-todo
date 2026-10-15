@@ -18,6 +18,12 @@ pub(crate) fn refusal(error: &api::ApiError) -> Refusal {
             code: ErrorCode::StaleUpdate,
             ..
         }) => Refusal::Stale,
+        // An internal error's message is the server's own text (storage, a panic), not
+        // words for the user.
+        api::ApiError::Server(todo_core::ApiError {
+            code: ErrorCode::Internal,
+            ..
+        }) => Refusal::Refused(None),
         api::ApiError::Server(refused) => Refusal::Refused(
             Some(refused.message.trim())
                 .filter(|why| !why.is_empty())
@@ -249,5 +255,14 @@ mod tests {
             refusal(&said),
             Refusal::Refused(Some("a deadline cannot be at midnight".into()))
         );
+    }
+
+    #[test]
+    fn an_internal_error_never_shows_the_servers_own_text() {
+        let mut broke = server(ErrorCode::Internal);
+        if let api::ApiError::Server(error) = &mut broke {
+            error.message = "database is locked".into();
+        }
+        assert_eq!(refusal(&broke), Refusal::Refused(None));
     }
 }
