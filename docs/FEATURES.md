@@ -439,7 +439,7 @@ hour_prefill_text`; `web/src/capture.rs:CaptureBox, noted`;
 `web/src/mascot.rs:State::Noting, Event::DropHour, asking_dismissed_by`.
 
 ### 9. The bookmark ribbon marks today
-a. A satin ribbon hangs from the top of the planner's paper at today's column. When
+a. A satin ribbon hangs from under the row of day names at today's column. When
 today is scrolled out of sight it stays at the paper's edge that today went past, the
 way a bookmark sticks out of a closed book. Pull it down past a short stretch (it
 stretches with the finger, ever stiffer) and let go, or tap it, and the paper slides

@@ -502,33 +502,34 @@ const HOUR_PX: f32 = 64.0;
 
 /// Where the bookmark ribbon hangs on the planner page (its left and top, in px from the
 /// page's top left): just inside today's column, held at the planner's visible edges
-/// when today is scrolled away, its top tucked under the top of the paper.
+/// when today is scrolled away. It hangs from under the row of day names, so it never
+/// covers one, today's or the name of the column it is held over.
 #[cfg(target_arch = "wasm32")]
 fn ribbon_spot(grid: &web_sys::HtmlDivElement) -> Option<(f64, f64)> {
-    let page = grid
-        .closest(".planner-page")
-        .ok()??
-        .get_bounding_client_rect();
+    let page_el = grid.closest(".planner-page").ok()??;
+    let page = page_el.get_bounding_client_rect();
     let paper = grid.get_bounding_client_rect();
-    let today = grid
-        .query_selector(".day[data-day='0']")
-        .ok()??
-        .get_bounding_client_rect();
-    let ribbon = grid
-        .closest(".planner-page")
-        .ok()??
+    let today_el = grid.query_selector(".day[data-day='0']").ok()??;
+    let today = today_el.get_bounding_client_rect();
+    let ribbon = page_el
         .query_selector(".bookmark-ribbon")
         .ok()??
         .get_bounding_client_rect();
-    // Today's column starts past the hours' gutter when the paper is at its left.
-    let gutter = today.left() + f64::from(grid.scroll_left()) - paper.left();
+    // The hours' column: where the first day starts with the paper scrolled to its left.
+    let hours_width = today.left() + f64::from(grid.scroll_left()) - paper.left();
     let left = crate::ribbon::hang_left(
         today.right() - page.left(),
         ribbon.width(),
-        paper.left() - page.left() + gutter,
+        paper.left() - page.left() + hours_width,
         paper.right() - page.left() - 1.5 * ribbon.width(),
     );
-    Some((left, paper.top() - page.top()))
+    // The names stick to the top of the paper as it scrolls, so their foot stays put.
+    let names_foot = today_el
+        .query_selector(".day-name")
+        .ok()
+        .flatten()
+        .map_or(paper.top(), |name| name.get_bounding_client_rect().bottom());
+    Some((left, (names_foot - page.top()).ceil()))
 }
 
 /// Calls `resized` whenever `paper` changes size, for as long as the page lives.
