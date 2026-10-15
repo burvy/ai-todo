@@ -300,7 +300,8 @@ pub fn lay(scraps: RwSignal<Vec<Scrap>>, title: String, undo: Undo, from: Option
 }
 
 /// Where the list shows row `id`, if it does.
-/// Whether the row `id` is on the page now.
+/// Whether the row `id` is on the page now. Called by the `Ripper`, which only the browser has.
+#[cfg(target_arch = "wasm32")]
 pub fn row_on_page(id: &str) -> bool {
     row_spot(id).is_some()
 }
