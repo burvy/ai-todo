@@ -29,6 +29,18 @@ pub const ASK_FOLD_MS: u32 = 180;
 /// week is drawn without it no sooner. Safe range 180 to 400: shorter and it pops,
 /// longer and the planner waits on it.
 pub const SLIP_OFF_MS: u32 = 260;
+/// How long a phone finger must hold still on a slip before it lifts onto the finger,
+/// in ms, so a plain drag still scrolls the paper (a mouse lifts at once). Safe range
+/// 150 to 500: shorter and a scroll lifts slips, longer and a lift feels stuck.
+pub const PRESS_HOLD_MS: u32 = 250;
+/// How far, in px in all, a finger that has not lifted its slip may slide and still be
+/// holding: past it the press is a scroll. Safe range 6 to 16: a resting finger on a
+/// phone shakes a few pixels.
+pub const PRESS_SLOP_PX: f64 = 10.0;
+/// How long an empty planner hour must be held before the capture box is filled with
+/// it, in ms. Safe range 450 to 900: shorter and a slow tap fills it, longer and the
+/// hold seems ignored.
+pub const LONG_PRESS_MS: u32 = 600;
 
 /// How loud the background music plays, 0 to 1. Safe range 0.05 to 0.25: the music is
 /// a bed under the cues (whose own volumes are 0.2 to 0.42), not a track to listen to.

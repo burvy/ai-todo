@@ -21,3 +21,4 @@ pub mod settings;
 pub mod store;
 pub mod task_list;
 pub mod tuning;
+pub mod week;
