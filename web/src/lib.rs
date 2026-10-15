@@ -34,6 +34,7 @@ mod placing;
 mod rambo;
 mod rip_ui;
 mod scrap;
+mod smudge;
 mod tasks;
 #[cfg(target_arch = "wasm32")]
 mod turn_util;
