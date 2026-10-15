@@ -63,14 +63,22 @@ impl Nest {
     /// landed on.
     pub(crate) fn land(&mut self, off: f64, impact: f64) {
         kick(&mut self.sag, give(impact), NEST_SAG_MAX_PX);
-        kick(&mut self.rock, off * NEST_ROCK_PER_PX * NEST_OMEGA, NEST_ROCK_MAX_DEG);
+        kick(
+            &mut self.rock,
+            off * NEST_ROCK_PER_PX * NEST_OMEGA,
+            NEST_ROCK_MAX_DEG,
+        );
     }
 
     /// A throw comes down in it at `speed` px per ms, heading `dx` across: a bigger sag
     /// the faster he comes, tipped the way he was going.
     pub(crate) fn catch(&mut self, speed: f64, dx: f64) {
         kick(&mut self.sag, give(speed * 1000.0), NEST_SAG_MAX_PX);
-        kick(&mut self.rock, dx.signum() * NEST_LEAVE_KICK, NEST_ROCK_MAX_DEG);
+        kick(
+            &mut self.rock,
+            dx.signum() * NEST_LEAVE_KICK,
+            NEST_ROCK_MAX_DEG,
+        );
     }
 
     /// He taps his nib on its rim: a small knock down, tipping it toward the page.
@@ -81,14 +89,22 @@ impl Nest {
 
     /// He bounces in it to a beat of `strength` (0 to 1).
     pub(crate) fn bounce(&mut self, strength: f64) {
-        kick(&mut self.sag, strength * crate::tuning::DANCE_BOUNCE_KICK, NEST_SAG_MAX_PX);
+        kick(
+            &mut self.sag,
+            strength * crate::tuning::DANCE_BOUNCE_KICK,
+            NEST_SAG_MAX_PX,
+        );
     }
 
     /// He leaves it heading `dx` across: it springs up as his weight goes and rocks
     /// the other way.
     pub(crate) fn leave(&mut self, dx: f64) {
         kick(&mut self.sag, -NEST_LAND_KICK * 0.5, NEST_SAG_MAX_PX);
-        kick(&mut self.rock, -dx.signum() * NEST_LEAVE_KICK, NEST_ROCK_MAX_DEG);
+        kick(
+            &mut self.rock,
+            -dx.signum() * NEST_LEAVE_KICK,
+            NEST_ROCK_MAX_DEG,
+        );
     }
 }
 

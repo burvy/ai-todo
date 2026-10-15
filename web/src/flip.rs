@@ -273,7 +273,8 @@ mod tests {
             zeta: 1.0,
         };
         let mut leaf = leaf(0.8, 0.0);
-        fall(&mut leaf, 
+        fall(
+            &mut leaf,
             0.8,
             pull,
             Some(Push {

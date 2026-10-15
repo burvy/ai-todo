@@ -84,8 +84,7 @@ impl Dance {
 
     /// Whether he has stopped swaying and hears nothing: the loop may sleep.
     pub(crate) fn still(&self) -> bool {
-        self.lean.settled(0.0, STILL, STILL * DANCE_OMEGA)
-            && self.fast < DANCE_FLOOR
+        self.lean.settled(0.0, STILL, STILL * DANCE_OMEGA) && self.fast < DANCE_FLOOR
     }
 }
 
