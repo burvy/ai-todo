@@ -16,16 +16,33 @@ use crate::tuning::{TAPE_AT_MS, TAPE_LAY_MS, TEAR_FADE_MS, TEAR_HOLD_MS};
 thread_local! {
     /// A row that has just torn out of the page, finished: where it stood. The `Ripper` takes
     /// it and opens the hole.
-    static ROW_OUT: RwSignal<Option<(String, Spot, Option<(String, f64)>)>> = RwSignal::new(None);
+    static ROW_OUT: RwSignal<Option<Departed>> = RwSignal::new(None);
     /// Whether a row's hole is open now: the rows below it wait where they were until it
     /// heals (`scrap::hold_rows`), so none slides into the hole.
     static HOLE_OPEN: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// A row that has finished: its task, where it stood, and the row above it (see
+/// [`rip::Waiting::anchor`]).
+// Only the browser's `Ripper` reads it.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+#[derive(Clone)]
+struct Departed {
+    id: String,
+    spot: Spot,
+    anchor: Option<(String, f64)>,
+}
+
 /// A row, finished, tears out of the page where it stood (`spot`, in viewport px): the hole
 /// shows the planner, Rambo tapes it, and the hole heals like any tear.
 pub(crate) fn row_out(id: &str, spot: Spot, anchor: Option<(String, f64)>) {
-    ROW_OUT.with(|row| row.set(Some((id.to_owned(), spot, anchor))));
+    ROW_OUT.with(|row| {
+        row.set(Some(Departed {
+            id: id.to_owned(),
+            spot,
+            anchor,
+        }))
+    });
 }
 
 /// Whether a row's hole is open: the rows below it hold their places until it heals.
@@ -235,7 +252,7 @@ mod imp {
             Effect::new({
                 let ripper = ripper.clone();
                 move |_| {
-                    if let Some((id, spot, anchor)) = row_out.get() {
+                    if let Some(super::Departed { id, spot, anchor }) = row_out.get() {
                         row_out.set(None);
                         ripper.tear_out(id, spot, anchor);
                     }
