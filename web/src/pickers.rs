@@ -256,7 +256,7 @@ pub fn PaperDate(
     start: Signal<NaiveDate>,
 ) -> impl IntoView {
     let open = RwSignal::new(false);
-    let scope = NodeRef::new();
+    let scope = crate::slide::arriving();
     let cursor = RwSignal::new(start.get_untracked());
     let rebuilding = RwSignal::new(false);
     // Moves the day cursor; the grid may be rebuilt under the focus, which must not

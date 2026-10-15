@@ -199,7 +199,7 @@ pub fn GearMenu(
             {move || open.get().then(|| {
                 view! {
                     <div class="gear-backdrop" on:click=close></div>
-                    <div class="gear-menu" role="menu" aria-label="Settings">
+                    <div class="gear-menu" role="menu" aria-label="Settings" node_ref=crate::slide::arriving()>
                         <h3>"Paper"</h3>
                         <div class="gear-choices" role="group" aria-label="Theme">
                             <For each=|| [Theme::Light, Theme::Dark] key=|t| *t let:theme>

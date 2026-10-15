@@ -334,6 +334,7 @@ pub fn WeekGrid(
                                     {move || view! {
                                             <div
                                                 class="landing"
+                                                node_ref=crate::slide::arriving()
                                                 style=move || {
                                                     let Some(slot) = landing.get() else {
                                                         return "top: 0px; height: 0px;".to_owned();

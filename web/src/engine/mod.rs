@@ -101,20 +101,9 @@ mod tests {
     ];
 
     /// Keyframes that still move a position, size or rotation, which rule 4 forbids: each
-    /// goes when its mover joins the world (Rambo's sway, the strips' bin, the planner's
-    /// slip-off, the page's arrivals). Delete a name here as its keyframes are deleted.
-    const OWED_KEYFRAMES: [&str; 10] = [
-        "bin-crumple",
-        "landing-unfold",
-        "paper-page-in",
-        "rambo-breathe",
-        "rambo-grumble",
-        "row-fall",
-        "row-make-room",
-        "slip-off",
-        "unfold-across",
-        "unfold-down",
-    ];
+    /// goes when its mover joins the world (Rambo's breathing and grumbling, the planner's
+    /// slip-off). Delete a name here as its keyframes are deleted.
+    const OWED_KEYFRAMES: [&str; 3] = ["rambo-breathe", "rambo-grumble", "slip-off"];
 
     #[test]
     fn css_keyframes_are_only_drawings_or_owed_to_the_world() {

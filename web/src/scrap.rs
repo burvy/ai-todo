@@ -457,6 +457,40 @@ fn carry_row(row: &web_sys::HtmlElement, id: &str, (dx, dy): (f64, f64)) {
     );
 }
 
+/// How far a strip let go over the bin has crumpled and dropped, `elapsed_ms` into its
+/// `total_ms`: the share of the crumple, and the share of the fall, which is that squared
+/// so it speeds up as a falling thing does.
+fn crumple_at(elapsed_ms: f64, total_ms: f64) -> (f64, f64) {
+    let share = (elapsed_ms / total_ms).clamp(0.0, 1.0);
+    (share, share * share)
+}
+
+/// A strip let go over the bin crumples and drops away for `BIN_CRUMPLE_MS`, then `done`
+/// (the delete waits for it). The page writes `--crumple` and `--fall`; the style sheet
+/// turns them into the squash, twist and drop. With reduced motion it is done at once.
+fn crumple(strip: &web_sys::HtmlElement, done: impl FnOnce() + 'static) {
+    if crate::mascot::prefers_reduced_motion() {
+        done();
+        return;
+    }
+    let style = strip.style();
+    let (started, mut done) = (std::cell::Cell::new(None::<f64>), Some(done));
+    crate::engine::on_tick(move |tick| {
+        let start = started.get().unwrap_or(tick.now);
+        started.set(Some(start));
+        let (crumpled, fallen) = crumple_at(tick.now - start, BIN_CRUMPLE_MS as f64);
+        let _ = style.set_property("--crumple", &format!("{crumpled:.4}"));
+        let _ = style.set_property("--fall", &format!("{fallen:.4}"));
+        if crumpled < 1.0 {
+            return crate::engine::Flow::Go;
+        }
+        if let Some(done) = done.take() {
+            done();
+        }
+        crate::engine::Flow::Stop
+    });
+}
+
 /// Slide a scrap whose time is up off the page's right edge, turning as it goes, on a
 /// spring (`engine::glide_keyed`). With reduced motion it only waits to be removed.
 fn slide_off(strip: &web_sys::HtmlElement, ticket: u32) {
@@ -688,7 +722,6 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
             class="scrap-pile"
             style:--strip-h=format!("{STRIP_H_PX}px")
             style:--strip-gap=format!("{STRIP_GAP_PX}px")
-            style:--bin-crumple-ms=format!("{BIN_CRUMPLE_MS}ms")
             style:--pin-room=format!("{PIN_ROOM_PX}px")
             style:--edge-px=format!("{PIN_EDGE_PX}px")
             style:--stack-h=format!("{}px", STRIP_H_PX + PIN_EDGE_PX * PIN_EDGES as f64)
@@ -794,11 +827,17 @@ pub fn ScrapCorner(snapshot: ReadSignal<Snapshot>, scraps: RwSignal<Vec<Scrap>>)
                                 if binned.get_untracked() {
                                     crate::sound::play(crate::sound::Cue::Crumple);
                                     let id = task_id.get_value();
-                                    crate::engine::after(BIN_CRUMPLE_MS as f64, move || {
+                                    let Some(strip) = hung_ref.get_untracked() else { return };
+                                    crumple(&strip, move || {
                                         wasm_bindgen_futures::spawn_local(async move {
                                             // Refused: the scrap comes back off the bin.
                                             if store.send(Command::DeleteTask(id)).await.is_none() {
                                                 binned.set(false);
+                                                if let Some(strip) = hung_ref.get_untracked() {
+                                                    let style = web_sys::HtmlElement::style(&strip);
+                                                    let _ = style.remove_property("--crumple");
+                                                    let _ = style.remove_property("--fall");
+                                                }
                                                 swing_home(&task_id.get_value().0, offset, homing);
                                             }
                                         });
@@ -917,6 +956,18 @@ mod tests {
 
     /// A tick that went through leaves the row's departure for its strip, which mounts
     /// after the tick returns; one no strip will take is dropped.
+    #[test]
+    fn a_crumple_runs_its_time_and_the_fall_speeds_up() {
+        assert_eq!(crumple_at(0.0, 360.0), (0.0, 0.0));
+        assert_eq!(crumple_at(360.0, 360.0), (1.0, 1.0));
+        assert_eq!(crumple_at(900.0, 360.0), (1.0, 1.0), "it stays done");
+        let (half, fall) = crumple_at(180.0, 360.0);
+        assert!(
+            (half - 0.5).abs() < 1e-9 && (fall - 0.25).abs() < 1e-9,
+            "a quarter of the drop at half the time"
+        );
+    }
+
     #[test]
     fn a_done_rows_departure_waits_for_its_strip_unless_the_tick_was_refused() {
         let mut snapshot = api::fixture_snapshot();

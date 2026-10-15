@@ -643,6 +643,7 @@ pub(crate) fn TaskList(
                         view! {
                     <li
                         class="task-row"
+                        node_ref=crate::slide::arriving()
                         class:pen-pending=queued
                         data-id={render_task_id_attr}
                         data-title={render_task_title.clone()}
@@ -696,7 +697,7 @@ pub(crate) fn TaskList(
                                     (!time.is_empty()).then(|| view! { <span class="task-time">" · " {time}</span> })
                                 }}
                             </span>
-                            {is_overdue(&task).then(|| view! { <span class="overdue">"Overdue"</span> })}
+                            {is_overdue(&task).then(|| view! { <span class="overdue" node_ref=crate::slide::arriving()>"Overdue"</span> })}
                         </span>
                         {(!is_occurrence).then(|| view! {
                             <button
