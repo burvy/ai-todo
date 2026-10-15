@@ -199,6 +199,32 @@ pub(crate) struct Rambo {
     fell: Option<Vec2>,
 }
 
+/// What the paper he lies on does to him when it moves: he stays (he is not on it), rides
+/// along by how far it moved, or is flung at its speed in px per ms.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum Swept {
+    Stays,
+    Carried(Vec2),
+    Flung(Vec2),
+}
+
+/// The page under him moved `delta` px on screen in `dt_ms` (Interview 1 item 2). Lying
+/// on it, he holds on by friction: up to [`tuning::SWEEP_GRIP_PX_MS`] he rides along,
+/// keeping his place on the paper; faster he slips and is flung with the paper's
+/// speed, and the throw does the rest (an edge he hits hard enough smacks him). With
+/// reduced motion he only ever rides along.
+pub(crate) fn swept(state: &State, delta: Vec2, dt_ms: f64, reduced_motion: bool) -> Swept {
+    if !mascot::lies_on_page(state) {
+        return Swept::Stays;
+    }
+    let vel = (delta.0 / dt_ms, delta.1 / dt_ms);
+    let slips = dt_ms > 0.0 && vel.0.hypot(vel.1) > tuning::SWEEP_GRIP_PX_MS;
+    match slips && !reduced_motion {
+        true => Swept::Flung(vel),
+        false => Swept::Carried(delta),
+    }
+}
+
 /// Everything the engine moves. Today that is Rambo; the nest, ink and the turn join it
 /// in later steps.
 #[derive(Clone, Debug, PartialEq)]
@@ -627,6 +653,108 @@ mod tests {
     /// Steps for `ms` of world time.
     fn steps(ms: f64) -> u32 {
         (ms / STEP_MS).ceil() as u32
+    }
+
+    /// A small seeded generator in -1..1, so the property runs are the same every time.
+    struct Seeded(u64);
+
+    impl Seeded {
+        fn unit(&mut self) -> f64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            ((self.0 >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0
+        }
+    }
+
+    #[test]
+    fn the_paper_he_lies_on_carries_him_slowly_and_flings_him_fast() {
+        let lying = [
+            State::Dazed,
+            State::Asking {
+                task_id: "t1".into(),
+                title: "Lab report".into(),
+            },
+        ];
+        let elsewhere = [
+            State::Home,
+            State::Dragging,
+            State::Thrown,
+            State::Splatting,
+            State::Skittering,
+            State::Inking,
+            State::Flying,
+            State::WritingRow,
+            State::Covered,
+        ];
+        let mut seeded = Seeded(12);
+        for _ in 0..500 {
+            let delta = (seeded.unit() * 80.0, seeded.unit() * 80.0);
+            let dt_ms = 1.0 + seeded.unit().abs() * 100.0;
+            let speed = delta.0.hypot(delta.1) / dt_ms;
+            for state in &elsewhere {
+                assert_eq!(swept(state, delta, dt_ms, false), Swept::Stays, "{state:?}");
+            }
+            for state in &lying {
+                match swept(state, delta, dt_ms, false) {
+                    // Holding on, he keeps his place on the paper exactly.
+                    Swept::Carried(moved) => {
+                        assert_eq!(moved, delta);
+                        assert!(speed <= tuning::SWEEP_GRIP_PX_MS);
+                    }
+                    // Slipping, he goes the paper's way at its speed.
+                    Swept::Flung(vel) => {
+                        assert!(speed > tuning::SWEEP_GRIP_PX_MS);
+                        assert!((vel.0 * dt_ms - delta.0).abs() < 1e-9);
+                        assert!((vel.1 * dt_ms - delta.1).abs() < 1e-9);
+                    }
+                    Swept::Stays => panic!("{state:?} lies on the page"),
+                }
+                assert_eq!(
+                    swept(state, delta, dt_ms, true),
+                    Swept::Carried(delta),
+                    "with reduced motion he only rides along"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_page_scrolled_hard_under_him_smacks_him_into_the_edge_and_a_gentler_one_does_not() {
+        let fling = |vel: Vec2| {
+            let at = (200.0, 500.0);
+            let mut world = dropped_at(at);
+            world.take_ink();
+            let Swept::Flung(vel) = swept(
+                &world.rambo.brain,
+                (vel.0 * 16.0, vel.1 * 16.0),
+                16.0,
+                false,
+            ) else {
+                panic!("{vel:?} is past his grip");
+            };
+            world.throw(vel);
+            world.tell(Event::Swept);
+            assert_eq!(world.rambo.brain, State::Thrown);
+            let mut seen = vec![world.rambo.brain.clone()];
+            for _ in 0..steps(3000.0) {
+                world.advance(1, &anchors(at));
+                if seen.last() != Some(&world.rambo.brain) {
+                    seen.push(world.rambo.brain.clone());
+                }
+            }
+            (seen, world.take_ink())
+        };
+        // Scrolled up hard, the paper flings him into the top of the screen.
+        let (seen, ink) = fling((0.0, -3.0));
+        assert!(seen.contains(&State::Splatting), "{seen:?}");
+        assert!(!ink.is_empty(), "the smack splats ink");
+        // A little past his grip, he slides, stops short of the edge and hops home.
+        let (seen, ink) = fling((0.0, -0.9));
+        assert!(!seen.contains(&State::Splatting), "{seen:?}");
+        assert_eq!(seen.last(), Some(&State::Home));
+        assert_eq!(ink, Vec::new());
     }
 
     /// Dazed at `spot`, as a smack or a writing drag that ends there leaves him.

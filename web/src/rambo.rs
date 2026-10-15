@@ -175,6 +175,7 @@ pub(crate) fn Rambo(
     let rim_ref = NodeRef::<leptos::html::Span>::new();
     let ticking = std::rc::Rc::new(std::cell::Cell::new(false));
     let thrower = world.clone();
+    let sweeper = world.clone();
     let wake = move || {
         if ticking.replace(true) {
             return;
@@ -279,6 +280,25 @@ pub(crate) fn Rambo(
         };
         set_state.set(mascot::transition(&before, event));
     };
+    // The paper he lies on drags him as it scrolls (Interview 1 item 2): slowly he rides
+    // along on it; faster than he can hold on, he is flung with it, and the throw does
+    // the rest (`engine::swept`).
+    on_paper_scrolled(move |scroller, delta, dt_ms| {
+        let before = state.get_untracked();
+        if !on_paper(scroller.as_ref(), shown.get_untracked()) {
+            return;
+        }
+        match crate::engine::swept(&before, delta, dt_ms, mascot::prefers_reduced_motion()) {
+            crate::engine::Swept::Stays => {}
+            crate::engine::Swept::Carried(moved) => {
+                pen_pos.update(|spot| *spot = (spot.0 + moved.0, spot.1 + moved.1));
+            }
+            crate::engine::Swept::Flung(vel) => {
+                sweeper.borrow_mut().throw(vel);
+                set_state.set(mascot::transition(&before, mascot::Event::Swept));
+            }
+        }
+    });
     // How far below his middle the nib is, measured when he is picked up.
     let nib_below = std::rc::Rc::new(std::cell::Cell::new(0.0_f64));
 
@@ -1297,6 +1317,57 @@ fn on_page_moved(moved: impl Fn() + Copy + 'static) {
         crate::tasks::write::wait_for_fonts().await;
         moved();
     });
+}
+
+/// Calls `moved(scroller, delta, dt_ms)` whenever a page scrolls: `delta` is how far its
+/// paper moved on screen (against the scroll) since that scroller's last scroll event,
+/// and `dt_ms` how long that took. The scroller is `None` for the window.
+fn on_paper_scrolled(moved: impl Fn(Option<web_sys::Element>, (f64, f64), f64) + 'static) {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    type Seen = (Option<web_sys::Element>, f64, f64, f64);
+    let last = std::cell::RefCell::new(None::<Seen>);
+    let listener = Closure::<dyn Fn(web_sys::Event)>::new(move |ev: web_sys::Event| {
+        let scroller = ev
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Element>().ok());
+        let (left, top) = match &scroller {
+            Some(el) => (f64::from(el.scroll_left()), f64::from(el.scroll_top())),
+            None => web_sys::window().map_or((0.0, 0.0), |w| {
+                (w.scroll_x().unwrap_or(0.0), w.scroll_y().unwrap_or(0.0))
+            }),
+        };
+        let at = ev.time_stamp();
+        let seen = last.replace(Some((scroller.clone(), left, top, at)));
+        if let Some((was, was_left, was_top, was_at)) = seen
+            && was == scroller
+        {
+            moved(scroller, (was_left - left, was_top - top), at - was_at);
+        }
+    });
+    // Scroll does not bubble; the capture phase hears every scroller.
+    let _ = window.add_event_listener_with_callback_and_bool(
+        "scroll",
+        listener.as_ref().unchecked_ref(),
+        true,
+    );
+    // Rambo lives as long as the page, and so does his listener.
+    listener.forget();
+}
+
+/// Whether he lies on the paper of `scroller` (the window's when `None`) at `at`: the
+/// first thing under him that is not him is inside it.
+fn on_paper(scroller: Option<&web_sys::Element>, at: (f64, f64)) -> bool {
+    let Some(scroller) = scroller else {
+        return true;
+    };
+    document()
+        .elements_from_point(at.0 as f32, at.1 as f32)
+        .iter()
+        .filter_map(|node| node.dyn_into::<web_sys::Element>().ok())
+        .find(|el| el.closest(".rambo").ok().flatten().is_none())
+        .is_some_and(|el| scroller.contains(Some(&el)))
 }
 
 /// A finger on the page while he is dazed, watched to see whether it holds.

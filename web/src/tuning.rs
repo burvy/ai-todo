@@ -369,6 +369,11 @@ pub const FLING_REST_SPEED: f64 = 0.03;
 /// How fast he must hit an edge to splat, and only then is he dazed. Safe range 0.8 to
 /// 2.5: lower and every bounce dazes him, higher and only a wild flick does.
 pub const FLING_SPLAT_SPEED: f64 = 1.2;
+/// How fast the paper he lies on may move, in px per ms, before he loses his grip on it:
+/// slower, he rides along on the scrolling page; faster, he is flung with it, as a throw
+/// at the paper's speed (Interview 1 item 2). Safe range 0.4 to 1.5: lower, an ordinary
+/// scroll sweeps him off; higher, only the wildest flick of the page ever does.
+pub const SWEEP_GRIP_PX_MS: f64 = 0.8;
 /// The strokes in a splat, and how far the longest reaches at the least splatting
 /// speed, in px (a harder hit reaches up to twice as far). Safe ranges 4 to 12 and 12
 /// to 48.
