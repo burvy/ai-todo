@@ -447,7 +447,7 @@ fn long_press_start(
             return;
         };
         let _ = cell.set_attribute("data-press", "armed");
-        gloo_timers::callback::Timeout::new(LONG_PRESS_MS, move || {
+        crate::engine::after(f64::from(LONG_PRESS_MS), move || {
             use wasm_bindgen::JsCast;
             let armed = cell.get_attribute("data-press").as_deref() == Some("armed");
             let _ = cell.remove_attribute("data-press");
@@ -464,8 +464,7 @@ fn long_press_start(
             {
                 let _ = input.focus();
             }
-        })
-        .forget();
+        });
     }
 }
 
@@ -634,7 +633,7 @@ fn current_minutes() -> u16 {
 #[cfg(target_arch = "wasm32")]
 struct Press {
     /// The hold that will lift the slip; taken and cancelled on a real slide.
-    lift: Option<gloo_timers::callback::Timeout>,
+    lift: Option<crate::engine::Guard>,
     /// Total distance the finger has slid since it went down, in pixels.
     slide: f64,
     /// Where the finger was last seen, client coordinates.
@@ -760,10 +759,12 @@ fn PlacementBlock(
             let hold = {
                 let press = press.clone();
                 let lift = lift.clone();
-                gloo_timers::callback::Timeout::new(PRESS_HOLD_MS, move || {
+                let mut hold = crate::engine::Guard::default();
+                hold.keep(crate::engine::after(f64::from(PRESS_HOLD_MS), move || {
                     press.borrow_mut().take();
                     lift(x, y, grab);
-                })
+                }));
+                hold
             };
             if let Some(p) = press.borrow_mut().as_mut() {
                 p.lift = Some(hold);
@@ -1105,7 +1106,7 @@ pub(crate) fn take_off(id: &TaskId, snapshot: ReadSignal<Snapshot>, store: Store
     let id = id.clone();
     wasm_bindgen_futures::spawn_local(async move {
         // The slips finish sliding out before the store shows the week without them.
-        gloo_timers::future::TimeoutFuture::new(crate::tuning::SLIP_OFF_MS).await;
+        crate::engine::wait(f64::from(crate::tuning::SLIP_OFF_MS)).await;
         let body = crate::api::PatchTaskBody::new()
             .off_planner(true)
             .updated_at(updated_at);
