@@ -1383,15 +1383,23 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   cursor: pointer;
 }
 
-/* On a phone the capture bar is at the foot, so the lamp stands just above it, at the
-   right, clear of the page note. */
+/* On a phone the lamp stands in the capture bar's left end, its base on the bar like
+   the desk's on the screen's edge, and the bar keeps clear of it: its left padding is the
+   lamp's width, so no page column is under the lamp on either page and the + and the box
+   sit to its right. It rides up with the bar over the keyboard. */
 @media (max-width: 700px) {
+  :root {
+    --lamp-w: 40px;
+    --lamp-h: 56px;
+  }
+
   .desk-lamp {
-    left: auto;
-    right: var(--space-2);
-    --lamp-bottom: calc(var(--capture-clear) + var(--space-1));
-    --lamp-w: 44px;
-    --lamp-h: 62px;
+    left: var(--gutter);
+    bottom: calc(var(--keyboard-inset, 0px) + var(--space-2) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .capture {
+    padding-left: calc(var(--gutter) + var(--lamp-w) + var(--space-2));
   }
 }
 

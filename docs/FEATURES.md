@@ -366,15 +366,16 @@ c. Code: `web/theme.css` (`:root` and `:root[data-theme="dark"]`);
 
 ### 5a. The desk lamp
 a. A small desk lamp is the dark-mode switch. Tapping it pulls its cord: a sheet of the
-other paper is laid down from the top edge over the page, the page's own paper is swapped
-under it, and the sheet is taken away on the next frame. The page is swapped out; nothing
-fades. The lamp is dark by day and lit by night (by night its light falls on the corner of
-the page), and its own light changes at the tap. The gear menu's Light and Dark choices
-use the same switch, so there is one behaviour; only with reduced motion does the paper
-change at once. It is the same stored Theme setting as ever, and the page still never
-follows the OS. On a desk the lamp stands on the bottom edge of the screen in the bottom
-left corner, clear of the capture box and the gear; on a phone it stands at the foot, just
-above the capture bar.
+other paper is laid down from the top edge over the whole desk (Rambo and his nest too), the
+page's own paper is swapped under it, and the sheet lifts back off the way it came. The page
+is swapped out; nothing fades. The lamp is dark by day and lit by night (by night its light
+falls on the corner of the page), and its own light changes at the tap. The gear menu's
+Light and Dark choices use the same switch, so there is one behaviour, and the menu closes
+on the pick; only with reduced motion does the paper change at once. It is the same stored
+Theme setting as ever, and the page still never follows the OS. On a desk the lamp stands on
+the bottom edge of the screen in the bottom left corner, clear of the capture box and the
+gear; on a phone it stands in the left end of the capture bar (the bar keeps clear of it, and
+it rides up with the bar over the keyboard), so no page is under it.
 b. Tap the lamp (or pick Light or Dark in the gear menu) and watch the new paper slide
 down; reload and see the choice kept.
 c. Code: `web/src/lamp.rs:DeskLamp, switch_to`; `web/theme.css` (`.desk-lamp`,
