@@ -1106,7 +1106,9 @@ pub(crate) fn stretch(
                 // microtask, so the ease queued after it lands before the next paint:
                 // a frame later, the new slip would show once at its planned height.
                 #[cfg(target_arch = "wasm32")]
-                let reached = slips_of(&id).first().map(|slip| slip.offset_height());
+                let reached = slips_of(&id)
+                    .first()
+                    .map(|slip| slip.get_bounding_client_rect().height());
                 set_snapshot.set(new_snapshot);
                 #[cfg(target_arch = "wasm32")]
                 if let Some(reached) = reached {
@@ -1136,7 +1138,7 @@ fn slips_of(id: &TaskId) -> Vec<web_sys::HtmlElement> {
 fn resize_slip(id: &TaskId, from: u16, to: u16) {
     let px = (f32::from(to) - f32::from(from)) / 60.0 * HOUR_PX;
     for slip in slips_of(id) {
-        let height = slip.offset_height() as f32 + px;
+        let height = slip.get_bounding_client_rect().height() as f32 + px;
         let _ = slip
             .style()
             .set_property("height", &format!("{:.1}px", height.max(0.0)));
@@ -1146,14 +1148,14 @@ fn resize_slip(id: &TaskId, from: u16, to: u16) {
 /// Eases task `id`'s newly drawn slip from `reached` px to the height the plan gives it
 /// (the slip's height transition).
 #[cfg(target_arch = "wasm32")]
-fn ease_slip_from(id: &TaskId, reached: i32) {
+fn ease_slip_from(id: &TaskId, reached: f64) {
     for slip in slips_of(id) {
         let style = slip.style();
         let Ok(planned) = style.get_property_value("height") else {
             continue;
         };
         let _ = style.set_property("transition", "none");
-        let _ = style.set_property("height", &format!("{reached}px"));
+        let _ = style.set_property("height", &format!("{reached:.2}px"));
         // Lay it out at the height reached before it eases on.
         let _ = slip.offset_height();
         let _ = style.remove_property("transition");
