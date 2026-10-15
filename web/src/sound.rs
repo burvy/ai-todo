@@ -86,7 +86,9 @@ pub fn for_change(was: &State, now: &State) -> Option<Cue> {
     match (was, now) {
         (State::Thrown, State::Thrown) => None,
         (_, State::Thrown) => Some(Cue::Toss),
-        (State::Dragging, State::Home | State::Asking { .. } | State::Noting) => Some(Cue::Drop),
+        (State::Dragging, State::Home | State::Asking { .. } | State::Noting { .. }) => {
+            Some(Cue::Drop)
+        }
         _ => None,
     }
 }
@@ -307,7 +309,13 @@ mod tests {
         }
         assert_eq!(for_change(&State::Thrown, &State::Thrown), None);
         // Let go: in the nest or on the page, on a task, on an hour.
-        for now in [State::Home, asking.clone(), State::Noting] {
+        let noting = State::Noting {
+            at: crate::mascot::NotedHour {
+                phrase: "today 11:15".into(),
+                at: chrono::DateTime::UNIX_EPOCH,
+            },
+        };
+        for now in [State::Home, asking.clone(), noting] {
             assert_eq!(
                 for_change(&State::Dragging, &now),
                 Some(Cue::Drop),
