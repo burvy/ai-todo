@@ -23,6 +23,25 @@ pub type Pt = (f64, f64);
 pub struct Waiting {
     pub id: String,
     pub place: Rect,
+    /// The row that stood above it when it finished, and how far below that row's top it
+    /// stood: the place is measured from it again at the row's turn, so a row added or
+    /// removed above does not shift the hole.
+    pub anchor: Option<(String, f64)>,
+}
+
+impl Waiting {
+    /// Its place now, given where its anchor's top is now in the page's coordinates (`None`
+    /// when the anchor is not on the page: the place noted stands).
+    pub fn place_now(&self, anchor_top: Option<f64>) -> Rect {
+        let (left, top, right, bottom) = self.place;
+        match (&self.anchor, anchor_top) {
+            (Some((_, offset)), Some(anchor_top)) => {
+                let top_now = anchor_top + offset;
+                (left, top_now, right, top_now + (bottom - top))
+            }
+            _ => self.place,
+        }
+    }
 }
 
 /// The rows that finished while a tear lasted, in the order they did. Each opens its hole
@@ -40,11 +59,11 @@ impl HoleQueue {
         true
     }
 
-    /// The next row whose hole is still due, the ones before it that `back` says are on the
-    /// page again (undone, refused) dropped.
-    pub fn next_due(&mut self, back: impl Fn(&str) -> bool) -> Option<Waiting> {
+    /// The next row whose hole is still due (`is_due` says so: its task is still done and it
+    /// has not come back to the list), the ones before it that are not dropped.
+    pub fn next_due(&mut self, is_due: impl Fn(&str) -> bool) -> Option<Waiting> {
         while let Some(waiting) = self.0.pop_front() {
-            if !back(&waiting.id) {
+            if is_due(&waiting.id) {
                 return Some(waiting);
             }
         }
@@ -447,6 +466,7 @@ mod tests {
         Waiting {
             id: id.to_owned(),
             place: (10.0, top, 300.0, top + 48.0),
+            anchor: None,
         }
     }
 
@@ -461,7 +481,7 @@ mod tests {
             "beyond the cap the row just leaves"
         );
         assert_eq!(queue.len(), RIP_MAX_WAITING_HOLES);
-        let first = queue.next_due(|_| false).expect("one waits");
+        let first = queue.next_due(|_| true).expect("one waits");
         assert_eq!(first.id, "t0");
         assert_eq!(first.place.1, 0.0, "it keeps the place it stood");
         // A place freed lets the next one in.
@@ -474,13 +494,26 @@ mod tests {
         queue.push(waiting("undone", 0.0));
         queue.push(waiting("done", 100.0));
         let due = queue
-            .next_due(|id| id == "undone")
+            .next_due(|id| id != "undone")
             .expect("the second is due");
         assert_eq!(due.id, "done");
         assert!(queue.is_empty());
         // Nobody due: nothing comes out.
         queue.push(waiting("gone", 0.0));
-        assert_eq!(queue.next_due(|_| true), None);
+        assert_eq!(queue.next_due(|_| false), None);
+    }
+
+    #[test]
+    fn a_waiting_hole_is_measured_again_from_the_row_above() {
+        let mut waiting = waiting("row", 200.0); // 48 px tall, top 200
+        // No anchor: the place noted stands.
+        assert_eq!(waiting.place_now(Some(500.0)), waiting.place);
+        // Anchored 60 px below the row above, which was at 140 and is now at 90 (a row
+        // above it was removed): the hole follows it.
+        waiting.anchor = Some(("above".to_owned(), 60.0));
+        assert_eq!(waiting.place_now(Some(90.0)), (10.0, 150.0, 300.0, 198.0));
+        // The anchor is gone: the place noted stands.
+        assert_eq!(waiting.place_now(None), waiting.place);
     }
 
     #[test]
@@ -490,7 +523,7 @@ mod tests {
         queue.push(waiting("b", 100.0));
         queue.clear();
         assert!(queue.is_empty());
-        assert_eq!(queue.next_due(|_| false), None);
+        assert_eq!(queue.next_due(|_| true), None);
     }
 
     use super::*;

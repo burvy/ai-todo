@@ -66,7 +66,7 @@ pub fn note_departure(id: &str) {
     if let Some(spot) = row_spot(id) {
         DEPARTURES.with(|noted| noted.borrow_mut().insert(id.to_owned(), spot));
         // The row tears out of the page: a hole shows the planner, and Rambo tapes it.
-        crate::rip_ui::row_out(id, spot);
+        crate::rip_ui::row_out(id, spot, row_anchor(id));
     }
 }
 
@@ -304,6 +304,26 @@ pub fn lay(scraps: RwSignal<Vec<Scrap>>, title: String, undo: Undo, from: Option
 #[cfg(target_arch = "wasm32")]
 pub fn row_on_page(id: &str) -> bool {
     row_spot(id).is_some()
+}
+
+/// Where the top of the row `id` is now, in viewport px.
+#[cfg(target_arch = "wasm32")]
+pub fn row_top_in_view(id: &str) -> Option<f64> {
+    row_spot(id).map(|spot| spot.y)
+}
+
+/// The row standing above the row `id`, and how far below its top `id` stands: what a hole
+/// that waits measures its place from again.
+fn row_anchor(id: &str) -> Option<(String, f64)> {
+    let row = web_sys::window()?
+        .document()?
+        .query_selector(&format!("li[data-id=\"{id}\"]"))
+        .ok()??;
+    let above = row.previous_element_sibling()?;
+    Some((
+        above.get_attribute("data-id")?,
+        row.get_bounding_client_rect().top() - above.get_bounding_client_rect().top(),
+    ))
 }
 
 fn row_spot(id: &str) -> Option<Spot> {
