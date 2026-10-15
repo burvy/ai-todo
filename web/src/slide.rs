@@ -1,6 +1,7 @@
-//! Paper sliding in the planner and the edit sheet: the ribbon's head hopping to another
-//! day, a stretched slip, a let-go slip's ghost, the placing note and the sheet coming
-//! into sight and leaving it.
+//! Paper sliding in the planner, the edit sheet and Rambo's ask: the ribbon's head hopping
+//! to another day, a stretched slip, a let-go slip's ghost, the placing note and the sheet
+//! coming into sight and leaving it, and the ask bubble growing out of him and folding back
+//! in.
 //! The engine runs it on one spring (`tuning::PAPER_SLIDE_OMEGA`); with reduced motion
 //! the paper is where it is going at once.
 

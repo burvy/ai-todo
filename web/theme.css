@@ -1316,33 +1316,19 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   box-shadow: var(--shadow);
   pointer-events: auto;
   /* It comes out of him and goes back into him, never fading (Interview 4, item 12):
-     tucked, it is small, behind him and moved to his middle (--ask-tuck); it grows
-     out to its place when he asks, and folds back in over --ask-fold-ms once he has
-     his answer, before it is taken away. */
+     --open (rambo.rs, glided by the engine) runs from 0, small and moved to his middle
+     (--ask-tuck), to 1, at its place. It grows out when he asks and folds back in once
+     he has his answer, before it is taken away. */
   --ask-tuck: calc(var(--space-1) + var(--space-2) + var(--ask-below-by, 0px) / 2);
-  transition:
-    scale var(--ask-fold-ms) var(--arrive-ease),
-    translate var(--ask-fold-ms) var(--arrive-ease),
-    z-index var(--ask-fold-ms) step-end;
+  scale: calc(0.25 + 0.75 * var(--open, 1));
+  translate: 0 calc((1 - var(--open, 1)) * var(--ask-tuck));
 }
 
+/* On its way out of him, and folding back in, it is behind him and takes no touch. */
 .ask.tucked,
 .ask.folding {
-  scale: 0.25;
-  translate: 0 var(--ask-tuck);
   z-index: var(--layer-behind);
   pointer-events: none;
-}
-
-.ask.tucked {
-  transition: none;
-}
-
-.ask.folding {
-  transition:
-    scale var(--ask-fold-ms) var(--leave-ease),
-    translate var(--ask-fold-ms) var(--leave-ease),
-    z-index var(--ask-fold-ms) step-start;
 }
 
 /* The status line sits above him, so below him is past his own height
@@ -1354,9 +1340,8 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
 }
 
 /* Below him, he is above it: tucked means moved up into him. */
-.ask.below.tucked,
-.ask.below.folding {
-  translate: 0 calc(-1 * var(--ask-tuck));
+.ask.below {
+  translate: 0 calc((var(--open, 1) - 1) * var(--ask-tuck));
 }
 
 .ask-question {
@@ -1397,7 +1382,6 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
     0% 70%, 2% 38%
   );
   rotate: -1.5deg;
-  transition: scale var(--dur-fast) var(--arrive-ease);
 }
 
 .ask-choice:nth-child(2) {
@@ -1429,13 +1413,6 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   box-shadow: var(--pressed);
   text-decoration: underline wavy var(--ink-soft) 1px;
   text-underline-offset: 0.2em;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .ask,
-  .ask-choice {
-    transition: none;
-  }
 }
 
 /* --- Week planner: days scroll inside their own box, never the page --- */
