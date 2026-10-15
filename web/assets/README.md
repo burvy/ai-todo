@@ -89,8 +89,8 @@ three weights (ballpoint / fountain / marker tool writing). Paste-ready
 
 Mono 44.1 kHz MP3, 0.12–0.98 s, 2–13 KB each, peak-normalized quiet (−10 to
 −14 dBFS). Sources and licences: `CREDITS.md`. Per
-`docs/DESIGN-DIRECTION.md` sounds are **on by default**, gentle; the mute
-toggle lives in the gear menu (wired in the app, not in these files).
+`docs/DESIGN-DIRECTION.md` sounds are **on by default**, gentle; which ones play is the
+gear menu's Sound preset (see `sounds/ABOUT.md`; wired in the app, not in these files).
 
 | File | Plays when |
 |---|---|
