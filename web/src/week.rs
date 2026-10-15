@@ -57,9 +57,27 @@ pub fn WeekGrid(
     mascot_state: ReadSignal<crate::mascot::State>,
     /// Turn to the list's page: what the note at this page's foot does.
     turn_back: std::rc::Rc<dyn Fn()>,
-    /// A task Rambo was asked to move: it waits for a tap on an hour.
-    move_request: RwSignal<Option<TaskId>>,
+    /// Turn to this page: where a task asked to move waits.
+    turn_here: std::rc::Rc<dyn Fn()>,
+    /// The page shown: 0 the list, 1 this planner.
+    pane: ReadSignal<u8>,
 ) -> impl IntoView {
+    // A task Rambo was asked to move (`Event::MoveAsked`): it waits for a tap on an hour.
+    // The page turns here when one is asked, and nothing waits once it turns back.
+    let waiting = RwSignal::new(None::<TaskId>);
+    let events = expect_context::<crate::events::Queue>();
+    Effect::new(move |_| {
+        events.track();
+        if let Some(id) = events.take_all(rambl_web_core::events::move_asked).pop() {
+            waiting.set(Some(TaskId(id)));
+            turn_here();
+        }
+    });
+    Effect::new(move |_| {
+        if pane.get() == 0 {
+            waiting.set(None);
+        }
+    });
     let grid_ref = NodeRef::<leptos::html::Div>::new();
     #[cfg(target_arch = "wasm32")]
     let store = expect_context::<Store>();
@@ -228,10 +246,10 @@ pub fn WeekGrid(
     };
     // The waiting task lands where it is told, and the planner stops waiting.
     let place = Callback::new(move |slot: Slot| {
-        let Some(id) = move_request.get_untracked() else {
+        let Some(id) = waiting.get_untracked() else {
             return;
         };
-        move_request.set(None);
+        waiting.set(None);
         landing.set(None);
         #[cfg(target_arch = "wasm32")]
         place_at(&id, slot, snapshot, store);
@@ -241,7 +259,7 @@ pub fn WeekGrid(
     // While a task waits, the hour under the pointer is where a tap puts it: outlined
     // under a mouse, placed on the tap. A held slip keeps its own outline.
     let waiting_slot = move |ev: &leptos::ev::PointerEvent| {
-        if move_request.with_untracked(Option::is_none) || drag.with_untracked(Option::is_some) {
+        if waiting.with_untracked(Option::is_none) || drag.with_untracked(Option::is_some) {
             return None;
         }
         #[cfg(target_arch = "wasm32")]
@@ -267,7 +285,7 @@ pub fn WeekGrid(
                 <crate::settings::GearMenu settings set_settings set_snapshot set_error />
             </div>
             <crate::PageFoot page=1 turn=turn_back />
-            <crate::placing::PlacingNote snapshot settings move_request place />
+            <crate::placing::PlacingNote snapshot settings to_place=waiting place />
             <crate::ribbon::Ribbon
                 left=ribbon_left
                 top=ribbon_top
@@ -292,7 +310,7 @@ pub fn WeekGrid(
                             </h3>
                             <div
                                 class="hours"
-                                class:placing=move || move_request.with(Option::is_some)
+                                class:placing=move || waiting.with(Option::is_some)
                                 on:pointermove=move |ev| {
                                     if ev.pointer_type() == "mouse"
                                         && let Some(slot) = waiting_slot(&ev)
@@ -301,7 +319,7 @@ pub fn WeekGrid(
                                     }
                                 }
                                 on:pointerleave=move |_| {
-                                    if move_request.with_untracked(Option::is_some)
+                                    if waiting.with_untracked(Option::is_some)
                                         && drag.with_untracked(Option::is_none)
                                     {
                                         landing.set(None);

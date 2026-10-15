@@ -97,8 +97,6 @@ pub fn App() -> impl IntoView {
     // Pen queue: task IDs the client just created, so the pen writes only those rows
     let pen_queue = RwSignal::new(Vec::<TaskId>::new());
     // A row Rambo was asked to edit: the task list opens its edit sheet
-    // A row Rambo was asked to move: the planner waits for a tap on an hour
-    let move_request = RwSignal::new(None::<TaskId>);
     // When Rambo was dropped on an empty planner hour, that hour as a date phrase: the
     // capture box's next task starts then.
     let noting_at = RwSignal::new(None::<capture::NotedHour>);
@@ -160,22 +158,6 @@ pub fn App() -> impl IntoView {
             )
         {
             set_talking.set(true);
-        }
-    });
-
-    // Asked to move a task, the page turns to the planner, where it waits; turned back
-    // to the list, nothing waits any more.
-    Effect::new({
-        let turner = turner.clone();
-        move |_| {
-            if move_request.with(Option::is_some) {
-                turner.turn_to(1);
-            }
-        }
-    });
-    Effect::new(move |_| {
-        if pane.get() == 0 {
-            move_request.set(None);
         }
     });
 
@@ -247,7 +229,11 @@ pub fn App() -> impl IntoView {
                     let turner = turner.clone();
                     move || turner.turn_to(0)
                 })
-                move_request
+                turn_here=std::rc::Rc::new({
+                    let turner = turner.clone();
+                    move || turner.turn_to(1)
+                })
+                pane
             />
             // What a turning page draws over the two panes, hidden until a turn: for the
             // book flip, the light on the leaf and the shadow it throws on the page under it
@@ -282,7 +268,6 @@ pub fn App() -> impl IntoView {
             pen_pos
             capture_text
             form_ref
-            move_request
             open_sheet
             nest_ref
             pen=Signal::derive(move || view_settings.get().pen)
