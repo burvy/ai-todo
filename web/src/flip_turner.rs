@@ -34,9 +34,6 @@ mod stub {
         ) -> Self {
             Turner
         }
-        pub(crate) fn idle(&self) -> bool {
-            true
-        }
         pub(crate) fn down(&self, _ev: &leptos::ev::PointerEvent) {}
         pub(crate) fn moved(&self, _ev: &leptos::ev::PointerEvent) {}
         pub(crate) fn up(&self, _ev: &leptos::ev::PointerEvent) {}
@@ -153,7 +150,7 @@ mod imp {
         }
 
         /// Whether no turn is under way.
-        pub(crate) fn idle(&self) -> bool {
+        fn idle(&self) -> bool {
             matches!(*self.0.phase.borrow(), Phase::Idle)
         }
 

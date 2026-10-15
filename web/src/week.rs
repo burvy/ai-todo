@@ -160,7 +160,7 @@ pub fn WeekGrid(
     #[cfg(not(target_arch = "wasm32"))]
     let _ = capture_text;
     // On the earliest day a right swipe has no days left to scroll, so the page takes it
-    // (turner.rs turns back to the list); the class tells the browser to let it through.
+    // (flip_turner.rs turns back to the list); the class tells the browser to let it through.
     let (at_earliest, set_at_earliest) = signal(true);
     // The bookmark ribbon's head (ribbon.rs) sticks out of the day names at today's
     // column, or at the edge today went past, kept up with the paper as it scrolls; its
