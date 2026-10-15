@@ -18,7 +18,7 @@ use crate::events::Queue;
 use crate::store::Store;
 use crate::tasks::occurrence_parts;
 use crate::tuning::{
-    BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGE_PX, PIN_EDGES, PIN_ROOM_PX, ROW_CLOSE_MS,
+    BIN_CORNER_FRACTION, BIN_CRUMPLE_MS, PIN_EDGE_PX, PIN_EDGES, PIN_ROOM_PX, ROW_SLIDE_OMEGA,
     SCRAP_MAX, SCRAP_SLIDE_MS, SCRAP_TICK_MS, SCRAP_UNDO_MS, STRIP_DRAG_PX, STRIP_GAP_PX,
     STRIP_H_PX,
 };
@@ -430,9 +430,39 @@ pub fn rows_to_slide(before: &[(String, i32)], after: &[(String, i32)]) -> Vec<(
         .collect()
 }
 
+/// Carry the row `id` from `(dx, dy)` px off its place back to it on a spring
+/// (`engine::glide_keyed`: a row sent off again on its way is taken over). The page's own
+/// transition on the row is off while it flies, and the row is left to the page's rules at
+/// the end.
+fn carry_row(row: &web_sys::HtmlElement, id: &str, (dx, dy): (f64, f64)) {
+    let pull = crate::engine::Pull {
+        omega: ROW_SLIDE_OMEGA,
+        zeta: 1.0,
+    };
+    let (style, landed) = (row.style(), row.style());
+    crate::engine::glide_keyed(
+        id,
+        [dx, dy],
+        [0.0; 2],
+        pull,
+        ROW_NEAR_PX,
+        move |[x, y]| {
+            let _ = style.set_property("transition", "none");
+            let _ = style.set_property("transform", &format!("translate({x:.1}px, {y:.1}px)"));
+        },
+        move || {
+            let _ = landed.remove_property("transform");
+            let _ = landed.remove_property("transition");
+        },
+    );
+}
+
+/// How near, in px, a flying row must come to its place to count as there.
+const ROW_NEAR_PX: f64 = 0.3;
+
 /// Slide the rows that rest `moved` px lower than they were back up into place: each
-/// starts where it stood, and a transition carries it home. With reduced motion they just
-/// sit in their new places.
+/// starts where it stood and a spring carries it home. With reduced motion they just sit
+/// in their new places.
 pub fn slide_rows(moved: &[(String, i32)]) {
     if crate::mascot::prefers_reduced_motion() {
         return;
@@ -440,31 +470,15 @@ pub fn slide_rows(moved: &[(String, i32)]) {
     let Some(doc) = web_sys::window().and_then(|window| window.document()) else {
         return;
     };
-    let rows: Vec<web_sys::HtmlElement> = moved
-        .iter()
-        .filter_map(|(id, up)| {
-            let row = doc
-                .query_selector(&format!("li[data-id=\"{id}\"]"))
-                .ok()??
-                .dyn_into::<web_sys::HtmlElement>()
-                .ok()?;
-            let style = row.style();
-            let _ = style.set_property("transition", "none");
-            let _ = style.set_property("transform", &format!("translateY({up}px)"));
-            Some(row)
-        })
-        .collect();
-    if let Some(row) = rows.first() {
-        // Reading a layout value makes the browser settle the starts before the release.
-        let _ = row.offset_width();
-    }
-    for row in rows {
-        let style = row.style();
-        let _ = style.set_property(
-            "transition",
-            &format!("transform {ROW_CLOSE_MS}ms var(--ease-out, ease-out)"),
-        );
-        let _ = style.set_property("transform", "none");
+    for (id, up) in moved {
+        let row = doc
+            .query_selector(&format!("li[data-id=\"{id}\"]"))
+            .ok()
+            .flatten()
+            .and_then(|row| row.dyn_into::<web_sys::HtmlElement>().ok());
+        if let Some(row) = row {
+            carry_row(&row, id, (0.0, f64::from(*up)));
+        }
     }
 }
 
@@ -478,7 +492,6 @@ pub fn fly_rows_back(events: Queue, snapshot: &Snapshot) {
     };
     let motion = !crate::mascot::prefers_reduced_motion();
     let noted = events.take_all(any_row_back);
-    let mut flown = Vec::new();
     for (id, strip) in noted {
         let row = doc
             .query_selector(&format!("li[data-id=\"{id}\"]"))
@@ -501,22 +514,7 @@ pub fn fly_rows_back(events: Queue, snapshot: &Snapshot) {
             w: rect.width(),
             h: rect.height(),
         };
-        let (dx, dy) = fly_offset(strip, at);
-        let style = row.style();
-        let _ = style.set_property("transition", "none");
-        let _ = style.set_property("transform", &format!("translate({dx:.1}px, {dy:.1}px)"));
-        flown.push(row);
-    }
-    if let Some(row) = flown.first() {
-        let _ = row.offset_width();
-    }
-    for row in flown {
-        let style = row.style();
-        let _ = style.set_property(
-            "transition",
-            &format!("transform {ROW_CLOSE_MS}ms var(--ease-out, ease-out)"),
-        );
-        let _ = style.set_property("transform", "none");
+        carry_row(&row, &id, fly_offset(strip, at));
     }
 }
 

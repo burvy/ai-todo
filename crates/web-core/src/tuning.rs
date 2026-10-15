@@ -194,9 +194,10 @@ pub const SCRAP_SLIDE_MS: u32 = 240;
 /// The most scraps lying in the corner at once; a new delete beyond it sends the oldest
 /// away. Safe range 1 to 5: two quick deletes keep two, but the pile never fills the page.
 pub const SCRAP_MAX: usize = 3;
-/// How long the rows below a removed row take to slide up and close the gap, in ms. Safe
-/// range 120 to 400.
-pub const ROW_CLOSE_MS: u32 = 220;
+/// How quickly a row slides, in radians per second (a critically damped spring, so about 6
+/// over this seconds): the rows below a removed one closing the gap, and a row coming back
+/// from the pin. 22 is about a quarter of a second. Safe range 12 to 35.
+pub const ROW_SLIDE_OMEGA: f64 = 22.0;
 /// The done tasks hang at the pin as a stack: the newest on top, the rest under it. This many
 /// edges of the older ones show below the top strip, a few px each, to say how deep the stack
 /// is; the rest sit behind the last edge. Safe range 1 to 5.

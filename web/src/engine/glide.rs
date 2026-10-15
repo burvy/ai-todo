@@ -8,6 +8,8 @@
 use super::body::{Pull, Spring1};
 use super::sched::ENGINE_DT_S;
 use super::sched::{Flow, Handle};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 
 /// `N` values on springs, all pulled by the same `pull` to their ends.
 #[derive(Clone, Copy, Debug)]
@@ -80,6 +82,44 @@ pub(crate) fn glide<const N: usize>(
         }
         Flow::Stop
     })
+}
+
+thread_local! {
+    /// The glides now running under a key, each with the number of the start that made it.
+    static KEPT: RefCell<HashMap<String, (u64, Handle)>> = RefCell::default();
+    static STARTS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// [`glide`] for a body the page names by `key` (a task's id): one glide runs per key, so
+/// a body sent somewhere new while it is still on its way is taken over by the new glide
+/// (it starts from `from`, and the old one never calls its `done`).
+pub(crate) fn glide_keyed<const N: usize>(
+    key: &str,
+    from: [f64; N],
+    to: [f64; N],
+    pull: Pull,
+    near: f64,
+    draw: impl FnMut([f64; N]) + 'static,
+    done: impl FnOnce() + 'static,
+) {
+    let start = STARTS.with(|starts| {
+        starts.set(starts.get() + 1);
+        starts.get()
+    });
+    let owned = key.to_owned();
+    let handle = glide(from, to, pull, near, draw, move || {
+        KEPT.with(|kept| {
+            let mut kept = kept.borrow_mut();
+            if kept.get(&owned).is_some_and(|(made, _)| *made == start) {
+                kept.remove(&owned);
+            }
+        });
+        done();
+    });
+    let replaced = KEPT.with(|kept| kept.borrow_mut().insert(key.to_owned(), (start, handle)));
+    if let Some((_, old)) = replaced {
+        old.stop();
+    }
 }
 
 #[cfg(test)]
