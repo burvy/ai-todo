@@ -77,11 +77,33 @@ fn capture_title(transcript: &str, typed: &str) -> Option<String> {
 
 /// What is sent for `title` while Rambo notes a task at the hour `at` (a date phrase
 /// Jev reads): the hour first, so the task starts then.
-fn noted(at: Option<&str>, title: &str) -> String {
-    match at {
-        Some(at) => format!("{} {title}", at.trim()),
-        None => title.to_owned(),
+fn noted(at: &NotedHour, title: &str) -> todo_core::TaskDraft {
+    todo_core::TaskDraft {
+        title: title.trim().to_owned(),
+        duration_min: todo_core::tuning::TASK_DEFAULT_DURATION_MIN,
+        when: todo_core::When::At(at.at),
+        label: todo_core::Label::Other,
+        priority: todo_core::Priority::Low,
+        source: todo_core::Source::Text,
     }
+}
+
+/// The tasks in `after` that were not in `before`: what a create just added.
+fn added(before: &Snapshot, after: &Snapshot) -> Vec<TaskId> {
+    after
+        .tasks
+        .iter()
+        .filter(|task| before.tasks.iter().all(|old| old.id != task.id))
+        .map(|task| task.id.clone())
+        .collect()
+}
+
+/// The empty planner hour Rambo was dropped on: its date phrase, which the capture box
+/// shows, and the instant a task noted there starts.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct NotedHour {
+    pub(crate) phrase: String,
+    pub(crate) at: chrono::DateTime<chrono::Utc>,
 }
 
 /// How much of the bottom of the layout a phone's keyboard covers, in px: the layout's
@@ -159,6 +181,7 @@ fn capture_note(title: &str, error: &api::ApiError) -> String {
 pub(crate) fn CaptureBox(
     form_ref: NodeRef<leptos::html::Form>,
     nest_ref: NodeRef<leptos::html::Button>,
+    snapshot: ReadSignal<Snapshot>,
     set_snapshot: WriteSignal<Snapshot>,
     state: ReadSignal<mascot::State>,
     set_state: WriteSignal<mascot::State>,
@@ -166,7 +189,7 @@ pub(crate) fn CaptureBox(
     pen_pos: RwSignal<(f64, f64)>,
     capture_text: RwSignal<String>,
     /// The hour Rambo was dropped on, as a date phrase: what is sent starts then.
-    noting_at: RwSignal<Option<String>>,
+    noting_at: RwSignal<Option<NotedHour>>,
     pen_queue: RwSignal<Vec<TaskId>>,
     set_typing: WriteSignal<bool>,
     set_error: WriteSignal<Option<String>>,
@@ -204,7 +227,7 @@ pub(crate) fn CaptureBox(
             return;
         };
         match noting_at.get() {
-            Some(at) => input.set_placeholder(&format!("A task for {}", at.trim())),
+            Some(at) => input.set_placeholder(&format!("A task for {}", at.phrase.trim())),
             None => input.set_placeholder(WHISPER_PROMPTS[index]),
         }
     });
@@ -359,7 +382,7 @@ pub(crate) fn CaptureBox(
                 return;
             };
             // Sent from an hour he was dropped on: the task starts then, and he goes home.
-            let title = noted(noting_at.get_untracked().as_deref(), &title);
+            let hour = noting_at.get_untracked();
             let st = state.get_untracked();
             if st == mascot::State::Noting {
                 set_state.set(mascot::transition(&st, mascot::Event::Return));
@@ -372,6 +395,27 @@ pub(crate) fn CaptureBox(
             sending.set(true);
             set_text.set(String::new());
             capture_text.set(String::new());
+            // Noted on an hour he was dropped on, it is a task at that hour, whatever its
+            // words: it is made as it is, never asked of the judge.
+            if let Some(hour) = hour {
+                let before = snapshot.get_untracked();
+                wasm_bindgen_futures::spawn_local(async move {
+                    match api::create_task(&noted(&hour, &title)).await {
+                        Ok(after) => {
+                            pen_queue.update(|queue| queue.extend(added(&before, &after)));
+                            set_snapshot.set(after);
+                        }
+                        Err(error) => {
+                            if text.get_untracked().trim().is_empty() {
+                                set_text.set(title.clone());
+                            }
+                            set_error.set(Some(capture_note(&title, &error)));
+                        }
+                    }
+                    sending.set(false);
+                });
+                return;
+            }
             wasm_bindgen_futures::spawn_local(async move {
                 // The capture pipeline (docs/ARCHITECTURE.md 5) splits the ramble into
                 // tasks and reads their days, times, labels and priorities.
@@ -536,12 +580,33 @@ mod tests {
     }
 
     #[test]
-    fn a_task_noted_on_an_hour_starts_then() {
-        assert_eq!(
-            noted(Some("tomorrow 14:00 "), "call mum"),
-            "tomorrow 14:00 call mum"
-        );
-        assert_eq!(noted(None, "call mum"), "call mum");
+    fn a_task_noted_on_an_hour_is_made_at_that_hour_as_it_is_worded() {
+        use chrono::TimeZone as _;
+        let hour = NotedHour {
+            phrase: "today 11:15 ".into(),
+            at: chrono::Utc
+                .with_ymd_and_hms(2026, 10, 15, 15, 15, 0)
+                .unwrap(),
+        };
+        // QA round 3: words that ask for no action are still the task: never judged.
+        for title in ["ff2d434 enter test", " call mum ", "the quarterly report"] {
+            let draft = noted(&hour, title);
+            assert_eq!(draft.title, title.trim());
+            assert_eq!(draft.when, todo_core::When::At(hour.at));
+            assert_eq!(
+                draft.duration_min,
+                todo_core::tuning::TASK_DEFAULT_DURATION_MIN
+            );
+        }
+    }
+
+    #[test]
+    fn what_a_create_added_is_the_tasks_that_were_not_there_before() {
+        let after = api::fixture_snapshot();
+        let mut before = after.clone();
+        let made = before.tasks.remove(1);
+        assert_eq!(added(&before, &after), vec![made.id]);
+        assert_eq!(added(&after, &after), Vec::<TaskId>::new());
     }
 
     #[test]

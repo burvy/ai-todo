@@ -551,7 +551,13 @@ pub(crate) fn TaskList(
             let now = scrap::row_tops();
             let slide = rested.with_value(|before| scrap::rows_to_slide(before, &now));
             rested.set_value(now);
-            scrap::slide_rows(&slide);
+            // A hole where a row tore out stays open for a while: the rows below wait
+            // where they were, and close it when it heals.
+            if crate::rip_ui::hole_open() {
+                scrap::hold_rows(&slide);
+            } else {
+                scrap::slide_rows(&slide);
+            }
             scrap::fly_rows_back();
         });
     });
@@ -1354,6 +1360,38 @@ fn task_time(snapshot: &Snapshot, id: &str, clock: Clock) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The list's ruled lines are one grid on the paper, and rows are laid on it: the grid
+    /// is drawn on the list itself at the pitch, and a row's height and its text's line
+    /// height are the pitch, so a wrapped title takes whole rules.
+    #[test]
+    fn the_rows_are_laid_on_one_grid_of_rules() {
+        let css = include_str!("../../theme.css");
+        let rule = |selector: &str| {
+            css.split(selector)
+                .nth(1)
+                .and_then(|rest| rest.split('}').next())
+                .unwrap_or_else(|| panic!("theme.css styles {selector}"))
+                .to_owned()
+        };
+        let list = rule(
+            "
+.task-list {",
+        );
+        let row = rule(".task-list li {");
+        let text = rule(".task-open {");
+        assert!(list.contains("repeating-linear-gradient"), "{list}");
+        assert!(list.matches("var(--line-pitch)").count() >= 2, "{list}");
+        assert!(list.contains("var(--paper-line)"), "{list}");
+        assert!(row.contains("min-height: var(--line-pitch)"), "{row}");
+        assert!(row.contains("padding: 0"), "{row}");
+        assert!(
+            !row.contains("border-bottom"),
+            "the grid is the rules: {row}"
+        );
+        assert!(text.contains("line-height: var(--line-pitch)"), "{text}");
+        assert!(text.contains("padding: 0"), "{text}");
+    }
+
     /// FRONTEND-PLAN 1.8 item 7: the edit sheet is a real modal (focus trapped, page
     /// inert, Escape closes), not a dialog merely given the `open` attribute.
     #[test]

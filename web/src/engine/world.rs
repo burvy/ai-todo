@@ -6,6 +6,7 @@
 //! element. The brain is [`mascot::transition`], unchanged; this decides only how his
 //! body follows it, so behaviours end on state, never on a guessed CSS duration.
 
+use super::dance::Dance;
 use super::fling::{self, Body, Walls};
 use super::look::{self, Look};
 use super::nest::Nest;
@@ -240,6 +241,10 @@ pub(crate) struct World {
     ink: Vec<Splash>,
     /// His nest, which sags and rocks as he lands in it and leaves it.
     nest: Nest,
+    /// How loud the music is that he hears now, if any plays.
+    heard: Option<f64>,
+    /// His dance to it.
+    dance: Dance,
 }
 
 impl World {
@@ -267,6 +272,8 @@ impl World {
             now: 0.0,
             ink: Vec::new(),
             nest: Nest::default(),
+            heard: None,
+            dance: Dance::default(),
         }
     }
 
@@ -283,7 +290,11 @@ impl World {
             _ => 0.0,
         };
         Look {
-            lean_deg: self.rambo.look.lean_deg + self.rambo.sway + rock + self.tap_lean(),
+            lean_deg: self.rambo.look.lean_deg
+                + self.rambo.sway
+                + rock
+                + self.tap_lean()
+                + self.dance.lean_deg(),
             ..self.rambo.look
         }
     }
@@ -355,7 +366,11 @@ impl World {
         let rambo = &self.rambo;
         let timed = matches!(
             rambo.brain,
-            State::Thrown | State::Splatting | State::Dazed | State::Covered | State::Mending
+            State::Thrown
+                | State::Splatting
+                | State::Dazed
+                | State::Covered
+                | State::Mending { .. }
         );
         !timed
             && look::still(&rambo.brain, self.now - rambo.since)
@@ -365,7 +380,24 @@ impl World {
             && !rambo.settling
             && rambo.run.is_none()
             && rambo.tapping.is_none()
+            && self.heard.is_none()
+            && self.dance.still()
             && self.nest.at_rest()
+    }
+
+    /// Whether he would dance to music now: settled in his nest, not tapping his nib, and
+    /// with motion allowed. Only then is the music worth listening to.
+    pub(crate) fn can_dance(&self, reduced_motion: bool) -> bool {
+        self.rambo.brain == State::Home
+            && self.rambo.settled_home
+            && self.rambo.tapping.is_none()
+            && !reduced_motion
+    }
+
+    /// The music plays this loud now (0 to 1), or none plays: he dances to it while he
+    /// sits in his nest.
+    pub(crate) fn hear(&mut self, level: Option<f64>) {
+        self.heard = level;
     }
 
     /// `steps` fixed engine steps with the page as `anchors` measured it.
@@ -393,6 +425,10 @@ impl World {
             self.rambo.written_ms += STEP_MS;
         }
         self.tap_nib();
+        let dancing = self.can_dance(anchors.reduced_motion);
+        if let Some(beat) = self.dance.hear(self.heard.filter(|_| dancing), STEP_MS) {
+            self.nest.bounce(beat);
+        }
         self.nest.step(STEP_MS / 1000.0);
         self.move_body(anchors);
         let rambo = &mut self.rambo;
@@ -478,7 +514,7 @@ impl World {
             State::Splatting => (mascot::SPLAT_MS, Event::Return),
             State::Dazed => (mascot::DAZED_MS, Event::Return),
             State::Covered => (mascot::COVERED_MS, Event::Uncovered),
-            State::Mending => (mascot::MEND_MS, Event::Return),
+            State::Mending { .. } => (mascot::MEND_MS, Event::Return),
             _ => return None,
         };
         // Steps of 1/120 s add up a hair short of whole ms.
@@ -516,7 +552,7 @@ impl World {
         }
         let elapsed = since - run.beat_ms();
         if elapsed >= run.hop.ms() {
-            return self.land(to);
+            return self.land_falling(to, run.hop.impact(to));
         }
         // Running home from a daze, each hop that comes down on the page leaves a dot.
         let landed = elapsed / crate::tuning::HOP_MS;
@@ -604,6 +640,12 @@ impl World {
 
     /// He has arrived at `at`: still, unsquashed, and home if he was on his way home.
     fn land(&mut self, at: Vec2) {
+        self.land_falling(at, 0.0);
+    }
+
+    /// He has arrived at `at`, still coming down at `falling` px/s: in the nest, that is
+    /// the weight it takes.
+    fn land_falling(&mut self, at: Vec2, falling: f64) {
         let rambo = &mut self.rambo;
         let sideways = rambo.vel.0;
         rambo.run = None;
@@ -619,7 +661,7 @@ impl World {
         rambo.settled_home = rambo.brain == State::Home;
         if rambo.settled_home {
             // Still moving a little sideways as he comes down, he lands off its middle.
-            self.nest.land(sideways * LANDING_LEAN);
+            self.nest.land(sideways * LANDING_LEAN, falling);
             // Home after a long stretch of writing, he taps his dry nib on the rim.
             if mascot::nib_dry(rambo.written_ms) {
                 rambo.written_ms = 0.0;
@@ -697,7 +739,7 @@ mod tests {
     }
 
     /// Long enough for his lean into a run and the nest under him to settle.
-    const SETTLES_MS: f64 = 2000.0;
+    const SETTLES_MS: f64 = 4000.0;
 
     /// Steps for `ms` of world time.
     fn steps(ms: f64) -> u32 {
@@ -1007,13 +1049,17 @@ mod tests {
     fn a_torn_page_sends_him_to_tape_it_and_home_again_with_no_ink() {
         let tear = (120.0, 300.0);
         let mut world = World::new(NEST);
-        world.tell(Event::Mend);
-        assert_eq!(world.rambo.brain, State::Mending);
+        world.tell(Event::Mend { annoyed: true });
+        assert_eq!(world.rambo.brain, State::Mending { annoyed: true });
         // He hops there and waits at the tear until the tape is on.
         let there = steps(f64::from(crate::tuning::FLY_MS) * 2.0);
         world.advance(there, &anchors(tear));
         assert_eq!(world.draw().pos, tear);
-        assert_eq!(world.rambo.brain, State::Mending, "still taping");
+        assert_eq!(
+            world.rambo.brain,
+            State::Mending { annoyed: true },
+            "still taping"
+        );
         world.advance(steps(f64::from(mascot::MEND_MS)), &anchors(tear));
         assert_eq!(world.rambo.brain, State::Home, "the tape is on");
         world.advance(there, &anchors(tear));
@@ -1067,8 +1113,9 @@ mod tests {
             }
         }
         assert_eq!(world.rambo.brain, State::Splatting, "smacked the left edge");
-        // Only his leaving it moved the nest (a little up): nothing came down in it.
-        assert!(deepest < 0.5, "no catch: {deepest}");
+        // Only his leaving it moved the nest (up, then a little back past level as it
+        // springs): nothing came down in it.
+        assert!(deepest < 1.5, "no catch: {deepest}");
     }
 
     #[test]
@@ -1088,6 +1135,105 @@ mod tests {
         assert!(deepest > 1.0, "it sagged as he came down in it: {deepest}");
         world.advance(steps(SETTLES_MS), &anchors((200.0, 400.0)));
         assert!(world.at_rest(), "it settles, and the loop may sleep");
+    }
+
+    /// Piano notes struck every `every_ms` (loud at once, dying away), as he hears them
+    /// for `ms` with the page as `anchors` measured it: how deep the nest bounced and
+    /// how far he swayed each way.
+    fn danced(world: &mut World, every_ms: f64, ms: f64, at: &Anchors) -> (f64, f64, f64) {
+        let (mut sag, mut left, mut right) = (0.0_f64, 0.0_f64, 0.0_f64);
+        for step in 0..steps(ms) {
+            let into = (f64::from(step) * STEP_MS) % every_ms;
+            world.hear(Some(0.3 * (-into / 250.0).exp()));
+            world.advance(1, at);
+            assert!(!world.at_rest(), "music keeps the loop awake");
+            sag = sag.max(world.nest_offset().0);
+            left = left.min(world.dance.lean_deg());
+            right = right.max(world.dance.lean_deg());
+        }
+        (sag, left, right)
+    }
+
+    #[test]
+    fn settled_in_his_nest_he_dances_to_the_music_and_stops_when_it_stops() {
+        let mut world = World::new(NEST);
+        world.advance(steps(SETTLES_MS), &anchors(NEST));
+        let (sag, left, right) = danced(&mut world, 700.0, 6000.0, &anchors(NEST));
+        assert!(sag > 1.0, "the nest bounces to the beat: {sag}");
+        assert!(
+            left < -1.0 && right > 1.0,
+            "he sways both ways: {left} to {right}"
+        );
+        world.hear(None);
+        world.advance(steps(5000.0), &anchors(NEST));
+        assert!(
+            world.at_rest(),
+            "the music stopped: he settles and the loop may sleep"
+        );
+        assert!(world.dance.lean_deg().abs() < 0.05);
+    }
+
+    #[test]
+    fn away_from_his_nest_or_with_less_motion_he_does_not_dance() {
+        // Held, writing or dazed, the music plays on and he does not sway to it.
+        let mut held = World::new(NEST);
+        held.tell(Event::Grab);
+        let (_, left, right) = danced(&mut held, 700.0, 3000.0, &anchors((200.0, 400.0)));
+        assert_eq!((left, right), (0.0, 0.0));
+        let mut calm = World::new(NEST);
+        calm.advance(steps(SETTLES_MS), &anchors(NEST));
+        let less = Anchors {
+            reduced_motion: true,
+            ..anchors(NEST)
+        };
+        let (sag, left, right) = danced(&mut calm, 700.0, 3000.0, &less);
+        assert_eq!((sag, left, right), (0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn he_could_dance_only_settled_at_home_and_only_music_heard_keeps_the_loop_awake() {
+        let mut world = World::new(NEST);
+        world.advance(steps(SETTLES_MS), &anchors(NEST));
+        assert!(world.at_rest(), "hearing nothing, he rests");
+        world.hear(Some(0.2));
+        assert!(!world.at_rest(), "hearing music, he dances");
+        world.hear(None);
+        assert!(world.can_dance(false));
+        assert!(!world.can_dance(true), "not with reduced motion");
+        world.tell(Event::Grab);
+        assert!(!world.can_dance(false), "not held");
+        let mut writing = World::new(NEST);
+        writing.tell(Event::WriteCaret);
+        assert!(!writing.can_dance(false), "not writing");
+    }
+
+    #[test]
+    fn hopping_home_he_sags_the_nest_visibly_and_it_takes_a_moment_to_settle() {
+        // QA round 3: a sag of 1.5 px gone in 0.6 s read as no nest at all.
+        for from in [(200.0, 400.0), (60.0, 120.0)] {
+            let mut world = World::new(NEST);
+            world.tell(Event::Grab);
+            world.advance(steps(500.0), &anchors(from));
+            world.tell(Event::DropEmpty);
+            let (mut deepest, mut landed_at, mut still_at) = (0.0_f64, None, None);
+            for step in 0..steps(f64::from(crate::tuning::FLY_MS) + 4000.0) {
+                world.advance(1, &anchors(from));
+                let sag = world.nest_offset().0;
+                if sag > 0.5 && landed_at.is_none() {
+                    landed_at = Some(step);
+                }
+                deepest = deepest.max(sag);
+                if landed_at.is_some() && still_at.is_none() && world.at_rest() {
+                    still_at = Some(step);
+                }
+            }
+            assert!(deepest >= 4.0, "from {from:?} it sags {deepest} px");
+            let settle_ms = f64::from(still_at.unwrap() - landed_at.unwrap()) * STEP_MS;
+            assert!(
+                settle_ms >= 900.0,
+                "from {from:?} it settles in {settle_ms} ms"
+            );
+        }
     }
 
     #[test]
@@ -1144,7 +1290,7 @@ mod tests {
         let spot = (120.0, 300.0);
         let mut world = World::new(NEST);
         world.adopt(asking());
-        world.advance(steps(1000.0), &anchors(spot));
+        world.advance(steps(SETTLES_MS), &anchors(spot));
         assert_eq!(
             world.draw(),
             Draw::at(spot),
@@ -1165,7 +1311,7 @@ mod tests {
             assert!(!world.at_rest(), "his daze timer must keep the loop awake");
             world.advance(1, &anchors(fell));
         }
-        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + 2000.0) {
+        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + SETTLES_MS) {
             if world.at_rest() {
                 break;
             }
@@ -1300,7 +1446,7 @@ mod tests {
         assert_eq!(world.rambo.brain, State::Skittering);
         let mut was = world.look().lean_deg;
         let mut most: f64 = 0.0;
-        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + 1500.0) {
+        for _ in 0..steps(f64::from(crate::tuning::FLY_MS) + SETTLES_MS) {
             world.advance(1, &anchors(fell));
             let lean = world.look().lean_deg;
             assert!(
