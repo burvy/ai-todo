@@ -197,8 +197,8 @@ ink is still wet, IV.3); a tap elsewhere on the row does nothing. The title is a
 reached with Tab, and Enter or Space opens it.
 b. Drag Rambo onto a task, then choose **Edit**, **Move** or **Done**, or tap off the bubble.
 Or tap a task's title.
-c. Code: `web/src/rambo.rs:Rambo`, which sets `edit_request` for
-`web/src/tasks/mod.rs:TaskList` to open its sheet; a tap on the row is decided on its
+c. Code: `web/src/rambo.rs:Rambo`, which pushes `Event::EditAsked`
+(`crates/web-core/src/events.rs`) for `web/src/tasks/mod.rs:TaskList` to open its sheet; a tap on the row is decided on its
 release (`tasks/mod.rs:tapped, on_title`), since the row holds the pointer from the press; `crates/web-core/src/mascot.rs:Choice, asking_dismissed_by`; `web/src/api.rs:patch_task`.
 d. The sheet's days and times are picked on the paper's own pickers (handwritten
 numbers, keyboard reachable, the paper's 12- or 24-hour clock), never the browser's:

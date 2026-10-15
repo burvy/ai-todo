@@ -155,7 +155,7 @@ mod tests {
             .map_or(arm, |(edit, _)| edit);
         assert!(handler.contains("listen_for_edit("), "{handler}");
         assert!(
-            handler.contains("edit_request.set("),
+            handler.contains("Event::EditAsked"),
             "Edit must open the edit sheet: {handler}"
         );
         assert!(
