@@ -21,7 +21,7 @@ The strip board (`tack.rs`, `tack.css`) is removed, so these no longer apply: BU
 ## Still open
 
 1. **Rambo's position has nine writers in three files.** `pen_pos` is set in `rambo.rs` (six, one of them an `update`), `capture.rs` (two) and `tasks/write.rs` (one). It should have one owner: the anchor resolver in ARCHITECTURE 8A.5. Moved there as a planned step.
-2. **BUG-8, the occurrence parser.** `occurrence_parts` (`tasks/mod.rs`, about line 95) still uses `split_once(':')`. A date never has a colon, so it should split from the right (`rsplit_once`), with a test for a series id that contains a colon. The move path already goes through the store; the overdue rule's second copy (`is_overdue_at`) was not checked.
+2. **BUG-8, the occurrence parser.** `occurrence_parts` (`crates/web-core/src/task_list.rs`) still uses `split_once(':')`. A date never has a colon, so it should split from the right (`rsplit_once`), with a test for a series id that contains a colon. The move path already goes through the store; the overdue rule's second copy (`is_overdue_at`) was not checked.
 3. **FE-5 leftovers.** The CSS rules for `.swipe-*` and `.pose-*` were not re-checked; grep `web/src` for each class before deleting. (`api::revise_task` is not dead: `store.rs` sends `Command::Revise` through it.)
 4. **BUG-9, the planner scroll to the last day on a phone.** Not checked in a browser here. Open until someone at 390x844 with touch can scroll to every day shown.
 5. **2.6, the ask bubble.** Edit opens the sheet. Move, and the choices for a planner slip or an empty hour, are open. The choices are DESIGN-DIRECTION §9's, not this file's.
