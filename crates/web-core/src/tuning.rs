@@ -569,3 +569,68 @@ pub const SHORT_SLIP_PX: f32 = HOUR_PX;
 pub const EDGE_ZONE_PX: f32 = 48.0;
 /// The most the paper slides per auto-scroll tick, right at an edge. Safe range 2 to 12 px.
 pub const EDGE_MAX_PX: f32 = 6.0;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CSS: &str = include_str!("../../../web/theme.css");
+
+    /// The px of every `edge` (`max-width` or `min-width`) in the `@media` lines, however
+    /// the query is combined or spaced, and how many widths of any kind those lines name.
+    fn media_edges(edge: &str) -> (Vec<u32>, usize) {
+        let medias: Vec<&str> = CSS
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("@media"))
+            .collect();
+        let edges = medias
+            .iter()
+            .flat_map(|line| line.split(edge).skip(1))
+            .map(|rest| {
+                let digits = rest.trim_start().trim_start_matches(':').trim_start();
+                let px = digits.split("px").next().expect("a width in px");
+                px.trim().parse().expect("a whole number of px")
+            })
+            .collect();
+        let named = medias
+            .iter()
+            .map(|line| line.matches("width").count())
+            .sum();
+        (edges, named)
+    }
+
+    /// A media query cannot read a variable, so the one phone width is typed in the style
+    /// sheet; this holds every query to `PHONE_MEDIA`, and the wide side to the px after it.
+    #[test]
+    fn every_phone_breakpoint_in_the_style_sheet_is_the_one_in_tuning() {
+        let phone: u32 = PHONE_MEDIA
+            .trim_start_matches("(max-width: ")
+            .trim_end_matches("px)")
+            .parse()
+            .expect("PHONE_MEDIA is a max-width in px");
+        let ((narrow, named), (wide, _)) = (media_edges("max-width"), media_edges("min-width"));
+        assert!(!narrow.is_empty() && !wide.is_empty());
+        assert_eq!(
+            named,
+            narrow.len() + wide.len(),
+            "a media query names a width other than max-width or min-width"
+        );
+        assert!(
+            narrow.iter().all(|&px| px == phone),
+            "{narrow:?} vs {phone}"
+        );
+        assert!(
+            wide.iter().all(|&px| px == phone + 1),
+            "{wide:?} vs {phone} + 1"
+        );
+    }
+
+    /// A duration the page writes to a variable has a fallback in the style sheet for the
+    /// frame before it does; the fallback is the same number.
+    #[test]
+    fn the_slip_off_fallback_in_the_style_sheet_is_the_one_in_tuning() {
+        let fallback = format!("var(--slip-off-ms, {SLIP_OFF_MS}ms)");
+        assert!(CSS.contains(&fallback), "theme.css should say {fallback}");
+    }
+}
