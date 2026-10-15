@@ -18,6 +18,10 @@ pub const BUBBLE_EDGE_PX: f64 = 8.0;
 /// pops, longer and the page waits on it.
 pub const ASK_FOLD_MS: u32 = 180;
 
+/// How loud the background music plays, 0 to 1. Safe range 0.05 to 0.25: the music is
+/// a bed under the cues (whose own volumes are 0.2 to 0.42), not a track to listen to.
+pub const MUSIC_VOLUME: f64 = 0.12;
+
 const _: () = assert!(60 % MINUTE_STEP == 0);
 
 // ---- What a finger means (web/src/gesture.rs, VISION-AUDIT item 3): one slop and

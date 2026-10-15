@@ -13,7 +13,7 @@ Short mono MP3 cues. The gear menu's **Sound** preset decides which play
 | Send | `send.mp3` | a ramble becomes tasks | no | no | yes | yes |
 
 The other files here (`delete`, `drop`, `listen`, `pin`, `toss`) are not wired yet.
-The music for the last preset is (planned).
+The music for the last preset is in `../music/ABOUT.md`.
 
 ## Swapping a sound
 

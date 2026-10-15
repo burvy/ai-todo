@@ -11,6 +11,7 @@ pub mod hop;
 pub mod ink;
 pub mod inklayer;
 pub mod mascot;
+pub mod music;
 pub mod pen;
 pub mod pickers;
 pub mod rip;
@@ -129,7 +130,10 @@ pub fn App() -> impl IntoView {
         {
             sound::play(sound::Cue::Tap);
         }
+        // The first press after Music is picked is the gesture a browser waits for.
+        music::sync(view_settings.get_untracked().sound);
     });
+    Effect::new(move |_| music::sync(view_settings.get().sound));
     Effect::new(move |previous: Option<u8>| {
         let now = pane.get();
         if previous.is_some_and(|before| before != now) {
