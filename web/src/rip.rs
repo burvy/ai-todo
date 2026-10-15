@@ -10,9 +10,9 @@
 //! ends. `Ripper` (browser only) reads the pointer and draws it.
 
 use crate::tuning::{
-    RIP_EDGE_PX, RIP_GAP_PX, RIP_JAG_PX, RIP_JAG_STEP_PX, RIP_MAX_WAITING_HOLES, RIP_MIN_PX,
-    RIP_SCROLL_SLOPE, TAPE_AT_MS, TAPE_EVERY_PX, TAPE_LAY_MS, TAPE_LEN_PX, TAPE_SKEW_DEG,
-    TEAR_EDGE_IN_PX, TEAR_FADE_MS, TEAR_HOLD_MS,
+    RIP_BAND_BLEED_PX, RIP_EDGE_PX, RIP_GAP_PX, RIP_JAG_PX, RIP_JAG_STEP_PX, RIP_MAX_WAITING_HOLES,
+    RIP_MIN_PX, RIP_SCROLL_SLOPE, TAPE_AT_MS, TAPE_EVERY_PX, TAPE_LAY_MS, TAPE_LEN_PX,
+    TAPE_SKEW_DEG, TEAR_EDGE_IN_PX, TEAR_FADE_MS, TEAR_HOLD_MS,
 };
 
 pub type Pt = (f64, f64);
@@ -22,6 +22,9 @@ pub type Pt = (f64, f64);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Waiting {
     pub id: String,
+    /// Whether its task must still be done at its turn (a finished row); a deleted row's
+    /// task is gone for good, and still has its hole.
+    pub needs_done: bool,
     pub place: Rect,
     /// The row that stood above it when it finished, and how far below that row's top it
     /// stood: the place is measured from it again at the row's turn, so a row added or
@@ -61,9 +64,9 @@ impl HoleQueue {
 
     /// The next row whose hole is still due (`is_due` says so: its task is still done and it
     /// has not come back to the list), the ones before it that are not dropped.
-    pub fn next_due(&mut self, is_due: impl Fn(&str) -> bool) -> Option<Waiting> {
+    pub fn next_due(&mut self, is_due: impl Fn(&Waiting) -> bool) -> Option<Waiting> {
         while let Some(waiting) = self.0.pop_front() {
-            if is_due(&waiting.id) {
+            if is_due(&waiting) {
                 return Some(waiting);
             }
         }
@@ -112,6 +115,10 @@ pub enum Profile {
     Slit,
     /// A row torn out of the page: full height from end to end, with ragged short ends.
     Strip,
+    /// A row torn out of the whole page: the tear runs right across it, past both edges,
+    /// and its two lips are the same torn edge, so they meet again when the lower part of
+    /// the page slides up.
+    Band,
 }
 
 /// Whether a press that has travelled `dx`, `dy` has gone far enough to be a rip, in
@@ -224,12 +231,28 @@ impl Tear {
         }
     }
 
+    /// The hole a row leaves when it tears out of the whole page: across it, from `width`
+    /// px wide's edges (and a bleed beyond each), along the row's middle line, as tall as
+    /// the row (`height`) less its ragged edge and a px.
+    pub fn band(width: f64, middle: f64, height: f64, seed: u32) -> Self {
+        Tear {
+            gap: (height - 2.0 * RIP_JAG_PX - 2.0).max(0.0),
+            profile: Profile::Band,
+            ..Tear::slit(
+                (-RIP_BAND_BLEED_PX, middle),
+                (width + RIP_BAND_BLEED_PX, middle),
+                seed,
+            )
+        }
+    }
+
     /// How far open the tear is, `0.0` to `1.0` of its gap, at `t` of the way along it
     /// (`span` px long).
     fn opening(&self, t: f64, span: f64) -> f64 {
         match self.profile {
             Profile::Slit => (std::f64::consts::PI * t).sin().powf(0.6),
             Profile::Strip => self.ends(t, span).powf(0.5),
+            Profile::Band => 1.0,
         }
     }
 
@@ -239,6 +262,7 @@ impl Tear {
         match self.profile {
             Profile::Slit => (std::f64::consts::PI * t).sin(),
             Profile::Strip => (t.min(1.0 - t) * span / (2.0 * RIP_JAG_STEP_PX)).min(1.0),
+            Profile::Band => 1.0,
         }
     }
 
@@ -267,6 +291,12 @@ impl Tear {
     /// lower lip back. It is pinched to a point at each end and opens widest in the
     /// middle, up to `RIP_GAP_PX`; each lip wanders by up to `RIP_JAG_PX`.
     pub fn outline(&self) -> Vec<Pt> {
+        self.outline_closed(0.0)
+    }
+
+    /// The outline with its lower lip `closed` px nearer the upper one (no further than
+    /// they touch): the lower part of the page has slid up that far.
+    pub fn outline_closed(&self, closed: f64) -> Vec<Pt> {
         let span = self.span();
         if span <= 0.0 {
             return Vec::new();
@@ -278,13 +308,20 @@ impl Tear {
             (self.to.1 - self.from.1) / span,
         );
         let across = (-along.1, along.0);
+        let closed = closed.clamp(0.0, self.gap);
+        // The lips of a band are one torn edge, so they close into a seam.
+        let lower_salt = if self.profile == Profile::Band {
+            0
+        } else {
+            1_000
+        };
         let lips = |side: f64, salt: u32| {
             (0..=steps).map(move |i| {
                 let t = f64::from(i) / f64::from(steps);
                 let open = self.gap / 2.0 * self.opening(t, span);
                 // The ends stay closed however the edge wanders.
                 let wander = RIP_JAG_PX * unit(self.seed, i + salt) * self.ends(t, span);
-                let off = side * open + wander;
+                let off = side * open + wander - if side > 0.0 { closed } else { 0.0 };
                 (
                     self.from.0 + along.0 * span * t + across.0 * off,
                     self.from.1 + along.1 * span * t + across.1 * off,
@@ -292,7 +329,7 @@ impl Tear {
             })
         };
         let upper: Vec<Pt> = lips(-1.0, 0).collect();
-        let lower: Vec<Pt> = lips(1.0, 1_000).collect();
+        let lower: Vec<Pt> = lips(1.0, lower_salt).collect();
         upper.into_iter().chain(lower.into_iter().rev()).collect()
     }
 
@@ -352,10 +389,10 @@ fn ring(outline: &[Pt], dy: f64) -> String {
 
 /// The CSS `clip-path` that cuts the tear out of a page `width` by `height`: the whole
 /// page with the slit left out (even-odd), the page scrolled `scroll` px.
-pub fn sheet_path(tear: &Tear, width: f64, height: f64, scroll: f64) -> String {
+pub fn sheet_path(tear: &Tear, closed: f64, width: f64, height: f64, scroll: f64) -> String {
     format!(
         "path(evenodd, \"M0 0H{width:.1}V{height:.1}H0Z{}\")",
-        ring(&tear.outline(), -scroll)
+        ring(&tear.outline_closed(closed), -scroll)
     )
 }
 
@@ -465,6 +502,7 @@ mod tests {
     fn waiting(id: &str, top: f64) -> Waiting {
         Waiting {
             id: id.to_owned(),
+            needs_done: true,
             place: (10.0, top, 300.0, top + 48.0),
             anchor: None,
         }
@@ -494,13 +532,43 @@ mod tests {
         queue.push(waiting("undone", 0.0));
         queue.push(waiting("done", 100.0));
         let due = queue
-            .next_due(|id| id != "undone")
+            .next_due(|waiting| waiting.id != "undone")
             .expect("the second is due");
         assert_eq!(due.id, "done");
         assert!(queue.is_empty());
         // Nobody due: nothing comes out.
         queue.push(waiting("gone", 0.0));
         assert_eq!(queue.next_due(|_| false), None);
+    }
+
+    #[test]
+    fn a_band_runs_across_the_page_and_its_lips_close_into_a_seam() {
+        let band = Tear::band(350.0, 300.0, 48.0, 7);
+        assert_eq!(band.profile, Profile::Band);
+        let outline = band.outline();
+        let (min_x, max_x) = outline.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| {
+            (lo.min(p.0), hi.max(p.0))
+        });
+        assert!(min_x <= -RIP_BAND_BLEED_PX + 1e-9 && max_x >= 350.0 + RIP_BAND_BLEED_PX - 1e-9);
+        // Open: the hole is nearly the row's height right up to both edges (no taper).
+        let lip = outline.len() / 2;
+        for k in [0, 1, lip / 2, lip - 2, lip - 1] {
+            let open = outline[outline.len() - 1 - k].1 - outline[k].1;
+            assert!(open >= band.gap - 2.0 * RIP_JAG_PX, "point {k}: {open}");
+        }
+        // Slid shut: the lower lip is the upper one, so nothing is open.
+        let shut = band.outline_closed(band.gap);
+        for k in 0..lip {
+            let open = shut[shut.len() - 1 - k].1 - shut[k].1;
+            assert!(open.abs() < 1e-9, "point {k}: {open}");
+        }
+        // Half way, half open; past shut stays shut.
+        let half = band.outline_closed(band.gap / 2.0);
+        let mid = lip / 2;
+        let open_half = half[half.len() - 1 - mid].1 - half[mid].1;
+        let open_full = outline[outline.len() - 1 - mid].1 - outline[mid].1;
+        assert!((open_half - open_full / 2.0).abs() < 1e-9);
+        assert_eq!(band.outline_closed(band.gap * 3.0), shut);
     }
 
     #[test]
@@ -830,10 +898,10 @@ mod tests {
     fn a_hole_in_the_page_scrolls_with_the_page() {
         let torn = tear(100.0);
         assert_ne!(
-            sheet_path(&torn, 390.0, 800.0, 0.0),
-            sheet_path(&torn, 390.0, 800.0, 50.0)
+            sheet_path(&torn, 0.0, 390.0, 800.0, 0.0),
+            sheet_path(&torn, 0.0, 390.0, 800.0, 50.0)
         );
-        let path = sheet_path(&torn, 390.0, 800.0, 0.0);
+        let path = sheet_path(&torn, 0.0, 390.0, 800.0, 0.0);
         assert!(path.starts_with("path(evenodd, \"M0 0H390.0V800.0H0Z"));
         assert!(path.ends_with("Z\")"));
         assert_eq!(path.matches('Z').count(), 2, "the page, and the one hole");

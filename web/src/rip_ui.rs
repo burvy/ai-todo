@@ -29,16 +29,18 @@ thread_local! {
 #[derive(Clone)]
 struct Departed {
     id: String,
+    needs_done: bool,
     spot: Spot,
     anchor: Option<(String, f64)>,
 }
 
 /// A row, finished, tears out of the page where it stood (`spot`, in viewport px): the hole
 /// shows the planner, Rambo tapes it, and the hole heals like any tear.
-pub(crate) fn row_out(id: &str, spot: Spot, anchor: Option<(String, f64)>) {
+pub(crate) fn row_out(id: &str, spot: Spot, anchor: Option<(String, f64)>, needs_done: bool) {
     ROW_OUT.with(|row| {
         row.set(Some(Departed {
             id: id.to_owned(),
+            needs_done,
             spot,
             anchor,
         }))
@@ -59,6 +61,8 @@ pub(crate) struct Ripper {
     /// Where the list page sits in `main`: the tear is drawn in the page's coordinates.
     offset: RwSignal<(f64, f64)>,
     released: RwSignal<bool>,
+    /// How far the lower part of the page has slid up to shut a row's hole, in px.
+    closed: RwSignal<f64>,
     #[cfg(target_arch = "wasm32")]
     dom: std::rc::Rc<imp::Dom>,
 }
@@ -80,6 +84,7 @@ impl Ripper {
             scroll: RwSignal::new(0.0),
             offset: RwSignal::new((0.0, 0.0)),
             released: RwSignal::new(false),
+            closed: RwSignal::new(0.0),
         }
     }
 
@@ -98,6 +103,7 @@ pub(crate) fn TearLayer(ripper: Ripper) -> impl IntoView {
         scroll,
         offset,
         released,
+        closed,
         ..
     } = ripper;
     view! {
@@ -114,15 +120,16 @@ pub(crate) fn TearLayer(ripper: Ripper) -> impl IntoView {
                 tear.get().map(|tear| {
                     let (left, top) = offset.get();
                     let shift = format!("translate({left:.1}px, {:.1}px)", top - scroll.get());
-                    let heal = rip::ring_path(&tear.outline());
+                    let tapes = tear.tapes();
+                    let (shade, edge, fill) = (tear.clone(), tear.clone(), tear);
                     view! {
                         <div class="tear-sheet" style:transform=shift>
                             <svg class="tear-heal" width="1" height="1">
-                                <path class="tear-shade" d=heal.clone() />
-                                <path class="tear-edge" d=heal.clone() />
-                                <path class="tear-fill" d=heal />
+                                <path class="tear-shade" d=move || rip::ring_path(&shade.outline_closed(closed.get())) />
+                                <path class="tear-edge" d=move || rip::ring_path(&edge.outline_closed(closed.get())) />
+                                <path class="tear-fill" d=move || rip::ring_path(&fill.outline_closed(closed.get())) />
                             </svg>
-                            {tear.tapes().into_iter().map(tape).collect_view()}
+                            {tapes.into_iter().map(tape).collect_view()}
                         </div>
                     }
                 })
@@ -208,6 +215,7 @@ mod imp {
                 scroll: RwSignal::new(0.0),
                 offset: RwSignal::new((0.0, 0.0)),
                 released: RwSignal::new(false),
+                closed: RwSignal::new(0.0),
                 dom: Rc::new(Dom {
                     pane,
                     snapshot,
@@ -222,7 +230,8 @@ mod imp {
             };
             // The page is torn while a tear lasts: the planner shows beneath, and the list,
             // paper, has the slit cut out of it.
-            let (tear, scroll, offset) = (ripper.tear, ripper.scroll, ripper.offset);
+            let (tear, scroll, offset, closed) =
+                (ripper.tear, ripper.scroll, ripper.offset, ripper.closed);
             // The part of the planner that has just slid under the hole can be left unpainted
             // (the day lines were missing from the hole on a desk) until the page's style
             // changes again: when the slide ends, a changed custom property on `main` makes
@@ -252,15 +261,20 @@ mod imp {
             Effect::new({
                 let ripper = ripper.clone();
                 move |_| {
-                    if let Some(super::Departed { id, spot, anchor }) = row_out.get() {
+                    if let Some(super::Departed {
+                        id,
+                        needs_done,
+                        spot,
+                        anchor,
+                    }) = row_out.get()
+                    {
                         row_out.set(None);
-                        ripper.tear_out(id, spot, anchor);
+                        ripper.tear_out(id, needs_done, spot, anchor);
                     }
                 }
             });
             Effect::new(move |_| {
                 let torn = tear.get();
-                let scrolled = scroll.get();
                 if let Some(main) = main.get() {
                     let _ = main.class_list().toggle_with_force("torn", torn.is_some());
                     el_style(&main, "--tear-slide-ms", &format!("{TEAR_SLIDE_MS}ms"));
@@ -279,7 +293,7 @@ mod imp {
                         // column that has something to show under where it starts.
                         let planner_left = f64::from(planner.offset_left());
                         let slide = match torn.as_ref() {
-                            Some(tear) if tear.profile == rip::Profile::Strip => rip::slide_over(
+                            Some(tear) if tear.profile != rip::Profile::Slit => rip::slide_over(
                                 planner_left,
                                 f64::from(pane.offset_left()) + tear.from.0,
                                 f64::from(pane.offset_left()) + tear.to.0,
@@ -308,12 +322,19 @@ mod imp {
                         );
                     }
                 }
+            });
+            // The hole cut in the list page, drawn again as the lower part slides shut.
+            Effect::new(move |_| {
+                let torn = tear.get();
+                let scrolled = scroll.get();
+                let shut = closed.get();
                 if let Some(pane) = pane.get() {
                     let clip = torn.map_or_else(
                         || "none".to_owned(),
                         |tear| {
                             rip::sheet_path(
                                 &tear,
+                                shut,
                                 f64::from(pane.client_width()),
                                 f64::from(pane.client_height()),
                                 scrolled,
@@ -455,14 +476,18 @@ mod imp {
             self.mend(&tear, true);
         }
 
-        /// Whether a waiting row's hole is still due: its task is still done, and it has
-        /// not come back to the list (taped back, refused). A task deleted from the pin
-        /// while its row waited is gone from the snapshot and has no hole.
-        fn still_due(&self, id: &str) -> bool {
-            self.dom
-                .snapshot
-                .with_untracked(|snapshot| snapshot.tasks.iter().any(|t| t.id.0 == id && t.done))
-                && !crate::scrap::row_on_page(id)
+        /// Whether a waiting row's hole is still due: it has not come back to the list
+        /// (taped back, refused), and a finished row's task is still done (one deleted from
+        /// the pin while its row waited is gone from the snapshot and has no hole).
+        fn still_due(&self, waiting: &rip::Waiting) -> bool {
+            let done = !waiting.needs_done
+                || self.dom.snapshot.with_untracked(|snapshot| {
+                    snapshot
+                        .tasks
+                        .iter()
+                        .any(|t| t.id.0 == waiting.id && t.done)
+                });
+            done && !crate::scrap::row_on_page(&waiting.id)
         }
 
         /// The page has no list to tear: forget the rows waiting and let the held rows go.
@@ -478,7 +503,13 @@ mod imp {
         /// without a sulk. One tear at a time: a row that finishes while one lasts waits its
         /// turn (the first few; one beyond that just leaves), and the rows below stay where
         /// they were until the last hole has healed, so each hole opens where its row stood.
-        fn tear_out(&self, id: String, spot: crate::scrap::Spot, anchor: Option<(String, f64)>) {
+        fn tear_out(
+            &self,
+            id: String,
+            needs_done: bool,
+            spot: crate::scrap::Spot,
+            anchor: Option<(String, f64)>,
+        ) {
             let dom = &self.dom;
             let Some(pane) = dom.pane.get() else {
                 return self.give_up();
@@ -486,6 +517,7 @@ mod imp {
             let (left, top) = Self::origin(&pane);
             let waiting = rip::Waiting {
                 id,
+                needs_done,
                 place: (
                     spot.x - left,
                     spot.y - top,
@@ -511,19 +543,77 @@ mod imp {
                 let (_, top) = Self::origin(&pane);
                 Some(crate::scrap::row_top_in_view(id)? - top)
             });
-            let (left, top, right, bottom) = waiting.place_now(anchor_top);
+            let (_, top, _, bottom) = waiting.place_now(anchor_top);
+            let Some(pane) = dom.pane.get_untracked() else {
+                return self.give_up();
+            };
             let seed = dom.made.get().wrapping_add(1);
             dom.made.set(seed);
-            let tear = Tear::out_of_row(
-                left,
-                right,
+            // The page tears right across at the row.
+            let tear = Tear::band(
+                f64::from(pane.client_width()),
                 (top + bottom) / 2.0,
                 bottom - top,
                 seed.wrapping_mul(2_654_435_761) ^ (top as u32),
             );
+            self.closed.set(0.0);
             super::HOLE_OPEN.with(|open| open.set(true));
             self.tear.set(Some(tear.clone()));
-            self.mend(&tear, false);
+            // It lies open a moment, then the lower part of the page slides up to shut it
+            // and Rambo tapes the join.
+            let open_ms = if crate::mascot::prefers_reduced_motion() {
+                1
+            } else {
+                crate::tuning::RIP_BAND_OPEN_MS
+            };
+            let ripper = self.clone();
+            crate::engine::every(f64::from(open_ms), move || {
+                ripper.close_hole(&tear, top, bottom);
+                crate::engine::Flow::Stop
+            });
+        }
+
+        /// The lower part of the page slides up (the rows below with it) until the two torn
+        /// lips of the hole meet; then he tapes the seam.
+        fn close_hole(&self, tear: &Tear, top: f64, bottom: f64) {
+            let Some(pane) = self.dom.pane.get_untracked() else {
+                return self.give_up();
+            };
+            let (_, origin_top) = Self::origin(&pane);
+            let closing = crate::scrap::begin_close(origin_top + top, origin_top + bottom);
+            let (gap, closed) = (tear.gap, self.closed);
+            let duration = if crate::mascot::prefers_reduced_motion() {
+                0.0
+            } else {
+                f64::from(crate::tuning::RIP_BAND_CLOSE_MS)
+            };
+            let (started, moved) = (std::cell::Cell::new(None::<f64>), std::cell::Cell::new(0.0));
+            let (ripper, tear) = (self.clone(), tear.clone());
+            crate::engine::on_tick(move |tick| {
+                let start = started.get().unwrap_or(tick.now);
+                started.set(Some(start));
+                let progress = if duration > 0.0 {
+                    ((tick.now - start) / duration).min(1.0)
+                } else {
+                    1.0
+                };
+                // Eased: it starts and ends gently, like a sheet drawn up by hand.
+                let eased = progress * progress * (3.0 - 2.0 * progress);
+                let to = closing.amount * eased;
+                crate::scrap::step_close(&closing, to - moved.get());
+                moved.set(to);
+                closed.set(if closing.amount > 0.0 {
+                    to.min(gap)
+                } else {
+                    gap * eased
+                });
+                if progress < 1.0 {
+                    return crate::engine::Flow::Go;
+                }
+                closed.set(gap);
+                ripper.mend(&tear, false);
+                crate::engine::Flow::Stop
+            });
         }
 
         /// The repair: Rambo goes to the tear (put out by it, or not), tapes it, and the tear
@@ -554,7 +644,7 @@ mod imp {
                         .dom
                         .waiting
                         .borrow_mut()
-                        .next_due(|id| ripper.still_due(id));
+                        .next_due(|waiting| ripper.still_due(waiting));
                     match next {
                         Some(waiting) => ripper.open_hole(&waiting),
                         None => ripper.give_up(),

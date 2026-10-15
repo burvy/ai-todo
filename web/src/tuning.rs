@@ -557,6 +557,15 @@ const _: () = assert!(WRITE_MAX_MS < WRITE_HOLD_MAX_MS);
 /// How far a swipe to the right must travel before it is a rip, in px. Safe range 16
 /// to 48: less and a sloppy tap tears the page, more and a rip feels ignored.
 pub const RIP_MIN_PX: f64 = 24.0;
+/// How long a row's hole lies open across the whole page, showing the planner, before the
+/// lower part of the page slides up to close it, in ms. Safe range 200 to 1500.
+pub const RIP_BAND_OPEN_MS: u32 = 500;
+/// How long the lower part of the page takes to slide up and shut the hole, in ms: the rows
+/// below move with it. Safe range 300 to 1200.
+pub const RIP_BAND_CLOSE_MS: u32 = 600;
+/// How far past each edge of the page a row's hole runs, in px, so it is torn right across.
+/// Safe range 4 to 40.
+pub const RIP_BAND_BLEED_PX: f64 = 12.0;
 /// How many finished rows may wait for a hole while one is open. A row beyond this leaves
 /// without a tear of its own, so the list is never held open for long. Safe range 1 to 4:
 /// each waiting row adds one repair (`rip::total_ms`) to how long the rows below stay put.

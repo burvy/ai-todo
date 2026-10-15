@@ -66,7 +66,7 @@ pub fn note_departure(id: &str) {
     if let Some(spot) = row_spot(id) {
         DEPARTURES.with(|noted| noted.borrow_mut().insert(id.to_owned(), spot));
         // The row tears out of the page: a hole shows the planner, and Rambo tapes it.
-        crate::rip_ui::row_out(id, spot, row_anchor(id));
+        crate::rip_ui::row_out(id, spot, row_anchor(id), true);
     }
 }
 
@@ -314,7 +314,7 @@ pub fn row_top_in_view(id: &str) -> Option<f64> {
 
 /// The row standing above the row `id`, and how far below its top `id` stands: what a hole
 /// that waits measures its place from again.
-fn row_anchor(id: &str) -> Option<(String, f64)> {
+pub(crate) fn row_anchor(id: &str) -> Option<(String, f64)> {
     let row = web_sys::window()?
         .document()?
         .query_selector(&format!("li[data-id=\"{id}\"]"))
@@ -464,14 +464,87 @@ pub fn hold_rows(moved: &[(String, i32)]) {
         };
         let held = row
             .get_attribute("data-held")
-            .and_then(|held| held.parse::<i32>().ok())
-            .unwrap_or(0)
-            + up;
+            .and_then(|held| held.parse::<f64>().ok())
+            .unwrap_or(0.0)
+            + f64::from(*up);
         let _ = row.set_attribute("data-held", &held.to_string());
         let _ = row.class_list().add_1("held-open");
         let style = row.style();
         let _ = style.set_property("transition", "none");
         let _ = style.set_property("transform", &format!("translateY({held}px)"));
+    }
+}
+
+/// The rows that slide up to shut one row's hole, and how far.
+#[cfg(target_arch = "wasm32")]
+pub struct Closing {
+    rows: Vec<web_sys::HtmlElement>,
+    /// How far each moves up in all, in px: what this hole's row held them down by.
+    pub amount: f64,
+}
+
+#[cfg(target_arch = "wasm32")]
+fn held_by(row: &web_sys::HtmlElement) -> f64 {
+    row.get_attribute("data-held")
+        .and_then(|held| held.parse::<f64>().ok())
+        .unwrap_or(0.0)
+}
+
+/// The held rows below a hole whose box runs from `top` to `bottom` (viewport px), and how
+/// far this hole holds them: what they are held down by, less what the row above the hole is
+/// (holes above it hold both alike).
+#[cfg(target_arch = "wasm32")]
+pub fn begin_close(top: f64, bottom: f64) -> Closing {
+    let list = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|doc| doc.query_selector(".task-list").ok().flatten());
+    let Some(children) = list.map(|list| list.children()) else {
+        return Closing {
+            rows: Vec::new(),
+            amount: 0.0,
+        };
+    };
+    let all: Vec<web_sys::HtmlElement> = (0..children.length())
+        .filter_map(|n| children.item(n)?.dyn_into::<web_sys::HtmlElement>().ok())
+        .collect();
+    let below: Vec<web_sys::HtmlElement> = all
+        .iter()
+        .filter(|row| {
+            row.class_list().contains("held-open")
+                && row.get_bounding_client_rect().top() >= bottom - 4.0
+        })
+        .cloned()
+        .collect();
+    let above = all
+        .iter()
+        .filter(|row| row.get_bounding_client_rect().bottom() <= top + 4.0)
+        .map(held_by)
+        .next_back()
+        .unwrap_or(0.0);
+    let amount = below
+        .first()
+        .map_or(0.0, |first| (held_by(first) - above).max(0.0));
+    Closing {
+        rows: below,
+        amount,
+    }
+}
+
+/// Move the rows of a closing hole up `by` px more (the page keeps whatever else holds them).
+#[cfg(target_arch = "wasm32")]
+pub fn step_close(closing: &Closing, by: f64) {
+    for row in &closing.rows {
+        let held = (held_by(row) - by).max(0.0);
+        let style = row.style();
+        let _ = style.set_property("transition", "none");
+        if held < 0.5 {
+            let _ = row.remove_attribute("data-held");
+            let _ = row.class_list().remove_1("held-open");
+            let _ = style.set_property("transform", "none");
+        } else {
+            let _ = row.set_attribute("data-held", &held.to_string());
+            let _ = style.set_property("transform", &format!("translateY({held}px)"));
+        }
     }
 }
 
@@ -575,9 +648,14 @@ where
     let undo = snapshot.with_untracked(|held| undo_for(held, &task_id.0));
     // Where the row stands now, before the list loses it: the scrap flies from there.
     let from = row_spot(&task_id.0);
+    let anchor = row_anchor(&task_id.0);
     let result = delete.await;
     if result.is_ok() {
         crate::sound::play(crate::sound::Cue::Delete);
+        // The crossed-out row tears out of the page like a finished one.
+        if let Some(spot) = from {
+            crate::rip_ui::row_out(&task_id.0, spot, anchor, false);
+        }
     }
     if let (Ok(_), Some((title, undo))) = (&result, undo) {
         lay(scraps, title, undo, from);
