@@ -204,6 +204,7 @@ mod imp {
                         );
                         let lift = rip::lift_px(
                             torn.is_some(),
+                            phone(),
                             f64::from(planner.offset_top()),
                             tear_y,
                             &columns,
@@ -403,6 +404,16 @@ mod imp {
                 })
                 .collect()
         };
+        // The middle of each part, as a height from the planner page's top.
+        let middles = |parts: web_sys::HtmlCollection| -> Vec<f64> {
+            (0..parts.length())
+                .filter_map(|i| parts.item(i))
+                .map(|part| {
+                    let rect = part.get_bounding_client_rect();
+                    rect.top() - page.top() + rect.height() / 2.0
+                })
+                .collect()
+        };
         let days = planner.get_elements_by_class_name("day");
         (0..days.length())
             .filter_map(|i| days.item(i))
@@ -412,11 +423,13 @@ mod imp {
                 // Its hour lines are what the hole lines up on: a slip may lie far from
                 // the tear, and the planner should not be dragged across the screen for it.
                 let marks = tops(day.get_elements_by_class_name("hour"));
+                let slips = middles(day.get_elements_by_class_name("placement"));
                 rip::Column {
                     left: rect.left() - page.left(),
                     width: rect.width(),
                     has_slips,
                     marks,
+                    slips,
                 }
             })
             .collect()
