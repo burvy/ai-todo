@@ -1,4 +1,5 @@
 use chrono::{DateTime, Timelike, Utc};
+use leptos::portal::Portal;
 use leptos::prelude::*;
 #[cfg(target_arch = "wasm32")]
 use todo_core::When;
@@ -8,16 +9,26 @@ use todo_core::{LocalContext, Placement, Snapshot, TaskId};
 
 use crate::{clock, settings::Settings};
 
-/// A task being dragged by its grip: who it is, and where the finger is.
-/// Where it may land is drawn from `landing`; the drop's `updated_at` guard
-/// is looked up from the snapshot when the slip lands, so a still fresh
-/// edit always wins.
+/// A task being dragged by its grip: who it is, where the finger is, and where on
+/// the slip it took hold. Where it may land is drawn from `landing`; the drop's
+/// `updated_at` guard is looked up from the snapshot when the slip lands, so a
+/// still fresh edit always wins.
 #[derive(Clone, Debug)]
 struct Drag {
     id: TaskId,
     title: String,
     x: f64,
     y: f64,
+    /// The finger's offset from the slip's top-left corner when it was lifted.
+    grab: (f64, f64),
+}
+
+impl Drag {
+    /// The ghost's top-left corner in viewport pixels: the slip stays under the
+    /// finger at the very spot it was taken.
+    fn ghost_corner(&self) -> (f64, f64) {
+        (self.x - self.grab.0, self.y - self.grab.1)
+    }
 }
 
 /// Where a task would start: a planner day (0 is today) and a minute of that day.
@@ -384,10 +395,17 @@ pub fn WeekGrid(
                     </For>
                 </div>
             </div>
+            // The ghost is fixed to the viewport, so it lives on the body: the planner
+            // page carries a transform (its slide), and a fixed child of a transformed
+            // box is placed against that box, far off the pointer.
+            <Portal>
             {move || drag.get().map(|d| view! {
                 <div
                     class="drag-ghost"
-                    style=format!("left: {:.1}px; top: {:.1}px;", d.x, d.y)
+                    style={
+                        let (left, top) = d.ghost_corner();
+                        format!("left: {left:.1}px; top: {top:.1}px;")
+                    }
                     aria-hidden="true"
                 >
                     <strong>{d.title.clone()}</strong>
@@ -405,6 +423,7 @@ pub fn WeekGrid(
                     </span>
                 </div>
             })}
+            </Portal>
         </section>
     }
 }
@@ -824,7 +843,7 @@ fn PlacementBlock(
     // Lift a slip onto its finger at a point: the title comes from the
     // snapshot. The pointer is usually captured already, at pointer-down.
     #[cfg(target_arch = "wasm32")]
-    let lift = move |x: f64, y: f64| {
+    let lift = move |x: f64, y: f64, grab: (f64, f64)| {
         let snap = snapshot.get_untracked();
         let Some(task) = snap.tasks.iter().find(|task| task.id == down_id) else {
             return;
@@ -836,6 +855,7 @@ fn PlacementBlock(
             title,
             x,
             y,
+            grab,
         }));
     };
 
@@ -873,9 +893,18 @@ fn PlacementBlock(
             }
             let x = f64::from(event.client_x());
             let y = f64::from(event.client_y());
+            // Where on the slip the finger is: the handlers sit on the slip itself.
+            let grab = event
+                .current_target()
+                .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+                .map(|slip| {
+                    let rect = slip.get_bounding_client_rect();
+                    (x - rect.left(), y - rect.top())
+                })
+                .unwrap_or_default();
             if event.pointer_type() == "mouse" {
                 // A mouse lifts a slip the moment it takes hold: no hold to mistime.
-                lift(x, y);
+                lift(x, y, grab);
                 return;
             }
             // A touch lifts when its finger has held still a beat; until then a
@@ -893,7 +922,7 @@ fn PlacementBlock(
                 let lift = lift.clone();
                 gloo_timers::callback::Timeout::new(PRESS_HOLD_MS, move || {
                     press.borrow_mut().take();
-                    lift(x, y);
+                    lift(x, y, grab);
                 })
             };
             if let Some(p) = press.borrow_mut().as_mut() {
@@ -1408,6 +1437,24 @@ fn placement_label(snapshot: &Snapshot, task_id: &TaskId) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_dragged_slip_stays_under_the_finger_where_it_was_taken() {
+        let drag = |x, y, grab| super::Drag {
+            id: todo_core::TaskId("t1".into()),
+            title: "Lab report".into(),
+            x,
+            y,
+            grab,
+        };
+        // Taken 12px in and 16px down, the ghost's corner keeps that offset wherever
+        // the finger goes, including off the planner's left and top edges.
+        for (x, y) in [(575.0, 174.0), (1745.0, 1000.0), (5.0, 3.0)] {
+            let (left, top) = drag(x, y, (12.0, 16.0)).ghost_corner();
+            assert_eq!((x - left, y - top), (12.0, 16.0));
+        }
+        assert_eq!(drag(40.0, 50.0, (0.0, 0.0)).ghost_corner(), (40.0, 50.0));
+    }
+
     use super::*;
     use chrono::TimeZone;
 
