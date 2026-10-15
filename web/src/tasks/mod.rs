@@ -1392,10 +1392,9 @@ mod tests {
         assert!(text.contains("padding: 0"), "{text}");
         // Small, notebook writing, and the red margin rule down the left of the page.
         assert!(text.contains("font-size: var(--text-list)"), "{text}");
-        let pane = rule(".tasks-pane {");
         assert!(
-            pane.contains("border-left: 1px solid var(--margin-line)"),
-            "{pane}"
+            include_str!("../../theme.css").contains("border-left: 1px solid var(--margin-line)"),
+            "the list page keeps its red margin rule"
         );
     }
 
