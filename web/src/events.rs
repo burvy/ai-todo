@@ -9,29 +9,43 @@ use leptos::prelude::*;
 use rambl_web_core::events::{Event, Events};
 
 #[derive(Clone, Copy)]
-pub struct Queue(StoredValue<Events>);
+pub struct Queue {
+    events: StoredValue<Events>,
+    /// Fired on every push, so a view that answers an event at once (the edit sheet) can
+    /// take it from an Effect that calls [`Queue::track`].
+    pushed: Trigger,
+}
 
 impl Queue {
     pub fn provide() -> Self {
-        let queue = Queue(StoredValue::new(Events::default()));
+        let queue = Queue {
+            events: StoredValue::new(Events::default()),
+            pushed: Trigger::new(),
+        };
         provide_context(queue);
         queue
     }
 
     pub fn push(self, event: Event) {
-        self.0.update_value(|events| events.push(event));
+        self.events.update_value(|events| events.push(event));
+        self.pushed.notify();
+    }
+
+    /// Run the calling Effect again after every push.
+    pub fn track(self) {
+        self.pushed.track();
     }
 
     /// Take the oldest event `claim` answers for.
     pub fn take<T>(self, claim: impl FnMut(&Event) -> Option<T>) -> Option<T> {
-        self.0
+        self.events
             .try_update_value(|events| events.take(claim))
             .flatten()
     }
 
     /// Take every event `claim` answers for, oldest first.
     pub fn take_all<T>(self, claim: impl FnMut(&Event) -> Option<T>) -> Vec<T> {
-        self.0
+        self.events
             .try_update_value(|events| events.take_all(claim))
             .unwrap_or_default()
     }

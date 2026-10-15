@@ -29,6 +29,9 @@ pub enum Event {
     /// The strip of task `id`, being taped back, hung at `from`: its row flies back from
     /// there once the list shows it again.
     RowBack { id: String, from: Spot },
+    /// The edit sheet was asked for on task `id`: Rambo's Edit, or a spoken change that
+    /// went through, so the open sheet fills again from the result.
+    EditAsked { id: String },
 }
 
 /// The facts not yet taken, oldest first.
@@ -91,6 +94,14 @@ pub fn row_back(id: &str) -> impl FnMut(&Event) -> Option<Spot> + '_ {
 pub fn any_row_back(event: &Event) -> Option<(String, Spot)> {
     match event {
         Event::RowBack { id, from } => Some((id.clone(), *from)),
+        _ => None,
+    }
+}
+
+/// A claim on any ask for the edit sheet: on which task.
+pub fn edit_asked(event: &Event) -> Option<String> {
+    match event {
+        Event::EditAsked { id } => Some(id.clone()),
         _ => None,
     }
 }
@@ -166,6 +177,21 @@ mod tests {
         );
         assert_eq!(events.take(row_back("b")), None);
         assert_eq!(events.take(row_left("a")), Some(spot(1.0)));
+    }
+
+    #[test]
+    fn the_sheet_opens_on_the_last_task_asked_for() {
+        let mut events = Events::default();
+        events.push(Event::EditAsked { id: "a".into() });
+        events.push(left("x", 1.0));
+        events.push(Event::EditAsked { id: "b".into() });
+        assert_eq!(events.take_all(edit_asked).pop(), Some("b".to_owned()));
+        assert_eq!(
+            events.take(edit_asked),
+            None,
+            "every ask is answered at once"
+        );
+        assert_eq!(events.take(row_left("x")), Some(spot(1.0)));
     }
 
     #[test]
