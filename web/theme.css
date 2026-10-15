@@ -2128,6 +2128,17 @@ main:has(~ .rambo.is-covered) > .tasks-pane {
   left: calc(var(--ribbon-w) - var(--tap));
 }
 
+/* A thumb needs the full --tap height: on a phone the target reaches on down over the
+   top of today's hours at the column's right (up is the page's own controls). A slip in
+   today's first hour gives up that corner of itself to the ribbon; the head drawn stays
+   the band's height. */
+@media (max-width: 700px) {
+  .bookmark-ribbon::before {
+    bottom: auto;
+    height: var(--tap);
+  }
+}
+
 /* .hours stops a --space-1 short of the day's right edge, where the head is measured
    from; the tail starts a --space-1 up, at the band's foot. */
 .ribbon-tail {
