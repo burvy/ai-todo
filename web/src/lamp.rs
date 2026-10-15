@@ -106,7 +106,9 @@ pub fn DeskLamp(
     // The paper being switched to, from the click until it has landed: the lamp's own
     // light changes at the click, instantly.
     let (going_to, set_going_to) = signal(None::<Theme>);
-    let slide = std::time::Duration::from_millis(u64::from(crate::tuning::LAMP_SLIDE_MS));
+    let slide = f64::from(crate::tuning::LAMP_SLIDE_MS);
+    // The timers of a switch in progress, stopped if the lamp goes before they run.
+    let timers = StoredValue::new_local(crate::engine::Guard::default());
     Effect::new(move |_| {
         let Some(theme) = request.get() else { return };
         // Clearing the request wakes this effect once more, with nothing to do.
@@ -126,25 +128,21 @@ pub fn DeskLamp(
         set_pulled.set(true);
         // One frame for the sheet to be drawn above the page, then it slides down.
         crate::engine::next_frame(move || set_sheet.set(Sheet::Down));
-        set_timeout(
-            move || {
+        timers.update_value(|timers| {
+            timers.keep(crate::engine::after(slide, move || {
                 // It covers the page: swap the paper under it, then lift it back off.
                 swap(set_settings, settings, theme);
                 crate::engine::next_frame(move || set_sheet.set(Sheet::Up));
-            },
-            slide,
-        );
-        set_timeout(
-            move || {
+            }));
+            timers.keep(crate::engine::after(slide * 2.0 + 50.0, move || {
                 set_sheet.set(Sheet::Away);
                 set_going_to.set(None);
-            },
-            slide * 2 + std::time::Duration::from_millis(50),
-        );
-        set_timeout(
-            move || set_pulled.set(false),
-            std::time::Duration::from_millis(u64::from(crate::tuning::LAMP_PULL_MS)),
-        );
+            }));
+            timers.keep(crate::engine::after(
+                f64::from(crate::tuning::LAMP_PULL_MS),
+                move || set_pulled.set(false),
+            ));
+        });
     });
     let lit = move || going_to.get().unwrap_or(settings.get().theme) == Theme::Dark;
     view! {
