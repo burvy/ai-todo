@@ -11,7 +11,8 @@ use chrono_tz::Tz;
 use icalendar::{CalendarDateTime, Component, DatePerhapsTime, Event};
 
 use crate::v2::app::{ImportedEvent, ImportedSeries};
-use crate::v2::tuning::{IMPORT_MAX_EVENT_LENGTH, IMPORT_MAX_RULE_COUNT};
+use crate::v2::tuning::{IMPORT_MAX_EVENT_LENGTH, IMPORT_MAX_INTERVAL, IMPORT_MAX_RULE_COUNT};
+use todo_core::Recurrence;
 use todo_core::tuning::{TASK_DEFAULT_DURATION_MIN, TASK_MAX_DURATION_MIN, TASK_MIN_DURATION_MIN};
 
 /// A calendar we could not read. A malformed upload is the caller's doing, so
@@ -73,8 +74,8 @@ pub fn parse_calendar(text: &str) -> Result<ParsedCalendar, ImportError> {
         let uid = uid_of(event);
         let title = summary_of(event);
 
-        match weekly_series(event, start) {
-            // A weekly rule becomes a series, never a task per date.
+        match rrule_series(event, start) {
+            // A rule becomes a series, never a task per date.
             Ok(Some(series)) => parsed.series.push(ImportedSeries {
                 uid,
                 title,
@@ -131,14 +132,14 @@ const RRULE_WEEKDAYS: [(&str, Weekday); 7] = [
     ("SU", Weekday::Sun),
 ];
 
-/// The parts of a weekly rule we follow. Anything else (`BYSETPOS`, `BYMONTH`,
+/// The parts of a rule we follow. Anything else (`BYSETPOS`, `BYMONTH`,
 /// `BYMONTHDAY`, `BYWEEKNO`, …) names a rhythm this app cannot keep.
-const SUPPORTED_PARTS: [&str; 5] = ["FREQ", "BYDAY", "UNTIL", "COUNT", "WKST"];
+const SUPPORTED_PARTS: [&str; 6] = ["FREQ", "BYDAY", "UNTIL", "COUNT", "WKST", "INTERVAL"];
 
-/// The series an event's weekly `RRULE` describes, or `None` when it has no rule. An
+/// The series an event's `RRULE` describes, or `None` when it has no rule. An
 /// `Err` is a rule we cannot follow, and says why: the caller imports the event's first
 /// instance instead and tells the user this rule was not followed.
-fn weekly_series(event: &Event, start: DateTime<Utc>) -> Result<Option<ImportedSeries>, String> {
+fn rrule_series(event: &Event, start: DateTime<Utc>) -> Result<Option<ImportedSeries>, String> {
     let Some(rule) = event.properties().get("RRULE").map(|p| p.value()) else {
         return Ok(None);
     };
@@ -158,16 +159,34 @@ fn weekly_series(event: &Event, start: DateTime<Utc>) -> Result<Option<ImportedS
     };
     // The rhythm first: "every month" says more about why we cannot follow a rule
     // than the parts we do not read do.
-    if !part("FREQ").is_some_and(|freq| freq.eq_ignore_ascii_case("WEEKLY")) {
-        return Err(format!(
-            "{} repeats, imported as one task",
-            part("FREQ").unwrap_or("this rule")
-        ));
+    let freq = part("FREQ").unwrap_or("WEEKLY");
+    let is_weekly = freq.eq_ignore_ascii_case("WEEKLY");
+    let is_daily = freq.eq_ignore_ascii_case("DAILY");
+    if !is_weekly && !is_daily {
+        return Err(format!("{} repeats, imported as one task", freq));
     }
-    if let Some(interval) = part("INTERVAL") {
-        return Err(format!(
-            "every {interval} weeks is not every week, imported as one task"
-        ));
+    // INTERVAL: how many weeks (weekly) or days (daily) between occurrences.
+    let interval: u32 = match part("INTERVAL") {
+        None => 1,
+        Some(raw) => raw
+            .trim()
+            .parse()
+            .ok()
+            .filter(|interval| (1..=IMPORT_MAX_INTERVAL).contains(interval))
+            .ok_or_else(|| {
+                format!(
+                    "INTERVAL={raw} is not a number from 1 to {IMPORT_MAX_INTERVAL}, imported as one task"
+                )
+            })?,
+    };
+    // Which weekday a week starts on decides which weeks "every 2 weeks" skips.
+    if is_weekly
+        && interval > 1
+        && part("WKST").is_some_and(|wkst| !wkst.eq_ignore_ascii_case("MO"))
+    {
+        return Err(
+            "WKST other than MO with an INTERVAL is not supported, imported as one task".into(),
+        );
     }
     if let Some((name, _)) = parts
         .iter()
@@ -176,10 +195,21 @@ fn weekly_series(event: &Event, start: DateTime<Utc>) -> Result<Option<ImportedS
         return Err(format!("{name} is not supported, imported as one task"));
     }
 
-    let weekdays = match part("BYDAY") {
+    let weekdays = match (is_weekly, part("BYDAY")) {
         // No BYDAY means the event's own weekday, which is the only one DTSTART can be.
-        None => vec![start_day.weekday()],
-        Some(list) => weekdays_of(list)?,
+        (true, None) => vec![start_day.weekday()],
+        (true, Some(list)) => weekdays_of(list)?,
+        // A daily rule has no weekdays.
+        (false, None) => Vec::new(),
+        // Every day, on these days only, is every week on these days: the same rule, as long
+        // as it is every day (a day step cannot be a week step).
+        (false, Some(list)) if interval == 1 => weekdays_of(list)?,
+        (false, Some(_)) => {
+            return Err(
+                "BYDAY with an INTERVAL on a daily rule is not supported, imported as one task"
+                    .into(),
+            );
+        }
     };
     // A rule ends either by naming a date or by counting occurrences; the earlier of
     // the two is the one that bites first.
@@ -190,7 +220,16 @@ fn weekly_series(event: &Event, start: DateTime<Utc>) -> Result<Option<ImportedS
             let count: u32 = raw
                 .parse()
                 .map_err(|_| format!("COUNT={raw} is not a number, imported as one task"))?;
-            Some(last_occurrence(start_day, &weekdays, count))
+            let rule = if weekdays.is_empty() {
+                Recurrence::daily(interval, None)
+            } else {
+                Recurrence::with_interval(weekdays.iter().copied(), interval, None)
+            };
+            rule.and_then(|rule| {
+                rule.nth_occurrence(start_day, count.clamp(1, IMPORT_MAX_RULE_COUNT))
+            })
+            .ok_or_else(|| format!("COUNT={raw} runs past the calendar, imported as one task"))
+            .map(Some)?
         }
     };
     let until = match (until, counted) {
@@ -205,6 +244,7 @@ fn weekly_series(event: &Event, start: DateTime<Utc>) -> Result<Option<ImportedS
         title: String::new(),
         duration_min: TASK_DEFAULT_DURATION_MIN,
         weekdays,
+        interval,
         until,
         start_day,
         // An all-day event (`VALUE=DATE`) has no time, so its occurrences float.
@@ -306,38 +346,6 @@ fn utc_instant(raw: &str) -> Option<DateTime<Utc>> {
     NaiveDateTime::parse_from_str(body, "%Y%m%dT%H%M%S")
         .ok()
         .map(|local| Utc.from_utc_datetime(&local))
-}
-
-/// The date of the `count`-th occurrence from `start_day`: how a rule that counts
-/// weeks instead of naming an end date is stored.
-///
-/// Computes arithmetically so a huge COUNT does not walk day by day and overflow.
-/// Caps at [`IMPORT_MAX_RULE_COUNT`] occurrences; a count that large is listed in
-/// `unmapped` instead.
-fn last_occurrence(start_day: NaiveDate, weekdays: &[Weekday], count: u32) -> NaiveDate {
-    // A count beyond the cap is almost certainly garbage.
-    let count = count.clamp(1, IMPORT_MAX_RULE_COUNT);
-    let days_per_cycle = weekdays.len() as i64;
-    // Whole cycles of the weekday pattern
-    let full_cycles = (count as i64 - 1) / days_per_cycle;
-    let remainder = (count as i64 - 1) % days_per_cycle;
-    // Jump full_cycles weeks, then walk the remainder days within the cycle
-    let base = start_day
-        .checked_add_days(chrono::Days::new(full_cycles as u64 * 7))
-        .unwrap_or(start_day);
-    let mut date = base;
-    let mut found = 0;
-    // Walk at most `weekdays.len()` days to find the remainder-th matching weekday
-    while found <= remainder {
-        if weekdays.contains(&date.weekday()) {
-            if found == remainder {
-                return date;
-            }
-            found += 1;
-        }
-        date = date.checked_add_days(chrono::Days::new(1)).unwrap_or(date);
-    }
-    date
 }
 
 /// The zone an event's times are written in: its `DTSTART` TZID, or UTC when it names
@@ -1031,8 +1039,6 @@ mod tests {
     fn rules_we_cannot_follow_are_imported_once_and_reported() {
         for (rule, because) in [
             ("FREQ=MONTHLY;BYMONTHDAY=1", "repeats"),
-            ("FREQ=DAILY;COUNT=10", "repeats"),
-            ("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO", "every 2 weeks"),
             ("FREQ=WEEKLY;BYDAY=2FR", "counts weeks"),
             (
                 "FREQ=WEEKLY;BYSETPOS=1;BYDAY=MO",
@@ -1062,6 +1068,106 @@ mod tests {
             assert!(note.contains("Repeat"), "{note} should name the event");
             assert!(note.contains(because), "{note} should say why: {because}");
         }
+    }
+
+    /// FREQ=WEEKLY;INTERVAL=2 becomes a series with interval=2.
+    #[test]
+    fn weekly_with_interval_becomes_a_series() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "UID:biweekly@example.com",
+            "SUMMARY:Biweekly sync",
+            "DTSTART;TZID=America/New_York:20261012T090000",
+            "DTEND;TZID=America/New_York:20261012T100000",
+            "RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO",
+            "END:VEVENT",
+        ]);
+        let calendar = parse_calendar(&text).expect("parses");
+        assert_eq!(
+            calendar.series.len(),
+            1,
+            "INTERVAL=2 weekly becomes a series"
+        );
+        let series = &calendar.series[0];
+        assert_eq!(series.weekdays, vec![Weekday::Mon]);
+        assert_eq!(series.interval, 2);
+        assert!(calendar.unmapped.is_empty(), "no unmapped for INTERVAL=2");
+    }
+
+    /// FREQ=DAILY becomes a daily series (empty weekdays).
+    #[test]
+    fn daily_becomes_a_series() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "UID:daily@example.com",
+            "SUMMARY:Standup",
+            "DTSTART;TZID=America/New_York:20261012T090000",
+            "DTEND;TZID=America/New_York:20261012T091500",
+            "RRULE:FREQ=DAILY;COUNT=10",
+            "END:VEVENT",
+        ]);
+        let calendar = parse_calendar(&text).expect("parses");
+        assert_eq!(calendar.series.len(), 1, "DAILY becomes a series");
+        let series = &calendar.series[0];
+        assert!(series.weekdays.is_empty(), "daily has no weekdays");
+        assert_eq!(series.interval, 1);
+        // COUNT=10: start Oct 12 + 9 days = Oct 21
+        assert_eq!(
+            series.until,
+            Some(NaiveDate::from_ymd_opt(2026, 10, 21).unwrap()),
+            "10 daily occurrences end on the 10th day"
+        );
+        assert!(calendar.unmapped.is_empty(), "no unmapped for DAILY");
+    }
+
+    /// FREQ=DAILY;INTERVAL=2 becomes a series that fires every 2 days.
+    #[test]
+    fn daily_with_interval_becomes_a_series() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "UID:every2days@example.com",
+            "SUMMARY:Water plants",
+            "DTSTART;TZID=America/New_York:20261012T080000",
+            "DTEND;TZID=America/New_York:20261012T081500",
+            "RRULE:FREQ=DAILY;INTERVAL=2;COUNT=5",
+            "END:VEVENT",
+        ]);
+        let calendar = parse_calendar(&text).expect("parses");
+        assert_eq!(calendar.series.len(), 1);
+        let series = &calendar.series[0];
+        assert!(series.weekdays.is_empty());
+        assert_eq!(series.interval, 2);
+        // COUNT=5: Oct 12, 14, 16, 18, 20
+        assert_eq!(
+            series.until,
+            Some(NaiveDate::from_ymd_opt(2026, 10, 20).unwrap()),
+            "5 occurrences every 2 days end on Oct 20"
+        );
+    }
+
+    /// FREQ=WEEKLY;INTERVAL=2;COUNT computes the last occurrence correctly.
+    #[test]
+    fn weekly_interval_with_count() {
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "UID:biweekly-count@example.com",
+            "SUMMARY:Biweekly review",
+            "DTSTART;TZID=America/New_York:20261012T140000",
+            "DTEND;TZID=America/New_York:20261012T150000",
+            "RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO;COUNT=3",
+            "END:VEVENT",
+        ]);
+        let calendar = parse_calendar(&text).expect("parses");
+        assert_eq!(calendar.series.len(), 1);
+        let series = &calendar.series[0];
+        assert_eq!(series.weekdays, vec![Weekday::Mon]);
+        assert_eq!(series.interval, 2);
+        // COUNT=3: Oct 12, Oct 26, Nov 9
+        assert_eq!(
+            series.until,
+            Some(NaiveDate::from_ymd_opt(2026, 11, 9).unwrap()),
+            "3 occurrences every 2 weeks end on Nov 9"
+        );
     }
 
     /// An all-day weekly event has no time, so its occurrences float rather than being
@@ -1141,23 +1247,140 @@ mod tests {
         );
     }
 
-    /// last_occurrence computes the same result as the old loop for small counts.
+    /// One event with the given RRULE, DTSTART Wed 14 Oct 2026 09:00 New York.
+    fn rule_on_a_wednesday(rule: &str) -> ParsedCalendar {
+        let rule = format!("RRULE:{rule}");
+        let text = with_vtimezone(&[
+            "BEGIN:VEVENT",
+            "UID:rule@example.com",
+            "SUMMARY:Rule",
+            "DTSTART;TZID=America/New_York:20261014T090000",
+            "DTEND;TZID=America/New_York:20261014T100000",
+            &rule,
+            "END:VEVENT",
+        ]);
+        parse_calendar(&text).expect("parses")
+    }
+
+    fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    /// COUNT with INTERVAL and several BYDAY days counts calendar weeks from the start's
+    /// own week: Wed 14, Mon 26, Wed 28, Mon 9 Nov is the 4th.
     #[test]
-    fn last_occurrence_matches_loop_for_small_counts() {
-        let start = NaiveDate::from_ymd_opt(2026, 10, 13).unwrap(); // Tuesday
-        let weekdays = vec![Weekday::Tue, Weekday::Thu];
-        // COUNT=5: Tue 13, Thu 15, Tue 20, Thu 22, Tue 27
-        let last = last_occurrence(start, &weekdays, 5);
-        assert_eq!(
-            last,
-            NaiveDate::from_ymd_opt(2026, 10, 27).unwrap(),
-            "5th occurrence of Tue/Thu from Oct 13 is Oct 27"
+    fn count_with_interval_and_several_days_ends_on_the_right_day() {
+        let calendar = rule_on_a_wednesday("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE;COUNT=4");
+        assert_eq!(calendar.series.len(), 1);
+        assert_eq!(calendar.series[0].until, Some(ymd(2026, 11, 9)));
+        // ...and it agrees with the rule's own coverage.
+        let rule = Recurrence::with_interval([Weekday::Mon, Weekday::Wed], 2, None).unwrap();
+        let start = calendar.series[0].start_day;
+        assert!(rule.covers(start, ymd(2026, 11, 9)));
+        assert!(
+            !rule.covers(start, ymd(2026, 11, 2)),
+            "the week between is skipped"
         );
-        // COUNT=1: just the start day
-        let first = last_occurrence(start, &weekdays, 1);
-        assert_eq!(first, start, "COUNT=1 is the start day");
-        // COUNT=0: treated as 1
-        let zero = last_occurrence(start, &weekdays, 0);
-        assert_eq!(zero, start, "COUNT=0 is treated as 1");
+    }
+
+    /// A weekday-only daily rule is a weekly rule on those days, never every day.
+    #[test]
+    fn daily_on_some_days_is_a_weekly_series_on_those_days() {
+        let calendar = rule_on_a_wednesday("FREQ=DAILY;BYDAY=MO,TU,WE,TH,FR;COUNT=7");
+        assert!(calendar.unmapped.is_empty());
+        let series = &calendar.series[0];
+        assert_eq!(
+            series.weekdays,
+            vec![
+                Weekday::Mon,
+                Weekday::Tue,
+                Weekday::Wed,
+                Weekday::Thu,
+                Weekday::Fri
+            ]
+        );
+        assert_eq!(series.interval, 1);
+        // Wed 14, Thu 15, Fri 16, Mon 19, Tue 20, Wed 21, Thu 22: no weekend.
+        assert_eq!(series.until, Some(ymd(2026, 10, 22)));
+    }
+
+    /// BYDAY on a daily rule with a day step has no weekly twin: imported once and reported.
+    #[test]
+    fn daily_on_some_days_with_a_step_is_reported() {
+        let calendar = rule_on_a_wednesday("FREQ=DAILY;INTERVAL=2;BYDAY=MO,WE");
+        assert!(calendar.series.is_empty());
+        assert_eq!(calendar.unmapped.len(), 1);
+        assert!(
+            calendar.unmapped[0].contains("BYDAY with an INTERVAL"),
+            "{:?}",
+            calendar.unmapped
+        );
+    }
+
+    /// An interval that is zero, not a number or beyond the cap falls back per event; the
+    /// rest of the import is untouched.
+    #[test]
+    fn a_bad_interval_falls_back_for_that_event_only() {
+        for interval in ["0", "x", "-1", "1001", "4294967295"] {
+            let text = with_vtimezone(&[
+                "BEGIN:VEVENT",
+                "UID:bad@example.com",
+                "SUMMARY:Bad",
+                "DTSTART;TZID=America/New_York:20261014T090000",
+                "DTEND;TZID=America/New_York:20261014T100000",
+                &format!("RRULE:FREQ=DAILY;INTERVAL={interval}"),
+                "END:VEVENT",
+                "BEGIN:VEVENT",
+                "UID:good@example.com",
+                "SUMMARY:Good",
+                "DTSTART;TZID=America/New_York:20261014T110000",
+                "DTEND;TZID=America/New_York:20261014T120000",
+                "RRULE:FREQ=DAILY;INTERVAL=2",
+                "END:VEVENT",
+            ]);
+            let calendar = parse_calendar(&text).expect("parses");
+            assert_eq!(
+                calendar.series.len(),
+                1,
+                "INTERVAL={interval}: only the good one"
+            );
+            assert_eq!(calendar.series[0].interval, 2);
+            assert_eq!(
+                calendar.events.len(),
+                1,
+                "INTERVAL={interval}: the bad one is one task"
+            );
+            assert_eq!(calendar.unmapped.len(), 1, "INTERVAL={interval}");
+            assert!(
+                calendar.unmapped[0].contains("INTERVAL"),
+                "{:?}",
+                calendar.unmapped
+            );
+        }
+        // The cap itself is fine.
+        let calendar = rule_on_a_wednesday("FREQ=WEEKLY;INTERVAL=1000;COUNT=2");
+        assert_eq!(calendar.series[0].interval, 1000);
+        assert_eq!(
+            calendar.series[0].until,
+            Some(ymd(2026, 10, 14) + chrono::Days::new(7000))
+        );
+    }
+
+    /// A week that starts on another day changes which weeks "every 2 weeks" skips: not
+    /// followed, so reported, unless it is the default Monday.
+    #[test]
+    fn a_week_start_other_than_monday_with_an_interval_is_reported() {
+        let calendar = rule_on_a_wednesday("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE;WKST=SU");
+        assert!(calendar.series.is_empty());
+        assert!(
+            calendar.unmapped[0].contains("WKST"),
+            "{:?}",
+            calendar.unmapped
+        );
+        let monday = rule_on_a_wednesday("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE;WKST=MO");
+        assert_eq!(monday.series.len(), 1);
+        // Every week, the week start does not matter.
+        let every = rule_on_a_wednesday("FREQ=WEEKLY;BYDAY=MO,WE;WKST=SU");
+        assert_eq!(every.series.len(), 1);
     }
 }

@@ -576,13 +576,22 @@ impl<S: Store> App<S> {
             .map(|series| {
                 check_title(&series.title)?;
                 check_duration(series.duration_min)?;
-                let rule =
-                    Recurrence::new(series.weekdays.clone(), series.until).ok_or_else(|| {
-                        ApiError {
-                            code: ErrorCode::BadRequest,
-                            message: "a series must repeat on at least one day".into(),
-                        }
-                    })?;
+                let rule = if series.weekdays.is_empty() {
+                    Recurrence::daily(series.interval, series.until).ok_or_else(|| ApiError {
+                        code: ErrorCode::BadRequest,
+                        message: "a daily series needs an interval of 1 or more".into(),
+                    })?
+                } else {
+                    Recurrence::with_interval(
+                        series.weekdays.clone(),
+                        series.interval,
+                        series.until,
+                    )
+                    .ok_or_else(|| ApiError {
+                        code: ErrorCode::BadRequest,
+                        message: "a series must repeat on at least one day".into(),
+                    })?
+                };
                 check_span(series.start_day, rule.until)?;
                 let existing = series
                     .uid
@@ -1077,7 +1086,7 @@ pub struct ImportResult {
     pub snapshot: Snapshot,
 }
 
-/// A weekly recurrence from a calendar export, before it becomes a [`Series`].
+/// A recurrence from a calendar export, before it becomes a [`Series`].
 ///
 /// The zone is the event's own TZID, not the importing user's: a lecture kept at 09:00
 /// New York stays at 09:00 New York for whoever imports it.
@@ -1086,7 +1095,10 @@ pub struct ImportedSeries {
     pub uid: Option<String>,
     pub title: String,
     pub duration_min: u16,
+    /// Weekdays for a weekly rule; empty for a daily rule.
     pub weekdays: Vec<Weekday>,
+    /// How often the rule fires: every `interval` weeks (weekly) or days (daily).
+    pub interval: u32,
     /// The last local day an occurrence falls on, inclusive. `None` repeats forever.
     pub until: Option<NaiveDate>,
     /// The first local day an occurrence may fall on, inclusive.
