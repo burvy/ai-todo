@@ -22,7 +22,7 @@ use crate::{gesture, ink, mascot, settings, speech, tuning, voice};
 pub(crate) fn Rambo(
     /// The empty planner hour he was dropped on, as a date phrase: the capture box's
     /// next task starts then
-    noting_at: RwSignal<Option<String>>,
+    noting_at: RwSignal<Option<crate::capture::NotedHour>>,
     state: ReadSignal<mascot::State>,
     set_state: WriteSignal<mascot::State>,
     talking: ReadSignal<bool>,
@@ -1454,11 +1454,14 @@ fn free_hour_under(
     (x, y): (f64, f64),
     snapshot: &Snapshot,
     settings: &settings::Settings,
-) -> Option<String> {
+) -> Option<crate::capture::NotedHour> {
     let slot = crate::week::hour_at(x, y, settings)?;
     let ctx = crate::week::planner_context(&snapshot.tz);
-    crate::week::free_at(&snapshot.plan.placements, &ctx, slot)
-        .then(|| crate::week::hour_prefill_text(&ctx, slot.day, slot.minutes))
+    let at = crate::week::drop_start(&ctx, slot.day, slot.minutes)?;
+    crate::week::free_at(&snapshot.plan.placements, &ctx, slot).then(|| crate::capture::NotedHour {
+        phrase: crate::week::hour_prefill_text(&ctx, slot.day, slot.minutes),
+        at,
+    })
 }
 
 fn row_under(x: f64, y: f64) -> Option<web_sys::Element> {

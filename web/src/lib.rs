@@ -111,7 +111,7 @@ pub fn App() -> impl IntoView {
     let move_request = RwSignal::new(None::<TaskId>);
     // When Rambo was dropped on an empty planner hour, that hour as a date phrase: the
     // capture box's next task starts then.
-    let noting_at = RwSignal::new(None::<String>);
+    let noting_at = RwSignal::new(None::<capture::NotedHour>);
     // The + was tapped: the list opens its sheet on a new task
     let new_task = RwSignal::new(false);
     // The task whose edit sheet is open: the list owns it, Rambo listens while it is
@@ -179,6 +179,7 @@ pub fn App() -> impl IntoView {
                 new_task
                 form_ref
                 nest_ref
+                snapshot
                 set_snapshot=set_snapshot
                 state=mascot_state
                 set_state=set_mascot_state

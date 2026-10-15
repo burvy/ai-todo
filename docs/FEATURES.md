@@ -409,8 +409,9 @@ listening, for a new task that starts then (snapped to the quarter hour): the ca
 box takes the focus and asks for it ("A task for today 14:30"). Say it, and it is sent
 as you stop speaking; or type it and press Enter or tap the nest. Tapping or clicking
 anywhere off the capture box, him included, or Esc, is never mind: nothing is created and
-the box empties. Dropped on a placed task, or at a time the clock skips that day, he
-does not start one.
+the box empties. Whatever its words, what you send there becomes a task at that hour:
+it is made as you worded it, never checked by the judge. Dropped on a placed task, or
+at a time the clock skips that day, he does not start one.
 b. Turn to the planner, drag Rambo onto an empty hour, then speak or type a title.
 c. Code: `web/src/rambo.rs:Rambo, free_hour_under`; `web/src/week.rs:hour_at, free_at,
 hour_prefill_text`; `web/src/capture.rs:CaptureBox, noted`;
@@ -444,7 +445,8 @@ row), he holds on to the paper as it scrolls: a slow scroll carries him along wi
 and one faster than he can hold on flings him with the page, a throw like any other,
 so a hard enough one smacks him into the edge of the screen. A throw that comes into the bottom-right corner
 is caught by his nest, however hard: no daze and no ink, he hops in. The nest is
-soft: it sags under him as he lands (deeper the harder he was thrown), rocks as he
+soft: it sags under him as he lands, visibly, and deeper the harder he comes down (a
+long hop or a hard throw), taking a moment to settle, rocks as he
 leaves or lands to one side, and settles; with reduced motion it stays still. He leans into where he hops, and eases from
 one pose into the next, never snapping. After a long stretch of writing his nib runs dry:
 home again, he tips toward the nest's rim and taps it there a few times, the nest

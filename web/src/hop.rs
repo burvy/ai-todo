@@ -71,6 +71,14 @@ impl Hop {
 
     /// Where he is `elapsed_ms` into the run towards `to`. Past the end he has
     /// landed: at `to`, unsquashed.
+    /// How fast he is coming down, in px/s, as each hop toward `to` touches down: the
+    /// fall of its arc at the end of its flight.
+    pub fn impact(&self, to: (f64, f64)) -> f64 {
+        let span = (to.0 - self.from.0).hypot(to.1 - self.from.1) / f64::from(self.hops);
+        let flight_ms = (TOUCH_DOWN - TAKE_OFF) * f64::from(HOP_MS);
+        arc_height(span) * std::f64::consts::PI * 1000.0 / flight_ms
+    }
+
     pub fn at(&self, to: (f64, f64), elapsed_ms: u32) -> Frame {
         if elapsed_ms >= self.ms() {
             return Frame {
