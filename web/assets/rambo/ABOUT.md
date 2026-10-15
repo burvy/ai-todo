@@ -30,3 +30,8 @@ Each folder also has a `sleepy.svg` that no pose draws today.
   `--rambo-ink`, `--rambo-pupil`, `--rambo-brow`, `--rambo-fx`, `--rambo-eye`,
   `--rambo-blush`), each with a fallback, so he follows the light and dark paper.
 - He is drawn 64 x 64 px on a phone and 80 x 80 on a desktop.
+
+## Source and licence
+
+Placeholder, AI-drawn in this repository; no external source, no licence needed (see
+`web/assets/CREDITS.md`).
