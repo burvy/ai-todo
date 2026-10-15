@@ -583,17 +583,25 @@ pub(crate) fn TaskList(
                                 let dragged = TaskId(row_id);
                                 // A tap on a control never reaches here (the row does not
                                 // take that press).
-                                let let_go = row_released(
-                                    outcome,
-                                    &dragged,
-                                    &snapshot.get_untracked(),
-                                    || is_wet(written, &dragged),
-                                    || on_title(x, y),
-                                    || row::dom::drop_target(x, y).map(|(target, slot)| (TaskId(target), slot)),
-                                );
+                                let dropped = || {
+                                    row::dom::drop_target(x, y)
+                                        .map(|(target, slot)| (TaskId(target), slot))
+                                };
+                                let let_go = snapshot.with_untracked(|listed| {
+                                    row_released(
+                                        outcome,
+                                        &dragged,
+                                        listed,
+                                        || is_wet(written, &dragged),
+                                        || on_title(x, y),
+                                        dropped,
+                                    )
+                                });
                                 match let_go {
                                     RowLetGo::Nothing => {}
-                                    RowLetGo::Smudge => smudge_if_wet(written, smudges, &dragged, (x, y)),
+                                    RowLetGo::Smudge => {
+                                        smudge_if_wet(written, smudges, &dragged, (x, y))
+                                    }
                                     RowLetGo::Open => open_editor(&dragged),
                                     RowLetGo::Done => {
                                         let task_id = TaskId(drop_task_id_clone.clone());

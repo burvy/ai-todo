@@ -225,7 +225,9 @@ pub enum RowLetGo {
     Open,
     /// The swipe went far enough: the task is done.
     Done,
-    /// A drop in the list: the stored tasks in this order.
+    /// A drop in the list: the stored tasks in this order. A drop that starts or lands on
+    /// a series occurrence is no reorder (`reorder_ids`), so nothing is sent rather than
+    /// an order the server would refuse.
     Reorder(Vec<TaskId>),
 }
 
@@ -622,9 +624,9 @@ mod tests {
             )
         );
         assert_eq!(drop_on(&first), RowLetGo::Nothing, "on itself");
-        assert!(matches!(
+        assert_eq!(
             row_released(Release::Reorder, &first, &snapshot, never, never, || None),
             RowLetGo::Nothing
-        ));
+        );
     }
 }
