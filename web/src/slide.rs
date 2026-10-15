@@ -1,5 +1,6 @@
 //! Paper sliding in the planner and the edit sheet: the ribbon's head hopping to another
-//! day, a stretched slip, the placing note and the sheet coming into sight and leaving it.
+//! day, a stretched slip, a let-go slip's ghost, the placing note and the sheet coming
+//! into sight and leaving it.
 //! The engine runs it on one spring (`tuning::PAPER_SLIDE_OMEGA`); with reduced motion
 //! the paper is where it is going at once.
 
@@ -24,13 +25,25 @@ pub(crate) fn slide(
     mut draw: impl FnMut(f64) + 'static,
     done: impl FnOnce() + 'static,
 ) {
+    slide_all(key, [from], [to], near, move |[at]| draw(at), done);
+}
+
+/// [`slide`] for paper placed by several values at once (a corner's left and top).
+pub(crate) fn slide_all<const N: usize>(
+    key: &str,
+    from: [f64; N],
+    to: [f64; N],
+    near: f64,
+    mut draw: impl FnMut([f64; N]) + 'static,
+    done: impl FnOnce() + 'static,
+) {
     if crate::mascot::prefers_reduced_motion() {
         crate::engine::cancel(key);
         draw(to);
         done();
         return;
     }
-    crate::engine::glide_keyed(key, [from], [to], PULL, near, move |[at]| draw(at), done);
+    crate::engine::glide_keyed(key, from, to, PULL, near, draw, done);
 }
 
 /// A node reference for an element that arrives when it is put on the page (`arrive`).

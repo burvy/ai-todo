@@ -112,6 +112,14 @@ pub fn placements_on_day(placements: &[Placement], day: i64, ctx: &LocalContext)
         .collect()
 }
 
+/// The minutes a drop snaps to.
+const SNAP: f32 = 15.0;
+
+/// A minute of the day rounded to the quarter hour a drop there lands on.
+pub fn snapped_minute(minutes: f32) -> f32 {
+    (minutes / SNAP).round() * SNAP
+}
+
 /// The minute a drop lands on, from a pixel offset inside a day column.
 /// Round to the quarter hour, and never land at the very end of the day:
 /// a zero-length task at 24:00 cannot start.
@@ -121,12 +129,10 @@ pub fn drop_minute(
     planner_end_hour: u8,
     hour_px: f32,
 ) -> u16 {
-    const SNAP: f32 = 15.0;
     let start_min = f32::from(planner_start_hour) * 60.0;
     let end_min = f32::from(planner_end_hour) * 60.0;
     let raw = start_min + offset_px.max(0.0) / hour_px * 60.0;
-    let snapped = (raw / SNAP).round() * SNAP;
-    snapped.clamp(start_min, (end_min - SNAP).max(start_min)) as u16
+    snapped_minute(raw).clamp(start_min, (end_min - SNAP).max(start_min)) as u16
 }
 
 /// The instant a slot starts: planner day + minute of the day, read in the
