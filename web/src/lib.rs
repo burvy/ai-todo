@@ -268,7 +268,7 @@ pub fn App() -> impl IntoView {
             pen_pos
             capture_text
             form_ref
-            open_sheet
+            open_sheet=open_sheet.read_only()
             nest_ref
             pen=Signal::derive(move || view_settings.get().pen)
             typing
