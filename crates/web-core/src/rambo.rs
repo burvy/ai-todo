@@ -185,6 +185,39 @@ pub fn opens_below(sits_on: f64, height: f64, edge: f64) -> bool {
     sits_on - height < edge
 }
 
+/// A box on the screen, in CSS px.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rect {
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// The nudge, in his own px, that keeps his line `edge` px inside a `screen` that wide:
+/// slid in from a side, and below him (`his_bottom`) when it would run off the top.
+/// It is worked out from where the line is `drawn`, nudged by `shift` and drawn at his
+/// `scale`, so his lean, size and sink count, not only where his middle is; worked out
+/// again on every frame he moves, the line never crosses an edge on the way.
+pub fn fit_line(
+    drawn: Rect,
+    shift: (f64, f64),
+    scale: f64,
+    his_bottom: f64,
+    screen: f64,
+    edge: f64,
+) -> (f64, f64) {
+    let left = drawn.left - shift.0 * scale;
+    let top = drawn.top - shift.1 * scale;
+    let across = bubble_offset(left + drawn.width / 2.0, drawn.width, screen, edge);
+    let down = if opens_below(top + drawn.height, drawn.height, edge) {
+        his_bottom + edge - top
+    } else {
+        0.0
+    };
+    (across / scale, down / scale)
+}
+
 /// How far to slide a bubble of `width`, centred on `centre_x`, so it keeps `edge`
 /// pixels from both sides of a `screen` that wide. A bubble too wide for the screen
 /// starts at the left edge, where its question begins.
@@ -459,5 +492,50 @@ mod tests {
         assert_eq!(bubble_offset(500.0, 1200.0, 1000.0, 16.0), 116.0);
         // Exactly as wide as the room between the edges: it fits.
         assert_eq!(bubble_offset(500.0, 968.0, 1000.0, 16.0), 0.0);
+    }
+
+    fn line_at(left: f64, top: f64) -> Rect {
+        Rect {
+            left,
+            top,
+            width: 200.0,
+            height: 40.0,
+        }
+    }
+
+    #[test]
+    fn a_line_with_room_stays_where_it_is_drawn() {
+        assert_eq!(
+            fit_line(line_at(400.0, 300.0), (0.0, 0.0), 1.0, 500.0, 1000.0, 8.0),
+            (0.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn a_line_he_leans_past_an_edge_slides_back_in() {
+        // Leaning, his line is drawn 11px past the right edge, wherever his middle is.
+        let (across, down) = fit_line(line_at(803.0, 300.0), (0.0, 0.0), 1.0, 500.0, 1000.0, 8.0);
+        assert_eq!((across, down), (-11.0, 0.0));
+    }
+
+    #[test]
+    fn the_nudge_already_drawn_is_not_counted_twice() {
+        // Drawn already nudged 11px in, at the edge: the nudge stays 11px, not 22.
+        let fitted = fit_line(line_at(792.0, 300.0), (-11.0, 0.0), 1.0, 500.0, 1000.0, 8.0);
+        assert_eq!(fitted, (-11.0, 0.0));
+        // Moved back to the middle, the nudge goes.
+        let middle = fit_line(line_at(389.0, 300.0), (-11.0, 0.0), 1.0, 500.0, 1000.0, 8.0);
+        assert_eq!(middle, (0.0, 0.0));
+    }
+
+    #[test]
+    fn near_the_top_it_drops_below_him_in_his_own_px() {
+        // Drawn from 1px above the top, he 100px tall below it, at twice his size: it
+        // goes 8px under his bottom, which is 108px on screen and 54px of his own.
+        let (_, down) = fit_line(line_at(400.0, -1.0), (0.0, 0.0), 2.0, 99.0, 1000.0, 8.0);
+        assert_eq!(down, 54.0);
+        // Already dropped, it stays dropped by the same amount.
+        let (_, again) = fit_line(line_at(400.0, 107.0), (0.0, 54.0), 2.0, 99.0, 1000.0, 8.0);
+        assert_eq!(again, 54.0);
     }
 }
